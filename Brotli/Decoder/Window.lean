@@ -52,6 +52,11 @@ private theorem data_uset (a : ByteArray) (i : USize) (v : UInt8) (h : i.toNat <
 @[inline] def ringWrite (ring : ByteArray) (pos : USize) (v : UInt8) (h : pos.toNat < ring.size) : ByteArray :=
   ring.uset pos v h
 
+theorem size_ringWrite (ring : ByteArray) (pos : USize) (v : UInt8) (h : pos.toNat < ring.size) :
+    (ringWrite ring pos v h).size = ring.size := by
+  show (ringWrite ring pos v h).data.size = ring.data.size
+  simp only [ringWrite, data_uset, Array.size_set]
+
 /-- The next position to write. -/
 @[inline] def ringNext (pos mask : USize) : USize :=
   (pos + USize.ofNat 1) &&& mask

@@ -114,6 +114,35 @@ theorem slotWord_spec {t : ByteArray} {i : USize} (h : 4 * i.toNat + 4 ≤ t.siz
   have h2 := (t.data[4 * i.toNat + 2]?.getD 0).toNat_lt
   omega
 
+/-- The four bytes of slot `i` as a number. -/
+def u32At (t : ByteArray) (i : Nat) : Nat :=
+  (t.data[4 * i]?.getD 0).toNat + 256 * (t.data[4 * i + 1]?.getD 0).toNat +
+    65536 * (t.data[4 * i + 2]?.getD 0).toNat + 16777216 * (t.data[4 * i + 3]?.getD 0).toNat
+
+/-- A slot's word is those four bytes. -/
+theorem slotWord_toNat {t : ByteArray} {i : USize} (h : 4 * i.toNat + 4 ≤ t.size) (h32 : t.size < 2 ^ 32) :
+    (slotWord t i h h32).toNat = u32At t i.toNat := by
+  have hp : (i * USize.ofNat 4).toNat = 4 * i.toNat := usize_shift2 (by omega)
+  have hk : ∀ k, k < 4 → (i * USize.ofNat 4 + USize.ofNat k).toNat = 4 * i.toNat + k := by
+    intro k hk
+    rw [usize_toNat_add (by rw [hp, usize_ofNat_toNat' (by omega)]; omega), hp, usize_ofNat_toNat' (by omega)]
+  unfold slotWord u32At
+  dsimp only
+  rw [four_bytes, uget_slot hp, uget_slot (hk 1 (by decide)), uget_slot (hk 2 (by decide)), uget_slot (hk 3 (by decide))]
+
+/-- A value of `u32At` fits 32 bits. -/
+theorem u32At_lt (t : ByteArray) (i : Nat) : u32At t i < 2 ^ 32 := by
+  unfold u32At
+  have h0 := (t.data[4 * i]?.getD 0).toNat_lt
+  have h1 := (t.data[4 * i + 1]?.getD 0).toNat_lt
+  have h2 := (t.data[4 * i + 2]?.getD 0).toNat_lt
+  have h3 := (t.data[4 * i + 3]?.getD 0).toNat_lt
+  omega
+
+/-- A word below `2 ^ 32` keeps its value as a position. -/
+theorem word_toUSize {v : UInt64} (h : v.toNat < 2 ^ 32) : v.toUSize.toNat = v.toNat :=
+  toNat_toUSize h
+
 /-- A root slot's position. -/
 @[inline] def rootIndex (base : USize) (w : UInt64) : USize :=
   base + (w &&& 255).toUSize

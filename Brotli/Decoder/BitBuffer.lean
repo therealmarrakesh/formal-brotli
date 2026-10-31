@@ -237,11 +237,11 @@ theorem BitBuffer.peek_toNat (b : BitBuffer) {k : UInt64} (hk : k.toNat < 64) :
   simp only [BitBuffer.peek, UInt64.toNat_and, mask_toNat hk]
   exact Nat.and_two_pow_sub_one_eq_mod _ _
 
-private theorem drop_word (b : BitBuffer) {k : UInt64} (hk : k.toNat < 64) :
+theorem drop_word (b : BitBuffer) {k : UInt64} (hk : k.toNat < 64) :
     (b.drop k).word.toNat = b.word.toNat / 2 ^ k.toNat := by
   simp only [BitBuffer.drop, UInt64.toNat_shiftRight, Nat.mod_eq_of_lt hk, Nat.shiftRight_eq_div_pow]
 
-private theorem drop_count {b : BitBuffer} {k : UInt64} (hle : k.toNat ≤ b.count.toNat) :
+theorem drop_count {b : BitBuffer} {k : UInt64} (hle : k.toNat ≤ b.count.toNat) :
     (b.drop k).count.toNat = b.count.toNat - k.toNat := by
   simp only [BitBuffer.drop]
   exact UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr hle)

@@ -1,0 +1,307 @@
+import Brotli.Decoder.Rest
+import Brotli.Decoder.Refill
+import Brotli.Decoder.Lookup
+import Brotli.Decoder.Window
+import Brotli.Decoder.ContextLut
+
+/-!
+# The literal loop
+
+The hot path for literals. It runs for `n` literals in a row, where `n` is at most the literals left in the command,
+in the block, and the room in the window, so it counts only one thing. Its state is plain values, and it returns
+only when `n` runs out or the bits at hand can't finish a symbol.
+-/
+
+namespace Brotli.Decoder
+
+open Brotli.Spec Brotli.Properties
+
+/-- What the header's check has established about the literal tables, with no mention of the spec. -/
+structure LitChecked (arena litBase lMap : ByteArray) (nTrees : Nat) : Prop where
+  arena32 : arena.size < 2 ^ 32
+  base32 : litBase.size < 2 ^ 32
+  map32 : lMap.size < 2 ^ 32
+  baseSize : litBase.size = 4 * nTrees
+  treeLt : ∀ p : USize, ∀ h : p.toNat < lMap.size, (lMap.uget p h).toNat < nTrees
+  fits : ∀ tree, tree < nTrees → TableFits arena (u32At litBase tree)
+
+/-- A literal loop's result, flat so the loop keeps every field as a plain value. -/
+structure LitRun where
+  word : UInt64
+  count : UInt64
+  pos : USize
+  wpos : USize
+  ring : ByteArray
+  p1 : UInt8
+  p2 : UInt8
+  left : Nat
+
+private theorem usize_add {a b : USize} (h : a.toNat + b.toNat < 2 ^ 32) : (a + b).toNat = a.toNat + b.toNat := by
+  rw [USize.toNat_add, ← USize.size_eq_two_pow]
+  have := USize.le_size
+  exact Nat.mod_eq_of_lt (by omega)
+
+private theorem u8_usize (x : UInt8) : x.toUSize.toNat = x.toNat := by
+  simp
+
+/-- The slot base of a literal tree. -/
+@[inline] def treeBase (litBase : ByteArray) (tree : UInt8) (h : 4 * tree.toNat + 4 ≤ litBase.size)
+    (h32 : litBase.size < 2 ^ 32) : USize :=
+  (slotWord litBase tree.toUSize (by rw [u8_usize]; exact h) h32).toUSize
+
+theorem treeBase_toNat {litBase : ByteArray} {tree : UInt8} (h : 4 * tree.toNat + 4 ≤ litBase.size)
+    (h32 : litBase.size < 2 ^ 32) : (treeBase litBase tree h h32).toNat = u32At litBase tree.toNat := by
+  unfold treeBase
+  rw [word_toUSize (by rw [slotWord_toNat]; exact u32At_lt _ _), slotWord_toNat, u8_usize]
+
+/-- The position of a literal's tree in the context map. -/
+@[inline] def mapIndex (mapBase : USize) (cid : UInt8) : USize := mapBase + cid.toUSize
+
+theorem mapIndex_toNat {mapBase : USize} {cid : UInt8} (h : mapBase.toNat + cid.toNat < 2 ^ 32) :
+    (mapIndex mapBase cid).toNat = mapBase.toNat + cid.toNat := by
+  unfold mapIndex
+  rw [usize_add (by rw [u8_usize]; exact h), u8_usize]
+
+/-- The context ID is below 64. -/
+theorem cid_lt {modeOff : USize} {p1 p2 : UInt8} (hm : modeOff.toNat + 512 ≤ 2048) (hd : modeOff.toNat % 512 = 0) :
+    (cidFast modeOff p1 p2 hm).toNat < 64 := by
+  rw [cid_eq hm hd]
+  exact contextId_lt _ _ p1.toNat_lt
+
+/-- Runs up to `n` literals. -/
+def literalRun {nTrees : Nat} {arena litBase lMap : ByteArray} (C : LitChecked arena litBase lMap nTrees)
+    (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (mapBase modeOff mask : USize) (k : Nat)
+    (hmb : mapBase.toNat + 64 ≤ lMap.size) (hm : modeOff.toNat + 512 ≤ 2048) (hd : modeOff.toNat % 512 = 0)
+    (hmask : mask.toNat = 2 ^ k - 1) (hk : k ≤ 24) :
+    (n : Nat) → (word count : UInt64) → (pos wpos : USize) → (ring : ByteArray) → (p1 p2 : UInt8) →
+    pos.toNat ≤ stop.toNat → (BitBuffer.mk word count).Wf → ring.size = 2 ^ k → wpos.toNat < 2 ^ k → LitRun
+  | 0, word, count, pos, wpos, ring, p1, p2, _, _, _, _ => ⟨word, count, pos, wpos, ring, p1, p2, 0⟩
+  | n + 1, word, count, pos, wpos, ring, p1, p2, hp, hw, hsize, hwp =>
+    let r := refill word count a pos stop hs hp
+    let rw := r.word
+    let rc := r.count
+    let rp := r.pos
+    have hspec := refill_spec hs hp hw
+    let cid := cidFast modeOff p1 p2 hm
+    have hcid : cid.toNat < 64 := cid_lt hm hd
+    have hi : (mapIndex mapBase cid).toNat < lMap.size := by
+      rw [mapIndex_toNat (by have := C.map32; omega)]
+      omega
+    let tree := lMap.uget (mapIndex mapBase cid) hi
+    have htree : tree.toNat < nTrees := C.treeLt _ hi
+    have hb : 4 * tree.toNat + 4 ≤ litBase.size := by
+      rw [C.baseSize]
+      omega
+    let base := treeBase litBase tree hb C.base32
+    have hfit : TableFits arena base.toNat := by
+      rw [treeBase_toNat]
+      exact C.fits _ htree
+    let v := lookup arena base rw hfit C.arena32
+    let l := v &&& 63
+    if hl : l ≤ rc then
+      let byte := (v >>> 8).toUInt8
+      have hl63 : l.toNat < 64 := by
+        have : (v &&& 63).toNat = v.toNat % 64 := by
+          rw [UInt64.toNat_and]
+          exact Nat.and_two_pow_sub_one_eq_mod v.toNat 6
+        show (v &&& 63).toNat < 64
+        omega
+      have hr : wpos.toNat < ring.size := by omega
+      let ring' := ringWrite ring wpos byte hr
+      have hsize' : ring'.size = 2 ^ k := (size_ringWrite ring wpos byte hr).trans hsize
+      have hnext : (ringNext wpos mask).toNat < 2 ^ k := by
+        unfold ringNext
+        rw [USize.toNat_and, hmask, Nat.and_two_pow_sub_one_eq_mod]
+        exact Nat.mod_lt _ (Nat.two_pow_pos _)
+      let b := (BitBuffer.mk rw rc).drop l
+      literalRun C a stop hs mapBase modeOff mask k hmb hm hd hmask hk n b.word b.count rp (ringNext wpos mask) ring'
+        byte p1 hspec.2.2.1 (BitBuffer.drop_wf hspec.1 hl63 (UInt64.le_iff_toNat_le.mp hl)) hsize' hnext
+    else ⟨rw, rc, rp, wpos, ring, p1, p2, n + 1⟩
+
+/-! ### What the loop does -/
+
+/-- The literal tables match the spec's header: the map's bytes are its context map, and each tree's table decodes
+its prefix code. -/
+structure LitRel (arena litBase lMap : ByteArray) (nTrees : Nat) (m : MetaBlockHeader) : Prop where
+  map : ∀ p : USize, ∀ h : p.toNat < lMap.size, m.literalMap[p.toNat]? = some (lMap.uget p h).toNat
+  code : ∀ tree, tree < nTrees → ∃ code, m.literalCodes[tree]? = some code ∧
+    TableOk arena (u32At litBase tree) code ∧ Complete code ∧ code.Symbols literalAlphabetSize
+
+/-- The bits the decoder holds, then the rest of the chunk, then any future. -/
+def availBits (word count : UInt64) (a : ByteArray) (pos stop : USize) (F : List Bool) : List Bool :=
+  (BitBuffer.mk word count).held ++ (chunkBits a pos.toNat stop.toNat ++ F)
+
+private theorem contextBytes_cons (b : Nat) (out : List Nat) :
+    contextBytes (b :: out) = (b, (contextBytes out).1) := by
+  cases out with
+  | nil => rfl
+  | cons x xs =>
+    cases xs with
+    | nil => rfl
+    | cons y ys => rfl
+
+private theorem and63 (v : UInt64) (h : v.toNat % 256 ≤ 15) : (v &&& 63).toNat = v.toNat % 256 := by
+  rw [UInt64.toNat_and]
+  have : v.toNat &&& 63 = v.toNat % 64 := Nat.and_two_pow_sub_one_eq_mod v.toNat 6
+  rw [show (63 : UInt64).toNat = 63 from rfl, this]
+  omega
+
+private theorem byte_of (v : UInt64) (h : v.toNat / 256 % 65536 < literalAlphabetSize) :
+    (v >>> 8).toUInt8.toNat = v.toNat / 256 % 65536 := by
+  have h' : v.toNat / 256 % 65536 < 256 := h
+  simp only [UInt64.toNat_toUInt8, UInt64.toNat_shiftRight]
+  rw [show (8 : UInt64).toNat % 64 = 8 from rfl, Nat.shiftRight_eq_div_pow, show (2 : Nat) ^ 8 = 256 from rfl]
+  omega
+
+/-- One literal with no block switch, in the spec's terms. -/
+private theorem literal_step {α : Type} {w : Nat} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
+    {s : CommandState} {ic : BlockState} {c ilen clen n : Nat} {lit : BlockState} {out : List Nat} {t mode tree : Nat}
+    {code : PrefixCode} {bs r : List Bool} {sym : Nat} (hc : lit.count ≠ 0) (hcur : lit.types.cur = t)
+    (hmode : m.contextModes[t]? = some mode)
+    (hmap : literalPrefixCodeIndex m.literalMap t (contextId mode (contextBytes out).1 (contextBytes out).2) = some tree)
+    (hcode : m.literalCodes[tree]? = some code) (hd : decodeSymbol code bs = some (sym, r)) :
+    rest w m K (.literals s ic c ilen clen (n + 1) lit out) bs =
+      rest w m K (.literals s ic c ilen clen n { lit with count := lit.count - 1 } (sym :: out)) r := by
+  have hnext : nextElement m.literal lit bs = some ({ lit with count := lit.count - 1 }, bs) := by
+    simp [nextElement, hc]
+  rw [rest_literal, hnext]
+  show rest w m K (.literalSymbol s ic c ilen clen n { lit with count := lit.count - 1 } out) bs = _
+  rw [rest_literalSymbol]
+  have hc' : ({ lit with count := lit.count - 1 } : BlockState).types.cur = t := hcur
+  rw [hc', hmode]
+  show (literalPrefixCodeIndex m.literalMap t (contextId mode (contextBytes out).1 (contextBytes out).2) >>= _) = _
+  rw [hmap]
+  show (m.literalCodes[tree]? >>= _) = _
+  rw [hcode]
+  show (decodeSymbol code bs >>= _) = _
+  rw [hd]
+  rfl
+
+/-- The literal loop's whole effect. Each literal it runs is one the spec reads, whatever bits follow. It stops when
+its count runs out, or when the chunk is used up and the bits at hand can't finish a symbol. -/
+theorem literalRun_spec {α : Type} {nTrees : Nat} {arena litBase lMap : ByteArray} (C : LitChecked arena litBase lMap nTrees)
+    {a : ByteArray} {stop : USize} (hs : stop.toNat ≤ a.size) {mapBase modeOff mask : USize} {k : Nat}
+    (hmb : mapBase.toNat + 64 ≤ lMap.size) (hm : modeOff.toNat + 512 ≤ 2048) (hd : modeOff.toNat % 512 = 0)
+    (hmask : mask.toNat = 2 ^ k - 1) (hk : k ≤ 24)
+    {w : Nat} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α} (R : LitRel arena litBase lMap nTrees m)
+    {t : Nat} (hmap : mapBase.toNat = 64 * t) (hmode : m.contextModes[t]? = some (modeOff.toNat / 512))
+    (s : CommandState) (ic : BlockState) (c ilen clen : Nat) (F : List Bool) :
+    ∀ (n : Nat) (word count : UInt64) (pos wpos : USize) (ring : ByteArray) (p1 p2 : UInt8)
+      (hp : pos.toNat ≤ stop.toNat) (hw : (BitBuffer.mk word count).Wf) (hsize : ring.size = 2 ^ k)
+      (hwp : wpos.toNat < 2 ^ k) (L : Nat) (lit : BlockState) (out : List Nat),
+      n ≤ L → n ≤ lit.count → lit.types.cur = t → contextBytes out = (p1.toNat, p2.toNat) →
+      RingOk ring k wpos.toNat out →
+      let r := literalRun C a stop hs mapBase modeOff mask k hmb hm hd hmask hk n word count pos wpos ring p1 p2 hp hw hsize hwp
+      ∃ (lit' : BlockState) (out' : List Nat),
+        r.left ≤ n ∧ lit'.types = lit.types ∧ lit'.seen = lit.seen ∧ lit'.count = lit.count - (n - r.left) ∧
+        out'.length = out.length + (n - r.left) ∧ RingOk r.ring k r.wpos.toNat out' ∧
+        contextBytes out' = (r.p1.toNat, r.p2.toNat) ∧ (BitBuffer.mk r.word r.count).Wf ∧
+        pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
+        rest w m K (.literals s ic c ilen clen L lit out) (availBits word count a pos stop F) =
+          rest w m K (.literals s ic c ilen clen (L - (n - r.left)) lit' out') (availBits r.word r.count a r.pos stop F) ∧
+        (r.left ≠ 0 → r.pos = stop) := by
+  intro n
+  induction n with
+  | zero =>
+    intro word count pos wpos ring p1 p2 hp hw hsize hwp L lit out _ _ _ hctx hring
+    exact ⟨lit, out, by simp [literalRun], rfl, rfl, by simp [literalRun], by simp [literalRun], hring, hctx, hw,
+      Nat.le_refl _, hp, by simp [literalRun], by simp [literalRun]⟩
+  | succ n ih =>
+    intro word count pos wpos ring p1 p2 hp hw hsize hwp L lit out hL hcount hcur hctx hring
+    rw [literalRun]
+    dsimp only
+    obtain ⟨hrw, hrp1, hrp2, hbits, hdisj⟩ := refill_spec hs hp hw
+    have hcidlt : (cidFast modeOff p1 p2 hm).toNat < 64 := cid_lt hm hd
+    have hcidv : (cidFast modeOff p1 p2 hm).toNat = contextId (modeOff.toNat / 512) p1.toNat p2.toNat := cid_eq hm hd
+    have hidx : (mapIndex mapBase (cidFast modeOff p1 p2 hm)).toNat = mapBase.toNat + (cidFast modeOff p1 p2 hm).toNat :=
+      mapIndex_toNat (by have := C.map32; omega)
+    have hi : (mapIndex mapBase (cidFast modeOff p1 p2 hm)).toNat < lMap.size := by
+      rw [hidx]
+      omega
+    have htree := C.treeLt _ hi
+    have hmapv := R.map _ hi
+    obtain ⟨code, hcode, hok, hC, hsym⟩ := R.code _ htree
+    have hb : 4 * (lMap.uget _ hi).toNat + 4 ≤ litBase.size := by
+      rw [C.baseSize]
+      omega
+    have hbase := treeBase_toNat hb C.base32
+    rw [← hbase] at hok
+    obtain ⟨hv1, hv2⟩ := lookup_spec (w := (refill word count a pos stop hs hp).word) hok.toTableFits C.arena32
+    have hhit := hok.hit (refill word count a pos stop hs hp).word.toNat
+    rw [← hv1, ← hv2] at hhit
+    have hl15 := hhit.le_15 hC
+    have hl63 := and63 _ hl15
+    have hrest : availBits word count a pos stop F =
+        (refill word count a pos stop hs hp).buf.held ++ (chunkBits a (refill word count a pos stop hs hp).pos.toNat stop.toNat ++ F) := by
+      unfold availBits
+      rw [← List.append_assoc, ← hbits, List.append_assoc]
+    split
+    · rename_i hl
+      have hle := UInt64.le_iff_toNat_le.mp hl
+      rw [hl63] at hle
+      have hdec := hhit.decode hC hle (chunkBits a (refill word count a pos stop hs hp).pos.toNat stop.toNat ++ F)
+      have hsymlt : _ < literalAlphabetSize := decodeSymbol_lt hsym hdec
+      have hbyte := byte_of _ hsymlt
+      rw [← hbyte] at hdec
+      have hlit : lit.count ≠ 0 := by omega
+      obtain ⟨L', rfl⟩ : ∃ L', L = L' + 1 := ⟨L - 1, by omega⟩
+      have hmapget : literalPrefixCodeIndex m.literalMap t
+          (contextId (modeOff.toNat / 512) (contextBytes out).1 (contextBytes out).2) =
+            some (lMap.uget (mapIndex mapBase (cidFast modeOff p1 p2 hm)) hi).toNat := by
+        unfold literalPrefixCodeIndex
+        rw [hctx]
+        dsimp only
+        rw [← hcidv, ← hmap, ← hidx]
+        exact hmapv
+      have hstep := literal_step (w := w) (K := K) (s := s) (ic := ic) (c := c) (ilen := ilen) (clen := clen) (n := L')
+        hlit hcur hmode hmapget hcode hdec
+      have hwr : wpos.toNat < ring.size := by rw [hsize]; exact hwp
+      have hringNew := RingOk.write (v := (lookup arena _ (refill word count a pos stop hs hp).word hok.toTableFits C.arena32 >>> 8).toUInt8)
+        hring hk hmask hwr
+      have hnextLt : (ringNext wpos mask).toNat < 2 ^ k := hringNew.pos_lt
+      have hsizeNew := hringNew.size
+      have hdropLt : (lookup arena _ (refill word count a pos stop hs hp).word hok.toTableFits C.arena32 &&& 63).toNat < 64 := by
+        rw [hl63]
+        omega
+      have hleCount := UInt64.le_iff_toNat_le.mp hl
+      have hih := ih
+        ((BitBuffer.mk (refill word count a pos stop hs hp).word (refill word count a pos stop hs hp).count).drop
+          (lookup arena _ (refill word count a pos stop hs hp).word hok.toTableFits C.arena32 &&& 63)).word
+        ((BitBuffer.mk (refill word count a pos stop hs hp).word (refill word count a pos stop hs hp).count).drop
+          (lookup arena _ (refill word count a pos stop hs hp).word hok.toTableFits C.arena32 &&& 63)).count
+        (refill word count a pos stop hs hp).pos (ringNext wpos mask) _ _ p1 hrp2
+        (BitBuffer.drop_wf hrw hdropLt hleCount) hsizeNew hnextLt L' { lit with count := lit.count - 1 } _
+        (by omega) (by show n ≤ lit.count - 1; omega) hcur (by rw [contextBytes_cons, hctx]) hringNew
+      dsimp only at hih
+      generalize literalRun C a stop hs mapBase modeOff mask k hmb hm hd hmask hk n _ _ _ _ _ _ _ _ _ _ _ = run at hih ⊢
+      obtain ⟨lit', out', h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12⟩ := hih
+      refine ⟨lit', out', Nat.le_succ_of_le h1, h2, h3, ?_, ?_, h6, h7, h8, by omega, h10, ?_, h12⟩
+      · rw [h4]
+        show lit.count - 1 - _ = _
+        omega
+      · rw [h5]
+        simp only [List.length_cons]
+        omega
+      · have hw' := drop_word (BitBuffer.mk (refill word count a pos stop hs hp).word (refill word count a pos stop hs hp).count) hdropLt
+        have hc' := drop_count (b := BitBuffer.mk (refill word count a pos stop hs hp).word (refill word count a pos stop hs hp).count) hleCount
+        have e1 : (refill word count a pos stop hs hp).buf.held =
+            lowBits (refill word count a pos stop hs hp).word.toNat (refill word count a pos stop hs hp).count.toNat := rfl
+        have eL : L' + 1 - (n + 1 - run.left) = L' - (n - run.left) := by omega
+        rw [hrest, e1, hstep, eL, ← h11]
+        unfold availBits
+        simp only [BitBuffer.held]
+        rw [hw', hc', hl63]
+    · rename_i hl
+      have hnot : (refill word count a pos stop hs hp).count.toNat < (lookup arena _ (refill word count a pos stop hs hp).word hok.toTableFits C.arena32 &&& 63).toNat :=
+        Nat.lt_of_not_le fun hle => hl (UInt64.le_iff_toNat_le.mpr hle)
+      rw [hl63] at hnot
+      refine ⟨lit, out, by simp, rfl, rfl, by simp, by simp, hring, hctx, hrw, hrp1, hrp2, ?_, ?_⟩
+      · rw [hrest]
+        simp only [Nat.sub_self, Nat.sub_zero]
+        rfl
+      · intro _
+        rcases hdisj with h | h
+        · omega
+        · exact h
+
+end Brotli.Decoder
