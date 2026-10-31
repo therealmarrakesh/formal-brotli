@@ -13,8 +13,8 @@ namespace Brotli.Decoder
 open Brotli.Spec Brotli.Properties
 
 /-- What a step must do. Moving on keeps the state tied to `rest`, whatever bits follow. Needing input means the chunk
-is used up, and the spec rejects if no more bits come. Needing output changes nothing, with the window full. Finishing
-means MLEN is reached at the start of a command. Rejecting means the spec rejects, whatever bits follow. -/
+is used up, and the spec rejects if no more bits come. Needing output means the window is full of bytes not yet handed
+over. Finishing means MLEN is reached at the start of a command. Rejecting means the spec rejects, whatever bits follow. -/
 structure StepOk {α : Type} (w k : Nat) (m : MetaBlockHeader) (K : CommandState → List Bool → Option α) (a : ByteArray)
     (stop : USize) (p : Phase) (st : Cmd) (pos : USize) (r : Stepped) : Prop where
   next : r.status = .next → ∃ p', Rel w k m r.st p' ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧

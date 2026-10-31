@@ -19,6 +19,7 @@ import Brotli.Decoder.Step
 import Brotli.Decoder.CmdLut
 import Brotli.Decoder.StepRead
 import Brotli.Decoder.StepLiterals
+import Brotli.Decoder.DictBytes
 import Brotli.Decoder.StepDistance
 import Brotli.Decoder.Loop
 

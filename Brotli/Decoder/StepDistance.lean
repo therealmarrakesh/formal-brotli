@@ -1,4 +1,5 @@
 import Brotli.Decoder.StepLiterals
+import Brotli.Decoder.DictBytes
 
 /-!
 # The distance's steps
@@ -31,7 +32,7 @@ private theorem wordBytes_size (word : List Nat) : (wordBytes word).size = word.
 /-- Begins the copy a distance selects. -/
 def applyDistance (st : Cmd) (pos : USize) (dcode d : Nat) : Stepped :=
   if st.written.toNat < d then
-    match dictionaryWord st.clen.toNat d st.written.toNat with
+    match dictWord st.clen.toNat d st.written.toNat with
     | none => ⟨st, pos, .bad⟩
     | some word =>
       if st.remaining.toNat < word.length then ⟨st, pos, .bad⟩
@@ -69,7 +70,7 @@ theorem applyDistance_spec {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {s : Com
   unfold applyDistance
   subst hclen
   by_cases hdict : st.written.toNat < d
-  · rw [ite_eq_left hdict, copyPhase_word (by rw [hmax]; exact hdict), hmax]
+  · rw [ite_eq_left hdict, copyPhase_word (by rw [hmax]; exact hdict), hmax, dictWord_eq]
     cases hword : dictionaryWord st.clen.toNat d st.written.toNat with
     | none => exact Or.inl ⟨rfl, rfl⟩
     | some word =>
