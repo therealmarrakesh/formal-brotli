@@ -1,4 +1,5 @@
 import Brotli.Properties.Lookups
+import Brotli.Properties.Complete
 
 /-!
 # Properties
