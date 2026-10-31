@@ -309,15 +309,11 @@ def copyPhase (w : Nat) (s : CommandState) (clen dcode d : Nat) : Option Phase :
     produced := s.produced + clen
     remaining := s.remaining - clen } d clen)
 
-/-- The distance, then the copy it selects. -/
-theorem rest_distance {w : Nat} {h : MetaBlockHeader} {K : CommandState → List Bool → Option α}
-    {s : CommandState} {c clen : Nat} (bs : List Bool) (h0 : s.remaining ≠ 0) :
-    rest w h K (.distance s c clen) bs =
-      readCommandDistance h s.distance s.distances c clen bs >>= fun ((distance, dcode, d), bs) =>
-      copyPhase w { s with distance } clen dcode d >>= fun p => rest w h K p bs := by
-  simp only [rest, afterLiterals, h0, ↓reduceIte]
-  congr 1
-  funext ⟨⟨dst, dcode, d⟩, b⟩
+/-- A command's copy is the place `copyPhase` gives, then `rest` from there. -/
+theorem copyCommand_phase (w : Nat) (h : MetaBlockHeader) (K : CommandState → List Bool → Option α)
+    (s : CommandState) (clen dcode d : Nat) (b : List Bool) :
+    (copyCommand w s clen dcode d >>= fun s => K s b) =
+      (copyPhase w s clen dcode d >>= fun p => rest w h K p b) := by
   unfold copyCommand copyPhase
   dsimp only
   by_cases hd : isDictionaryReference d (maxBackwardDistance w s.produced) = true
@@ -329,12 +325,89 @@ theorem rest_distance {w : Nat} {h : MetaBlockHeader} {K : CommandState → List
       by_cases hr : s.remaining < word.length
       · simp only [hr, ↓reduceIte]
       · simp only [hr, ↓reduceIte]
+        rfl
   · simp only [hd, Bool.false_eq_true, ↓reduceIte]
     by_cases hr : s.remaining < clen
     · simp only [hr, ↓reduceIte]
       rfl
     · simp only [hr, ↓reduceIte]
       rfl
+
+/-- The distance, then the copy it selects. -/
+theorem rest_distance {w : Nat} {h : MetaBlockHeader} {K : CommandState → List Bool → Option α}
+    {s : CommandState} {c clen : Nat} (bs : List Bool) (h0 : s.remaining ≠ 0) :
+    rest w h K (.distance s c clen) bs =
+      readCommandDistance h s.distance s.distances c clen bs >>= fun ((distance, dcode, d), bs) =>
+      copyPhase w { s with distance } clen dcode d >>= fun p => rest w h K p bs := by
+  simp only [rest, afterLiterals, h0, ↓reduceIte]
+  congr 1
+  funext ⟨⟨dst, dcode, d⟩, b⟩
+  exact copyCommand_phase w h K _ clen dcode d b
+
+/-- With MLEN reached, a command has no distance. -/
+theorem rest_distance_end {w : Nat} {h : MetaBlockHeader} {K : CommandState → List Bool → Option α}
+    {s : CommandState} {c clen : Nat} (bs : List Bool) (h0 : s.remaining = 0) :
+    rest w h K (.distance s c clen) bs = rest w h K (.command s) bs := by
+  simp only [rest, afterLiterals, h0, ↓reduceIte]
+
+/-- With MLEN not reached and an implied distance symbol 0, there is nothing to read. -/
+theorem rest_distance_implicit {w : Nat} {h : MetaBlockHeader} {K : CommandState → List Bool → Option α}
+    {s : CommandState} {c clen : Nat} (bs : List Bool) (h0 : s.remaining ≠ 0) (hc : implicitZeroDistance c = true) :
+    rest w h K (.distance s c clen) bs =
+      distanceOf h.npostfix h.ndirect s.distances 0 0 >>= fun d =>
+      copyPhase w s clen 0 d >>= fun p => rest w h K p bs := by
+  rw [rest_distance bs h0]
+  unfold readCommandDistance
+  rw [ite_eq_left hc]
+  cases distanceOf h.npostfix h.ndirect s.distances 0 0 with
+  | none => rfl
+  | some d => rfl
+
+/-- A distance's symbol and extra bits, once the symbol is read. -/
+theorem rest_distanceSymbol {w : Nat} {h : MetaBlockHeader} {K : CommandState → List Bool → Option α}
+    {s : CommandState} {clen : Nat} {dist : BlockState} {tree dcode : Nat} {code : PrefixCode} {bs r : List Bool}
+    (hindex : distancePrefixCodeIndex h.distanceMap dist.types.cur (distanceContextId clen) = some tree)
+    (hcode : h.distanceCodes[tree]? = some code) (hd : decodeSymbol code bs = some (dcode, r)) :
+    rest w h K (.distanceSymbol s clen dist) bs =
+      readInt (distanceExtraBits h.npostfix h.ndirect dcode) r >>= fun (e, b) =>
+      distanceOf h.npostfix h.ndirect s.distances dcode e >>= fun d =>
+      copyPhase w { s with distance := dist } clen dcode d >>= fun p => rest w h K p b := by
+  simp only [rest, hindex, bind, Option.bind, hcode, readDistance, hd]
+  cases readInt (distanceExtraBits h.npostfix h.ndirect dcode) r with
+  | none => rfl
+  | some q =>
+    obtain ⟨e, b⟩ := q
+    dsimp only
+    cases distanceOf h.npostfix h.ndirect s.distances dcode e with
+    | none => rfl
+    | some d => exact copyCommand_phase w h K _ clen dcode d b
+
+/-- With nothing more than these bits, a distance's symbol can't be read. -/
+theorem rest_distanceSymbol_none {w : Nat} {h : MetaBlockHeader} {K : CommandState → List Bool → Option α}
+    {s : CommandState} {clen : Nat} {dist : BlockState} {tree : Nat} {code : PrefixCode} {bs : List Bool}
+    (hindex : distancePrefixCodeIndex h.distanceMap dist.types.cur (distanceContextId clen) = some tree)
+    (hcode : h.distanceCodes[tree]? = some code) (hd : decodeSymbol code bs = none) :
+    rest w h K (.distanceSymbol s clen dist) bs = none := by
+  simp only [rest, hindex, bind, Option.bind, hcode, readDistance, hd]
+
+/-- `copyPhase` for a dictionary reference. -/
+theorem copyPhase_word {w : Nat} {s : CommandState} {clen dcode d : Nat} (h : maxBackwardDistance w s.produced < d) :
+    copyPhase w s clen dcode d = (dictionaryWord clen d (maxBackwardDistance w s.produced)).bind fun word =>
+      if s.remaining < word.length then none
+      else some (.word { s with
+        produced := s.produced + word.length
+        remaining := s.remaining - word.length } word) := by
+  simp [copyPhase, isDictionaryReference, pushDistance, h]
+
+/-- `copyPhase` for a backward copy. -/
+theorem copyPhase_copy {w : Nat} {s : CommandState} {clen dcode d : Nat} (h : ¬ maxBackwardDistance w s.produced < d) :
+    copyPhase w s clen dcode d =
+      if s.remaining < clen then none
+      else some (.copy { s with
+        distances := pushDistance s.distances dcode d false
+        produced := s.produced + clen
+        remaining := s.remaining - clen } d clen) := by
+  simp [copyPhase, isDictionaryReference, h]
 
 /-- One byte of a backward copy. -/
 theorem rest_copy (w : Nat) (h : MetaBlockHeader) (K : CommandState → List Bool → Option α) (s : CommandState)

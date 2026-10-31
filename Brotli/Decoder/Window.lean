@@ -57,6 +57,10 @@ theorem size_ringWrite (ring : ByteArray) (pos : USize) (v : UInt8) (h : pos.toN
   show (ringWrite ring pos v h).data.size = ring.data.size
   simp only [ringWrite, data_uset, Array.size_set]
 
+/-- A small position plus one. -/
+theorem usize_succ {i : USize} (h : i.toNat + 1 < 2 ^ 32) : (i + USize.ofNat 1).toNat = i.toNat + 1 := by
+  rw [usize_add (by rw [usize_ofNat (by decide)]; exact h), usize_ofNat (by decide)]
+
 /-- The next position to write. -/
 @[inline] def ringNext (pos mask : USize) : USize :=
   (pos + USize.ofNat 1) &&& mask

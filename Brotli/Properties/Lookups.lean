@@ -544,7 +544,7 @@ private theorem DICT_byte (i : Nat) : DICT i < 256 := by
   unfold DICT
   exact Nat.lt_of_le_of_lt Nat.and_le_right (by decide)
 
-private theorem dictionaryWord_bytes {length distance maxDistance : Nat} {word : List Nat}
+theorem dictionaryWord_bytes {length distance maxDistance : Nat} {word : List Nat}
     (h : dictionaryWord length distance maxDistance = some word) : ∀ b ∈ word, b < 256 := by
   unfold dictionaryWord at h
   split at h
@@ -868,7 +868,7 @@ theorem readMetaBlocks_ok (w : Nat) : ∀ (fuel : Nat) (st st' : StreamState) (b
 private theorem toUInt8_toNat : ∀ x, x < 256 → (Nat.toUInt8 x).toNat = x := by
   decide +kernel
 
-private theorem map_toUInt8 : ∀ l : List Nat, (∀ b ∈ l, b < 256) →
+theorem map_toUInt8 : ∀ l : List Nat, (∀ b ∈ l, b < 256) →
     (l.map Nat.toUInt8).map UInt8.toNat = l
   | [], _ => rfl
   | x :: l, h => by

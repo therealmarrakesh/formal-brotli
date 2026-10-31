@@ -11,6 +11,16 @@ import Brotli.Decoder.Lookup
 import Brotli.Decoder.Window
 import Brotli.Decoder.ContextLut
 import Brotli.Decoder.Literals
+import Brotli.Decoder.Reader
+import Brotli.Decoder.Block
+import Brotli.Decoder.State
+import Brotli.Decoder.Copy
+import Brotli.Decoder.Step
+import Brotli.Decoder.CmdLut
+import Brotli.Decoder.StepRead
+import Brotli.Decoder.StepLiterals
+import Brotli.Decoder.StepDistance
+import Brotli.Decoder.Loop
 
 /-!
 # Decoder
