@@ -67,6 +67,54 @@ theorem commandsFrom_step {w : Nat} {h : MetaBlockHeader} {s : CommandState} (bs
         exact readCommandsWith_fuel w h f _ s1 b1 (by omega) (hF s1 b1)
   exact key (fun s bs => commandMeasure s bs + 1) (fun _ _ => Nat.lt_succ_self _)
 
+private theorem readMetaBlocksWith_fuel (w : Nat) : ∀ (f f' : Nat) (st : StreamState) (bs : List Bool),
+    bs.length < f → bs.length < f' →
+    readMetaBlocksWith w none f st bs = readMetaBlocksWith w none f' st bs
+  | 0, _, _, _, hf, _ => by omega
+  | _ + 1, 0, _, _, _, hf' => by omega
+  | f + 1, f' + 1, st, bs, hf, hf' => by
+    simp only [readMetaBlocksWith]
+    cases hm : readMetaBlock w st bs with
+    | none => rfl
+    | some p =>
+      obtain ⟨⟨st1, islast⟩, b1⟩ := p
+      have := readMetaBlock_lt hm
+      dsimp only [bind, Option.bind]
+      split
+      · rfl
+      · exact readMetaBlocksWith_fuel w f f' st1 b1 (by omega) (by omega)
+
+/-- The meta-blocks, from a state, with fuel settled. -/
+def metaBlocksFrom (w : Nat) (st : StreamState) (bs : List Bool) : Option (StreamState × List Bool) :=
+  readMetaBlocks w (bs.length + 1) st bs
+
+/-- One meta-block, then the others unless it was the last. -/
+theorem metaBlocksFrom_step (w : Nat) (st : StreamState) (bs : List Bool) :
+    metaBlocksFrom w st bs = readMetaBlock w st bs >>= fun ((st1, islast), b) =>
+      if islast then some (st1, b) else metaBlocksFrom w st1 b := by
+  have key : ∀ f, bs.length ≤ f → readMetaBlocksWith w none (f + 1) st bs =
+      readMetaBlock w st bs >>= fun ((st1, islast), b) =>
+        if islast then some (st1, b) else metaBlocksFrom w st1 b := by
+    intro f hf
+    simp only [readMetaBlocksWith]
+    cases hm : readMetaBlock w st bs with
+    | none => rfl
+    | some p =>
+      obtain ⟨⟨st1, islast⟩, b1⟩ := p
+      have := readMetaBlock_lt hm
+      dsimp only [bind, Option.bind]
+      split
+      · rfl
+      · exact readMetaBlocksWith_fuel w f _ st1 b1 (by omega) (Nat.lt_succ_self _)
+  exact key _ (Nat.le_refl _)
+
+/-- `decode`, with fuel settled. -/
+theorem decode_eq (input : List UInt8) :
+    decode input = readWBITS (bits input) >>= fun (wbits, bs) =>
+      metaBlocksFrom (windowSize wbits) ⟨[], 0, initialDistances⟩ bs >>= fun (st, bs) =>
+      readEnd bs >>= fun _ => some (st.output.reverse.map Nat.toUInt8) :=
+  rfl
+
 /-! ### The places to pause -/
 
 /-- The state once a command's literals are done. -/
