@@ -67,7 +67,7 @@ private theorem byteAt_eq {a : ByteArray} {i : USize} {k : Nat} {hk : k < 8} {h8
 /-- Eight bytes at `i`, the first the least significant. -/
 @[inline] private def loadBuffer (a : ByteArray) (i : USize) (h8 : i.toNat + 8 ≤ a.size)
     (hu : i.toNat + 8 ≤ USize.size) : BitBuffer :=
-  (((((((BitBuffer.empty.push (byteAt a i 0 (by decide) h8 hu)).push (byteAt a i 1 (by decide) h8 hu)).push
+  (((((((BitBuffer.push ⟨0, 0⟩ (byteAt a i 0 (by decide) h8 hu)).push (byteAt a i 1 (by decide) h8 hu)).push
     (byteAt a i 2 (by decide) h8 hu)).push (byteAt a i 3 (by decide) h8 hu)).push
     (byteAt a i 4 (by decide) h8 hu)).push (byteAt a i 5 (by decide) h8 hu)).push
     (byteAt a i 6 (by decide) h8 hu)).push (byteAt a i 7 (by decide) h8 hu)
@@ -102,6 +102,7 @@ private theorem chunk_eight {input : ByteArray} {pos stop : Nat} (h : pos + 8 �
   · intro i hi h8 hu
     subst hi
     simp only [loadBuffer, byteAt_eq, List.foldl_cons, List.foldl_nil, Nat.add_zero]
+    rfl
   · rw [chunk_cons (by omega) hs, chunk_cons (by omega) hs, chunk_cons (by omega) hs, chunk_cons (by omega) hs,
       chunk_cons (by omega) hs, chunk_cons (by omega) hs, chunk_cons (by omega) hs, chunk_cons (by omega) hs]
     simp
@@ -282,12 +283,22 @@ theorem BitBuffer.fillSlow_bits {a : ByteArray} {stop : USize} (hs : stop.toNat 
       rw [h3, hnext, BitBuffer.push_held _ hw h.1, List.append_assoc, chunkBits_cons hlt hs, uget_eq hb]
     · exact ⟨Nat.le_refl _, hp, rfl⟩
 
-/-- Fills the buffer as far as whole bytes fit, from the unread part of the chunk. -/
-@[inline] def BitBuffer.refill (b : BitBuffer) (a : ByteArray) (pos stop : USize) (hs : stop.toNat ≤ a.size)
-    (hp : pos.toNat ≤ stop.toNat) : BitBuffer × USize :=
-  if 56 < b.count then (b, pos)
+/-- A refill's result, flat so that hot loops keep every field as a plain value. -/
+structure Refilled where
+  word : UInt64
+  count : UInt64
+  pos : USize
+
+/-- The buffer in a refill's result. -/
+@[inline] def Refilled.buf (r : Refilled) : BitBuffer := ⟨r.word, r.count⟩
+
+/-- Fills the buffer as far as whole bytes fit, from the unread part of the chunk. Its arguments are the buffer's
+fields, so that only the path with fewer than eight bytes unread allocates anything. -/
+@[inline] def refill (word count : UInt64) (a : ByteArray) (pos stop : USize) (hs : stop.toNat ≤ a.size)
+    (hp : pos.toNat ≤ stop.toNat) : Refilled :=
+  if 56 < count then ⟨word, count, pos⟩
   else if h : USize.ofNat 8 ≤ stop - pos then
-    b.fill a pos
+    let r := (BitBuffer.mk word count).fill a pos
       (by
         have h1 := USize.le_iff_toNat_le.mp h
         rw [usize_ofNat_toNat (by decide), USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr hp)] at h1
@@ -297,23 +308,28 @@ theorem BitBuffer.fillSlow_bits {a : ByteArray} {stop : USize} (hs : stop.toNat 
         rw [usize_ofNat_toNat (by decide), USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr hp)] at h1
         have := stop.toNat_lt_size
         omega)
-  else BitBuffer.fillSlow a stop hs 8 b pos
+    ⟨r.1.word, r.1.count, r.2⟩
+  else
+    let r := BitBuffer.fillSlow a stop hs 8 ⟨word, count⟩ pos
+    ⟨r.1.word, r.1.count, r.2⟩
 
 /-- What `refill` does: a well-formed buffer, the same bits, and the buffer near full or the chunk used up. -/
-theorem BitBuffer.refill_spec {b : BitBuffer} {a : ByteArray} {pos stop : USize} (hs : stop.toNat ≤ a.size)
-    (hp : pos.toNat ≤ stop.toNat) (hw : b.Wf) :
-    (b.refill a pos stop hs hp).1.Wf ∧
-      pos.toNat ≤ (b.refill a pos stop hs hp).2.toNat ∧ (b.refill a pos stop hs hp).2.toNat ≤ stop.toNat ∧
-      (b.refill a pos stop hs hp).1.held ++ chunkBits a (b.refill a pos stop hs hp).2.toNat stop.toNat =
-        b.held ++ chunkBits a pos.toNat stop.toNat ∧
-      (56 < (b.refill a pos stop hs hp).1.count.toNat ∨ (b.refill a pos stop hs hp).2 = stop) := by
-  unfold BitBuffer.refill
+theorem refill_spec {word count : UInt64} {a : ByteArray} {pos stop : USize} (hs : stop.toNat ≤ a.size)
+    (hp : pos.toNat ≤ stop.toNat) (hw : (BitBuffer.mk word count).Wf) :
+    (refill word count a pos stop hs hp).buf.Wf ∧
+      pos.toNat ≤ (refill word count a pos stop hs hp).pos.toNat ∧
+      (refill word count a pos stop hs hp).pos.toNat ≤ stop.toNat ∧
+      (refill word count a pos stop hs hp).buf.held ++
+          chunkBits a (refill word count a pos stop hs hp).pos.toNat stop.toNat =
+        (BitBuffer.mk word count).held ++ chunkBits a pos.toNat stop.toNat ∧
+      (56 < (refill word count a pos stop hs hp).count.toNat ∨ (refill word count a pos stop hs hp).pos = stop) := by
+  unfold refill
   split
   · rename_i h
     have h1 := UInt64.lt_iff_toNat_lt.mp h
     exact ⟨hw, Nat.le_refl _, hp, rfl, Or.inl h1⟩
   · rename_i h
-    have hc : b.count.toNat ≤ 56 :=
+    have hc : (BitBuffer.mk word count).count.toNat ≤ 56 :=
       Nat.le_of_not_lt fun hl => h (UInt64.lt_iff_toNat_lt.mpr hl)
     split
     · rename_i hb
@@ -323,8 +339,8 @@ theorem BitBuffer.refill_spec {b : BitBuffer} {a : ByteArray} {pos stop : USize}
       obtain ⟨w, c, p1, p2, e⟩ := BitBuffer.fill_spec (stop := stop) hw hc hk hs (by omega)
         (by have := stop.toNat_lt_size; omega)
       exact ⟨w, p1, p2, e, Or.inl c⟩
-    · obtain ⟨p1, p2, e⟩ := BitBuffer.fillSlow_bits hs 8 b pos hw hp
-      rcases BitBuffer.fillSlow_spec hs 8 b pos hw hp (by omega) with ⟨w, c⟩ | ⟨w, c⟩
+    · obtain ⟨p1, p2, e⟩ := BitBuffer.fillSlow_bits hs 8 ⟨word, count⟩ pos hw hp
+      rcases BitBuffer.fillSlow_spec hs 8 ⟨word, count⟩ pos hw hp (by omega) with ⟨w, c⟩ | ⟨w, c⟩
       · exact ⟨w, p1, p2, e, Or.inl c⟩
       · exact ⟨w, p1, p2, e, Or.inr c⟩
 
