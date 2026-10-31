@@ -1602,6 +1602,129 @@ theorem readMetaBlock_lastEmpty {w : Nat} {st : StreamState} {bs b0 b1 : List Bo
   rw [h1]
   rfl
 
+/-- What a meta-block's result comes from: ISLAST, then ISLASTEMPTY or the meta-block's body (§9.2). -/
+theorem readMetaBlock_cases {w : Nat} {st st' : StreamState} {last : Bool} {bs r : List Bool}
+    (h : readMetaBlock w st bs = some ((st', last), r)) :
+    (∃ b, readInt 1 bs = some (0, b) ∧ last = false ∧ readMetaBlockBody w st false b = some (st', r)) ∨
+    (∃ b, readInt 1 bs = some (1, b) ∧ last = true ∧
+      ((readInt 1 b = some (1, r) ∧ st' = st) ∨
+        ∃ b', readInt 1 b = some (0, b') ∧ readMetaBlockBody w st true b' = some (st', r))) := by
+  unfold readMetaBlock at h
+  obtain ⟨⟨islast, bs1⟩, h1, h⟩ := bind_some h
+  dsimp only at h
+  have hlt : islast < 2 := by simpa using readInt_lt 1 _ _ _ h1
+  split at h
+  · rename_i h0
+    subst h0
+    obtain ⟨⟨st1, bs2⟩, h2, h⟩ := bind_some h
+    simp only [Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨⟨rfl, rfl⟩, rfl⟩ := h
+    exact Or.inl ⟨bs1, h1, rfl, h2⟩
+  · rename_i h0
+    have h1' : islast = 1 := by omega
+    subst h1'
+    obtain ⟨⟨ie, bs2⟩, h2, h⟩ := bind_some h
+    dsimp only at h
+    have hie : ie < 2 := by simpa using readInt_lt 1 _ _ _ h2
+    split at h
+    · rename_i he
+      subst he
+      simp only [Option.some.injEq, Prod.mk.injEq] at h
+      obtain ⟨⟨rfl, rfl⟩, rfl⟩ := h
+      exact Or.inr ⟨bs1, h1, rfl, Or.inl ⟨h2, rfl⟩⟩
+    · rename_i he
+      have he' : ie = 0 := by omega
+      subst he'
+      obtain ⟨⟨st1, bs3⟩, h3, h⟩ := bind_some h
+      simp only [Option.some.injEq, Prod.mk.injEq] at h
+      obtain ⟨⟨rfl, rfl⟩, rfl⟩ := h
+      exact Or.inr ⟨bs1, h1, rfl, Or.inr ⟨bs2, h2, h3⟩⟩
+
+/-- What a meta-block's body comes from: metadata, stored bytes, or a compressed meta-block (§9.2). -/
+theorem readMetaBlockBody_cases {w : Nat} {st st' : StreamState} {islast : Bool} {bs r : List Bool}
+    (h : readMetaBlockBody w st islast bs = some (st', r)) :
+    (∃ b1, readMNIBBLES bs = some (0, b1) ∧ readMetadata b1 = some r ∧ st' = st) ∨
+    ∃ mn b1 mlen b2 u b3, readMNIBBLES bs = some (mn, b1) ∧ mn ≠ 0 ∧
+      readMLEN mn b1 = some (mlen, b2) ∧ readIsUncompressed islast b2 = some (u, b3) ∧
+      ((u = 1 ∧ ∃ b4 bytes, readFill b3 = some b4 ∧ readBytes mlen b4 = some (bytes, r) ∧
+          st' = ⟨bytes.reverse ++ st.output, st.produced + mlen, st.distances⟩) ∨
+        (u ≠ 1 ∧ readCompressed w st mlen b3 = some (st', r))) := by
+  unfold readMetaBlockBody at h
+  obtain ⟨⟨mn, bs1⟩, h1, h⟩ := bind_some h
+  dsimp only at h
+  split at h
+  · rename_i h0
+    subst h0
+    obtain ⟨bs2, h2, h⟩ := bind_some h
+    simp only [Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl⟩ := h
+    exact Or.inl ⟨bs1, h1, h2, rfl⟩
+  · rename_i h0
+    obtain ⟨⟨mlen, bs2⟩, h2, h⟩ := bind_some h
+    dsimp only at h
+    obtain ⟨⟨iu, bs3⟩, h3, h⟩ := bind_some h
+    dsimp only at h
+    refine Or.inr ⟨mn, bs1, mlen, bs2, iu, bs3, h1, h0, h2, h3, ?_⟩
+    split at h
+    · rename_i hu
+      obtain ⟨bs4, h4, h⟩ := bind_some h
+      obtain ⟨⟨bytes, bs5⟩, h5, h⟩ := bind_some h
+      simp only [Option.some.injEq, Prod.mk.injEq] at h
+      exact Or.inl ⟨hu, bs4, bytes, h4, by rw [h5, h.2], h.1.symm⟩
+    · rename_i hu
+      exact Or.inr ⟨hu, h⟩
+
+/-- With bytes left of MLEN, a further step of the commands is one `readCommand`, with the same window (§9.3). -/
+theorem readCommands_step {w fuel : Nat} {m : MetaBlockHeader} {s : CommandState} {bs : List Bool}
+    (h0 : s.remaining ≠ 0) :
+    readCommands w m (fuel + 1) s bs =
+      (readCommand w m s bs >>= fun (s1, b) => readCommands w m fuel s1 b) := by
+  simp only [readCommands, readCommandsWith, h0, ↓reduceIte]
+
+/-- A command's parts: its literals, and unless they reach MLEN, its distance and `copyCommand` with the
+same window (§9.3). -/
+theorem readCommand_parts {w : Nat} {m : MetaBlockHeader} {s s' : CommandState} {bs r : List Bool}
+    (h : readCommand w m s bs = some (s', r)) :
+    ∃ (ic : BlockState) (b1 : List Bool) (code : PrefixCode) (c ilen clen : Nat) (b2 : List Bool)
+      (lit : BlockState) (out : List Nat) (b3 : List Bool),
+      nextElement m.insertCopy s.insertCopy bs = some (ic, b1) ∧
+      m.insertCopyCodes[ic.types.cur]? = some code ∧
+      readInsertCopy code b1 = some ((c, ilen, clen), b2) ∧ ilen ≤ s.remaining ∧
+      readLiterals m ilen s.literal s.output b2 = some (lit, out, b3) ∧
+      ((s.remaining = ilen ∧ r = b3 ∧ s' = { s with
+          insertCopy := ic, literal := lit, output := out,
+          produced := s.produced + ilen, remaining := s.remaining - ilen }) ∨
+        (s.remaining ≠ ilen ∧ ∃ (dst : BlockState) (dcode d : Nat),
+          readCommandDistance m s.distance s.distances c clen b3 = some ((dst, dcode, d), r) ∧
+          copyCommand w { s with
+            insertCopy := ic, literal := lit, output := out,
+            produced := s.produced + ilen, remaining := s.remaining - ilen, distance := dst }
+            clen dcode d = some s')) := by
+  unfold readCommand at h
+  obtain ⟨⟨ic, bs1⟩, h1, h⟩ := bind_some h
+  dsimp only at h
+  obtain ⟨code, hc, h⟩ := bind_some h
+  obtain ⟨⟨⟨c, ilen, clen⟩, bs2⟩, h2, h⟩ := bind_some h
+  dsimp only at h
+  split at h
+  · simp at h
+  rename_i hle
+  obtain ⟨⟨lit, out, bs3⟩, h3, h⟩ := bind_some h
+  dsimp only at h
+  refine ⟨ic, bs1, code, c, ilen, clen, bs2, lit, out, bs3, h1, hc, h2, by omega, h3, ?_⟩
+  split at h
+  · rename_i h0
+    simp only [Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl⟩ := h
+    exact Or.inl ⟨by omega, rfl, rfl⟩
+  · rename_i h0
+    obtain ⟨⟨⟨dst, dcode, d⟩, bs4⟩, h4, h⟩ := bind_some h
+    dsimp only at h
+    obtain ⟨s2, h5, h⟩ := bind_some h
+    simp only [Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl⟩ := h
+    exact Or.inr ⟨by omega, dst, dcode, d, h4, h5⟩
+
 /-- If the literals reach MLEN, the copy length has no effect and no distance is read: the command ends
 at the last literal (§2, §9.3, §10). -/
 theorem readCommand_literals_reach {w ilen clen c : Nat} {m : MetaBlockHeader} {s : CommandState}
@@ -1736,6 +1859,42 @@ theorem decode_parts {input : List UInt8} {y : List UInt8} (h : decode input = s
   refine ⟨wbits, bs, parts, st, bs1, h1, hc, h3, ?_, hb⟩
   rw [← h, hp]
   simp
+
+/-- A chain of meta-blocks is what `readMetaBlocks` reads, given more fuel than bits. -/
+theorem readMetaBlocks_of_chain {w : Nat} {st st' : StreamState} {bs r : List Bool}
+    {parts : List (List Nat)} (hc : MetaBlockChain w st bs parts st' r) :
+    ∀ fuel, bs.length < fuel → readMetaBlocks w fuel st bs = some (st', r) := by
+  induction hc with
+  | last h1 _ =>
+    intro fuel hf
+    cases fuel with
+    | zero => omega
+    | succ f =>
+      simp only [readMetaBlocks, readMetaBlocksWith]
+      rw [h1]
+      rfl
+  | step h1 _ _ ih =>
+    intro fuel hf
+    cases fuel with
+    | zero => omega
+    | succ f =>
+      have hl := readMetaBlock_lt h1
+      simp only [readMetaBlocks, readMetaBlocksWith]
+      rw [h1]
+      exact ih f (by omega)
+
+/-- The converse of `decode_parts`: a chain of meta-blocks after WBITS, ending on the last one and followed by
+the stream's end, is a valid stream, with that chain's output. -/
+theorem decode_of_chain {input : List UInt8} {wbits : Nat} {bs r : List Bool} {st : StreamState}
+    {parts : List (List Nat)} (h1 : readWBITS (bits input) = some (wbits, bs))
+    (hc : MetaBlockChain (windowSize wbits) ⟨[], 0, initialDistances⟩ bs parts st r)
+    (he : readEnd r = some ()) : decode input = some (st.output.reverse.map Nat.toUInt8) := by
+  unfold decode
+  rw [h1]
+  dsimp only [bind, Option.bind]
+  rw [readMetaBlocks_of_chain hc _ (by omega)]
+  dsimp only
+  rw [he]
 
 /-- A valid stream has at least one meta-block (§2, §9.2). -/
 theorem decode_metaBlock {input : List UInt8} {y : List UInt8} (h : decode input = some y) :
@@ -1952,30 +2111,58 @@ private theorem readCommands_wf (w : Nat) (m : MetaBlockHeader)
     dsimp only at h
     exact readCommands_wf w m hm f s1 s' bs1 r (readCommand_wf hm hs h1) h
 
-/-- If every block type of a category occurred, and all are within its number of block types, that
-number is the largest block type plus one (§6). -/
-theorem usesEveryType_largest {c : BlockCategory} {st : BlockState} (hn : 1 ≤ c.n)
+/-- The types `seen` are the first block's 0 (§6). -/
+theorem BlockState.initial_seen (c : BlockCategory) :
+    (BlockState.initial c).seen = [0] ∧ (BlockState.initial c).types.cur = 0 :=
+  ⟨rfl, rfl⟩
+
+/-- Each block switch adds the block type it read to the types `seen`, and nothing else does (§6). -/
+theorem nextElement_seen {c : BlockCategory} {st st' : BlockState} {bs r : List Bool}
+    (h : nextElement c st bs = some (st', r)) :
+    (st'.seen = st.seen ∧ st'.types = st.types) ∨
+      ∃ b, readBlockType c.n c.typeCode st.types bs = some (st'.types, b) ∧
+        st'.seen = st'.types.cur :: st.seen := by
+  unfold nextElement at h
+  split at h
+  · split at h
+    · simp at h
+    · obtain ⟨⟨t, bs1⟩, h1, h⟩ := bind_some h
+      dsimp only at h
+      obtain ⟨⟨cnt, bs2⟩, _, h⟩ := bind_some h
+      simp only [Option.some.injEq, Prod.mk.injEq] at h
+      obtain ⟨rfl, -⟩ := h
+      exact Or.inr ⟨bs1, h1, rfl⟩
+  · simp only [Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨rfl, -⟩ := h
+    exact Or.inl ⟨rfl, rfl⟩
+
+/-- If every block type of a category occurred, and all are within its number of block types, the types
+are exactly [0..n-1], and that number is the largest plus one (§6). -/
+theorem usesEveryType_largest {c : BlockCategory} {st : BlockState}
     (hw : ∀ t ∈ st.seen, t < c.n) (hu : usesEveryType c st = true) :
-    c.n - 1 ∈ st.seen ∧ ∀ t ∈ st.seen, t + 1 ≤ c.n := by
+    (∀ t, t < c.n → t ∈ st.seen) ∧ ∀ t ∈ st.seen, t + 1 ≤ c.n := by
   refine ⟨?_, fun t ht => hw t ht⟩
-  have := List.all_eq_true.mp hu (c.n - 1) (List.mem_range.mpr (by omega))
+  intro t ht
+  have := List.all_eq_true.mp hu t (List.mem_range.mpr ht)
   simpa using this
 
-/-- In a valid compressed meta-block, each category's number of block types is the largest block type
-plus one, and every block type is at most 255 (§2, §6). -/
+/-- In a valid compressed meta-block, each category's block types are exactly [0..n-1], so its number of block
+types is the largest plus one, and every block type is at most 255 (§2, §6). -/
 theorem readCompressed_blockTypes {w mlen : Nat} {st st' : StreamState} {bs r : List Bool}
     (h : readCompressed w st mlen bs = some (st', r)) :
-    ∃ (m : MetaBlockHeader) (b1 : List Bool) (s : CommandState) (b2 : List Bool),
+    ∃ (m : MetaBlockHeader) (b1 : List Bool) (s : CommandState),
       readMetaBlockHeader bs = some (m, b1) ∧
       readCommands w m
         (commandMeasure ⟨st.output, st.produced, st.distances, mlen, .initial m.insertCopy,
           .initial m.literal, .initial m.distance⟩ b1 + 1)
         ⟨st.output, st.produced, st.distances, mlen, .initial m.insertCopy,
-          .initial m.literal, .initial m.distance⟩ b1 = some (s, b2) ∧
-      (m.literal.n - 1 ∈ s.literal.seen ∧ ∀ t ∈ s.literal.seen, t + 1 ≤ m.literal.n ∧ t < 256) ∧
-      (m.insertCopy.n - 1 ∈ s.insertCopy.seen ∧
+          .initial m.literal, .initial m.distance⟩ b1 = some (s, r) ∧
+      st' = ⟨s.output, s.produced, s.distances⟩ ∧
+      ((∀ t, t < m.literal.n → t ∈ s.literal.seen) ∧
+        ∀ t ∈ s.literal.seen, t + 1 ≤ m.literal.n ∧ t < 256) ∧
+      ((∀ t, t < m.insertCopy.n → t ∈ s.insertCopy.seen) ∧
         ∀ t ∈ s.insertCopy.seen, t + 1 ≤ m.insertCopy.n ∧ t < 256) ∧
-      (m.distance.n - 1 ∈ s.distance.seen ∧
+      ((∀ t, t < m.distance.n → t ∈ s.distance.seen) ∧
         ∀ t ∈ s.distance.seen, t + 1 ≤ m.distance.n ∧ t < 256) := by
   unfold readCompressed at h
   obtain ⟨⟨m, bs1⟩, h1, h⟩ := bind_some h
@@ -1988,12 +2175,14 @@ theorem readCompressed_blockTypes {w mlen : Nat} {st st' : StreamState} {bs r : 
   split at h
   · rename_i hall
     simp only [Bool.and_eq_true] at hall
-    refine ⟨m, bs1, s, bs2, h1, h2, ?_, ?_, ?_⟩
-    · have hL := usesEveryType_largest hm.1.1 hs.1.2.2 hall.1.1
+    simp only [Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl⟩ := h
+    refine ⟨m, bs1, s, h1, h2, rfl, ?_, ?_, ?_⟩
+    · have hL := usesEveryType_largest hs.1.2.2 hall.1.1
       exact ⟨hL.1, fun t ht => ⟨hL.2 t ht, by have := hs.1.2.2 t ht; have := hm.1.2.1; omega⟩⟩
-    · have hI := usesEveryType_largest hm.2.1.1 hs.2.1.2.2 hall.1.2
+    · have hI := usesEveryType_largest hs.2.1.2.2 hall.1.2
       exact ⟨hI.1, fun t ht => ⟨hI.2 t ht, by have := hs.2.1.2.2 t ht; have := hm.2.1.2.1; omega⟩⟩
-    · have hD := usesEveryType_largest hm.2.2.1 hs.2.2.2.2 hall.2
+    · have hD := usesEveryType_largest hs.2.2.2.2 hall.2
       exact ⟨hD.1, fun t ht => ⟨hD.2 t ht, by have := hs.2.2.2.2 t ht; have := hm.2.2.2.1; omega⟩⟩
   · simp at h
 
@@ -2155,9 +2344,16 @@ private theorem table_ext : ∀ (T : List (Nat × Nat × Nat)),
       rw [hnone]
       exact table_ext T hsub p q a r h
 
-private theorem readWBITS_ext {p : List Bool} (q : List Bool) {w : Nat} {r : List Bool}
+/-- WBITS read from some bits reads the same however much input follows. -/
+theorem readWBITS_ext {p : List Bool} (q : List Bool) {w : Nat} {r : List Bool}
     (h : readWBITS p = some (w, r)) : readWBITS (p ++ q) = some (w, r ++ q) :=
   table_ext wbitsCode wbitsCode_prefixFree p q w r h
+
+/-- A code length of a code length symbol reads the same however much input follows. -/
+theorem readCodeLengthCodeLength_ext {p : List Bool} (q : List Bool) {v : Nat} {r : List Bool}
+    (h : readCodeLengthCodeLength p = some (v, r)) :
+    readCodeLengthCodeLength (p ++ q) = some (v, r ++ q) :=
+  table_ext codeLengthCodeLengthCode codeLengthCodeLengthCode_prefixFree p q v r h
 
 private theorem readCode_ext {n : Nat} {p : List Bool} (q : List Bool) {c : Nat} {r : List Bool}
     (h : readCode n p = some (c, r)) : readCode n (p ++ q) = some (c, r ++ q) := by

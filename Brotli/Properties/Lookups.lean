@@ -1,4 +1,5 @@
 import Brotli.Spec.Stream
+import Brotli.Properties.Complete
 
 /-!
 # Lookups, defaults and bytes
@@ -34,7 +35,7 @@ theorem getD_default {l : List Nat} {i : Nat} (h : i < l.length) (d d' : Nat) :
 
 private theorem readPrefixCodes_spec (size : Nat) : ∀ (n : Nat) (bs : List Bool)
     (codes : List PrefixCode) (r : List Bool), readPrefixCodes size n bs = some (codes, r) →
-    codes.length = n ∧ ∀ c ∈ codes, c.Symbols size
+    codes.length = n ∧ ∀ c ∈ codes, c.Symbols size ∧ Complete c
   | 0, _, codes, _, h => by
     simp only [readPrefixCodes, Option.some.injEq, Prod.mk.injEq] at h
     rw [← h.1]
@@ -50,7 +51,7 @@ private theorem readPrefixCodes_spec (size : Nat) : ∀ (n : Nat) (bs : List Boo
     refine ⟨by simp [hl], ?_⟩
     intro x hx
     rcases List.mem_cons.mp hx with rfl | hx
-    · exact readPrefixCode_symbols h1
+    · exact ⟨readPrefixCode_symbols h1, readPrefixCode_complete h1⟩
     · exact hs x hx
 
 private theorem readContextModes_length : ∀ (n : Nat) (bs : List Bool) (modes : List Nat) (r : List Bool),
@@ -89,7 +90,8 @@ private theorem readTreesAndMap_spec {size : Nat} {bs r : List Bool} {n : Nat} {
 
 private theorem readBlockCategory_spec {bs r : List Bool} {c : BlockCategory}
     (h : readBlockCategory bs = some (c, r)) :
-    c.Wf ∧ (2 ≤ c.n → c.countCode.Symbols blockCountAlphabetSize) := by
+    c.Wf ∧ (2 ≤ c.n → c.countCode.Symbols blockCountAlphabetSize) ∧
+      Complete c.typeCode ∧ Complete c.countCode := by
   unfold readBlockCategory at h
   obtain ⟨⟨n, bs1⟩, h1, h⟩ := bind_some h
   dsimp only at h
@@ -97,7 +99,7 @@ private theorem readBlockCategory_spec {bs r : List Bool} {c : BlockCategory}
   split at h
   · simp only [Option.some.injEq, Prod.mk.injEq] at h
     obtain ⟨rfl, -⟩ := h
-    exact ⟨⟨hr.1, hr.2, by simp only; omega⟩, by simp only; omega⟩
+    exact ⟨⟨hr.1, hr.2, by simp only; omega⟩, by simp only; omega, trivial, trivial⟩
   obtain ⟨⟨tc, bs2⟩, h2, h⟩ := bind_some h
   dsimp only at h
   obtain ⟨⟨cc, bs3⟩, h3, h⟩ := bind_some h
@@ -105,7 +107,8 @@ private theorem readBlockCategory_spec {bs r : List Bool} {c : BlockCategory}
   obtain ⟨⟨fc, bs4⟩, _, h⟩ := bind_some h
   simp only [Option.some.injEq, Prod.mk.injEq] at h
   obtain ⟨rfl, -⟩ := h
-  exact ⟨⟨hr.1, hr.2, fun _ => readPrefixCode_symbols h2⟩, fun _ => readPrefixCode_symbols h3⟩
+  exact ⟨⟨hr.1, hr.2, fun _ => readPrefixCode_symbols h2⟩, fun _ => readPrefixCode_symbols h3,
+    readPrefixCode_complete h2, readPrefixCode_complete h3⟩
 
 /-- What a meta-block header read from a stream gives the lookups that follow it. -/
 structure HeaderOk (m : MetaBlockHeader) : Prop where
@@ -118,12 +121,16 @@ structure HeaderOk (m : MetaBlockHeader) : Prop where
   modes_length : m.contextModes.length = m.literal.n
   literalMap_length : m.literalMap.length = literalContextMapSize m.literal.n
   literalMap_lt : ∀ v ∈ m.literalMap, v < m.literalCodes.length
-  literalCodes : ∀ c ∈ m.literalCodes, c.Symbols literalAlphabetSize
+  literalCodes : ∀ c ∈ m.literalCodes, c.Symbols literalAlphabetSize ∧ Complete c
   insertCopyCodes_length : m.insertCopyCodes.length = m.insertCopy.n
-  insertCopyCodes : ∀ c ∈ m.insertCopyCodes, c.Symbols insertCopyAlphabetSize
+  insertCopyCodes : ∀ c ∈ m.insertCopyCodes, c.Symbols insertCopyAlphabetSize ∧ Complete c
   distanceMap_length : m.distanceMap.length = distanceContextMapSize m.distance.n
   distanceMap_lt : ∀ v ∈ m.distanceMap, v < m.distanceCodes.length
-  distanceCodes : ∀ c ∈ m.distanceCodes, c.Symbols (distanceAlphabetSize m.npostfix m.ndirect)
+  distanceCodes : ∀ c ∈ m.distanceCodes,
+    c.Symbols (distanceAlphabetSize m.npostfix m.ndirect) ∧ Complete c
+  literalSwitch : Complete m.literal.typeCode ∧ Complete m.literal.countCode
+  insertCopySwitch : Complete m.insertCopy.typeCode ∧ Complete m.insertCopy.countCode
+  distanceSwitch : Complete m.distance.typeCode ∧ Complete m.distance.countCode
 
 /-- Every header read from a stream meets `HeaderOk`. -/
 theorem readMetaBlockHeader_ok {bs r : List Bool} {m : MetaBlockHeader}
@@ -152,9 +159,9 @@ theorem readMetaBlockHeader_ok {bs r : List Bool} {m : MetaBlockHeader}
   obtain ⟨⟨cd, bs11⟩, h11, h⟩ := bind_some h
   simp only [Option.some.injEq, Prod.mk.injEq] at h
   obtain ⟨rfl, -⟩ := h
-  obtain ⟨w1, k1⟩ := readBlockCategory_spec h1
-  obtain ⟨w2, k2⟩ := readBlockCategory_spec h2
-  obtain ⟨w3, k3⟩ := readBlockCategory_spec h3
+  obtain ⟨w1, k1, s1⟩ := readBlockCategory_spec h1
+  obtain ⟨w2, k2, s2⟩ := readBlockCategory_spec h2
+  obtain ⟨w3, k3, s3⟩ := readBlockCategory_spec h3
   obtain ⟨l7, v7⟩ := readTreesAndMap_spec h7
   obtain ⟨l8, v8⟩ := readTreesAndMap_spec h8
   obtain ⟨l9, s9⟩ := readPrefixCodes_spec _ _ _ _ _ h9
@@ -171,7 +178,8 @@ theorem readMetaBlockHeader_ok {bs r : List Bool} {m : MetaBlockHeader}
     insertCopyCodes := s10
     distanceMap_length := l8
     distanceMap_lt := by simpa only [l11] using v8
-    distanceCodes := s11 }
+    distanceCodes := s11
+    literalSwitch := s1, insertCopySwitch := s2, distanceSwitch := s3 }
 
 /-! ### Lookups never fail -/
 
@@ -184,40 +192,45 @@ theorem contextBytes_lt {output : List Nat} (h : ∀ b ∈ output, b < 256) :
   | p1 :: p2 :: _, h =>
     exact ⟨h p1 (by simp), h p2 (by simp)⟩
 
-/-- A literal's context mode, map position and prefix code all exist, and the code is over the literal
-alphabet. -/
+/-- A literal's context mode, map position and prefix code all exist, and the code is complete and over the
+literal alphabet. -/
 theorem literal_lookups {m : MetaBlockHeader} {st : BlockState} {p1 : Nat} (p2 : Nat) (hm : HeaderOk m)
     (hs : st.Wf m.literal) (hp : p1 < 256) :
     ∃ mode index code, m.contextModes[st.types.cur]? = some mode ∧
       literalPrefixCodeIndex m.literalMap st.types.cur (contextId mode p1 p2) = some index ∧
-      m.literalCodes[index]? = some code ∧ code.Symbols literalAlphabetSize := by
+      m.literalCodes[index]? = some code ∧ code.Symbols literalAlphabetSize ∧ Complete code := by
   obtain ⟨mode, h1, _⟩ := lookup_some (l := m.contextModes) (i := st.types.cur)
     (by rw [hm.modes_length]; exact hs.2.1)
   have hpos := literalIndex_lt hs.2.1 (contextId_lt mode p2 hp)
   rw [← hm.literalMap_length] at hpos
   obtain ⟨index, h2, h2m⟩ := lookup_some hpos
   obtain ⟨code, h3, h3m⟩ := lookup_some (hm.literalMap_lt index h2m)
-  exact ⟨mode, index, code, h1, h2, h3, hm.literalCodes code h3m⟩
+  have hc := hm.literalCodes code h3m
+  exact ⟨mode, index, code, h1, h2, h3, hc.1, hc.2⟩
 
-/-- A distance's map position and prefix code exist, and the code is over the distance alphabet. -/
+/-- A distance's map position and prefix code exist, and the code is complete and over the distance
+alphabet. -/
 theorem distance_lookups {m : MetaBlockHeader} {st : BlockState} (clen : Nat) (hm : HeaderOk m)
     (hs : st.Wf m.distance) :
     ∃ index code, distancePrefixCodeIndex m.distanceMap st.types.cur (distanceContextId clen) = some index ∧
       m.distanceCodes[index]? = some code ∧
-      code.Symbols (distanceAlphabetSize m.npostfix m.ndirect) := by
+      code.Symbols (distanceAlphabetSize m.npostfix m.ndirect) ∧ Complete code := by
   have hpos := distanceIndex_lt hs.2.1 (distanceContextId_lt clen)
   rw [← hm.distanceMap_length] at hpos
   obtain ⟨index, h2, h2m⟩ := lookup_some hpos
   obtain ⟨code, h3, h3m⟩ := lookup_some (hm.distanceMap_lt index h2m)
-  exact ⟨index, code, h2, h3, hm.distanceCodes code h3m⟩
+  have hc := hm.distanceCodes code h3m
+  exact ⟨index, code, h2, h3, hc.1, hc.2⟩
 
-/-- An insert-and-copy element's prefix code exists, and it is over the alphabet. -/
+/-- An insert-and-copy element's prefix code exists, and it is complete and over the alphabet. -/
 theorem insertCopy_lookup {m : MetaBlockHeader} {st : BlockState} (hm : HeaderOk m)
     (hs : st.Wf m.insertCopy) :
-    ∃ code, m.insertCopyCodes[st.types.cur]? = some code ∧ code.Symbols insertCopyAlphabetSize := by
+    ∃ code, m.insertCopyCodes[st.types.cur]? = some code ∧
+      code.Symbols insertCopyAlphabetSize ∧ Complete code := by
   obtain ⟨code, h, hm'⟩ := lookup_some (l := m.insertCopyCodes) (i := st.types.cur)
     (by rw [hm.insertCopyCodes_length]; exact hs.2.1)
-  exact ⟨code, h, hm.insertCopyCodes code hm'⟩
+  have hc := hm.insertCopyCodes code hm'
+  exact ⟨code, h, hc.1, hc.2⟩
 
 private theorem insertCopyCodes_total : ∀ c, c < 704 →
     ((insertCopyCodes c).any fun p => decide (p.1 < 24) && decide (p.2 < 24)) = true := by
@@ -254,18 +267,89 @@ theorem alphabetBits_found (size : Nat) :
   rw [List.find?_isSome]
   exact ⟨size, List.mem_range.mpr (by omega), by simpa using Nat.le_of_lt Nat.lt_two_pow_self⟩
 
+private theorem find?_range (p : Nat → Bool) : ∀ (n x : Nat), (List.range n).find? p = some x →
+    p x = true ∧ ∀ y, y < x → p y = false
+  | 0, x, h => by simp at h
+  | n + 1, x, h => by
+    rw [List.range_succ, List.find?_append] at h
+    cases hf : (List.range n).find? p with
+    | some u =>
+      rw [hf] at h
+      simp only [Option.some_or, Option.some.injEq] at h
+      subst h
+      exact find?_range p n _ hf
+    | none =>
+      rw [hf] at h
+      simp only [Option.none_or, List.find?_cons, List.find?_nil] at h
+      split at h
+      · rename_i hp
+        simp only [Option.some.injEq] at h
+        subst h
+        refine ⟨hp, ?_⟩
+        intro y hy
+        have := List.find?_eq_none.mp hf y (List.mem_range.mpr hy)
+        simpa using this
+      · simp at h
+
+/-- `alphabetBits` is the least `b` with `size ≤ 2 ^ b`. -/
+theorem alphabetBits_spec (size : Nat) :
+    size ≤ 2 ^ alphabetBits size ∧ ∀ b, b < alphabetBits size → ¬ size ≤ 2 ^ b := by
+  have hs := alphabetBits_found size
+  unfold alphabetBits
+  cases hf : (List.range (size + 1)).find? (fun b => decide (size ≤ 2 ^ b)) with
+  | none =>
+    rw [hf] at hs
+    simp at hs
+  | some x =>
+    obtain ⟨h1, h2⟩ := find?_range _ _ _ hf
+    refine ⟨by simpa using h1, ?_⟩
+    intro b hb
+    have := h2 b (by simpa using hb)
+    simpa using this
+
+/-- With 7 bits, WBITS fails only on the pattern 0010001, the RFC's invalid one. -/
+theorem readWBITS_total {a b c d e f g : Bool} (q : List Bool)
+    (h : [a, b, c, d, e, f, g] ≠ [true, false, false, false, true, false, false]) :
+    ∃ w r, readWBITS ([a, b, c, d, e, f, g] ++ q) = some (w, r) := by
+  have key : ∀ a b c d e f g : Bool,
+      [a, b, c, d, e, f, g] ≠ [true, false, false, false, true, false, false] →
+      (readWBITS [a, b, c, d, e, f, g]).isSome = true := by
+    decide +kernel
+  cases hr : readWBITS [a, b, c, d, e, f, g] with
+  | none =>
+    have := key a b c d e f g h
+    rw [hr] at this
+    simp at this
+  | some p =>
+    obtain ⟨w, r⟩ := p
+    exact ⟨w, r ++ q, readWBITS_ext q hr⟩
+
+/-- With 4 bits, a code length of a code length symbol always reads. -/
+theorem readCodeLengthCodeLength_total (a b c d : Bool) (q : List Bool) :
+    ∃ v r, readCodeLengthCodeLength ([a, b, c, d] ++ q) = some (v, r) := by
+  have key : ∀ a b c d : Bool, (readCodeLengthCodeLength [a, b, c, d]).isSome = true := by
+    decide +kernel
+  cases hr : readCodeLengthCodeLength [a, b, c, d] with
+  | none =>
+    have := key a b c d
+    rw [hr] at this
+    simp at this
+  | some p =>
+    obtain ⟨v, r⟩ := p
+    exact ⟨v, r ++ q, readCodeLengthCodeLength_ext q hr⟩
+
 /-! ### The steps of a command, with the lookups gone -/
 
 /-- A literal step: after the block switch, the only thing that can fail is decoding the literal. -/
 theorem readLiterals_step {m : MetaBlockHeader} {n : Nat} {st st1 : BlockState} {output : List Nat}
     {bs bs1 : List Bool} (hm : HeaderOk m) (hs : st1.Wf m.literal) (hb : ∀ b ∈ output, b < 256)
     (h1 : nextElement m.literal st bs = some (st1, bs1)) :
-    ∃ code, code.Symbols literalAlphabetSize ∧
+    ∃ code, code ∈ m.literalCodes ∧ code.Symbols literalAlphabetSize ∧ Complete code ∧
       readLiterals m (n + 1) st output bs =
         (decodeSymbol code bs1 >>= fun (byte, bs2) => readLiterals m n st1 (byte :: output) bs2) := by
-  obtain ⟨mode, index, code, h2, h3, h4, hc⟩ :=
+  obtain ⟨mode, index, code, h2, h3, h4, hc, hk⟩ :=
     literal_lookups (contextBytes output).2 hm hs (contextBytes_lt hb).1
-  refine ⟨code, hc, ?_⟩
+  refine ⟨code, List.mem_of_getElem? h4, hc, hk, ?_⟩
   simp only [readLiterals]
   rw [h1]
   dsimp only [bind, Option.bind]
@@ -280,12 +364,13 @@ special symbol that resolves to zero or less. -/
 theorem readCommandDistance_step {m : MetaBlockHeader} {st st1 : BlockState} {r : Distances}
     {c clen : Nat} {bs bs1 : List Bool} (hm : HeaderOk m) (hs : st1.Wf m.distance)
     (hi : implicitZeroDistance c = false) (h1 : nextElement m.distance st bs = some (st1, bs1)) :
-    ∃ code, code.Symbols (distanceAlphabetSize m.npostfix m.ndirect) ∧
+    ∃ code, code ∈ m.distanceCodes ∧ code.Symbols (distanceAlphabetSize m.npostfix m.ndirect) ∧
+      Complete code ∧
       readCommandDistance m st r c clen bs =
         (readDistance m.npostfix m.ndirect code r bs1 >>= fun ((dcode, d), bs2) =>
           some ((st1, dcode, d), bs2)) := by
-  obtain ⟨index, code, h2, h3, hc⟩ := distance_lookups clen hm hs
-  refine ⟨code, hc, ?_⟩
+  obtain ⟨index, code, h2, h3, hc, hk⟩ := distance_lookups clen hm hs
+  refine ⟨code, List.mem_of_getElem? h3, hc, hk, ?_⟩
   unfold readCommandDistance
   simp only [hi, Bool.false_eq_true, ↓reduceIte]
   rw [h1]
@@ -555,7 +640,7 @@ theorem readLiterals_ok {m : MetaBlockHeader} (hm : HeaderOk m) : ∀ (n : Nat) 
     obtain ⟨⟨byte, bs2⟩, h2, h⟩ := bind_some h
     dsimp only at h
     have hbyte : byte < 256 :=
-      decodeSymbol_lt (hm.literalCodes code (List.mem_of_getElem? hc)) h2
+      decodeSymbol_lt (hm.literalCodes code (List.mem_of_getElem? hc)).1 h2
     have hb' : ∀ b ∈ byte :: output, b < 256 := by
       intro b hm'
       rcases List.mem_cons.mp hm' with rfl | hm'
@@ -675,7 +760,8 @@ theorem readCommands_ok (w : Nat) {m : MetaBlockHeader} (hm : HeaderOk m) : ∀ 
     dsimp only at h
     exact readCommands_ok w hm f s1 s' bs1 r (readCommand_ok hm hs h1) h
 
-private theorem readCompressed_ok {w mlen : Nat} {st st' : StreamState} {bs r : List Bool}
+/-- A compressed meta-block keeps the state between meta-blocks `StreamOk`. -/
+theorem readCompressed_ok {w mlen : Nat} {st st' : StreamState} {bs r : List Bool}
     (hs : StreamOk st) (h : readCompressed w st mlen bs = some (st', r)) : StreamOk st' := by
   unfold readCompressed at h
   obtain ⟨⟨m, bs1⟩, h1, h⟩ := bind_some h
@@ -711,7 +797,8 @@ private theorem readBytes_ok : ∀ (n : Nat) (bs : List Bool) (bytes : List Nat)
     · simpa using readInt_lt 8 _ _ _ h1
     · exact hb x hx
 
-private theorem readMetaBlockBody_ok {w : Nat} {st st' : StreamState} {islast : Bool} {bs r : List Bool}
+/-- A meta-block's body keeps the state between meta-blocks `StreamOk`. -/
+theorem readMetaBlockBody_ok {w : Nat} {st st' : StreamState} {islast : Bool} {bs r : List Bool}
     (hs : StreamOk st) (h : readMetaBlockBody w st islast bs = some (st', r)) : StreamOk st' := by
   unfold readMetaBlockBody at h
   obtain ⟨⟨mn, bs1⟩, _, h⟩ := bind_some h
@@ -740,7 +827,9 @@ private theorem readMetaBlockBody_ok {w : Nat} {st st' : StreamState} {islast : 
       omega
   · exact readCompressed_ok hs h
 
-private theorem readMetaBlock_ok {w : Nat} {st st' : StreamState} {last : Bool} {bs r : List Bool}
+/-- Each meta-block keeps the state between meta-blocks `StreamOk`, last or not, so the invariants hold at the
+start of every meta-block a stream reaches, even if it's rejected later. -/
+theorem readMetaBlock_ok {w : Nat} {st st' : StreamState} {last : Bool} {bs r : List Bool}
     (hs : StreamOk st) (h : readMetaBlock w st bs = some ((st', last), r)) : StreamOk st' := by
   unfold readMetaBlock at h
   obtain ⟨⟨islast, bs1⟩, _, h⟩ := bind_some h
@@ -813,6 +902,23 @@ theorem Lut_default {p : Nat} (h : p < 256) (d : Nat) :
   obtain ⟨h0, h1, h2⟩ := Lut_lengths
   exact ⟨getD_default (by omega) d 0, getD_default (by omega) d 0, getD_default (by omega) d 0⟩
 
+/-- With bytes for `p1` and `p2`, `contextId` reads real entries of the lookup tables. -/
+theorem contextId_tables {p1 p2 : Nat} (h1 : p1 < 256) (h2 : p2 < 256) :
+    (∃ v1 v2, Lut0[p1]? = some v1 ∧ Lut1[p2]? = some v2 ∧ contextId 2 p1 p2 = v1 ||| v2) ∧
+    ∀ mode, 3 ≤ mode → ∃ v1 v2, Lut2[p1]? = some v1 ∧ Lut2[p2]? = some v2 ∧
+      contextId mode p1 p2 = (v1 <<< 3) ||| v2 := by
+  obtain ⟨l0, l1, l2⟩ := Lut_lengths
+  obtain ⟨a, ha, _⟩ := lookup_some (l := Lut0) (i := p1) (by omega)
+  obtain ⟨b, hb, _⟩ := lookup_some (l := Lut1) (i := p2) (by omega)
+  obtain ⟨c, hc, _⟩ := lookup_some (l := Lut2) (i := p1) (by omega)
+  obtain ⟨d, hd, _⟩ := lookup_some (l := Lut2) (i := p2) (by omega)
+  refine ⟨⟨a, b, ha, hb, ?_⟩, ?_⟩
+  · simp [contextId, List.getD_eq_getElem?_getD, ha, hb]
+  · intro mode hm
+    refine ⟨c, d, hc, hd, ?_⟩
+    obtain ⟨k, rfl⟩ : ∃ k, mode = k + 3 := ⟨mode - 3, by omega⟩
+    simp [contextId, List.getD_eq_getElem?_getD, hc, hd]
+
 /-- `inverseMoveToFrontFrom`, with its default as a parameter. -/
 def inverseMoveToFrontFromWith (dflt : Nat) : List Nat → List Nat → List Nat
   | _, [] => []
@@ -834,6 +940,11 @@ theorem inverseMoveToFront_default (dflt : Nat) : ∀ (v mtf : List Nat), (∀ x
     have := h x (List.mem_cons_of_mem _ hx)
     simp only [List.length_cons, List.length_eraseIdx_of_lt hi]
     omega
+
+/-- With indexes below 256, `inverseMoveToFront` never uses its default. -/
+theorem inverseMoveToFront_noDefault (dflt : Nat) {v : List Nat} (h : ∀ x ∈ v, x < 256) :
+    inverseMoveToFrontFromWith dflt (List.range 256) v = inverseMoveToFront v :=
+  inverseMoveToFront_default dflt v _ (by simpa using h)
 
 /-- A context map read with NTREES of at most 256 hands the transform the values it read, all below 256, the
 length of `mtf`, so `inverseMoveToFront_default` applies. -/
@@ -894,5 +1005,31 @@ theorem dictionary_in_range {length wordId k : Nat} (h1 : 4 ≤ length) (h2 : le
   have hsum : DOFFSET length + wordId % NWORDS length * length + k < 122784 := by omega
   apply Nat.div_lt_of_lt_mul
   omega
+
+/-- A dictionary word comes from a real row of `NDBITS` and of `transforms`, applied to the base word at an
+index below `NWORDS`, whose bytes all lie inside the dictionary. -/
+theorem dictionaryWord_reads {length distance maxDistance : Nat} {word : List Nat}
+    (h : dictionaryWord length distance maxDistance = some word) :
+    ∃ n t, NDBITS[length]? = some n ∧
+      transforms[(distance - (maxDistance + 1)) >>> n]? = some t ∧
+      word = applyTransform t ((List.range length).map fun k =>
+        DICT (wordOffset length ((distance - (maxDistance + 1)) % NWORDS length) + k)) ∧
+      (distance - (maxDistance + 1)) % NWORDS length < NWORDS length ∧
+      ∀ k, k < length →
+        (wordOffset length ((distance - (maxDistance + 1)) % NWORDS length) + k) / 32 <
+          dictLines.length := by
+  obtain ⟨h4, h24⟩ := dictionaryWord_copyLength h
+  obtain ⟨n, hn, _⟩ := lookup_some (NDBITS_in_range h24)
+  have hgetD : NDBITS.getD length 0 = n := by
+    rw [List.getD_eq_getElem?_getD, hn]
+    rfl
+  unfold dictionaryWord at h
+  rw [ite_eq_right (by omega)] at h
+  simp only [hgetD] at h
+  obtain ⟨t, ht, rfl⟩ := Option.map_eq_some_iff.mp h
+  refine ⟨n, t, hn, ht, rfl, ?_, ?_⟩
+  · exact (dictionary_in_range (k := 0) h4 h24 (by omega)).2.1
+  · intro k hk
+    exact (dictionary_in_range h4 h24 hk).2.2
 
 end Brotli.Properties

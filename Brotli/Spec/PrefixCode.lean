@@ -669,12 +669,22 @@ theorem readSymbolLengths_stop {size : Nat} {clc : PrefixCode} {st : LengthState
       some (st.lens ++ List.replicate (size - st.lens.length) 0, bs) := by
   simp [readSymbolLengths, readSymbolLengthsWith, h]
 
+/-- The code length symbols read from one state and its bits to another, each read while the sum isn't yet
+32768 (§3.5). -/
+inductive LengthRun (clc : PrefixCode) : LengthState → List Bool → LengthState → List Bool → Prop
+  | refl (st : LengthState) (bs : List Bool) : LengthRun clc st bs st bs
+  | step {st st' : LengthState} {bs b1 b2 r : List Bool} {sym e : Nat} :
+    lengthSum st.lens ≠ 32768 → decodeSymbol clc bs = some (sym, b1) →
+    readInt (if sym = 16 then 2 else if sym = 17 then 3 else 0) b1 = some (e, b2) →
+    LengthRun clc (applyCodeLength st sym e) b2 st' r → LengthRun clc st bs st' r
+
 /-- A successful run of code length symbols ends on the symbol that brings the sum to 32768, a symbol between
 1 and 16, with nothing read after it and the remaining lengths zero (§3.5). -/
 theorem readSymbolLengths_last {size : Nat} {clc : PrefixCode} : ∀ (fuel : Nat) (st : LengthState)
     (bs : List Bool) (lens : List Nat) (r : List Bool), lengthSum st.lens ≠ 32768 →
     readSymbolLengths size clc fuel st bs = some (lens, r) →
     ∃ (st1 : LengthState) (b1 : List Bool) (sym : Nat) (b2 : List Bool) (e : Nat),
+      LengthRun clc st bs st1 b1 ∧
       decodeSymbol clc b1 = some (sym, b2) ∧
       readInt (if sym = 16 then 2 else if sym = 17 then 3 else 0) b2 = some (e, r) ∧
       lengthSum st1.lens ≠ 32768 ∧ lengthSum (applyCodeLength st1 sym e).lens = 32768 ∧
@@ -710,8 +720,9 @@ theorem readSymbolLengths_last {size : Nat} {clc : PrefixCode} : ∀ (fuel : Nat
               Prod.mk.injEq] at h
             obtain ⟨rfl, rfl⟩ := h
             have hr := applyCodeLength_reaches hs hreach
-            exact ⟨st, bs, sym, bs1, e, hd, hx, hs, hreach, hr.1, hr.2, rfl⟩
-        · exact readSymbolLengths_last f _ bs2 lens r hreach h
+            exact ⟨st, bs, sym, bs1, e, .refl st bs, hd, hx, hs, hreach, hr.1, hr.2, rfl⟩
+        · obtain ⟨st1, b1, s1, b2, e1, hrun, rest⟩ := readSymbolLengths_last f _ bs2 lens r hreach h
+          exact ⟨st1, b1, s1, b2, e1, .step hs hd hx hrun, rest⟩
 
 /-- Each non-zero code length adds at most `32768 >> 1 = 16384` to the sum. -/
 theorem lengthSum_le (lens : List Nat) : lengthSum lens ≤ 16384 * (lens.filter (· != 0)).length := by
