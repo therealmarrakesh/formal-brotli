@@ -8,6 +8,7 @@ import Brotli.Decoder.Slots
 import Brotli.Decoder.Codes
 import Brotli.Decoder.Table
 import Brotli.Decoder.Lookup
+import Brotli.Decoder.Window
 
 /-!
 # Decoder

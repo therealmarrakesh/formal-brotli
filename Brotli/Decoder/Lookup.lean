@@ -122,7 +122,7 @@ private theorem and_255 (v : UInt64) : (v &&& 255).toNat = v.toNat % 256 := by
   rw [UInt64.toNat_and]
   exact Nat.and_two_pow_sub_one_eq_mod v.toNat 8
 
-theorem rootIndex_toNat {t : ByteArray} {base : USize} {c : PrefixCode} (w : UInt64) (hok : TableOk t base.toNat c)
+theorem rootIndex_toNat {t : ByteArray} {base : USize} (w : UInt64) (hok : TableFits t base.toNat)
     (h32 : t.size < 2 ^ 32) : (rootIndex base w).toNat = base.toNat + w.toNat % 256 := by
   have hr := hok.root
   have hl : w.toNat % 256 < 256 := Nat.mod_lt _ (by decide)
@@ -131,7 +131,7 @@ theorem rootIndex_toNat {t : ByteArray} {base : USize} {c : PrefixCode} (w : UIn
   unfold rootIndex
   rw [usize_toNat_add (by rw [hu]; omega), hu]
 
-theorem rootIndex_bound {t : ByteArray} {base : USize} {c : PrefixCode} (w : UInt64) (hok : TableOk t base.toNat c)
+theorem rootIndex_bound {t : ByteArray} {base : USize} (w : UInt64) (hok : TableFits t base.toNat)
     (h32 : t.size < 2 ^ 32) : 4 * (rootIndex base w).toNat + 4 ≤ t.size := by
   rw [rootIndex_toNat w hok h32]
   have hr := hok.root
@@ -143,7 +143,7 @@ theorem rootIndex_bound {t : ByteArray} {base : USize} {c : PrefixCode} (w : UIn
   base + USize.ofNat 256 + ((e >>> 8) &&& 65535).toUSize + (BitBuffer.peek ⟨w >>> 8, 0⟩ ((e &&& 255) - 8)).toUSize
 
 /-- Where a sub-table slot is, for a root slot with a bit count above 8. -/
-theorem subIndex_spec {t : ByteArray} {base : USize} {c : PrefixCode} {w e : UInt64} (hok : TableOk t base.toNat c)
+theorem subIndex_spec {t : ByteArray} {base : USize} {w e : UInt64} (hok : TableFits t base.toNat)
     (h32 : t.size < 2 ^ 32) (he1 : e.toNat % 256 = (slotAt t (base.toNat + w.toNat % 256)).1)
     (he2 : e.toNat / 256 % 65536 = (slotAt t (base.toNat + w.toNat % 256)).2) (hbig : ¬ (e &&& 255) ≤ 8) :
     (subIndex base w e).toNat = base.toNat + 256 + (slotAt t (base.toNat + w.toNat % 256)).2 +
@@ -190,7 +190,7 @@ theorem subIndex_spec {t : ByteArray} {base : USize} {c : PrefixCode} {w e : UIn
   exact ⟨hval, by rw [hval]; omega⟩
 
 /-- Looks up the next bits, giving the slot's word: its bit count in the low byte, and its value above. -/
-@[inline] def lookup (t : ByteArray) (base : USize) (w : UInt64) {c : PrefixCode} (hok : TableOk t base.toNat c)
+@[inline] def lookup (t : ByteArray) (base : USize) (w : UInt64) (hok : TableFits t base.toNat)
     (h32 : t.size < 2 ^ 32) : UInt64 :=
   let e := slotWord t (rootIndex base w) (rootIndex_bound w hok h32) h32
   if hbig : e &&& 255 ≤ 8 then e
@@ -206,7 +206,7 @@ theorem subIndex_spec {t : ByteArray} {base : USize} {c : PrefixCode} {w e : UIn
         hbig).2 h32
 
 /-- `lookup` reads the slot `lookupSlots` describes. -/
-theorem lookup_spec {t : ByteArray} {base : USize} {w : UInt64} {c : PrefixCode} (hok : TableOk t base.toNat c)
+theorem lookup_spec {t : ByteArray} {base : USize} {w : UInt64} (hok : TableFits t base.toNat)
     (h32 : t.size < 2 ^ 32) :
     (lookup t base w hok h32).toNat % 256 = (lookupSlots t base.toNat w.toNat).1 ∧
       (lookup t base w hok h32).toNat / 256 % 65536 = (lookupSlots t base.toNat w.toNat).2 := by
@@ -239,13 +239,13 @@ theorem lookup_spec {t : ByteArray} {base : USize} {w : UInt64} {c : PrefixCode}
 and uses that many bits, whatever follows. Too few: `decodeSymbol` has nothing to give from what's at hand. -/
 theorem lookup_decode {t : ByteArray} {base : USize} {b : BitBuffer} {c : PrefixCode} (hok : TableOk t base.toNat c)
     (h32 : t.size < 2 ^ 32) (hC : Complete c) :
-    let v := lookup t base b.word hok h32
+    let v := lookup t base b.word hok.toTableFits h32
     (∀ f : List Bool, (v.toNat % 256 ≤ b.count.toNat →
         decodeSymbol c (b.held ++ f) =
           some (v.toNat / 256 % 65536, lowBits (b.word.toNat / 2 ^ (v.toNat % 256)) (b.count.toNat - v.toNat % 256) ++ f))) ∧
       (b.count.toNat < v.toNat % 256 → decodeSymbol c b.held = none) := by
   intro v
-  obtain ⟨h1, h2⟩ := lookup_spec (w := b.word) hok h32
+  obtain ⟨h1, h2⟩ := lookup_spec (w := b.word) hok.toTableFits h32
   have hh := hok.hit b.word.toNat
   rw [← h1, ← h2] at hh
   exact ⟨fun f hle => hh.decode hC hle f, fun hlt => hh.short hC hlt⟩

@@ -21,12 +21,16 @@ def lookupSlots (t : ByteArray) (base w : Nat) : Nat × Nat :=
   let e := slotAt t (base + w % 256)
   if e.1 ≤ 8 then e else slotAt t (base + 256 + e.2 + (w / 256) % 2 ^ (e.1 - 8))
 
-/-- The table at `base` is in the array, stays within it, and gives every bit pattern its hit. -/
-structure TableOk (t : ByteArray) (base : Nat) (c : PrefixCode) : Prop where
+/-- The table at `base` is in the array and stays within it. This is all a lookup needs to be safe, and it says
+nothing about the spec, so the decoder's state can carry it. -/
+structure TableFits (t : ByteArray) (base : Nat) : Prop where
   root : 4 * (base + 256) ≤ t.size
   sub : ∀ r, r < 256 → 8 < (slotAt t (base + r)).1 →
     (slotAt t (base + r)).1 ≤ 15 ∧
       4 * (base + 256 + (slotAt t (base + r)).2 + 2 ^ ((slotAt t (base + r)).1 - 8)) ≤ t.size
+
+/-- The table at `base` also gives every bit pattern its hit. -/
+structure TableOk (t : ByteArray) (base : Nat) (c : PrefixCode) : Prop extends TableFits t base where
   hit : ∀ w, Hit c w (lookupSlots t base w).1 (lookupSlots t base w).2
 
 /-! ### Writing runs of slots -/
@@ -778,7 +782,7 @@ theorem buildCanonical_spec {t : ByteArray} (hC : Complete (.canonical lens)) (h
     intro r hr hz
     rw [(hroots _).1 ⟨r, by omega, by omega, hz, rfl⟩, Nat.add_sub_cancel_left, oAt r hr]
   generalize writeRoots base (depths lens) (offsets (depths lens)).1 256 0 t2 = t3 at hsize3 hroots hkeep hroot
-  refine ⟨⟨by rw [hsize3]; omega, ?_, ?_⟩, by rw [hsize3]; omega, ?_, hsize3⟩
+  refine ⟨⟨⟨by rw [hsize3]; omega, ?_⟩, ?_⟩, by rw [hsize3]; omega, ?_, hsize3⟩
   · intro r hr hbig
     by_cases hz : (depths lens).getD r 0 = 0
     · exfalso
@@ -860,7 +864,7 @@ theorem buildSingle_spec {t : ByteArray} {sym : Nat} (ht : t.size % 4 = 0) (hsym
   have hroot : ∀ r, r < 256 → slotAt (writeRange 0 sym 1 256 t1 (t.size / 4)) (t.size / 4 + r) = (0, sym) := by
     intro r hr
     rw [hat _ hin, ite_eq_left ⟨r, hr, by omega⟩]
-  refine ⟨⟨by rw [hsz, hs1]; omega, ?_, ?_⟩, by rw [hsz, hs1]; omega, ?_, by rw [hsz, hs1]⟩
+  refine ⟨⟨⟨by rw [hsz, hs1]; omega, ?_⟩, ?_⟩, by rw [hsz, hs1]; omega, ?_, by rw [hsz, hs1]⟩
   · intro r hr hb
     rw [hroot r hr] at hb
     simp at hb
@@ -903,6 +907,36 @@ theorem buildTable_spec {t : ByteArray} {c : PrefixCode} (hC : Complete c) (ht :
     simp only [buildTable, tableSlots]
     exact buildCanonical_spec hC ht hf
 
+/-- One root slot stays within the array. -/
+def rootFits (t : ByteArray) (base r : Nat) : Bool :=
+  let e := slotAt t (base + r)
+  decide (e.1 ≤ 8) || (decide (e.1 ≤ 15) && decide (4 * (base + 256 + e.2 + 2 ^ (e.1 - 8)) ≤ t.size))
+
+/-- Checks once, when a table is built, what a lookup needs to be safe. Each symbol's lookup then needs no check. -/
+def checkFits (t : ByteArray) (base : Nat) : Bool :=
+  decide (4 * (base + 256) ≤ t.size) && (List.range 256).all (rootFits t base)
+
+/-- The check says exactly that the table fits, so it never fails on a table `buildTable` built. -/
+theorem checkFits_iff (t : ByteArray) (base : Nat) : checkFits t base = true ↔ TableFits t base := by
+  unfold checkFits
+  simp only [Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true, List.mem_range]
+  constructor
+  · rintro ⟨h1, h2⟩
+    refine ⟨h1, ?_⟩
+    intro r hr hb
+    have := h2 r hr
+    simp only [rootFits, Bool.or_eq_true, Bool.and_eq_true, decide_eq_true_eq] at this
+    rcases this with h | h
+    · omega
+    · exact h
+  · rintro ⟨h1, h2⟩
+    refine ⟨h1, ?_⟩
+    intro r hr
+    simp only [rootFits, Bool.or_eq_true, Bool.and_eq_true, decide_eq_true_eq]
+    by_cases hb : (slotAt t (base + r)).1 ≤ 8
+    · exact Or.inl hb
+    · exact Or.inr (h2 r hr (by omega))
+
 /-- A table stays correct when the array changes only after it. -/
 theorem TableOk.frame {t t' : ByteArray} {base : Nat} {c : PrefixCode} (h : TableOk t base c) (ht : t.size % 4 = 0)
     (hsize : t.size ≤ t'.size) (hframe : ∀ q, q < t.size / 4 → slotAt t' q = slotAt t q) : TableOk t' base c := by
@@ -910,7 +944,7 @@ theorem TableOk.frame {t t' : ByteArray} {base : Nat} {c : PrefixCode} (h : Tabl
     intro r hr
     have := h.root
     exact hframe _ (by omega)
-  refine ⟨by have := h.root; omega, ?_, ?_⟩
+  refine ⟨⟨by have := h.root; omega, ?_⟩, ?_⟩
   · intro r hr hb
     rw [hrootSlot r hr] at hb ⊢
     obtain ⟨h1, h2⟩ := h.sub r hr hb

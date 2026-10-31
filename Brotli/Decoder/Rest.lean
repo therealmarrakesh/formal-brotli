@@ -130,10 +130,16 @@ inductive Phase where
   | command (s : CommandState)
   /-- The insert-and-copy element's block switch is done; its symbol and extra bits are next. -/
   | insertCopy (s : CommandState) (ic : BlockState)
+  /-- The element's symbol and insert extra bits are read; its copy extra bits are next. -/
+  | copyLength (s : CommandState) (ic : BlockState) (c ilen copyBits copyBase : Nat)
   /-- In the literals, with `n` left. -/
   | literals (s : CommandState) (ic : BlockState) (c ilen clen n : Nat) (lit : BlockState) (out : List Nat)
+  /-- A literal's block switch is done; its symbol is next, with `n` more after it. -/
+  | literalSymbol (s : CommandState) (ic : BlockState) (c ilen clen n : Nat) (lit : BlockState) (out : List Nat)
   /-- The literals are done and the distance is next. -/
   | distance (s : CommandState) (c clen : Nat)
+  /-- The distance's block switch is done; its symbol and extra bits are next. -/
+  | distanceSymbol (s : CommandState) (clen : Nat) (dist : BlockState)
   /-- In a backward copy, with `n` bytes left, which `s.output` has yet to take. -/
   | copy (s : CommandState) (d n : Nat)
   /-- In a dictionary word, with `pending` left, which `s.output` has yet to take. -/
@@ -160,10 +166,29 @@ def rest (w : Nat) (h : MetaBlockHeader) (K : CommandState → List Bool → Opt
     else
       readLiterals h ilen s.literal s.output bs >>= fun (lit, out, bs) =>
       afterLiterals w h K (withLiterals s ic lit out ilen) c clen bs
+  | .copyLength s ic c ilen copyBits copyBase, bs =>
+    readInt copyBits bs >>= fun (copyExtra, bs) =>
+    if s.remaining < ilen then none
+    else
+      readLiterals h ilen s.literal s.output bs >>= fun (lit, out, bs) =>
+      afterLiterals w h K (withLiterals s ic lit out ilen) c (copyBase + copyExtra) bs
   | .literals s ic c ilen clen n lit out, bs =>
     readLiterals h n lit out bs >>= fun (lit, out, bs) =>
     afterLiterals w h K (withLiterals s ic lit out ilen) c clen bs
+  | .literalSymbol s ic c ilen clen n lit out, bs =>
+    h.contextModes[lit.types.cur]? >>= fun mode =>
+    literalPrefixCodeIndex h.literalMap lit.types.cur
+      (contextId mode (contextBytes out).1 (contextBytes out).2) >>= fun index =>
+    h.literalCodes[index]? >>= fun code =>
+    decodeSymbol code bs >>= fun (byte, bs) =>
+    readLiterals h n lit (byte :: out) bs >>= fun (lit, out, bs) =>
+    afterLiterals w h K (withLiterals s ic lit out ilen) c clen bs
   | .distance s c clen, bs => afterLiterals w h K s c clen bs
+  | .distanceSymbol s clen dist, bs =>
+    distancePrefixCodeIndex h.distanceMap dist.types.cur (distanceContextId clen) >>= fun index =>
+    h.distanceCodes[index]? >>= fun code =>
+    readDistance h.npostfix h.ndirect code s.distances bs >>= fun ((dcode, d), bs) =>
+    copyCommand w { s with distance := dist } clen dcode d >>= fun s => K s bs
   | .copy s d n, bs => K { s with output := copyBytes d n s.output } bs
   | .word s pending, bs => K { s with output := pending.reverse ++ s.output } bs
 
@@ -196,29 +221,51 @@ theorem readCommand_rest (w : Nat) (h : MetaBlockHeader) (K : CommandState → L
     · simp only [bind_assoc]
       rfl
 
-/-- After the block switch come the element's symbol and extra bits, which begin the literals. -/
+/-- After the block switch come the element's symbol and insert extra bits. They fit the bit buffer together, and
+the copy extra bits may not fit with them. -/
 theorem rest_insertCopy (w : Nat) (h : MetaBlockHeader) (K : CommandState → List Bool → Option α)
     (s : CommandState) (ic : BlockState) (bs : List Bool) :
     rest w h K (.insertCopy s ic) bs =
       h.insertCopyCodes[ic.types.cur]? >>= fun code =>
-      readInsertCopy code bs >>= fun ((c, ilen, clen), bs) =>
-      if s.remaining < ilen then none
-      else rest w h K (.literals s ic c ilen clen ilen s.literal s.output) bs :=
+      decodeSymbol code bs >>= fun (c, bs) =>
+      insertCopyCodes c >>= fun (insertCode, copyCode) =>
+      insertLengthCodes[insertCode]? >>= fun (insertBits, insertBase, _) =>
+      copyLengthCodes[copyCode]? >>= fun (copyBits, copyBase, _) =>
+      readInt insertBits bs >>= fun (insertExtra, bs) =>
+      rest w h K (.copyLength s ic c (insertBase + insertExtra) copyBits copyBase) bs := by
+  simp only [rest, readInsertCopy, bind_assoc]
   rfl
 
-/-- One more literal. -/
+/-- The copy extra bits, which begin the literals. -/
+theorem rest_copyLength (w : Nat) (h : MetaBlockHeader) (K : CommandState → List Bool → Option α)
+    (s : CommandState) (ic : BlockState) (c ilen copyBits copyBase : Nat) (bs : List Bool) :
+    rest w h K (.copyLength s ic c ilen copyBits copyBase) bs =
+      readInt copyBits bs >>= fun (copyExtra, bs) =>
+      if s.remaining < ilen then none
+      else rest w h K (.literals s ic c ilen (copyBase + copyExtra) ilen s.literal s.output) bs :=
+  rfl
+
+/-- One more literal starts with its block switch. -/
 theorem rest_literal (w : Nat) (h : MetaBlockHeader) (K : CommandState → List Bool → Option α)
     (s : CommandState) (ic : BlockState) (c ilen clen n : Nat) (lit : BlockState) (out : List Nat)
     (bs : List Bool) :
     rest w h K (.literals s ic c ilen clen (n + 1) lit out) bs =
       nextElement h.literal lit bs >>= fun (lit, bs) =>
+      rest w h K (.literalSymbol s ic c ilen clen n lit out) bs := by
+  simp only [rest, readLiterals, bind_assoc]
+
+/-- A literal's symbol. -/
+theorem rest_literalSymbol (w : Nat) (h : MetaBlockHeader) (K : CommandState → List Bool → Option α)
+    (s : CommandState) (ic : BlockState) (c ilen clen n : Nat) (lit : BlockState) (out : List Nat)
+    (bs : List Bool) :
+    rest w h K (.literalSymbol s ic c ilen clen n lit out) bs =
       h.contextModes[lit.types.cur]? >>= fun mode =>
       literalPrefixCodeIndex h.literalMap lit.types.cur
         (contextId mode (contextBytes out).1 (contextBytes out).2) >>= fun index =>
       h.literalCodes[index]? >>= fun code =>
       decodeSymbol code bs >>= fun (byte, bs) =>
-      rest w h K (.literals s ic c ilen clen n lit (byte :: out)) bs := by
-  simp only [rest, readLiterals, bind_assoc]
+      rest w h K (.literals s ic c ilen clen n lit (byte :: out)) bs :=
+  rfl
 
 /-- The literals done, with MLEN reached: the command ignores its copy. -/
 theorem rest_literals_end {w : Nat} {h : MetaBlockHeader} {K : CommandState → List Bool → Option α}
@@ -234,6 +281,15 @@ theorem rest_literals_distance {w : Nat} {h : MetaBlockHeader} {K : CommandState
     {s : CommandState} {ic : BlockState} {c ilen clen : Nat} {lit : BlockState} {out : List Nat} (bs : List Bool) :
     rest w h K (.literals s ic c ilen clen 0 lit out) bs =
       rest w h K (.distance (withLiterals s ic lit out ilen) c clen) bs :=
+  rfl
+
+/-- With MLEN not reached and an explicit distance, the distance's block switch is next. -/
+theorem rest_distance_switch {w : Nat} {h : MetaBlockHeader} {K : CommandState → List Bool → Option α}
+    {s : CommandState} {c clen : Nat} (bs : List Bool) (h0 : s.remaining ≠ 0) (hc : implicitZeroDistance c = false) :
+    rest w h K (.distance s c clen) bs =
+      nextElement h.distance s.distance bs >>= fun (dist, bs) =>
+      rest w h K (.distanceSymbol s clen dist) bs := by
+  simp only [rest, afterLiterals, h0, ↓reduceIte, readCommandDistance, hc, Bool.false_eq_true, bind_assoc]
   rfl
 
 /-- What a command's copy becomes, once its distance is known: a backward copy, a dictionary word, or a
