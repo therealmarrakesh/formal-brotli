@@ -388,6 +388,36 @@ theorem readSimpleSymbols_length (size bits : Nat) : ∀ (n : Nat) (syms : List 
         simp at this
         omega
 
+/-- The symbols of a simple prefix code are distinct (§3.4). -/
+theorem readSimpleSymbols_nodup (size bits : Nat) : ∀ (n : Nat) (syms : List Nat)
+    (bs : List Bool) (out : List Nat) (r : List Bool), syms.Nodup →
+    readSimpleSymbols size bits n syms bs = some (out, r) → out.Nodup
+  | 0, _, _, _, _, hs, h => by
+    simp only [readSimpleSymbols, Option.some.injEq, Prod.mk.injEq] at h
+    rw [← h.1]
+    exact hs
+  | n + 1, syms, bs, out, r, hs, h => by
+    simp only [readSimpleSymbols] at h
+    cases hv : readInt bits bs with
+    | none => rw [hv] at h; simp at h
+    | some p =>
+      obtain ⟨v, bs1⟩ := p
+      rw [hv] at h
+      dsimp only [bind, Option.bind] at h
+      split at h
+      · simp at h
+      · rename_i hnot
+        have hv' : v ∉ syms := by
+          intro hm
+          exact hnot (Or.inr (by simpa using hm))
+        refine readSimpleSymbols_nodup size bits n _ bs1 out r ?_ h
+        refine List.pairwise_append.mpr ⟨hs, List.pairwise_singleton _ _, ?_⟩
+        intro a ha b hb
+        simp only [List.mem_singleton] at hb
+        subst hb
+        intro hab
+        exact hv' (hab ▸ ha)
+
 /-- A simple prefix code has 1 to 4 symbols. -/
 theorem readSimple_count {size nsym : Nat} {bs bs' r : List Bool} {syms : List Nat}
     (h1 : readInt 2 bs = some (nsym, bs'))
@@ -425,6 +455,11 @@ theorem codeLengthCodeLengthCode_prefixFree :
       e ≠ f → e.2.1 ≤ f.2.1 → f.2.2 % 2 ^ e.2.1 ≠ e.2.2 := by
   decide +kernel
 
+/-- The code lengths of code length symbols are 0 to 5, in 2 to 4 bits (§3.5). -/
+theorem codeLengthCodeLengthCode_fields :
+    ∀ e ∈ codeLengthCodeLengthCode, e.1 ≤ 5 ∧ 2 ≤ e.2.1 ∧ e.2.1 ≤ 4 := by
+  decide +kernel
+
 /-- One code length of a code length symbol, by `codeLengthCodeLengthCode` (§3.5). -/
 def readCodeLengthCodeLength (bs : List Bool) : Option (Nat × List Bool) :=
   codeLengthCodeLengthCode.findSome? fun (sym, n, printed) =>
@@ -450,6 +485,46 @@ def readCodeLengthCodeLengths :
       if sum = 32 then some (acc, bs)
       else if 32 < sum then none
       else readCodeLengthCodeLengths order acc sum bs
+
+/-- Reading code length code lengths ends with exactly one non-zero length, or on a non-zero length. -/
+private theorem readCodeLengthCodeLengths_end : ∀ (order : List Nat) (acc : List (Nat × Nat))
+    (sum : Nat) (bs : List Bool) (pairs : List (Nat × Nat)) (r : List Bool),
+    readCodeLengthCodeLengths order acc sum bs = some (pairs, r) →
+    (pairs.filter (·.2 != 0)).length = 1 ∨ ∃ p, pairs.getLast? = some p ∧ p.2 ≠ 0
+  | [], _, _, _, pairs, _, h => by
+    simp only [readCodeLengthCodeLengths] at h
+    split at h
+    · rename_i hone
+      simp only [Option.some.injEq, Prod.mk.injEq] at h
+      rw [← h.1]
+      exact Or.inl hone
+    · simp at h
+  | sym :: order, acc, sum, bs, pairs, r, h => by
+    simp only [readCodeLengthCodeLengths] at h
+    cases h1 : readCodeLengthCodeLength bs with
+    | none => rw [h1] at h; simp at h
+    | some q =>
+      obtain ⟨len, bs1⟩ := q
+      rw [h1] at h
+      dsimp only [bind, Option.bind] at h
+      split at h
+      · exact readCodeLengthCodeLengths_end order _ _ bs1 pairs r h
+      · rename_i h0
+        split at h
+        · simp only [Option.some.injEq, Prod.mk.injEq] at h
+          rw [← h.1]
+          exact Or.inr ⟨(sym, len), by simp, h0⟩
+        · split at h
+          · simp at h
+          · exact readCodeLengthCodeLengths_end order _ _ bs1 pairs r h
+
+/-- With at least two non-zero code lengths, the last one read is non-zero (§3.5). -/
+theorem readCodeLengthCodeLengths_last {order : List Nat} {bs r : List Bool}
+    {pairs : List (Nat × Nat)} (h : readCodeLengthCodeLengths order [] 0 bs = some (pairs, r))
+    (h2 : 2 ≤ (pairs.filter (·.2 != 0)).length) : ∃ p, pairs.getLast? = some p ∧ p.2 ≠ 0 := by
+  rcases readCodeLengthCodeLengths_end _ _ _ _ _ _ h with hone | hlast
+  · omega
+  · exact hlast
 
 /-- The code length code: one symbol if there is one non-zero length, otherwise canonical (§3.5). -/
 def codeLengthCode (pairs : List (Nat × Nat)) : PrefixCode :=
@@ -563,6 +638,80 @@ theorem lengthSum_append (a b : List Nat) : lengthSum (a ++ b) = lengthSum a + l
 /-- Code lengths of zero add nothing to the sum. -/
 theorem lengthSum_replicate_zero (k : Nat) : lengthSum (List.replicate k 0) = 0 := by
   simp [lengthSum]
+
+/-- The symbols 0 and 17 and above add nothing to the sum. -/
+private theorem applyCodeLength_sum_same {st : LengthState} {sym extra : Nat}
+    (hs : sym = 0 ∨ 17 ≤ sym) :
+    lengthSum (applyCodeLength st sym extra).lens = lengthSum st.lens := by
+  unfold applyCodeLength
+  rcases hs with rfl | hs
+  · simp [lengthSum]
+  · have h1 : ¬ sym < 16 := by omega
+    have h2 : sym ≠ 16 := by omega
+    simp only [h1, ↓reduceIte, h2, lengthSum_append, lengthSum_replicate_zero, Nat.add_zero]
+
+/-- The code length symbol that brings the sum to 32768 is between 1 and 16 (§3.5). -/
+theorem applyCodeLength_reaches {st : LengthState} {sym extra : Nat}
+    (h0 : lengthSum st.lens ≠ 32768) (h : lengthSum (applyCodeLength st sym extra).lens = 32768) :
+    1 ≤ sym ∧ sym ≤ 16 := by
+  refine Nat.lt_or_ge sym 1 |>.elim (fun h1 => ?_) (fun h1 => ?_)
+  · rw [applyCodeLength_sum_same (Or.inl (by omega))] at h
+    exact absurd h h0
+  · refine ⟨h1, Nat.le_of_not_lt fun h2 => ?_⟩
+    rw [applyCodeLength_sum_same (Or.inr (by omega))] at h
+    exact absurd h h0
+
+/-- Once the sum is 32768, no more code length symbols are read, so the symbol that reached it is the
+last (§3.5). -/
+theorem readSymbolLengths_stop {size : Nat} {clc : PrefixCode} {st : LengthState} (fuel : Nat)
+    (bs : List Bool) (h : lengthSum st.lens = 32768) :
+    readSymbolLengths size clc (fuel + 1) st bs =
+      some (st.lens ++ List.replicate (size - st.lens.length) 0, bs) := by
+  simp [readSymbolLengths, readSymbolLengthsWith, h]
+
+/-- A successful run of code length symbols ends on the symbol that brings the sum to 32768, a symbol between
+1 and 16, with nothing read after it and the remaining lengths zero (§3.5). -/
+theorem readSymbolLengths_last {size : Nat} {clc : PrefixCode} : ∀ (fuel : Nat) (st : LengthState)
+    (bs : List Bool) (lens : List Nat) (r : List Bool), lengthSum st.lens ≠ 32768 →
+    readSymbolLengths size clc fuel st bs = some (lens, r) →
+    ∃ (st1 : LengthState) (b1 : List Bool) (sym : Nat) (b2 : List Bool) (e : Nat),
+      decodeSymbol clc b1 = some (sym, b2) ∧
+      readInt (if sym = 16 then 2 else if sym = 17 then 3 else 0) b2 = some (e, r) ∧
+      lengthSum st1.lens ≠ 32768 ∧ lengthSum (applyCodeLength st1 sym e).lens = 32768 ∧
+      1 ≤ sym ∧ sym ≤ 16 ∧
+      lens = (applyCodeLength st1 sym e).lens ++
+        List.replicate (size - (applyCodeLength st1 sym e).lens.length) 0
+  | 0, _, _, _, _, _, h => by simp [readSymbolLengths, readSymbolLengthsWith] at h
+  | f + 1, st, bs, lens, r, hs, h => by
+    simp only [readSymbolLengths, readSymbolLengthsWith, hs, ↓reduceIte] at h
+    split at h
+    · simp at h
+    cases hd : decodeSymbol clc bs with
+    | none => rw [hd] at h; simp at h
+    | some p =>
+      obtain ⟨sym, bs1⟩ := p
+      rw [hd] at h
+      dsimp only [bind, Option.bind] at h
+      cases hx : readInt (if sym = 16 then 2 else if sym = 17 then 3 else 0) bs1 with
+      | none => rw [hx] at h; simp at h
+      | some q =>
+        obtain ⟨e, bs2⟩ := q
+        rw [hx] at h
+        dsimp only at h
+        split at h
+        · simp at h
+        split at h
+        · simp at h
+        by_cases hreach : lengthSum (applyCodeLength st sym e).lens = 32768
+        · cases f with
+          | zero => simp [readSymbolLengthsWith] at h
+          | succ g =>
+            simp only [readSymbolLengthsWith, hreach, ↓reduceIte, Option.some.injEq,
+              Prod.mk.injEq] at h
+            obtain ⟨rfl, rfl⟩ := h
+            have hr := applyCodeLength_reaches hs hreach
+            exact ⟨st, bs, sym, bs1, e, hd, hx, hs, hreach, hr.1, hr.2, rfl⟩
+        · exact readSymbolLengths_last f _ bs2 lens r hreach h
 
 /-- Each non-zero code length adds at most `32768 >> 1 = 16384` to the sum. -/
 theorem lengthSum_le (lens : List Nat) : lengthSum lens ≤ 16384 * (lens.filter (· != 0)).length := by

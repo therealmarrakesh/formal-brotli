@@ -17,6 +17,14 @@ def maxBackwardDistance (windowSize produced : Nat) : Nat :=
 def isDictionaryReference (distance maxDistance : Nat) : Bool :=
   maxDistance < distance
 
+/-- A distance is not a dictionary reference exactly when it is at most the window size and the bytes
+produced (§8, §9.1, §10). -/
+theorem backwardDistance_iff {w p d : Nat} :
+    isDictionaryReference d (maxBackwardDistance w p) = false ↔ d ≤ w ∧ d ≤ p := by
+  unfold isDictionaryReference maxBackwardDistance
+  rw [decide_eq_false_iff_not]
+  omega
+
 /-- NDBITS[0..24] (§8, Appendix A). -/
 def NDBITS : List Nat :=
   [0, 0, 0, 0, 10, 10, 11, 11, 10, 10,
@@ -65,6 +73,14 @@ def dictionaryWord (length distance maxDistance : Nat) : Option (List Nat) :=
     let baseWord := (List.range length).map fun k => DICT (wordOffset length index + k)
     let transformId := wordId >>> NDBITS.getD length 0
     transforms[transformId]?.map fun t => applyTransform t baseWord
+
+/-- A static dictionary reference's copy length is 4 to 24 (§8). -/
+theorem dictionaryWord_copyLength {length distance maxDistance : Nat} {word : List Nat}
+    (h : dictionaryWord length distance maxDistance = some word) : 4 ≤ length ∧ length ≤ 24 := by
+  unfold dictionaryWord at h
+  split at h
+  · simp at h
+  · omega
 
 /-- A transformed word and a terminating zero fit in 38 bytes (§8). -/
 theorem dictionaryWord_length {length distance maxDistance : Nat} {word : List Nat}

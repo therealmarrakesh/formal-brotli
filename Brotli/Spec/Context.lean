@@ -375,6 +375,57 @@ def readRLEMAX (bs : List Bool) : Option (Nat × List Bool) := do
     let (x, bs) ← readInt 4 bs
     some (x + 1, bs)
 
+/-- RLEMAX is 0 to 16 (§7.3). -/
+theorem readRLEMAX_range {bs r : List Bool} {v : Nat} (h : readRLEMAX bs = some (v, r)) : v ≤ 16 := by
+  unfold readRLEMAX at h
+  cases h1 : readInt 1 bs with
+  | none => rw [h1] at h; simp at h
+  | some p =>
+    obtain ⟨flag, bs1⟩ := p
+    rw [h1] at h
+    dsimp only [bind, Option.bind] at h
+    split at h
+    · simp only [Option.some.injEq, Prod.mk.injEq] at h
+      omega
+    · cases h2 : readInt 4 bs1 with
+      | none => rw [h2] at h; simp at h
+      | some q =>
+        obtain ⟨x, bs2⟩ := q
+        rw [h2] at h
+        simp only [Option.some.injEq, Prod.mk.injEq] at h
+        have : x < 16 := by simpa using readInt_lt 4 bs1 x bs2 h2
+        omega
+
+/-- A run's count, `1 << k` plus `k` extra bits, is `1 << k` to `(1 << (k + 1)) - 1`. -/
+theorem runLength_range {k extra : Nat} {bs r : List Bool} (h : readInt k bs = some (extra, r)) :
+    1 <<< k ≤ (1 <<< k) + extra ∧ (1 <<< k) + extra ≤ (1 <<< (k + 1)) - 1 := by
+  have hx := readInt_lt k bs extra r h
+  simp only [Nat.shiftLeft_eq, Nat.one_mul, Nat.pow_succ]
+  omega
+
+/-- Run length code `k` repeats a zero `1 << k` to `(1 << (k + 1)) - 1` times, and a run past the map's size is
+invalid (§7.3). -/
+theorem readContextMapValues_run {rlemax k extra left fuel : Nat} {code : PrefixCode}
+    {bs b1 b2 : List Bool} (h0 : left ≠ 0) (hd : decodeSymbol code bs = some (k, b1))
+    (hv : contextMapValue rlemax k = none) (he : readInt k b1 = some (extra, b2)) :
+    readContextMapValues rlemax code (fuel + 1) left bs =
+      (if left < (1 <<< k) + extra then none
+      else
+        (readContextMapValues rlemax code fuel (left - ((1 <<< k) + extra)) b2).map fun x =>
+          (List.replicate ((1 <<< k) + extra) 0 ++ x.1, x.2)) ∧
+    1 <<< k ≤ (1 <<< k) + extra ∧ (1 <<< k) + extra ≤ (1 <<< (k + 1)) - 1 := by
+  refine ⟨?_, runLength_range he⟩
+  simp only [readContextMapValues, readContextMapValuesWith, h0, ↓reduceIte]
+  rw [hd]
+  dsimp only [bind, Option.bind]
+  rw [hv]
+  dsimp only
+  rw [he]
+  dsimp only
+  split
+  · rfl
+  · cases readContextMapValuesWith rlemax code none fuel (left - ((1 <<< k) + extra)) b2 <;> rfl
+
 /-- The loop of `inverseMoveToFront`: each index's value moves to the front. -/
 def inverseMoveToFrontFrom : List Nat → List Nat → List Nat
   | _, [] => []

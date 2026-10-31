@@ -71,6 +71,23 @@ def readBlockType (n : Nat) (code : PrefixCode) (bt : BlockTypes) (bs : List Boo
   let next := switchBlockType n bt sym
   if next.cur = bt.cur then none else some (next, bs)
 
+/-- Consecutive blocks of a category have different block types (§2). -/
+theorem readBlockType_differs {n : Nat} {code : PrefixCode} {bt next : BlockTypes} {bs r : List Bool}
+    (h : readBlockType n code bt bs = some (next, r)) : next.cur ≠ bt.cur := by
+  unfold readBlockType at h
+  cases hd : decodeSymbol code bs with
+  | none => rw [hd] at h; simp at h
+  | some p =>
+    obtain ⟨sym, bs1⟩ := p
+    rw [hd] at h
+    dsimp only [bind, Option.bind] at h
+    split at h
+    · simp at h
+    · rename_i hne
+      simp only [Option.some.injEq, Prod.mk.injEq] at h
+      rw [← h.1]
+      exact hne
+
 /-- The block count code alphabet's size (§3.3). -/
 def blockCountAlphabetSize : Nat := 26
 
