@@ -1,0 +1,4 @@
+/.lake
+/docs
+*.md
+!/README.md

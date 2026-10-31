@@ -1,0 +1,11 @@
+name = "brotli"
+version = "0.1.0"
+defaultTargets = ["Brotli"]
+
+[leanOptions]
+warningAsError = true
+autoImplicit = false
+relaxedAutoImplicit = false
+
+[[lean_lib]]
+name = "Brotli"
