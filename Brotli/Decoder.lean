@@ -1,5 +1,6 @@
 import Brotli.Decoder.Interface
 import Brotli.Decoder.GoalChecks
+import Brotli.Decoder.Rest
 
 /-!
 # Decoder
