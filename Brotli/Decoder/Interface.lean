@@ -1,0 +1,259 @@
+import Brotli.Spec.Stream
+
+/-!
+# The decoder's interface and goals
+
+What a streaming decoder looks like to its caller, and the four correctness goals, stated over any machine with
+that interface. There is no decoder here.
+-/
+
+namespace Brotli.Decoder
+
+open Brotli.Spec
+
+/-- What a call reports. -/
+inductive Status where
+  | needsInput
+  | needsOutput
+  | done
+  | rejected
+  | memoryLimit
+  deriving DecidableEq
+
+/-- A stopped decoder takes no more calls. -/
+def Status.stopped : Status → Bool
+  | .done | .rejected | .memoryLimit => true
+  | .needsInput | .needsOutput => false
+
+/-- What a call returns: the new state, the input bytes it used, the caller's buffer with the output appended, and
+a status. -/
+structure Reply (σ : Type) where
+  state : σ
+  used : Nat
+  output : ByteArray
+  status : Status
+
+/-- A streaming decoder. `start` takes the memory limit. `step` takes the state, an input array with the start and
+stop of the chunk inside it, the caller's output buffer, the output space and the end flag, so a caller can resume
+a chunk and reuse a buffer without copying either. -/
+structure Machine (σ : Type) where
+  start : Nat → σ × Status
+  step : σ → ByteArray → Nat → Nat → ByteArray → Nat → Bool → Reply σ
+
+/-- A run so far, on a stream the caller delivers: the state, the last status, the bytes used, how far the stream
+has been offered, the bytes handed out, and whether the end has been signalled. -/
+structure Run (σ : Type) where
+  state : σ
+  status : Status
+  read : Nat
+  offered : Nat
+  emitted : List UInt8
+  ended : Bool
+
+/-- One call: the bytes around the chunk in the input array, what the output buffer already holds, the chunk's
+size, the output space and the end flag. -/
+structure Call where
+  pre : List UInt8
+  post : List UInt8
+  buf : List UInt8
+  size : Nat
+  space : Nat
+  final : Bool
+
+variable {σ : Type}
+
+/-- The run before any call. -/
+def Run.initial (D : Machine σ) (limit : Nat) : Run σ :=
+  { state := (D.start limit).1, status := (D.start limit).2, read := 0, offered := 0, emitted := [],
+    ended := false }
+
+/-- A call's input array: the next bytes of the stream `x` as the chunk, with other bytes around it. -/
+def Run.input (x : List UInt8) (R : Run σ) (c : Call) : ByteArray :=
+  (c.pre ++ (x.drop R.read).take c.size ++ c.post).toByteArray
+
+/-- A call's reply. -/
+def Run.reply (D : Machine σ) (x : List UInt8) (R : Run σ) (c : Call) : Reply σ :=
+  D.step R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.buf.toByteArray c.space c.final
+
+/-- The run after a call. -/
+def Run.after (D : Machine σ) (x : List UInt8) (R : Run σ) (c : Call) : Run σ :=
+  { state := (R.reply D x c).state
+    status := (R.reply D x c).status
+    read := R.read + (R.reply D x c).used
+    offered := max R.offered (R.read + c.size)
+    emitted := R.emitted ++ (R.reply D x c).output.data.toList.drop c.buf.length
+    ended := R.ended || c.final }
+
+/-- A call the caller may make: the decoder hasn't stopped, the chunk is within the stream, and the end flag is
+set only with the whole of the rest of the stream, and stays set. -/
+structure Run.Allowed (x : List UInt8) (R : Run σ) (c : Call) : Prop where
+  running : R.status.stopped = false
+  inside : R.read + c.size ≤ x.length
+  whole : c.final = true → R.read + c.size = x.length
+  stays : R.ended = true → c.final = true
+
+/-- The runs a machine can reach on the stream `x`, under every way of delivering it. -/
+inductive Reaches (D : Machine σ) (limit : Nat) (x : List UInt8) : Run σ → Prop
+  | start : Reaches D limit x (Run.initial D limit)
+  | call {R : Run σ} {c : Call} : Reaches D limit x R → R.Allowed x c → Reaches D limit x (R.after D x c)
+
+/-! ### The goals -/
+
+/-- Goal 1. A success gives exactly what `decode` gives, after the end signal and with the whole stream used,
+and a rejection means `decode` rejects. `decode_valid` and `decode_invalid` give the other direction. -/
+structure Correct (D : Machine σ) : Prop where
+  done : ∀ {limit x} {R : Run σ}, Reaches D limit x R → R.status = .done →
+    R.ended = true ∧ R.read = x.length ∧ decode x = some R.emitted
+  rejected : ∀ {limit x} {R : Run σ}, Reaches D limit x R → R.status = .rejected → decode x = none
+
+/-- Goal 2. What's been handed out is always a prefix of the output of a valid stream. `prefix_of_completion`
+and `rejected_final` state it for every continuation of the input so far. -/
+def NoWrongBytes (D : Machine σ) : Prop :=
+  ∀ {limit x} {R : Run σ} {y}, Reaches D limit x R → decode x = some y → R.emitted <+: y
+
+/-- Goal 3, for a size measure on the state and a demand on the input so far. The size stays within the demand,
+and within the limit unless the limit was reported, which happens only when the demand exceeds it. -/
+structure Streams (D : Machine σ) (size : σ → Nat) (demand : List UInt8 → Nat) : Prop where
+  within_demand : ∀ {limit x} {R : Run σ}, Reaches D limit x R → size R.state ≤ demand (x.take R.offered)
+  within_limit : ∀ {limit x} {R : Run σ}, Reaches D limit x R → R.status ≠ .memoryLimit → size R.state ≤ limit
+  honest_limit : ∀ {limit x} {R : Run σ}, Reaches D limit x R → R.status = .memoryLimit →
+    limit < demand (x.take R.offered)
+
+/-- Goal 4, its truthful part. A call uses at most its chunk, keeps what the buffer held, and fills at most its
+space. "Needs input" means the chunk was all used and the end hasn't been signalled, and "needs output" means the
+space is full. -/
+structure Truthful (D : Machine σ) : Prop where
+  used_le : ∀ {limit x} {R : Run σ} {c}, Reaches D limit x R → R.Allowed x c → (R.reply D x c).used ≤ c.size
+  keeps : ∀ {limit x} {R : Run σ} {c}, Reaches D limit x R → R.Allowed x c →
+    c.buf <+: (R.reply D x c).output.data.toList
+  output_le : ∀ {limit x} {R : Run σ} {c}, Reaches D limit x R → R.Allowed x c →
+    (R.reply D x c).output.size ≤ c.buf.length + c.space
+  needsInput : ∀ {limit x} {R : Run σ} {c}, Reaches D limit x R → R.Allowed x c →
+    (R.reply D x c).status = .needsInput → (R.reply D x c).used = c.size ∧ c.final = false
+  needsOutput : ∀ {limit x} {R : Run σ} {c}, Reaches D limit x R → R.Allowed x c →
+    (R.reply D x c).status = .needsOutput → (R.reply D x c).output.size = c.buf.length + c.space
+
+/-- A call that answers the last status: more input or the end after "needs input", and some space after "needs
+output". -/
+def Run.Answers (R : Run σ) (c : Call) : Prop :=
+  (R.status = .needsInput → 0 < c.size ∨ c.final = true) ∧ (R.status = .needsOutput → 0 < c.space)
+
+/-- `R'` follows `R` by a call that answers `R`'s status. -/
+def Follows (D : Machine σ) (limit : Nat) (x : List UInt8) (R' R : Run σ) : Prop :=
+  Reaches D limit x R ∧ ∃ c, R.Allowed x c ∧ R.Answers c ∧ R' = R.after D x c
+
+/-- Goal 4, its terminating part. No caller answering the signals can keep a machine running forever. Every call
+returning is the type of `Machine.step`, whose definitions are total. -/
+def Terminates (D : Machine σ) : Prop :=
+  ∀ {limit x} {R : Run σ}, Reaches D limit x R → Acc (Follows D limit x) R
+
+/-! ### What follows from them -/
+
+private theorem chunk_continuation {x t : List UInt8} {o r k : Nat} (h1 : r + k ≤ o) (h2 : r + k ≤ x.length) :
+    ((x.take o ++ t).drop r).take k = (x.drop r).take k := by
+  have hl : r + k ≤ (x.take o).length := by
+    simp only [List.length_take]
+    omega
+  rw [List.drop_append_of_le_length (by omega), List.take_append_of_le_length (by simp only [List.length_drop]; omega),
+    List.drop_take, List.take_take]
+  congr 1
+  omega
+
+/-- A run that hasn't signalled the end is also a run on every stream that continues what it was offered. -/
+theorem Reaches.continuation {D : Machine σ} {limit : Nat} {x : List UInt8} {R : Run σ}
+    (h : Reaches D limit x R) (he : R.ended = false) {o : Nat} (ho : R.offered ≤ o) (t : List UInt8) :
+    Reaches D limit (x.take o ++ t) R := by
+  induction h with
+  | start => exact .start
+  | @call R c hR ha ih =>
+    simp only [Run.after, Bool.or_eq_false_iff] at he
+    have hk : R.read + c.size ≤ o := Nat.le_trans (Nat.le_max_right _ _) ho
+    have heq : R.after D (x.take o ++ t) c = R.after D x c := by
+      simp only [Run.after, Run.reply, Run.input, chunk_continuation hk ha.inside]
+    rw [← heq]
+    refine .call (ih he.1 (Nat.le_trans (Nat.le_max_left _ _) ho)) ⟨ha.running, ?_, ?_, ?_⟩
+    · simp only [List.length_append, List.length_take]
+      have := ha.inside
+      omega
+    · simp [he.2]
+    · simp [he.1]
+
+/-- Goal 2 for every valid continuation of the input so far. -/
+theorem prefix_of_completion {D : Machine σ} (h : NoWrongBytes D) {limit : Nat} {x : List UInt8} {R : Run σ}
+    (hR : Reaches D limit x R) (he : R.ended = false) (t : List UInt8) {y : List UInt8}
+    (hd : decode (x.take R.offered ++ t) = some y) : R.emitted <+: y :=
+  h (hR.continuation he (Nat.le_refl _) t) hd
+
+/-- An early rejection is final: no continuation of the input so far is valid. It follows from goal 1. -/
+theorem rejected_final {D : Machine σ} (h : Correct D) {limit : Nat} {x : List UInt8} {R : Run σ}
+    (hR : Reaches D limit x R) (he : R.ended = false) (hs : R.status = .rejected) (t : List UInt8) :
+    decode (x.take R.offered ++ t) = none :=
+  h.rejected (hR.continuation he (Nat.le_refl _) t) hs
+
+/-- The bytes used stay within the stream. -/
+theorem Reaches.read_le {D : Machine σ} (ht : Truthful D) {limit : Nat} {x : List UInt8} {R : Run σ}
+    (h : Reaches D limit x R) : R.read ≤ x.length := by
+  induction h with
+  | start => simp [Run.initial]
+  | @call R c hR ha _ =>
+    have := ht.used_le hR ha
+    have := ha.inside
+    simp only [Run.after]
+    omega
+
+private theorem reaches_stop_of_acc {D : Machine σ} (ht : Truthful D) {limit : Nat} {x : List UInt8}
+    {R : Run σ} (hacc : Acc (Follows D limit x) R) :
+    Reaches D limit x R → ∃ R', Reaches D limit x R' ∧ R'.status.stopped = true := by
+  induction hacc with
+  | intro R _ ih =>
+    intro hR
+    cases hs : R.status.stopped with
+    | true => exact ⟨R, hR, hs⟩
+    | false =>
+      have hle := hR.read_le ht
+      let c : Call := ⟨[], [], [], x.length - R.read, 1, true⟩
+      have ha : R.Allowed x c := ⟨hs, by simp only [c]; omega, fun _ => by simp only [c]; omega, fun _ => rfl⟩
+      have hans : R.Answers c := ⟨fun _ => Or.inr rfl, fun _ => by simp only [c]; omega⟩
+      exact ih _ ⟨hR, c, ha, hans, rfl⟩ (.call hR ha)
+
+/-- From anywhere in a run, a caller answering the signals can reach a stopped decoder. -/
+theorem reaches_stop {D : Machine σ} (ht : Truthful D) (hd : Terminates D) {limit : Nat} {x : List UInt8}
+    {R : Run σ} (hR : Reaches D limit x R) : ∃ R', Reaches D limit x R' ∧ R'.status.stopped = true :=
+  reaches_stop_of_acc ht (hd hR) hR
+
+/-- The other direction of goal 1 for a valid stream: from anywhere in a run, the decoder can reach success with
+exactly `decode`'s output, or a reported memory limit. -/
+theorem decode_valid {D : Machine σ} (hc : Correct D) (ht : Truthful D) (hd : Terminates D) {limit : Nat}
+    {x y : List UInt8} (hv : decode x = some y) {R : Run σ} (hR : Reaches D limit x R) :
+    ∃ R', Reaches D limit x R' ∧ (R'.status = .memoryLimit ∨ (R'.status = .done ∧ R'.emitted = y)) := by
+  obtain ⟨R', hR', hs⟩ := reaches_stop ht hd hR
+  refine ⟨R', hR', ?_⟩
+  cases hst : R'.status with
+  | needsInput => simp [hst, Status.stopped] at hs
+  | needsOutput => simp [hst, Status.stopped] at hs
+  | memoryLimit => exact Or.inl rfl
+  | rejected =>
+    have := hc.rejected hR' hst
+    simp [hv] at this
+  | done =>
+    have := (hc.done hR' hst).2.2
+    rw [hv] at this
+    exact Or.inr ⟨rfl, by simpa using this.symm⟩
+
+/-- The other direction of goal 1 for an invalid stream: from anywhere in a run, the decoder can reach a rejection
+or a reported memory limit. -/
+theorem decode_invalid {D : Machine σ} (hc : Correct D) (ht : Truthful D) (hd : Terminates D) {limit : Nat}
+    {x : List UInt8} (hv : decode x = none) {R : Run σ} (hR : Reaches D limit x R) :
+    ∃ R', Reaches D limit x R' ∧ (R'.status = .memoryLimit ∨ R'.status = .rejected) := by
+  obtain ⟨R', hR', hs⟩ := reaches_stop ht hd hR
+  refine ⟨R', hR', ?_⟩
+  cases hst : R'.status with
+  | needsInput => simp [hst, Status.stopped] at hs
+  | needsOutput => simp [hst, Status.stopped] at hs
+  | memoryLimit => exact Or.inl rfl
+  | rejected => exact Or.inr rfl
+  | done =>
+    have := (hc.done hR' hst).2.2
+    simp [hv] at this
+
+end Brotli.Decoder
