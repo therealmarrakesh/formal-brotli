@@ -473,7 +473,7 @@ private theorem bind_some {α β : Type} {x : Option α} {f : α → Option β} 
   | some a => exact ⟨a, rfl, h⟩
 
 /-- An integer value of `n` bits takes `n` bits. -/
-private theorem readInt_length : ∀ (n : Nat) (bs : List Bool) (v : Nat) (r : List Bool),
+theorem readInt_length : ∀ (n : Nat) (bs : List Bool) (v : Nat) (r : List Bool),
     readInt n bs = some (v, r) → r.length + n = bs.length
   | 0, _, _, _, h => by
     simp only [readInt, Option.some.injEq, Prod.mk.injEq] at h
@@ -492,12 +492,12 @@ private theorem readInt_length : ∀ (n : Nat) (bs : List Bool) (v : Nat) (r : L
       simp only [List.length_cons]
       omega
 
-private theorem readInt_le {n : Nat} {bs r : List Bool} {v : Nat} (h : readInt n bs = some (v, r)) :
+theorem readInt_le {n : Nat} {bs r : List Bool} {v : Nat} (h : readInt n bs = some (v, r)) :
     r.length ≤ bs.length := by
   have := readInt_length n bs v r h
   omega
 
-private theorem decodeSymbol_le {c : PrefixCode} {bs r : List Bool} {s : Nat}
+theorem decodeSymbol_le {c : PrefixCode} {bs r : List Bool} {s : Nat}
     (h : decodeSymbol c bs = some (s, r)) : r.length ≤ bs.length := by
   cases c with
   | single sym =>
@@ -508,7 +508,7 @@ private theorem decodeSymbol_le {c : PrefixCode} {bs r : List Bool} {s : Nat}
     obtain ⟨_, _, w, _, _, _, _, rfl⟩ := decodeLengths_sound lens 15 1 bs s r (by decide) h
     simp
 
-private theorem readSimpleSymbols_le (size bits : Nat) : ∀ (n : Nat) (syms : List Nat)
+theorem readSimpleSymbols_le (size bits : Nat) : ∀ (n : Nat) (syms : List Nat)
     (bs : List Bool) (out : List Nat) (r : List Bool),
     readSimpleSymbols size bits n syms bs = some (out, r) → r.length ≤ bs.length
   | 0, _, _, _, _, h => by
@@ -523,7 +523,7 @@ private theorem readSimpleSymbols_le (size bits : Nat) : ∀ (n : Nat) (syms : L
     · simp at h
     · exact Nat.le_trans (readSimpleSymbols_le size bits n _ bs1 out r h) (readInt_le h1)
 
-private theorem readSimple_le {size : Nat} {bs r : List Bool} {c : PrefixCode}
+theorem readSimple_le {size : Nat} {bs r : List Bool} {c : PrefixCode}
     (h : readSimple size bs = some (c, r)) : r.length ≤ bs.length := by
   unfold readSimple at h
   obtain ⟨⟨nsym, bs1⟩, h1, h⟩ := bind_some h
@@ -551,7 +551,7 @@ private theorem readSimple_le {size : Nat} {bs r : List Bool} {c : PrefixCode}
       omega
   · simp at h
 
-private theorem readCodeLengthCodeLength_le' {bs r : List Bool} {v : Nat}
+theorem readCodeLengthCodeLength_le' {bs r : List Bool} {v : Nat}
     (h : readCodeLengthCodeLength bs = some (v, r)) : r.length ≤ bs.length := by
   unfold readCodeLengthCodeLength at h
   obtain ⟨⟨sym, n, printed⟩, _, hf⟩ := List.exists_of_findSome?_eq_some h
@@ -565,7 +565,7 @@ private theorem readCodeLengthCodeLength_le' {bs r : List Bool} {v : Nat}
     · simp at hf
   · simp at hf
 
-private theorem readCodeLengthCodeLengths_le : ∀ (order : List Nat) (acc : List (Nat × Nat))
+theorem readCodeLengthCodeLengths_le : ∀ (order : List Nat) (acc : List (Nat × Nat))
     (sum : Nat) (bs : List Bool) (pairs : List (Nat × Nat)) (r : List Bool),
     readCodeLengthCodeLengths order acc sum bs = some (pairs, r) → r.length ≤ bs.length
   | [], _, _, bs, _, r, h => by
@@ -590,7 +590,7 @@ private theorem readCodeLengthCodeLengths_le : ∀ (order : List Nat) (acc : Lis
         · simp at h
         · exact Nat.le_trans (readCodeLengthCodeLengths_le order _ _ bs1 pairs r h) l1
 
-private theorem readSymbolLengths_le (size : Nat) (clc : PrefixCode) : ∀ (fuel : Nat)
+theorem readSymbolLengths_le (size : Nat) (clc : PrefixCode) : ∀ (fuel : Nat)
     (st : LengthState) (bs : List Bool) (lens : List Nat) (r : List Bool),
     readSymbolLengths size clc fuel st bs = some (lens, r) → r.length ≤ bs.length
   | 0, _, _, _, _, h => by simp [readSymbolLengths, readSymbolLengthsWith] at h
@@ -615,7 +615,7 @@ private theorem readSymbolLengths_le (size : Nat) (clc : PrefixCode) : ∀ (fuel
     have := readSymbolLengths_le size clc f _ bs2 lens r h
     omega
 
-private theorem readPrefixCode_le {size : Nat} {bs r : List Bool} {c : PrefixCode}
+theorem readPrefixCode_le {size : Nat} {bs r : List Bool} {c : PrefixCode}
     (h : readPrefixCode size bs = some (c, r)) : r.length ≤ bs.length := by
   unfold readPrefixCode at h
   obtain ⟨⟨hskip, bs1⟩, h1, h⟩ := bind_some h
@@ -633,7 +633,7 @@ private theorem readPrefixCode_le {size : Nat} {bs r : List Bool} {c : PrefixCod
     have := readSymbolLengths_le _ _ _ _ _ _ _ h3
     omega
 
-private theorem readContextModes_le : ∀ (n : Nat) (bs : List Bool) (modes : List Nat) (r : List Bool),
+theorem readContextModes_le : ∀ (n : Nat) (bs : List Bool) (modes : List Nat) (r : List Bool),
     readContextModes n bs = some (modes, r) → r.length ≤ bs.length
   | 0, _, _, _, h => by
     simp only [readContextModes, Option.some.injEq, Prod.mk.injEq] at h
@@ -648,7 +648,7 @@ private theorem readContextModes_le : ∀ (n : Nat) (bs : List Bool) (modes : Li
     obtain ⟨-, rfl⟩ := h
     exact Nat.le_trans (readContextModes_le n bs1 ms _ h2) (readInt_le h1)
 
-private theorem readContextMapValues_le (rlemax : Nat) (code : PrefixCode) : ∀ (fuel left : Nat)
+theorem readContextMapValues_le (rlemax : Nat) (code : PrefixCode) : ∀ (fuel left : Nat)
     (bs : List Bool) (vals : List Nat) (r : List Bool),
     readContextMapValues rlemax code fuel left bs = some (vals, r) → r.length ≤ bs.length
   | 0, _, _, _, _, h => by simp [readContextMapValues, readContextMapValuesWith] at h
@@ -677,7 +677,7 @@ private theorem readContextMapValues_le (rlemax : Nat) (code : PrefixCode) : ∀
         have := readContextMapValues_le rlemax code f _ bs2 vs _ h3
         omega
 
-private theorem readRLEMAX_le {bs r : List Bool} {v : Nat} (h : readRLEMAX bs = some (v, r)) :
+theorem readRLEMAX_le {bs r : List Bool} {v : Nat} (h : readRLEMAX bs = some (v, r)) :
     r.length ≤ bs.length := by
   unfold readRLEMAX at h
   obtain ⟨⟨flag, bs1⟩, h1, h⟩ := bind_some h
@@ -692,7 +692,7 @@ private theorem readRLEMAX_le {bs r : List Bool} {v : Nat} (h : readRLEMAX bs = 
     obtain ⟨-, rfl⟩ := h
     exact Nat.le_trans (readInt_le h2) l1
 
-private theorem readContextMap_le {size ntrees : Nat} {bs r : List Bool} {cmap : List Nat}
+theorem readContextMap_le {size ntrees : Nat} {bs r : List Bool} {cmap : List Nat}
     (h : readContextMap size ntrees bs = some (cmap, r)) : r.length ≤ bs.length := by
   unfold readContextMap at h
   obtain ⟨⟨rlemax, bs1⟩, h1, h⟩ := bind_some h
@@ -714,7 +714,7 @@ private theorem readContextMap_le {size ntrees : Nat} {bs r : List Bool} {cmap :
     omega
   · simp at h
 
-private theorem readVarLen_le {bs r : List Bool} {v : Nat} (h : readVarLen bs = some (v, r)) :
+theorem readVarLen_le {bs r : List Bool} {v : Nat} (h : readVarLen bs = some (v, r)) :
     r.length ≤ bs.length := by
   unfold readVarLen at h
   obtain ⟨⟨first, bs1⟩, h1, h⟩ := bind_some h
@@ -738,7 +738,7 @@ private theorem readVarLen_le {bs r : List Bool} {v : Nat} (h : readVarLen bs = 
   omega
 
 /-- A block count takes at least 2 bits, and is at most 16793840. -/
-private theorem readBlockCount_bound {code : PrefixCode} {bs r : List Bool} {v : Nat}
+theorem readBlockCount_bound {code : PrefixCode} {bs r : List Bool} {v : Nat}
     (h : readBlockCount code bs = some (v, r)) : r.length + 2 ≤ bs.length ∧ v ≤ 16793840 := by
   unfold readBlockCount at h
   obtain ⟨⟨c, bs1⟩, h1, h⟩ := bind_some h
@@ -758,7 +758,7 @@ private theorem readBlockCount_bound {code : PrefixCode} {bs r : List Bool} {v :
   have hx := readInt_lt _ _ _ _ h3
   omega
 
-private theorem readBlockType_le {n : Nat} {code : PrefixCode} {bt bt' : BlockTypes}
+theorem readBlockType_le {n : Nat} {code : PrefixCode} {bt bt' : BlockTypes}
     {bs r : List Bool} (h : readBlockType n code bt bs = some (bt', r)) : r.length ≤ bs.length := by
   unfold readBlockType at h
   obtain ⟨⟨sym, bs1⟩, h1, h⟩ := bind_some h
@@ -769,7 +769,7 @@ private theorem readBlockType_le {n : Nat} {code : PrefixCode} {bt bt' : BlockTy
     obtain ⟨-, rfl⟩ := h
     exact decodeSymbol_le h1
 
-private theorem readBlockCategory_le {bs r : List Bool} {c : BlockCategory}
+theorem readBlockCategory_le {bs r : List Bool} {c : BlockCategory}
     (h : readBlockCategory bs = some (c, r)) : r.length ≤ bs.length := by
   unfold readBlockCategory at h
   obtain ⟨⟨n, bs1⟩, h1, h⟩ := bind_some h
@@ -791,7 +791,7 @@ private theorem readBlockCategory_le {bs r : List Bool} {c : BlockCategory}
   have := (readBlockCount_bound h4).1
   omega
 
-private theorem readTreesAndMap_le {size : Nat} {bs r : List Bool} {p : Nat × List Nat}
+theorem readTreesAndMap_le {size : Nat} {bs r : List Bool} {p : Nat × List Nat}
     (h : readTreesAndMap size bs = some (p, r)) : r.length ≤ bs.length := by
   unfold readTreesAndMap at h
   obtain ⟨⟨n, bs1⟩, h1, h⟩ := bind_some h
@@ -806,7 +806,7 @@ private theorem readTreesAndMap_le {size : Nat} {bs r : List Bool} {p : Nat × L
   obtain ⟨-, rfl⟩ := h
   exact Nat.le_trans (readContextMap_le h2) l1
 
-private theorem readPrefixCodes_le (size : Nat) : ∀ (n : Nat) (bs : List Bool)
+theorem readPrefixCodes_le (size : Nat) : ∀ (n : Nat) (bs : List Bool)
     (codes : List PrefixCode) (r : List Bool),
     readPrefixCodes size n bs = some (codes, r) → r.length ≤ bs.length
   | 0, _, _, _, h => by
@@ -822,7 +822,7 @@ private theorem readPrefixCodes_le (size : Nat) : ∀ (n : Nat) (bs : List Bool)
     obtain ⟨-, rfl⟩ := h
     exact Nat.le_trans (readPrefixCodes_le size n bs1 cs _ h2) (readPrefixCode_le h1)
 
-private theorem readMetaBlockHeader_le {bs r : List Bool} {m : MetaBlockHeader}
+theorem readMetaBlockHeader_le {bs r : List Bool} {m : MetaBlockHeader}
     (h : readMetaBlockHeader bs = some (m, r)) : r.length ≤ bs.length := by
   unfold readMetaBlockHeader at h
   obtain ⟨⟨c1, bs1⟩, h1, h⟩ := bind_some h
@@ -893,7 +893,7 @@ theorem readMetaBlockHeader_range {bs r : List Bool} {m : MetaBlockHeader}
   have key : ∀ a < 4, ∀ b < 16, b <<< a ≤ 120 := by decide
   exact ⟨hnp, key np hnp nd hnd⟩
 
-private theorem nextElement_le {c : BlockCategory} {st st' : BlockState} {bs r : List Bool}
+theorem nextElement_le {c : BlockCategory} {st st' : BlockState} {bs r : List Bool}
     (h : nextElement c st bs = some (st', r)) : r.length ≤ bs.length := by
   unfold nextElement at h
   split at h
@@ -912,7 +912,7 @@ private theorem nextElement_le {c : BlockCategory} {st st' : BlockState} {bs r :
     exact Nat.le_refl _
 
 /-- The measure of the insert-and-copy category falls at each element. -/
-private theorem nextElement_measure {c : BlockCategory} {st st' : BlockState} {bs r : List Bool}
+theorem nextElement_measure {c : BlockCategory} {st st' : BlockState} {bs r : List Bool}
     (h : nextElement c st bs = some (st', r)) :
     r.length * 16793841 + st'.count < bs.length * 16793841 + st.count := by
   unfold nextElement at h
@@ -933,7 +933,7 @@ private theorem nextElement_measure {c : BlockCategory} {st st' : BlockState} {b
     simp only
     omega
 
-private theorem readLiterals_le (h : MetaBlockHeader) : ∀ (n : Nat) (st : BlockState)
+theorem readLiterals_le (h : MetaBlockHeader) : ∀ (n : Nat) (st : BlockState)
     (output : List Nat) (bs : List Bool) (st' : BlockState) (o : List Nat) (r : List Bool),
     readLiterals h n st output bs = some (st', o, r) → r.length ≤ bs.length
   | 0, _, _, _, _, _, _, hr => by
@@ -954,7 +954,7 @@ private theorem readLiterals_le (h : MetaBlockHeader) : ∀ (n : Nat) (st : Bloc
     have := readLiterals_le h n _ _ bs2 st' o r hr
     omega
 
-private theorem readInsertCopy_le {code : PrefixCode} {bs r : List Bool} {v : Nat × Nat × Nat}
+theorem readInsertCopy_le {code : PrefixCode} {bs r : List Bool} {v : Nat × Nat × Nat}
     (h : readInsertCopy code bs = some (v, r)) : r.length ≤ bs.length := by
   unfold readInsertCopy at h
   obtain ⟨⟨c, bs1⟩, h1, h⟩ := bind_some h
@@ -975,7 +975,7 @@ private theorem readInsertCopy_le {code : PrefixCode} {bs r : List Bool} {v : Na
   have := readInt_le h3
   omega
 
-private theorem readCommandDistance_le {m : MetaBlockHeader} {st : BlockState} {d : Distances}
+theorem readCommandDistance_le {m : MetaBlockHeader} {st : BlockState} {d : Distances}
     {c clen : Nat} {bs r : List Bool} {v : BlockState × Nat × Nat}
     (h : readCommandDistance m st d c clen bs = some (v, r)) : r.length ≤ bs.length := by
   unfold readCommandDistance at h
@@ -1004,7 +1004,7 @@ private theorem readCommandDistance_le {m : MetaBlockHeader} {st : BlockState} {
     have := readInt_le h4
     omega
 
-private theorem copyCommand_insertCopy {w clen dcode d : Nat} {s s' : CommandState}
+theorem copyCommand_insertCopy {w clen dcode d : Nat} {s s' : CommandState}
     (h : copyCommand w s clen dcode d = some s') : s'.insertCopy = s.insertCopy := by
   unfold copyCommand at h
   dsimp only at h
@@ -1020,7 +1020,7 @@ private theorem copyCommand_insertCopy {w clen dcode d : Nat} {s s' : CommandSta
       rw [← h]
 
 /-- A command's insert-and-copy element, and what follows it. -/
-private theorem readCommand_spec {w : Nat} {m : MetaBlockHeader} {s s' : CommandState}
+theorem readCommand_spec {w : Nat} {m : MetaBlockHeader} {s s' : CommandState}
     {bs r : List Bool} (h : readCommand w m s bs = some (s', r)) :
     ∃ bs1, nextElement m.insertCopy s.insertCopy bs = some (s'.insertCopy, bs1) ∧
       r.length ≤ bs1.length := by
@@ -1083,7 +1083,7 @@ theorem readCommands_out (w : Nat) (m : MetaBlockHeader) (s : CommandState) (bs 
       readCommandsWith w m out (commandMeasure s bs + 1) s bs :=
   readCommandsWith_out w m _ s bs (by omega) none out
 
-private theorem readCommands_le (w : Nat) (m : MetaBlockHeader) : ∀ (fuel : Nat) (s s' : CommandState)
+theorem readCommands_le (w : Nat) (m : MetaBlockHeader) : ∀ (fuel : Nat) (s s' : CommandState)
     (bs r : List Bool), readCommands w m fuel s bs = some (s', r) → r.length ≤ bs.length
   | 0, _, _, _, _, h => by simp [readCommands, readCommandsWith] at h
   | f + 1, s, s', bs, r, h => by
@@ -1099,7 +1099,7 @@ private theorem readCommands_le (w : Nat) (m : MetaBlockHeader) : ∀ (fuel : Na
     have := readCommands_le w m f s1 s' bs1 r h
     omega
 
-private theorem readCompressed_le {w mlen : Nat} {st st' : StreamState} {bs r : List Bool}
+theorem readCompressed_le {w mlen : Nat} {st st' : StreamState} {bs r : List Bool}
     (h : readCompressed w st mlen bs = some (st', r)) : r.length ≤ bs.length := by
   unfold readCompressed at h
   obtain ⟨⟨m, bs1⟩, h1, h⟩ := bind_some h
@@ -1114,7 +1114,7 @@ private theorem readCompressed_le {w mlen : Nat} {st st' : StreamState} {bs r : 
     omega
   · simp at h
 
-private theorem readFill_le {bs r : List Bool} (h : readFill bs = some r) : r.length ≤ bs.length := by
+theorem readFill_le {bs r : List Bool} (h : readFill bs = some r) : r.length ≤ bs.length := by
   unfold readFill at h
   obtain ⟨⟨v, bs1⟩, h1, h⟩ := bind_some h
   dsimp only at h
@@ -1124,7 +1124,7 @@ private theorem readFill_le {bs r : List Bool} (h : readFill bs = some r) : r.le
     exact readInt_le h1
   · simp at h
 
-private theorem readMetadata_le {bs r : List Bool} (h : readMetadata bs = some r) :
+theorem readMetadata_le {bs r : List Bool} (h : readMetadata bs = some r) :
     r.length ≤ bs.length := by
   unfold readMetadata at h
   obtain ⟨⟨res, bs1⟩, h1, h⟩ := bind_some h
@@ -1150,7 +1150,7 @@ private theorem readMetadata_le {bs r : List Bool} (h : readMetadata bs = some r
     simp only [List.length_drop]
     omega
 
-private theorem readBytes_le : ∀ (n : Nat) (bs : List Bool) (bytes : List Nat) (r : List Bool),
+theorem readBytes_le : ∀ (n : Nat) (bs : List Bool) (bytes : List Nat) (r : List Bool),
     readBytes n bs = some (bytes, r) → r.length ≤ bs.length
   | 0, _, _, _, h => by
     simp only [readBytes, Option.some.injEq, Prod.mk.injEq] at h
@@ -1165,7 +1165,7 @@ private theorem readBytes_le : ∀ (n : Nat) (bs : List Bool) (bytes : List Nat)
     obtain ⟨-, rfl⟩ := h
     exact Nat.le_trans (readBytes_le n bs1 rest _ h2) (readInt_le h1)
 
-private theorem readMetaBlockBody_le {w : Nat} {st st' : StreamState} {islast : Bool}
+theorem readMetaBlockBody_le {w : Nat} {st st' : StreamState} {islast : Bool}
     {bs r : List Bool} (h : readMetaBlockBody w st islast bs = some (st', r)) :
     r.length ≤ bs.length := by
   unfold readMetaBlockBody at h
@@ -1266,7 +1266,7 @@ theorem readMetaBlocks_out (w : Nat) (st : StreamState) (bs : List Bool)
 
 /-! ### Field ranges and widths -/
 
-private theorem wbitsCode_fields :
+theorem wbitsCode_fields :
     ∀ e ∈ wbitsCode, 10 ≤ e.1 ∧ e.1 ≤ 24 ∧ (e.2.1 = 1 ∨ e.2.1 = 4 ∨ e.2.1 = 7) := by
   decide +kernel
 
@@ -1359,7 +1359,7 @@ theorem readCodeLengthCodeLength_width {bs r : List Bool} {v : Nat}
 
 /-! ### What a meta-block produces -/
 
-private theorem copyBytes_output (d : Nat) : ∀ (n : Nat) (o : List Nat),
+theorem copyBytes_output (d : Nat) : ∀ (n : Nat) (o : List Nat),
     ∃ a, copyBytes d n o = a ++ o ∧ a.length = n
   | 0, _ => ⟨[], rfl, rfl⟩
   | n + 1, o => by
@@ -1369,7 +1369,7 @@ private theorem copyBytes_output (d : Nat) : ∀ (n : Nat) (o : List Nat),
     rw [ha]
     simp
 
-private theorem readLiterals_output (h : MetaBlockHeader) : ∀ (n : Nat) (st : BlockState)
+theorem readLiterals_output (h : MetaBlockHeader) : ∀ (n : Nat) (st : BlockState)
     (output : List Nat) (bs : List Bool) (st' : BlockState) (o : List Nat) (r : List Bool),
     readLiterals h n st output bs = some (st', o, r) → ∃ a, o = a ++ output ∧ a.length = n
   | 0, _, _, _, _, _, _, hr => by
@@ -1411,7 +1411,7 @@ theorem copyCommand_cases {w clen dcode d : Nat} {s s' : CommandState}
       have hle := (backwardDistance_iff (w := w) (p := s.produced) (d := d)).mp (by simpa using hd)
       exact Or.inl ⟨hle.1, hle.2, by rw [← h]⟩
 
-private theorem copyCommand_output {w clen dcode d : Nat} {s s' : CommandState}
+theorem copyCommand_output {w clen dcode d : Nat} {s s' : CommandState}
     (h : copyCommand w s clen dcode d = some s') :
     ∃ a, s'.output = a ++ s.output ∧ a.length + s'.remaining = s.remaining ∧
       s'.produced = s.produced + a.length := by
@@ -1437,7 +1437,7 @@ private theorem copyCommand_output {w clen dcode d : Nat} {s s' : CommandState}
       simp only [hl]
       omega
 
-private theorem readCommand_output {w : Nat} {m : MetaBlockHeader} {s s' : CommandState}
+theorem readCommand_output {w : Nat} {m : MetaBlockHeader} {s s' : CommandState}
     {bs r : List Bool} (h : readCommand w m s bs = some (s', r)) :
     ∃ a, s'.output = a ++ s.output ∧ a.length + s'.remaining = s.remaining ∧
       s'.produced = s.produced + a.length := by
@@ -1507,7 +1507,7 @@ theorem readCompressed_output {w mlen : Nat} {st st' : StreamState} {bs r : List
     exact ⟨hp, a, ha, hl⟩
   · simp at h
 
-private theorem readBytes_length : ∀ (n : Nat) (bs : List Bool) (bytes : List Nat) (r : List Bool),
+theorem readBytes_length : ∀ (n : Nat) (bs : List Bool) (bytes : List Nat) (r : List Bool),
     readBytes n bs = some (bytes, r) → bytes.length = n
   | 0, _, _, _, h => by
     simp only [readBytes, Option.some.injEq, Prod.mk.injEq] at h
@@ -1749,7 +1749,7 @@ theorem readCommand_literals_reach {w ilen clen c : Nat} {m : MetaBlockHeader} {
   rw [ite_eq_left (by omega)]
   simp [hreach]
 
-private theorem readMetaBlockBody_output {w : Nat} {st st' : StreamState} {islast : Bool}
+theorem readMetaBlockBody_output {w : Nat} {st st' : StreamState} {islast : Bool}
     {bs r : List Bool} (h : readMetaBlockBody w st islast bs = some (st', r)) :
     ∃ a, st'.output = a ++ st.output ∧ a.length ≤ 16777216 ∧ st'.produced = st.produced + a.length := by
   unfold readMetaBlockBody at h
@@ -1919,7 +1919,7 @@ def BlockCategory.Wf (c : BlockCategory) : Prop :=
 def BlockState.Wf (c : BlockCategory) (st : BlockState) : Prop :=
   (2 ≤ c.n → st.types.prev < c.n) ∧ st.types.cur < c.n ∧ ∀ t ∈ st.seen, t < c.n
 
-private theorem readBlockCategory_wf {bs r : List Bool} {c : BlockCategory}
+theorem readBlockCategory_wf {bs r : List Bool} {c : BlockCategory}
     (h : readBlockCategory bs = some (c, r)) : c.Wf := by
   unfold readBlockCategory at h
   obtain ⟨⟨n, bs1⟩, h1, h⟩ := bind_some h
@@ -1938,7 +1938,7 @@ private theorem readBlockCategory_wf {bs r : List Bool} {c : BlockCategory}
   obtain ⟨rfl, -⟩ := h
   exact ⟨hr.1, hr.2, fun _ => readPrefixCode_symbols h2⟩
 
-private theorem readMetaBlockHeader_wf {bs r : List Bool} {m : MetaBlockHeader}
+theorem readMetaBlockHeader_wf {bs r : List Bool} {m : MetaBlockHeader}
     (h : readMetaBlockHeader bs = some (m, r)) : m.literal.Wf ∧ m.insertCopy.Wf ∧ m.distance.Wf := by
   unfold readMetaBlockHeader at h
   obtain ⟨⟨c1, bs1⟩, h1, h⟩ := bind_some h
@@ -1966,7 +1966,7 @@ private theorem readMetaBlockHeader_wf {bs r : List Bool} {m : MetaBlockHeader}
   obtain ⟨rfl, -⟩ := h
   exact ⟨readBlockCategory_wf h1, readBlockCategory_wf h2, readBlockCategory_wf h3⟩
 
-private theorem BlockState.initial_wf {c : BlockCategory} (hc : c.Wf) : (BlockState.initial c).Wf c := by
+theorem BlockState.initial_wf {c : BlockCategory} (hc : c.Wf) : (BlockState.initial c).Wf c := by
   refine ⟨fun h2 => ?_, ?_, ?_⟩
   · simp only [BlockState.initial, initialBlockTypes]
     omega
@@ -1977,7 +1977,7 @@ private theorem BlockState.initial_wf {c : BlockCategory} (hc : c.Wf) : (BlockSt
     have := hc.1
     omega
 
-private theorem nextElement_wf {c : BlockCategory} {st st' : BlockState} {bs r : List Bool}
+theorem nextElement_wf {c : BlockCategory} {st st' : BlockState} {bs r : List Bool}
     (hc : c.Wf) (hs : st.Wf c) (h : nextElement c st bs = some (st', r)) : st'.Wf c := by
   unfold nextElement at h
   split at h
@@ -2008,7 +2008,7 @@ private theorem nextElement_wf {c : BlockCategory} {st st' : BlockState} {bs r :
     obtain ⟨rfl, -⟩ := h
     exact hs
 
-private theorem readLiterals_wf (m : MetaBlockHeader) (hc : m.literal.Wf) : ∀ (n : Nat) (st : BlockState)
+theorem readLiterals_wf (m : MetaBlockHeader) (hc : m.literal.Wf) : ∀ (n : Nat) (st : BlockState)
     (output : List Nat) (bs : List Bool) (st' : BlockState) (o : List Nat) (r : List Bool),
     st.Wf m.literal → readLiterals m n st output bs = some (st', o, r) → st'.Wf m.literal
   | 0, _, _, _, _, _, _, hs, hr => by
@@ -2026,7 +2026,7 @@ private theorem readLiterals_wf (m : MetaBlockHeader) (hc : m.literal.Wf) : ∀ 
     dsimp only at hr
     exact readLiterals_wf m hc n _ _ bs2 st' o r (nextElement_wf hc hs h1) hr
 
-private theorem readCommandDistance_wf {m : MetaBlockHeader} {st : BlockState} {d : Distances}
+theorem readCommandDistance_wf {m : MetaBlockHeader} {st : BlockState} {d : Distances}
     {c clen : Nat} {bs r : List Bool} {v : BlockState × Nat × Nat} (hc : m.distance.Wf)
     (hs : st.Wf m.distance) (h : readCommandDistance m st d c clen bs = some (v, r)) :
     v.1.Wf m.distance := by
@@ -2045,7 +2045,7 @@ private theorem readCommandDistance_wf {m : MetaBlockHeader} {st : BlockState} {
     rw [← h.1]
     exact nextElement_wf hc hs h1
 
-private theorem copyCommand_blocks {w clen dcode d : Nat} {s s' : CommandState}
+theorem copyCommand_blocks {w clen dcode d : Nat} {s s' : CommandState}
     (h : copyCommand w s clen dcode d = some s') :
     s'.insertCopy = s.insertCopy ∧ s'.literal = s.literal ∧ s'.distance = s.distance := by
   unfold copyCommand at h
@@ -2063,7 +2063,7 @@ private theorem copyCommand_blocks {w clen dcode d : Nat} {s s' : CommandState}
       rw [← h]
       exact ⟨rfl, rfl, rfl⟩
 
-private theorem readCommand_wf {w : Nat} {m : MetaBlockHeader} {s s' : CommandState} {bs r : List Bool}
+theorem readCommand_wf {w : Nat} {m : MetaBlockHeader} {s s' : CommandState} {bs r : List Bool}
     (hm : m.literal.Wf ∧ m.insertCopy.Wf ∧ m.distance.Wf)
     (hs : s.literal.Wf m.literal ∧ s.insertCopy.Wf m.insertCopy ∧ s.distance.Wf m.distance)
     (h : readCommand w m s bs = some (s', r)) :
@@ -2094,7 +2094,7 @@ private theorem readCommand_wf {w : Nat} {m : MetaBlockHeader} {s s' : CommandSt
     rw [e1, e2, e3]
     exact ⟨wL, wI, wD⟩
 
-private theorem readCommands_wf (w : Nat) (m : MetaBlockHeader)
+theorem readCommands_wf (w : Nat) (m : MetaBlockHeader)
     (hm : m.literal.Wf ∧ m.insertCopy.Wf ∧ m.distance.Wf) : ∀ (fuel : Nat) (s s' : CommandState)
     (bs r : List Bool),
     (s.literal.Wf m.literal ∧ s.insertCopy.Wf m.insertCopy ∧ s.distance.Wf m.distance) →
@@ -2188,7 +2188,7 @@ theorem readCompressed_blockTypes {w mlen : Nat} {st st' : StreamState} {bs r : 
 
 /-! ### More input changes nothing -/
 
-private theorem readInt_ext : ∀ (n : Nat) (p q : List Bool) (v : Nat) (r : List Bool),
+theorem readInt_ext: ∀ (n : Nat) (p q : List Bool) (v : Nat) (r : List Bool),
     readInt n p = some (v, r) → readInt n (p ++ q) = some (v, r ++ q)
   | 0, p, q, v, r, h => by
     simp only [readInt, Option.some.injEq, Prod.mk.injEq] at h ⊢
@@ -2204,7 +2204,7 @@ private theorem readInt_ext : ∀ (n : Nat) (p q : List Bool) (v : Nat) (r : Lis
       obtain ⟨rfl, rfl⟩ := h
       simp [List.cons_append, readInt, readInt_ext n p q u r' hr]
 
-private theorem readInt_none : ∀ (n : Nat) (p : List Bool), readInt n p = none → p.length < n
+theorem readInt_none : ∀ (n : Nat) (p : List Bool), readInt n p = none → p.length < n
   | 0, _, h => by simp [readInt] at h
   | _ + 1, [], _ => by simp
   | n + 1, _ :: p, h => by
@@ -2216,7 +2216,7 @@ private theorem readInt_none : ∀ (n : Nat) (p : List Bool), readInt n p = none
       omega
     | some x => simp [hr] at h
 
-private theorem mod_step {x P : Nat} (u : Nat) (hx : x < 2) (hP : 0 < P) :
+theorem mod_step {x P : Nat} (u : Nat) (hx : x < 2) (hP : 0 < P) :
     (x + 2 * u) % (2 * P) = x + 2 * (u % P) := by
   have e : x + 2 * u = (x + 2 * (u % P)) + (2 * P) * (u / P) := by
     have := Nat.div_add_mod u P
@@ -2226,7 +2226,7 @@ private theorem mod_step {x P : Nat} (u : Nat) (hx : x < 2) (hP : 0 < P) :
   have := Nat.mod_lt u hP
   omega
 
-private theorem readInt_mod : ∀ (m n : Nat) (bs : List Bool) (v u : Nat) (r r' : List Bool), m ≤ n →
+theorem readInt_mod : ∀ (m n : Nat) (bs : List Bool) (v u : Nat) (r r' : List Bool), m ≤ n →
     readInt n bs = some (v, r) → readInt m bs = some (u, r') → v % 2 ^ m = u
   | 0, _, _, v, u, _, _, _, _, h2 => by
     simp only [readInt, Option.some.injEq, Prod.mk.injEq] at h2
@@ -2252,13 +2252,13 @@ private theorem readInt_mod : ∀ (m n : Nat) (bs : List Bool) (v u : Nat) (r r'
         rw [Nat.pow_succ', mod_step v' hb (Nat.two_pow_pos m), ih]
 
 /-- One row of a variable-length code's table, tried on the bits. -/
-private def tableStep (bs : List Bool) : Nat × Nat × Nat → Option (Nat × List Bool) :=
+def tableStep (bs : List Bool) : Nat × Nat × Nat → Option (Nat × List Bool) :=
   fun (sym, n, printed) =>
     match readInt n bs with
     | some (v, rest) => if v = printed then some (sym, rest) else none
     | none => none
 
-private theorem tableStep_ext {p : List Bool} (q : List Bool) {f : Nat × Nat × Nat} {a : Nat}
+theorem tableStep_ext{p : List Bool} (q : List Bool) {f : Nat × Nat × Nat} {a : Nat}
     {r : List Bool} (h : tableStep p f = some (a, r)) : tableStep (p ++ q) f = some (a, r ++ q) := by
   obtain ⟨s, n, pr⟩ := f
   simp only [tableStep] at h ⊢
@@ -2277,7 +2277,7 @@ private theorem tableStep_ext {p : List Bool} (q : List Bool) {f : Nat × Nat ×
     · simp at h
 
 /-- A table of prefix-free rows gives the same row however much input follows. -/
-private theorem table_ext : ∀ (T : List (Nat × Nat × Nat)),
+theorem table_ext: ∀ (T : List (Nat × Nat × Nat)),
     (∀ e ∈ T, ∀ f ∈ T, e ≠ f → e.2.1 ≤ f.2.1 → f.2.2 % 2 ^ e.2.1 ≠ e.2.2) →
     ∀ (p q : List Bool) (a : Nat) (r : List Bool),
     T.findSome? (tableStep p) = some (a, r) → T.findSome? (tableStep (p ++ q)) = some (a, r ++ q)
@@ -2355,13 +2355,13 @@ theorem readCodeLengthCodeLength_ext {p : List Bool} (q : List Bool) {v : Nat} {
     readCodeLengthCodeLength (p ++ q) = some (v, r ++ q) :=
   table_ext codeLengthCodeLengthCode codeLengthCodeLengthCode_prefixFree p q v r h
 
-private theorem readCode_ext {n : Nat} {p : List Bool} (q : List Bool) {c : Nat} {r : List Bool}
+theorem readCode_ext{n : Nat} {p : List Bool} (q : List Bool) {c : Nat} {r : List Bool}
     (h : readCode n p = some (c, r)) : readCode n (p ++ q) = some (c, r ++ q) := by
   obtain ⟨u, rfl, hu⟩ := readCode_split n p c r h
   rw [List.append_assoc]
   exact readCode_append n u c (r ++ q) hu
 
-private theorem decodeLengths_ext (lens : List Nat) : ∀ (k len : Nat) (p q : List Bool) (s : Nat)
+theorem decodeLengths_ext(lens : List Nat) : ∀ (k len : Nat) (p q : List Bool) (s : Nat)
     (r : List Bool), decodeLengths lens p len k = some (s, r) →
     decodeLengths lens (p ++ q) len k = some (s, r ++ q)
   | 0, _, _, _, _, _, h => by simp [decodeLengths] at h
@@ -2389,7 +2389,7 @@ private theorem decodeLengths_ext (lens : List Nat) : ∀ (k len : Nat) (p q : L
       · rw [ite_eq_right hle] at h ⊢
         exact decodeLengths_ext lens k (len + 1) p q s r h
 
-private theorem decodeSymbol_ext {c : PrefixCode} {p : List Bool} (q : List Bool) {s : Nat}
+theorem decodeSymbol_ext{c : PrefixCode} {p : List Bool} (q : List Bool) {s : Nat}
     {r : List Bool} (h : decodeSymbol c p = some (s, r)) :
     decodeSymbol c (p ++ q) = some (s, r ++ q) := by
   cases c with
@@ -2398,7 +2398,7 @@ private theorem decodeSymbol_ext {c : PrefixCode} {p : List Bool} (q : List Bool
     exact ⟨h.1, by rw [h.2]⟩
   | canonical lens => exact decodeLengths_ext lens 15 1 p q s r h
 
-private theorem readSimpleSymbols_ext (size bits : Nat) : ∀ (n : Nat) (syms : List Nat)
+theorem readSimpleSymbols_ext(size bits : Nat) : ∀ (n : Nat) (syms : List Nat)
     (p q : List Bool) (out : List Nat) (r : List Bool),
     readSimpleSymbols size bits n syms p = some (out, r) →
     readSimpleSymbols size bits n syms (p ++ q) = some (out, r ++ q)
@@ -2416,7 +2416,7 @@ private theorem readSimpleSymbols_ext (size bits : Nat) : ∀ (n : Nat) (syms : 
       rw [ite_eq_right hc]
       exact readSimpleSymbols_ext size bits n _ bs1 q out r h
 
-private theorem readSimple_ext {size : Nat} {p : List Bool} (q : List Bool) {c : PrefixCode}
+theorem readSimple_ext{size : Nat} {p : List Bool} (q : List Bool) {c : PrefixCode}
     {r : List Bool} (h : readSimple size p = some (c, r)) :
     readSimple size (p ++ q) = some (c, r ++ q) := by
   unfold readSimple at h ⊢
@@ -2453,7 +2453,7 @@ private theorem readSimple_ext {size : Nat} {p : List Bool} (q : List Bool) {c :
       exact ⟨h.1, by rw [h.2]⟩
   | _ :: _ :: _ :: _ :: _ :: _, h => simp at h
 
-private theorem readCodeLengthCodeLengths_ext : ∀ (order : List Nat) (acc : List (Nat × Nat))
+theorem readCodeLengthCodeLengths_ext: ∀ (order : List Nat) (acc : List (Nat × Nat))
     (sum : Nat) (p q : List Bool) (pairs : List (Nat × Nat)) (r : List Bool),
     readCodeLengthCodeLengths order acc sum p = some (pairs, r) →
     readCodeLengthCodeLengths order acc sum (p ++ q) = some (pairs, r ++ q)
@@ -2491,7 +2491,7 @@ private theorem readCodeLengthCodeLengths_ext : ∀ (order : List Nat) (acc : Li
           rw [ite_eq_right hl]
           exact readCodeLengthCodeLengths_ext order _ _ bs1 q pairs r h
 
-private theorem readSymbolLengths_ext (size : Nat) (clc : PrefixCode) : ∀ (fuel : Nat)
+theorem readSymbolLengths_ext(size : Nat) (clc : PrefixCode) : ∀ (fuel : Nat)
     (st : LengthState) (p q : List Bool) (lens : List Nat) (r : List Bool),
     readSymbolLengths size clc fuel st p = some (lens, r) →
     readSymbolLengths size clc fuel st (p ++ q) = some (lens, r ++ q)
@@ -2525,7 +2525,7 @@ private theorem readSymbolLengths_ext (size : Nat) (clc : PrefixCode) : ∀ (fue
             rw [ite_eq_right h4]
             exact readSymbolLengths_ext size clc f _ bs2 q lens r h
 
-private theorem readPrefixCode_ext {size : Nat} {p : List Bool} (q : List Bool) {c : PrefixCode}
+theorem readPrefixCode_ext{size : Nat} {p : List Bool} (q : List Bool) {c : PrefixCode}
     {r : List Bool} (h : readPrefixCode size p = some (c, r)) :
     readPrefixCode size (p ++ q) = some (c, r ++ q) := by
   unfold readPrefixCode at h ⊢
@@ -2548,7 +2548,7 @@ private theorem readPrefixCode_ext {size : Nat} {p : List Bool} (q : List Bool) 
     simp only [Option.some.injEq, Prod.mk.injEq] at h ⊢
     exact ⟨h.1, by rw [h.2]⟩
 
-private theorem readContextModes_ext : ∀ (n : Nat) (p q : List Bool) (modes : List Nat) (r : List Bool),
+theorem readContextModes_ext: ∀ (n : Nat) (p q : List Bool) (modes : List Nat) (r : List Bool),
     readContextModes n p = some (modes, r) → readContextModes n (p ++ q) = some (modes, r ++ q)
   | 0, _, _, _, _, h => by
     simp only [readContextModes, Option.some.injEq, Prod.mk.injEq] at h ⊢
@@ -2564,7 +2564,7 @@ private theorem readContextModes_ext : ∀ (n : Nat) (p q : List Bool) (modes : 
     simp only [Option.some.injEq, Prod.mk.injEq] at h ⊢
     exact ⟨h.1, by rw [h.2]⟩
 
-private theorem readContextMapValues_ext (rlemax : Nat) (code : PrefixCode) : ∀ (fuel left : Nat)
+theorem readContextMapValues_ext(rlemax : Nat) (code : PrefixCode) : ∀ (fuel left : Nat)
     (p q : List Bool) (vals : List Nat) (r : List Bool),
     readContextMapValues rlemax code fuel left p = some (vals, r) →
     readContextMapValues rlemax code fuel left (p ++ q) = some (vals, r ++ q)
@@ -2610,7 +2610,7 @@ private theorem readContextMapValues_ext (rlemax : Nat) (code : PrefixCode) : �
           simp only [Option.some.injEq, Prod.mk.injEq] at h ⊢
           exact ⟨h.1, by rw [h.2]⟩
 
-private theorem readRLEMAX_ext {p : List Bool} (q : List Bool) {v : Nat} {r : List Bool}
+theorem readRLEMAX_ext{p : List Bool} (q : List Bool) {v : Nat} {r : List Bool}
     (h : readRLEMAX p = some (v, r)) : readRLEMAX (p ++ q) = some (v, r ++ q) := by
   unfold readRLEMAX at h ⊢
   obtain ⟨⟨flag, bs1⟩, h1, h⟩ := bind_some h
@@ -2629,7 +2629,7 @@ private theorem readRLEMAX_ext {p : List Bool} (q : List Bool) {v : Nat} {r : Li
     simp only [Option.some.injEq, Prod.mk.injEq] at h ⊢
     exact ⟨h.1, by rw [h.2]⟩
 
-private theorem readContextMap_ext {size ntrees : Nat} {p : List Bool} (q : List Bool)
+theorem readContextMap_ext{size ntrees : Nat} {p : List Bool} (q : List Bool)
     {cmap : List Nat} {r : List Bool} (h : readContextMap size ntrees p = some (cmap, r)) :
     readContextMap size ntrees (p ++ q) = some (cmap, r ++ q) := by
   unfold readContextMap at h ⊢
@@ -2653,7 +2653,7 @@ private theorem readContextMap_ext {size ntrees : Nat} {p : List Bool} (q : List
     exact ⟨h.1, by rw [h.2]⟩
   · simp at h
 
-private theorem readVarLen_ext {p : List Bool} (q : List Bool) {v : Nat} {r : List Bool}
+theorem readVarLen_ext{p : List Bool} (q : List Bool) {v : Nat} {r : List Bool}
     (h : readVarLen p = some (v, r)) : readVarLen (p ++ q) = some (v, r ++ q) := by
   unfold readVarLen at h ⊢
   obtain ⟨⟨first, bs1⟩, h1, h⟩ := bind_some h
@@ -2682,7 +2682,7 @@ private theorem readVarLen_ext {p : List Bool} (q : List Bool) {v : Nat} {r : Li
       simp only [Option.some.injEq, Prod.mk.injEq] at h ⊢
       exact ⟨h.1, by rw [h.2]⟩
 
-private theorem readBlockCount_ext {code : PrefixCode} {p : List Bool} (q : List Bool) {v : Nat}
+theorem readBlockCount_ext{code : PrefixCode} {p : List Bool} (q : List Bool) {v : Nat}
     {r : List Bool} (h : readBlockCount code p = some (v, r)) :
     readBlockCount code (p ++ q) = some (v, r ++ q) := by
   unfold readBlockCount at h ⊢
@@ -2698,7 +2698,7 @@ private theorem readBlockCount_ext {code : PrefixCode} {p : List Bool} (q : List
   simp only [Option.some.injEq, Prod.mk.injEq] at h ⊢
   exact ⟨h.1, by rw [h.2]⟩
 
-private theorem readBlockType_ext {n : Nat} {code : PrefixCode} {bt bt' : BlockTypes} {p : List Bool}
+theorem readBlockType_ext{n : Nat} {code : PrefixCode} {bt bt' : BlockTypes} {p : List Bool}
     (q : List Bool) {r : List Bool} (h : readBlockType n code bt p = some (bt', r)) :
     readBlockType n code bt (p ++ q) = some (bt', r ++ q) := by
   unfold readBlockType at h ⊢
@@ -2712,7 +2712,7 @@ private theorem readBlockType_ext {n : Nat} {code : PrefixCode} {bt bt' : BlockT
     simp only [Option.some.injEq, Prod.mk.injEq] at h ⊢
     exact ⟨h.1, by rw [h.2]⟩
 
-private theorem readBlockCategory_ext {p : List Bool} (q : List Bool) {c : BlockCategory}
+theorem readBlockCategory_ext{p : List Bool} (q : List Bool) {c : BlockCategory}
     {r : List Bool} (h : readBlockCategory p = some (c, r)) :
     readBlockCategory (p ++ q) = some (c, r ++ q) := by
   unfold readBlockCategory at h ⊢
@@ -2738,7 +2738,7 @@ private theorem readBlockCategory_ext {p : List Bool} (q : List Bool) {c : Block
     simp only [Option.some.injEq, Prod.mk.injEq] at h ⊢
     exact ⟨h.1, by rw [h.2]⟩
 
-private theorem readTreesAndMap_ext {size : Nat} {p : List Bool} (q : List Bool) {v : Nat × List Nat}
+theorem readTreesAndMap_ext{size : Nat} {p : List Bool} (q : List Bool) {v : Nat × List Nat}
     {r : List Bool} (h : readTreesAndMap size p = some (v, r)) :
     readTreesAndMap size (p ++ q) = some (v, r ++ q) := by
   unfold readTreesAndMap at h ⊢
@@ -2758,7 +2758,7 @@ private theorem readTreesAndMap_ext {size : Nat} {p : List Bool} (q : List Bool)
     simp only [Option.some.injEq, Prod.mk.injEq] at h ⊢
     exact ⟨h.1, by rw [h.2]⟩
 
-private theorem readPrefixCodes_ext (size : Nat) : ∀ (n : Nat) (p q : List Bool)
+theorem readPrefixCodes_ext(size : Nat) : ∀ (n : Nat) (p q : List Bool)
     (codes : List PrefixCode) (r : List Bool),
     readPrefixCodes size n p = some (codes, r) → readPrefixCodes size n (p ++ q) = some (codes, r ++ q)
   | 0, _, _, _, _, h => by
@@ -2775,7 +2775,7 @@ private theorem readPrefixCodes_ext (size : Nat) : ∀ (n : Nat) (p q : List Boo
     simp only [Option.some.injEq, Prod.mk.injEq] at h ⊢
     exact ⟨h.1, by rw [h.2]⟩
 
-private theorem readMetaBlockHeader_ext {p : List Bool} (q : List Bool) {m : MetaBlockHeader}
+theorem readMetaBlockHeader_ext{p : List Bool} (q : List Bool) {m : MetaBlockHeader}
     {r : List Bool} (h : readMetaBlockHeader p = some (m, r)) :
     readMetaBlockHeader (p ++ q) = some (m, r ++ q) := by
   unfold readMetaBlockHeader at h ⊢
@@ -2815,7 +2815,7 @@ private theorem readMetaBlockHeader_ext {p : List Bool} (q : List Bool) {m : Met
   simp only [Option.some.injEq, Prod.mk.injEq] at h ⊢
   exact ⟨h.1, by rw [h.2]⟩
 
-private theorem nextElement_ext {c : BlockCategory} {st st' : BlockState} {p : List Bool}
+theorem nextElement_ext{c : BlockCategory} {st st' : BlockState} {p : List Bool}
     (q : List Bool) {r : List Bool} (h : nextElement c st p = some (st', r)) :
     nextElement c st (p ++ q) = some (st', r ++ q) := by
   unfold nextElement at h ⊢
@@ -2839,7 +2839,7 @@ private theorem nextElement_ext {c : BlockCategory} {st st' : BlockState} {p : L
     simp only [Option.some.injEq, Prod.mk.injEq] at h ⊢
     exact ⟨h.1, by rw [h.2]⟩
 
-private theorem readLiterals_ext (m : MetaBlockHeader) : ∀ (n : Nat) (st : BlockState)
+theorem readLiterals_ext(m : MetaBlockHeader) : ∀ (n : Nat) (st : BlockState)
     (output : List Nat) (p q : List Bool) (st' : BlockState) (o : List Nat) (r : List Bool),
     readLiterals m n st output p = some (st', o, r) →
     readLiterals m n st output (p ++ q) = some (st', o, r ++ q)
@@ -2865,7 +2865,7 @@ private theorem readLiterals_ext (m : MetaBlockHeader) : ∀ (n : Nat) (st : Blo
     dsimp only [bind, Option.bind] at h ⊢
     exact readLiterals_ext m n _ _ bs2 q st' o r h
 
-private theorem readInsertCopy_ext {code : PrefixCode} {p : List Bool} (q : List Bool)
+theorem readInsertCopy_ext{code : PrefixCode} {p : List Bool} (q : List Bool)
     {v : Nat × Nat × Nat} {r : List Bool} (h : readInsertCopy code p = some (v, r)) :
     readInsertCopy code (p ++ q) = some (v, r ++ q) := by
   unfold readInsertCopy at h ⊢
@@ -2890,7 +2890,7 @@ private theorem readInsertCopy_ext {code : PrefixCode} {p : List Bool} (q : List
   simp only [Option.some.injEq, Prod.mk.injEq] at h ⊢
   exact ⟨h.1, by rw [h.2]⟩
 
-private theorem readCommandDistance_ext {m : MetaBlockHeader} {st : BlockState} {d : Distances}
+theorem readCommandDistance_ext{m : MetaBlockHeader} {st : BlockState} {d : Distances}
     {c clen : Nat} {p : List Bool} (q : List Bool) {v : BlockState × Nat × Nat} {r : List Bool}
     (h : readCommandDistance m st d c clen p = some (v, r)) :
     readCommandDistance m st d c clen (p ++ q) = some (v, r ++ q) := by
@@ -2933,7 +2933,7 @@ private theorem readCommandDistance_ext {m : MetaBlockHeader} {st : BlockState} 
     simp only [Option.some.injEq, Prod.mk.injEq] at h ⊢
     exact ⟨h.1, by rw [h.2]⟩
 
-private theorem readCommand_ext {w : Nat} {m : MetaBlockHeader} {s s' : CommandState} {p : List Bool}
+theorem readCommand_ext{w : Nat} {m : MetaBlockHeader} {s s' : CommandState} {p : List Bool}
     (q : List Bool) {r : List Bool} (h : readCommand w m s p = some (s', r)) :
     readCommand w m s (p ++ q) = some (s', r ++ q) := by
   unfold readCommand at h ⊢
@@ -2969,7 +2969,7 @@ private theorem readCommand_ext {w : Nat} {m : MetaBlockHeader} {s s' : CommandS
       simp only [Option.some.injEq, Prod.mk.injEq] at h ⊢
       exact ⟨h.1, by rw [h.2]⟩
 
-private theorem readCommands_ext (w : Nat) (m : MetaBlockHeader) : ∀ (fuel : Nat) (s s' : CommandState)
+theorem readCommands_ext(w : Nat) (m : MetaBlockHeader) : ∀ (fuel : Nat) (s s' : CommandState)
     (p q r : List Bool), readCommands w m fuel s p = some (s', r) →
     readCommands w m fuel s (p ++ q) = some (s', r ++ q)
   | 0, _, _, _, _, _, h => by simp [readCommands, readCommandsWith] at h
@@ -2987,7 +2987,7 @@ private theorem readCommands_ext (w : Nat) (m : MetaBlockHeader) : ∀ (fuel : N
       dsimp only [bind, Option.bind] at h ⊢
       exact readCommands_ext w m f s1 s' bs1 q r h
 
-private theorem readCommands_mono (w : Nat) (m : MetaBlockHeader) : ∀ (f f' : Nat) (s s' : CommandState)
+theorem readCommands_mono (w : Nat) (m : MetaBlockHeader) : ∀ (f f' : Nat) (s s' : CommandState)
     (bs r : List Bool), f ≤ f' → readCommands w m f s bs = some (s', r) →
     readCommands w m f' s bs = some (s', r)
   | 0, _, _, _, _, _, _, h => by simp [readCommands, readCommandsWith] at h
@@ -3010,14 +3010,14 @@ private theorem bind_eq {α β : Type} {x : Option α} {f : α → Option β} {a
   rw [h]
   exact hf
 
-private theorem commandMeasure_append (s : CommandState) (p q : List Bool) :
+theorem commandMeasure_append (s : CommandState) (p q : List Bool) :
     commandMeasure s p ≤ commandMeasure s (p ++ q) := by
   unfold commandMeasure
   apply Nat.add_le_add_right
   apply Nat.mul_le_mul_right
   simp
 
-private theorem readCompressed_ext {w mlen : Nat} {st st' : StreamState} {p : List Bool} (q : List Bool)
+theorem readCompressed_ext{w mlen : Nat} {st st' : StreamState} {p : List Bool} (q : List Bool)
     {r : List Bool} (h : readCompressed w st mlen p = some (st', r)) :
     readCompressed w st mlen (p ++ q) = some (st', r ++ q) := by
   unfold readCompressed at h ⊢
@@ -3038,7 +3038,7 @@ private theorem readCompressed_ext {w mlen : Nat} {st st' : StreamState} {p : Li
     exact ⟨h.1, by rw [h.2]⟩
   · simp at h
 
-private theorem readFill_ext {p q r : List Bool} (hq : q.length % 8 = 0) (h : readFill p = some r) :
+theorem readFill_ext{p q r : List Bool} (hq : q.length % 8 = 0) (h : readFill p = some r) :
     readFill (p ++ q) = some (r ++ q) := by
   unfold readFill at h ⊢
   have hl : (p ++ q).length % 8 = p.length % 8 := by
@@ -3055,7 +3055,7 @@ private theorem readFill_ext {p q r : List Bool} (hq : q.length % 8 = 0) (h : re
     rw [h]
   · simp at h
 
-private theorem readMetadata_ext {p q r : List Bool} (hq : q.length % 8 = 0)
+theorem readMetadata_ext{p q r : List Bool} (hq : q.length % 8 = 0)
     (h : readMetadata p = some r) : readMetadata (p ++ q) = some (r ++ q) := by
   unfold readMetadata at h ⊢
   obtain ⟨⟨res, bs1⟩, h1, h⟩ := bind_some h
@@ -3090,7 +3090,7 @@ private theorem readMetadata_ext {p q r : List Bool} (hq : q.length % 8 = 0)
         rw [← h]
         exact List.drop_append_of_le_length (by omega)
 
-private theorem readBytes_ext : ∀ (n : Nat) (p q : List Bool) (bytes : List Nat) (r : List Bool),
+theorem readBytes_ext: ∀ (n : Nat) (p q : List Bool) (bytes : List Nat) (r : List Bool),
     readBytes n p = some (bytes, r) → readBytes n (p ++ q) = some (bytes, r ++ q)
   | 0, _, _, _, _, h => by
     simp only [readBytes, Option.some.injEq, Prod.mk.injEq] at h ⊢
@@ -3106,7 +3106,7 @@ private theorem readBytes_ext : ∀ (n : Nat) (p q : List Bool) (bytes : List Na
     simp only [Option.some.injEq, Prod.mk.injEq] at h ⊢
     exact ⟨h.1, by rw [h.2]⟩
 
-private theorem readMetaBlockBody_ext {w : Nat} {st st' : StreamState} {islast : Bool}
+theorem readMetaBlockBody_ext{w : Nat} {st st' : StreamState} {islast : Bool}
     {p q r : List Bool} (hq : q.length % 8 = 0) (h : readMetaBlockBody w st islast p = some (st', r)) :
     readMetaBlockBody w st islast (p ++ q) = some (st', r ++ q) := by
   unfold readMetaBlockBody at h ⊢
@@ -3172,7 +3172,7 @@ private theorem readMetaBlockBody_ext {w : Nat} {st st' : StreamState} {islast :
       rw [ite_eq_right hu]
       exact readCompressed_ext q h
 
-private theorem readMetaBlock_ext {w : Nat} {st : StreamState} {v : StreamState × Bool}
+theorem readMetaBlock_ext{w : Nat} {st : StreamState} {v : StreamState × Bool}
     {p q r : List Bool} (hq : q.length % 8 = 0) (h : readMetaBlock w st p = some (v, r)) :
     readMetaBlock w st (p ++ q) = some (v, r ++ q) := by
   unfold readMetaBlock at h ⊢
@@ -3205,7 +3205,7 @@ private theorem readMetaBlock_ext {w : Nat} {st : StreamState} {v : StreamState 
       simp only [Option.some.injEq, Prod.mk.injEq] at h ⊢
       exact ⟨h.1, by rw [h.2]⟩
 
-private theorem readMetaBlocks_ext (w : Nat) : ∀ (fuel : Nat) (st st' : StreamState)
+theorem readMetaBlocks_ext(w : Nat) : ∀ (fuel : Nat) (st st' : StreamState)
     (p q r : List Bool), q.length % 8 = 0 → readMetaBlocks w fuel st p = some (st', r) →
     readMetaBlocks w fuel st (p ++ q) = some (st', r ++ q)
   | 0, _, _, _, _, _, _, h => by simp [readMetaBlocks, readMetaBlocksWith] at h
@@ -3223,7 +3223,7 @@ private theorem readMetaBlocks_ext (w : Nat) : ∀ (fuel : Nat) (st st' : Stream
       rw [ite_eq_right hl]
       exact readMetaBlocks_ext w f st1 st' bs1 q r hq h
 
-private theorem readMetaBlocks_mono (w : Nat) : ∀ (f f' : Nat) (st st' : StreamState) (bs r : List Bool),
+theorem readMetaBlocks_mono (w : Nat) : ∀ (f f' : Nat) (st st' : StreamState) (bs r : List Bool),
     f ≤ f' → readMetaBlocks w f st bs = some (st', r) → readMetaBlocks w f' st bs = some (st', r)
   | 0, _, _, _, _, _, _, h => by simp [readMetaBlocks, readMetaBlocksWith] at h
   | _ + 1, 0, _, _, _, _, hle, _ => by omega
@@ -3240,10 +3240,10 @@ private theorem readMetaBlocks_mono (w : Nat) : ∀ (f f' : Nat) (st st' : Strea
       rw [ite_eq_right hl]
       exact readMetaBlocks_mono w f f' st1 st' bs1 r (by omega) h
 
-private theorem bits_append (x t : List UInt8) : bits (x ++ t) = bits x ++ bits t := by
+theorem bits_append (x t : List UInt8) : bits (x ++ t) = bits x ++ bits t := by
   simp [bits, List.flatMap_append]
 
-private theorem bits_length : ∀ t : List UInt8, (bits t).length = t.length * 8
+theorem bits_length : ∀ t : List UInt8, (bits t).length = t.length * 8
   | [] => by simp [bits]
   | b :: t => by
     have ih := bits_length t

@@ -131,7 +131,7 @@ theorem readCode_split : ∀ (n : Nat) (bs : List Bool) (c : Nat) (r : List Bool
       exact ⟨b :: w, by simp [hw], by simp [readCode, hcw]⟩
 
 /-- Reading `a + b` bits reads `a` bits, then `b` more as the higher part. -/
-private theorem readInt_add (a b : Nat) (s : List Bool) :
+theorem readInt_add (a b : Nat) (s : List Bool) :
     readInt (a + b) s =
       (readInt a s).bind fun (v, r) => (readInt b r).map fun (w, r') => (v + 2 ^ a * w, r') := by
   induction a generalizing s with
@@ -157,7 +157,7 @@ private theorem readInt_add (a b : Nat) (s : List Bool) :
           rw [Nat.pow_succ]
           grind
 
-private theorem readInt_byte (b : UInt8) (s : List Bool) :
+theorem readInt_byte (b : UInt8) (s : List Bool) :
     readInt 8 ((List.range 8).map b.toNat.testBit ++ s) = some (b.toNat, s) := by
   have key : ∀ n < 256,
       (n.testBit 0).toNat + 2 * ((n.testBit 1).toNat + 2 * ((n.testBit 2).toNat +
