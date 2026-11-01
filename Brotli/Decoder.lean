@@ -45,6 +45,7 @@ import Brotli.Decoder.StreamSteps
 import Brotli.Decoder.StreamRun
 import Brotli.Decoder.StreamOut
 import Brotli.Decoder.StreamCall
+import Brotli.Decoder.StreamTop
 
 /-!
 # Decoder
