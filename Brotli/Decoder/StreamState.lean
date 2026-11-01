@@ -159,7 +159,7 @@ def DRel (D : Dec) : SPhase → Prop
   | .skip w st last n => D.tag = .skip ∧ (BitBuffer.mk D.cmd.word D.cmd.count).Wf ∧ WinAll D w st ∧ D.last = last ∧ D.left.toNat = n ∧
     D.cmd.count.toNat % 8 = 0 ∧ n < 2 ^ 32
   | .raw w st last n => D.tag = .raw ∧ (BitBuffer.mk D.cmd.word D.cmd.count).Wf ∧ WinAll D w st ∧ D.last = last ∧ D.left.toNat = n ∧
-    D.cmd.count.toNat % 8 = 0 ∧ n < 2 ^ 32
+    n < 2 ^ 32
   | .hdr w st last mlen g p => D.tag = .hdr ∧ WinAll D w st ∧ D.last = last ∧ D.left.toNat = mlen ∧ 1 ≤ mlen ∧ mlen ≤ 16777216 ∧ HRel D.hd g p
   | .cmds w last m p => D.tag = .cmds ∧ D.last = last ∧ D.limit.toNat + 132096 < 2 ^ 32 ∧ HdrRel D.H m ∧ Rel w D.k.toNat m D.cmd p
   | .ended st => D.tag = .ended ∧ (BitBuffer.mk D.cmd.word D.cmd.count).Wf ∧ ∃ w, WinAll D w st
