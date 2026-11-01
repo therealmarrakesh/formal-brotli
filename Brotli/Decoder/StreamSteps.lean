@@ -240,7 +240,7 @@ theorem hdStart_rel {word count limit : UInt64} (hw : (BitBuffer.mk word count).
   refine ⟨hw, Upto.low (by decide) rfl (Nat.zero_le _) hl (fun i hi => ?_), rfl, rfl⟩
   cases i <;> exact absurd hi (by decide)
 
-private theorem whole_bytes {a : ByteArray} {p stop : Nat} (hs : stop ≤ a.size) (t : List UInt8) : (chunkBits a p stop ++ bits t).length % 8 = 0 := by
+theorem whole_bytes {a : ByteArray} {p stop : Nat} (hs : stop ≤ a.size) (t : List UInt8) : (chunkBits a p stop ++ bits t).length % 8 = 0 := by
   rw [List.length_append, chunkBits_length hs, bits_length]
   omega
 
