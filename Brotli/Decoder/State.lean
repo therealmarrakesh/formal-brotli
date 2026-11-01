@@ -180,6 +180,7 @@ structure Core (w k : Nat) (m : MetaBlockHeader) (st : Cmd) (out : List Nat) (re
   lRel : BlockRel st.seen 0 st.lCur st.lPrev st.lCount lit m.literal
   dRel : BlockRel st.seen 512 st.dCur st.dPrev st.dCount dist m.distance
   seenSize : st.seen.size = 768
+  wordLe : st.wordBuf.size ≤ 38
 
 /-- A state stands for a place in `rest`. -/
 def Rel (w k : Nat) (m : MetaBlockHeader) (st : Cmd) : Phase → Prop

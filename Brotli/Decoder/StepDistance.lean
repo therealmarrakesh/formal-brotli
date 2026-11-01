@@ -71,7 +71,8 @@ private theorem word_cases {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {s : Com
     have hr' : ¬ s.remaining < (wb.data.toList.map UInt8.toNat).length := by omega
     rw [ite_eq_right hr, ite_eq_right hr']
     refine Or.inr ⟨_, rfl, rfl, rfl, rfl, rfl, ⟨?_, rfl, ?_, ?_, ?_, ?_⟩⟩
-    · refine { hC with rem := ?_ }
+    · have hwLe : wb.size ≤ 38 := by omega
+      refine { hC with rem := ?_, wordLe := hwLe }
       show (st.remaining - wb.usize.toUInt64).toNat = _
       rw [u64_sub (by omega), hsizeU]
       show _ = s.remaining - (wb.data.toList.map UInt8.toNat).length

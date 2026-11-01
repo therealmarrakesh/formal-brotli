@@ -161,6 +161,31 @@ private theorem chunk_continuation {x t : List UInt8} {o r k : Nat} (h1 : r + k 
   congr 1
   omega
 
+/-- A run is offered no more than the stream. -/
+theorem Reaches.offered_le {D : Machine σ} {limit : Nat} {x : List UInt8} {R : Run σ} (h : Reaches D limit x R) : R.offered ≤ x.length := by
+  induction h with
+  | start => exact Nat.zero_le _
+  | @call R c hR ha ih =>
+    have := ha.inside
+    simp only [Run.after]
+    omega
+
+/-- After the end signal, a run has been offered the whole stream. -/
+theorem Reaches.offered_ended {D : Machine σ} {limit : Nat} {x : List UInt8} {R : Run σ} (h : Reaches D limit x R) : R.ended = true → R.offered = x.length := by
+  induction h with
+  | start => exact fun e => Bool.noConfusion e
+  | @call R c hR ha ih =>
+    intro he
+    have hin := ha.inside
+    have hle := hR.offered_le
+    simp only [Run.after] at he ⊢
+    by_cases hR2 : R.ended = true
+    · have := ih hR2
+      omega
+    · have hc : c.final = true := by simpa [hR2] using he
+      have := ha.whole hc
+      omega
+
 /-- A run that hasn't signalled the end is also a run on every stream that continues what it was offered. -/
 theorem Reaches.continuation {D : Machine σ} {limit : Nat} {x : List UInt8} {R : Run σ}
     (h : Reaches D limit x R) (he : R.ended = false) {o : Nat} (ho : R.offered ≤ o) (t : List UInt8) :

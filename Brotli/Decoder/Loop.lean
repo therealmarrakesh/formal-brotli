@@ -390,6 +390,20 @@ theorem Rel.window {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {p : Phase} (h :
   | copy => exact ⟨h.1.ring, h.1.pendLe, h.1.pendOut, h.1.k24⟩
   | word => exact ⟨h.1.ring, h.1.pendLe, h.1.pendOut, h.1.k24⟩
 
+/-- What a state's place says of its arrays. -/
+theorem Rel.arrays {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {p : Phase} (h : Rel w k m st p) :
+    st.ring.size = 2 ^ k ∧ k ≤ 24 ∧ st.seen.size ≤ 768 ∧ st.wordBuf.size ≤ 38 := by
+  cases p with
+  | literalSymbol => exact h.elim
+  | command => exact ⟨h.1.ring.size, h.1.k24, Nat.le_of_eq h.1.seenSize, h.1.wordLe⟩
+  | insertCopy => exact ⟨h.1.ring.size, h.1.k24, Nat.le_of_eq h.1.seenSize, h.1.wordLe⟩
+  | copyLength => exact ⟨h.1.ring.size, h.1.k24, Nat.le_of_eq h.1.seenSize, h.1.wordLe⟩
+  | literals => exact ⟨h.1.ring.size, h.1.k24, Nat.le_of_eq h.1.seenSize, h.1.wordLe⟩
+  | distance => exact ⟨h.1.ring.size, h.1.k24, Nat.le_of_eq h.1.seenSize, h.1.wordLe⟩
+  | distanceSymbol => exact ⟨h.1.ring.size, h.1.k24, Nat.le_of_eq h.1.seenSize, h.1.wordLe⟩
+  | copy => exact ⟨h.1.ring.size, h.1.k24, Nat.le_of_eq h.1.seenSize, h.1.wordLe⟩
+  | word => exact ⟨h.1.ring.size, h.1.k24, Nat.le_of_eq h.1.seenSize, h.1.wordLe⟩
+
 /-- Flushing keeps the state's place, adds the next bytes waiting to the buffer, oldest first, and takes them off those
 waiting. It adds at least one byte when one is waiting and there is space. -/
 theorem flushCmd_spec {k : USize} {st : Cmd} {out : List Nat} {buf : ByteArray} {space : USize}

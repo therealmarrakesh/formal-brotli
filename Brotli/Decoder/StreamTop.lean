@@ -1,10 +1,10 @@
-import Brotli.Decoder.StreamCall
+import Brotli.Decoder.StreamMem
 
 /-!
 # The decoder
 
-The streaming decoder as a `Machine`, and the invariant over every run that ties it to `decode`. Goal 1 and the truthful part
-of goal 4 follow from it.
+The streaming decoder as a `Machine`, and the invariants over every run that tie it to `decode` and to what the stream demands.
+The four goals follow from them.
 -/
 
 namespace Brotli.Decoder
@@ -13,9 +13,6 @@ open Brotli.Spec Brotli.Properties
 
 /-- The decoder's state between calls. -/
 abbrev DState := { D : Dec // ∃ p, DRel D p }
-
-/-- What the state costs apart from its window and its tables: the buffers a header's reading needs, and the fields. -/
-def fixedCost : Nat := 1048576
 
 /-- A state at a stream's start, with what the limit leaves for the window and the tables. -/
 def liveD (limit : Nat) : Dec := { deadD with limit := UInt64.ofNat (min (limit - fixedCost) 4294835199) }
@@ -524,5 +521,177 @@ theorem decoder_terminates : Terminates decoder := by
   | false =>
     obtain ⟨p, hrel, _⟩ := (top_inv hR).running hs
     exact key _ R p hR hrel (hpend hR).1 (hpend hR).2 rfl
+
+/-! ### Goal 3 -/
+
+/-- What the limit leaves for the window and the tables. -/
+def roomOf (limit : Nat) : Nat := min (limit - fixedCost) 4294835199
+
+/-- What every run of the decoder holds, for its stream. -/
+structure MemTop (limit : Nat) (x : List UInt8) (R : Run DState) : Prop where
+  running : R.status.stopped = false → fixedCost ≤ limit ∧
+    MemD (winSem.first (bits x)) ((demandSem.first (bits x)).getD 0) (roomOf limit) R.state.val (R.state.val.held ++ bits (x.drop R.read))
+  stopped : R.status.stopped = true → R.state.val = deadD
+  why : R.status = .memoryLimit → limit < demand x
+  fine : R.status ≠ .memoryLimit → fixedCost ≤ limit
+
+/-- A state with no window and no tables holds no more than the fixed cost. -/
+private theorem holds_small {D : Dec} (c1 : D.cmd.ring.size = 0) (c2 : D.cmd.seen.size = 0) (c3 : D.cmd.wordBuf.size = 0) (h1 : D.hd.d.arena.size = 0)
+    (h2 : D.H.arena.size = 0) (s : HSize D.hd) (s2 : HSmall D.H) : D.holds ≤ fixedCost := by
+  obtain ⟨a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11⟩ := s
+  obtain ⟨b1, b2, b3, b4, b5, b6⟩ := s2
+  unfold Dec.holds Hd.holds Done.holds Hdr.holds fixedCost fieldBytes
+  omega
+
+/-- A state with nothing in it holds no more than the fixed cost. -/
+theorem deadD_holds : deadD.holds ≤ fixedCost :=
+  holds_small rfl rfl rfl rfl rfl hsize_none hsmall_none
+
+/-- A state at a stream's start. -/
+theorem liveD_mem (limit : Nat) (x : List UInt8) :
+    MemD (winSem.first (bits x)) ((demandSem.first (bits x)).getD 0) (roomOf limit) (liveD limit) (bits x) := by
+  refine ⟨⟨.wbits, liveD_rel limit, Nat.le_refl _⟩, fun e => DTag.noConfusion e, fun e => DTag.noConfusion e, fun e => DTag.noConfusion e, fun _ => rfl, fun _ => rfl,
+    hsize_none, hsmall_none, Or.inl ⟨rfl, rfl, rfl, rfl, ?_, rfl⟩⟩
+  show (UInt64.ofNat (min (limit - fixedCost) 4294835199)).toNat = _
+  rw [u64_ofNat (by omega)]
+  rfl
+
+/-- The reply to a call the caller may make, for what a state holds. -/
+private theorem reply_mem {Ws : Option Nat} {X L : Nat} {x : List UInt8} {R : Run DState} {c : Call} (ha : R.Allowed x c)
+    (M : MemD Ws X L R.state.val (R.state.val.held ++ bits (x.drop R.read))) :
+    ∃ o : Out, (R.reply decoder x c).state.val = o.D ∧ (R.reply decoder x c).used = o.pos.toNat - c.pre.length ∧ (R.reply decoder x c).status = o.status ∧
+      o.pos.toNat ≤ c.pre.length + c.size ∧ c.pre.length ≤ o.pos.toNat ∧
+      CallMem Ws X L (R.input x c) (USize.ofNat (c.pre.length + c.size)) (x.drop (R.read + c.size)) o := by
+  have hin := ha.inside
+  have hfit := ha.fits
+  have hg : c.pre.length + c.size ≤ (R.input x c).size ∧ c.pre.length ≤ c.pre.length + c.size ∧ c.pre.length + c.size < USize.size :=
+    ⟨by rw [input_size hin]; omega, by omega, by omega⟩
+  have hs : (USize.ofNat (c.pre.length + c.size)).toNat ≤ (R.input x c).size := by
+    rw [usize_of hg.2.2]
+    exact hg.1
+  have hinv := atPos_inv (start := c.pre.length) R.state hg.2.1 hg.2.2
+  obtain ⟨p, hrel, hw⟩ := M.place
+  have hok := callD_ok (hs := hs) (final := c.final) c.space _ hinv p _ c.buf.toByteArray (atPos_rel hrel _) rfl
+  have hstop : (USize.ofNat (c.pre.length + c.size)).toNat = c.pre.length + c.size := usize_of hg.2.2
+  have hpos0 : (atPos R.state.val c.pre.length).pos.toNat = c.pre.length := usize_of (by omega)
+  have hpos1 : (atPos R.state.val c.pre.length).pos.toNat = c.pre.length + 0 := hpos0
+  have h1 := hok.posLe
+  have h2 := hok.posStop
+  rw [hpos0] at h1
+  rw [hstop] at h2
+  have hb0 : (atPos R.state.val c.pre.length).bits (R.input x c) (atPos R.state.val c.pre.length).pos (USize.ofNat (c.pre.length + c.size)) (bits (x.drop (R.read + c.size))) =
+      R.state.val.held ++ bits (x.drop R.read) := by
+    have := bits_at (R := R) (c := c) hin (atPos R.state.val c.pre.length) hpos1 (Nat.zero_le _) hstop
+    rw [this]
+    rfl
+  have M0 : MemD Ws X L (atPos R.state.val c.pre.length)
+      ((atPos R.state.val c.pre.length).bits (R.input x c) (atPos R.state.val c.pre.length).pos (USize.ofNat (c.pre.length + c.size)) (bits (x.drop (R.read + c.size)))) :=
+    M.move hb0 ⟨p, atPos_rel hrel _, by rw [hb0]; exact hw⟩ rfl rfl rfl rfl rfl rfl rfl rfl
+  refine ⟨callD (R.input x c) (USize.ofNat (c.pre.length + c.size)) hs c.final (atPos R.state.val c.pre.length) hinv c.buf.toByteArray c.space, ?_, ?_, ?_, h2, h1, callD_mem _ _ _ _ M0⟩
+  · unfold Run.reply
+    show (decStep _ _ _ _ _ _ _).state.val = _
+    unfold decStep
+    rw [dite_eq_left hg]
+  · unfold Run.reply
+    show (decStep _ _ _ _ _ _ _).used = _
+    unfold decStep
+    rw [dite_eq_left hg]
+  · unfold Run.reply
+    show (decStep _ _ _ _ _ _ _).status = _
+    unfold decStep
+    rw [dite_eq_left hg]
+
+/-- The limit, from why it was reached. -/
+private theorem limit_why {limit : Nat} {x : List UInt8} (hl : fixedCost ≤ limit) (h : MemWhy (winSem.first (bits x)) ((demandSem.first (bits x)).getD 0) (roomOf limit)) :
+    limit < demand x := by
+  obtain ⟨h1, h2⟩ := h
+  rw [window_eq] at h1
+  unfold demand
+  unfold roomOf at h1 h2
+  omega
+
+/-- Every run of the decoder holds the invariant. -/
+theorem mem_top {limit : Nat} {x : List UInt8} {R : Run DState} (h : Reaches decoder limit x R) : MemTop limit x R := by
+  induction h with
+  | start =>
+    show MemTop limit x { state := (decStart limit).1, status := (decStart limit).2, read := 0, offered := 0, emitted := [], ended := false }
+    by_cases hl : limit < fixedCost
+    · have e : decStart limit = (⟨deadD, _, deadD_rel⟩, .memoryLimit) := by
+        unfold decStart
+        rw [ite_eq_left hl]
+      rw [e]
+      exact ⟨fun hs => Bool.noConfusion hs, fun _ => rfl, fun _ => by unfold demand; omega, fun hs => absurd rfl hs⟩
+    · have e : decStart limit = (⟨liveD limit, _, liveD_rel limit⟩, .needsInput) := by
+        unfold decStart
+        rw [ite_eq_right hl]
+      rw [e]
+      exact ⟨fun _ => ⟨Nat.le_of_not_lt hl, liveD_mem limit x⟩, fun hs => Bool.noConfusion hs, fun hs => Status.noConfusion hs, fun _ => Nat.le_of_not_lt hl⟩
+  | @call R c hR ha ih =>
+    obtain ⟨hlim, M⟩ := ih.running ha.running
+    obtain ⟨o, e1, e2, e4, h1, h2, hC⟩ := reply_mem ha M
+    have hin := ha.inside
+    have hfit := ha.fits
+    have hstop : (USize.ofNat (c.pre.length + c.size)).toNat = c.pre.length + c.size := usize_of (by omega)
+    have hq : o.pos.toNat = c.pre.length + (o.pos.toNat - c.pre.length) := by omega
+    have hbn : o.D.bits (R.input x c) o.pos (USize.ofNat (c.pre.length + c.size)) (bits (x.drop (R.read + c.size))) =
+        o.D.held ++ bits (x.drop (R.read + (o.pos.toNat - c.pre.length))) := bits_at hin o.D hq (by omega) hstop
+    have hstate : (R.after decoder x c).state.val = o.D := e1
+    have hstatus : (R.after decoder x c).status = o.status := e4
+    have hread : (R.after decoder x c).read = R.read + (o.pos.toNat - c.pre.length) := by
+      show R.read + (R.reply decoder x c).used = _
+      rw [e2]
+    refine ⟨fun hs => ⟨hlim, ?_⟩, fun hs => ?_, fun hs => ?_, fun _ => hlim⟩
+    · rw [hstatus] at hs
+      rw [hstate, hread, ← hbn]
+      exact hC.running hs
+    · rw [hstatus] at hs
+      rw [hstate]
+      exact hC.stopped hs
+    · rw [hstatus] at hs
+      exact limit_why hlim (hC.why hs)
+
+/-- The invariant, for the input a run has been offered. -/
+private theorem mem_offered {limit : Nat} {x : List UInt8} {R : Run DState} (h : Reaches decoder limit x R) : MemTop limit (x.take R.offered) R := by
+  cases he : R.ended with
+  | false =>
+    have h' := h.continuation he (Nat.le_refl _) []
+    rw [List.append_nil] at h'
+    exact mem_top h'
+  | true =>
+    rw [h.offered_ended he, List.take_length]
+    exact mem_top h
+
+/-- Goal 3: what the state holds stays within what the stream so far demands, and within the limit unless the limit was reported, which happens only
+when the demand exceeds it. -/
+theorem decoder_streams : Streams decoder (fun s => s.val.holds) demand where
+  within_demand {limit x R} h := by
+    have hT := mem_offered h
+    show R.state.val.holds ≤ _
+    cases hs : R.status.stopped with
+    | true =>
+      rw [hT.stopped hs]
+      have := deadD_holds
+      unfold demand
+      omega
+    | false =>
+      have := (hT.running hs).2.holds_le.1
+      rw [window_eq] at this
+      unfold demand
+      omega
+  within_limit {limit x R} h hn := by
+    have hT := mem_top h
+    show R.state.val.holds ≤ _
+    cases hs : R.status.stopped with
+    | true =>
+      rw [hT.stopped hs]
+      have := deadD_holds
+      have := hT.fine hn
+      omega
+    | false =>
+      obtain ⟨hl, M⟩ := hT.running hs
+      have := M.holds_le.2
+      unfold roomOf at this
+      omega
+  honest_limit h hs := (mem_offered h).why hs
 
 end Brotli.Decoder

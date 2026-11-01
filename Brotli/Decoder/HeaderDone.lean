@@ -381,7 +381,8 @@ def mkHdr (d : Done) : Option Hdr :=
   else none
 
 /-- A header that was read passes the checks, and the header they make matches the spec's. -/
-theorem mkHdr_ok {d : Done} {g : Gh} (hu : Upto d g 10) : ∃ H, mkHdr d = some H ∧ HdrRel H g.m ∧ H.arena = d.arena := by
+theorem mkHdr_ok {d : Done} {g : Gh} (hu : Upto d g 10) : ∃ H, mkHdr d = some H ∧ HdrRel H g.m ∧ H.arena = d.arena ∧ H.litBase = d.litBase ∧ H.lMap = d.lMap ∧
+    H.icBase = d.icBase ∧ H.dBase = d.dBase ∧ H.dMap = d.dMap ∧ H.modes = d.modes := by
   have hL := hu.cat .L (by decide)
   have hI := hu.cat .I (by decide)
   have hD := hu.cat .D (by decide)
@@ -442,7 +443,7 @@ theorem mkHdr_ok {d : Done} {g : Gh} (hu : Upto d g 10) : ∃ H, mkHdr d = some 
     exact ⟨h4, h3⟩
   unfold mkHdr
   rw [dite_eq_left hsizes, dite_eq_left hchecks]
-  refine ⟨_, rfl, ?_, rfl⟩
+  refine ⟨_, rfl, ?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
   exact {
     ok := {
       literal := hL.wf

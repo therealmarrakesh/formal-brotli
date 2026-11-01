@@ -373,7 +373,7 @@ theorem stepDMeta_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {a : 
 def winStart (c : Cmd) (word count need : UInt64) : Cmd :=
   { c with
     word := word, count := count, ring := zeroBytes need.toNat, wpos := 0, pend := 0, written := 0, p1 := 0, p2 := 0
-    d0 := 4, d1 := 11, d2 := 15, d3 := 16 }
+    d0 := 4, d1 := 11, d2 := 15, d3 := 16, seen := ByteArray.empty, wordBuf := ByteArray.empty }
 
 /-- The place at the stream's first bits. -/
 def stepDWbits (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize) : Dec :=
@@ -431,7 +431,9 @@ theorem winStart_win {c : Cmd} {word count need : UInt64} {kv : Nat} (h10 : 10 �
     d1 := rfl
     d2 := rfl
     d3 := rfl
-    dsLt := by decide }
+    dsLt := by decide
+    seenLe := by show ByteArray.empty.size ≤ 768; decide
+    wordLe := by show ByteArray.empty.size ≤ 38; decide }
 
 theorem stepDWbits_ok {α : Type} {S : Sem α} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize}
     (hrel : DRel D .wbits) (hpos : pos.toNat ≤ stop.toNat) : DStepOk S a stop .wbits D pos (stepDWbits a stop hs D pos) := by
@@ -790,7 +792,9 @@ theorem rawFinish_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {last
         d1 := hw.d1
         d2 := hw.d2
         d3 := hw.d3
-        dsLt := hw.dsLt }
+        dsLt := hw.dsLt
+        seenLe := hw.seenLe
+        wordLe := hw.wordLe }
     · show st.produced + moved.length = (moved.reverse ++ st.output).length
       rw [List.length_append, List.length_reverse]
       omega

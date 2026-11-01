@@ -79,7 +79,8 @@ theorem cmdStart_rel {c : Cmd} {d : Done} {g : Gh} {w k : Nat} {st : StreamState
     iRel := blockRel_start hs2 (off := 256) (by decide) hI.count hI.wf
     lRel := blockRel_start hs2 (off := 0) (by decide) hL.count hL.wf
     dRel := blockRel_start hs2 (off := 512) (by decide) hD.count hD.wf
-    seenSize := hs1 }
+    seenSize := hs1
+    wordLe := hwin.wordLe }
 
 /-! ### The check at the end of the commands -/
 
