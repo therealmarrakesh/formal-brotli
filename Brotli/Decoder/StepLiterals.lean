@@ -207,9 +207,13 @@ private theorem literals_after {α : Type} {w : Nat} {k : USize} {m : MetaBlockH
   · obtain ⟨hstop, hnone⟩ := h13 (usize_ne hz)
     refine StepOk.ofInput (by show (if r.left = 0 then _ else _) = _; rw [ite_eq_right hz]) hstop hp hnew (fun F => h12 F) hnone ?_ hoAll
     by_cases hu : run.toNat - r.left.toNat = 0
-    · refine Or.inr (Or.inr ?_)
-      simp only [rankC, hu, h4, Nat.sub_zero]
-    · refine Or.inr (Or.inl (Or.inr ⟨rfl, ?_⟩))
+    · refine Or.inr ⟨?_, ?_⟩
+      · simp only [rankC, hu, h4, Nat.sub_zero]
+      · apply USize.toNat_inj.mp
+        show (st.pend + (run - r.left)).toNat = _
+        rw [pend_after hk (by rw [huN]; omega), huN]
+        omega
+    · refine Or.inl (Or.inr ⟨rfl, ?_⟩)
       simp only [rankC]
       split <;> split <;> omega
 

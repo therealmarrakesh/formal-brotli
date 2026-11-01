@@ -21,7 +21,7 @@ theorem rejectAll_not_correct : ¬ Correct rejectAll := by
   intro h
   let c : Call := ⟨[], [], [], 0, 0, false⟩
   have ha : (Run.initial rejectAll 0).Allowed [6] c :=
-    ⟨rfl, by simp [Run.initial, c], by simp [c], by simp [Run.initial]⟩
+    ⟨rfl, by simp [Run.initial, c], by simp [c], by simp [Run.initial], by simpa [c] using USize.size_pos⟩
   have hd := h.rejected (Reaches.call .start ha) rfl
   have hv : decode [6] = some [] := by decide +kernel
   simp [hv] at hd
@@ -36,7 +36,7 @@ theorem alwaysAsks_not_truthful : ¬ Truthful alwaysAsks := by
   intro h
   let c : Call := ⟨[], [], [], 0, 0, true⟩
   have ha : (Run.initial alwaysAsks 0).Allowed [] c :=
-    ⟨rfl, by simp [Run.initial, c], by simp [Run.initial, c], by simp [c]⟩
+    ⟨rfl, by simp [Run.initial, c], by simp [Run.initial, c], by simp [c], by simpa [c] using USize.size_pos⟩
   have hd := h.needsInput .start ha rfl
   simp [c] at hd
 
@@ -45,14 +45,31 @@ def holdAll : Machine Nat where
   start _ := (0, .needsInput)
   step n _ start stop out _ _ := { state := n + (stop - start), used := stop - start, output := out, status := .needsInput }
 
+/-- A byte at a time, `holdAll` holds as many bytes as it has been given. -/
+private theorem holdAll_runs (L : Nat) : ∀ n, n ≤ L → ∃ R, Reaches holdAll 0 (List.replicate L 0) R ∧ R.state = n ∧ R.read = n ∧ R.status = .needsInput ∧ R.ended = false := by
+  intro n
+  induction n with
+  | zero => exact fun _ => ⟨_, .start, rfl, rfl, rfl, rfl⟩
+  | succ n ih =>
+    intro hn
+    obtain ⟨R, h1, h2, h3, h4, h5⟩ := ih (by omega)
+    let c : Call := ⟨[], [], [], 1, 0, false⟩
+    have ha : R.Allowed (List.replicate L 0) c := by
+      refine ⟨by rw [h4]; rfl, by simp [c, h3]; omega, by simp [c], by simp [h5], ?_⟩
+      have := USize.le_size
+      simp only [c, List.length_nil]
+      omega
+    refine ⟨_, .call h1 ha, ?_, ?_, rfl, ?_⟩
+    · simp [Run.after, Run.reply, holdAll, c, h2]
+    · simp [Run.after, Run.reply, holdAll, c, h3]
+    · simp [Run.after, c, h5]
+
 /-- Goal 3 rules out holding everything back, for every fixed demand. -/
 theorem holdAll_not_streams (K : Nat) : ¬ Streams holdAll id (fun _ => K) := by
   intro h
-  let c : Call := ⟨[], [], [], K + 1, 0, false⟩
-  have ha : (Run.initial holdAll 0).Allowed (List.replicate (K + 1) 0) c :=
-    ⟨rfl, by simp [Run.initial, c], by simp [c], by simp [Run.initial]⟩
-  have hd := h.within_demand (Reaches.call .start ha)
-  simp [Run.after, Run.reply, Run.initial, holdAll, c] at hd
+  obtain ⟨R, h1, h2, _⟩ := holdAll_runs (K + 1) (K + 1) (Nat.le_refl _)
+  have hd := h.within_demand h1
+  simp only [id, h2] at hd
   omega
 
 /-- Reports the memory limit at once. -/

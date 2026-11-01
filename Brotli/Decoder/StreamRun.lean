@@ -139,11 +139,24 @@ structure CDown (R : (Nat × Nat) × (Nat × Nat) → (Nat × Nat) × (Nat × Na
   next : r.status = .next → ∃ p', Rel w k m r p' ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
     ∀ F, R (cMeas w last m p' (stateBits r a r.pos stop F)) (cMeas w last m p (stateBits st a pos stop F))
   needsInput : r.status = .needsInput → ∃ p', Rel w k m r p' ∧
-    ∀ F, Lex4Eq (cMeas w last m p' (stateBits r a r.pos stop F)) (cMeas w last m p (stateBits st a pos stop F))
+    ((∀ F, Lex4 (cMeas w last m p' (stateBits r a r.pos stop F)) (cMeas w last m p (stateBits st a pos stop F))) ∨
+      (r.pend = st.pend ∧ ∀ F, cMeas w last m p' (stateBits r a r.pos stop F) = cMeas w last m p (stateBits st a pos stop F)))
   needsOutput : r.status = .needsOutput → ∃ p', Rel w k m r p' ∧
-    ∀ F, Lex4Eq (cMeas w last m p' (stateBits r a r.pos stop F)) (cMeas w last m p (stateBits st a pos stop F))
+    ((∀ F, Lex4 (cMeas w last m p' (stateBits r a r.pos stop F)) (cMeas w last m p (stateBits st a pos stop F))) ∨
+      (r.pend = st.pend ∧ ∀ F, cMeas w last m p' (stateBits r a r.pos stop F) = cMeas w last m p (stateBits st a pos stop F)))
   done : r.status = .done → ∃ s, Rel w k m r (.command s) ∧ s.remaining = 0 ∧
     ∀ F, Lex4Eq (cMeas w last m (.command s) (stateBits r a r.pos stop F)) (cMeas w last m p (stateBits st a pos stop F))
+
+/-- Moves on, then pauses: the measure is lower than it was. -/
+private theorem pause_after {R : (Nat × Nat) × (Nat × Nat) → (Nat × Nat) × (Nat × Nat) → Prop} {A B C : List Bool → (Nat × Nat) × (Nat × Nat)} {x y : USize}
+    (hR : ∀ {u v w}, R u v → Lex4 v w → Lex4 u w) (h2 : ∀ F, Lex4 (B F) (C F))
+    (h1 : (∀ F, R (A F) (B F)) ∨ (x = y ∧ ∀ F, A F = B F)) :
+    (∀ F, Lex4 (A F) (C F)) := by
+  rcases h1 with h | ⟨_, h⟩
+  · exact fun F => hR (h F) (h2 F)
+  · intro F
+    rw [h F]
+    exact h2 F
 
 /-- Only a command's start has rank zero. -/
 private theorem rank_ne {p : Phase} (hrel : ∀ s, p ≠ .command s) : (rankC p).1 ≠ 0 := by
@@ -167,8 +180,8 @@ theorem stepCmd_down {w : Nat} {k : USize} {last : Bool} {H : Hdr} {m : MetaBloc
       have h := readCommand_cK (w := w) (last := last) (m := m) (s := s) (bs := stateBits st a pos stop F) r4
       rw [readCommand_rest, r5 F] at h
       exact h
-    · obtain ⟨r1, r2⟩ := c2 e
-      exact ⟨.command s, r1, fun F => Or.inr (by rw [r2 F])⟩
+    · obtain ⟨r1, r0, r2⟩ := c2 e
+      exact ⟨.command s, r1, Or.inr ⟨r0, fun F => by rw [r2 F]⟩⟩
     · obtain ⟨r1, r2, r3⟩ := c3 e
       exact ⟨s, r1, r2, fun F => Or.inr (by rw [r3 F])⟩
   · have hne : ∀ s, p ≠ .command s := fun s e => hc ⟨s, e⟩
@@ -181,21 +194,23 @@ theorem stepCmd_down {w : Nat} {k : USize} {last : Bool} {H : Hdr} {m : MetaBloc
       show (rest w m (cK w last m) p' _).getD (0, 0) = (rest w m (cK w last m) p _).getD (0, 0)
       rw [r4]
     · obtain ⟨_, _, p', r1, r2, _, r3, _⟩ := hstep.needsInput e
-      refine ⟨p', r1, fun F => ?_⟩
-      have hv : cVal w last m p' (stateBits r a r.pos stop F) = cVal w last m p (stateBits st a pos stop F) := by
+      have hv : ∀ F, cVal w last m p' (stateBits r a r.pos stop F) = cVal w last m p (stateBits st a pos stop F) := by
+        intro F
         show (rest w m (cK w last m) p' _).getD (0, 0) = (rest w m (cK w last m) p _).getD (0, 0)
         rw [r2]
-      rcases r3.resolve_left hrk with h | h
-      · exact Or.inl (Or.inr ⟨hv, h⟩)
-      · exact Or.inr (Prod.ext hv h)
+      refine ⟨p', r1, ?_⟩
+      rcases r3 with h | ⟨h1, h2⟩
+      · exact Or.inl fun F => Or.inr ⟨hv F, h⟩
+      · exact Or.inr ⟨h2, fun F => Prod.ext (hv F) h1⟩
     · obtain ⟨p', r1, _, _, r2, _, r3, _⟩ := hstep.needsOutput e
-      refine ⟨p', r1, fun F => ?_⟩
-      have hv : cVal w last m p' (stateBits r a r.pos stop F) = cVal w last m p (stateBits st a pos stop F) := by
+      have hv : ∀ F, cVal w last m p' (stateBits r a r.pos stop F) = cVal w last m p (stateBits st a pos stop F) := by
+        intro F
         show (rest w m (cK w last m) p' _).getD (0, 0) = (rest w m (cK w last m) p _).getD (0, 0)
         rw [r2]
-      rcases r3.resolve_left hrk with h | h
-      · exact Or.inl (Or.inr ⟨hv, h⟩)
-      · exact Or.inr (Prod.ext hv h)
+      refine ⟨p', r1, ?_⟩
+      rcases r3 with h | ⟨h1, h2⟩
+      · exact Or.inl fun F => Or.inr ⟨hv F, h⟩
+      · exact Or.inr ⟨h2, fun F => Prod.ext (hv F) h1⟩
     · obtain ⟨s, r1, _, _, r2, r3, _⟩ := hstep.done e
       refine ⟨s, r1, r3, fun F => Or.inl (Or.inr ⟨?_, Or.inl (Nat.pos_of_ne_zero hrk)⟩)⟩
       show (rest w m (cK w last m) (.command s) _).getD (0, 0) = (rest w m (cK w last m) p _).getD (0, 0)
@@ -229,9 +244,11 @@ theorem runCmd_le {w : Nat} {k : USize} {last : Bool} {H : Hdr} {m : MetaBlockHe
       · obtain ⟨p2, b1, b2, b3, b4⟩ := hin.next e
         exact ⟨p2, b1, Nat.le_trans h1 b2, b3, fun F => (b4 F).trans (Or.inl (h3 F))⟩
       · obtain ⟨p2, b1, b2⟩ := hin.needsInput e
-        exact ⟨p2, b1, fun F => (b2 F).trans (Or.inl (h3 F))⟩
+        refine ⟨p2, b1, Or.inl (pause_after (R := Lex4) (x := r2.pend) (y := r.pend) (fun a b => a.trans b) h3 ?_)⟩
+        exact b2
       · obtain ⟨p2, b1, b2⟩ := hin.needsOutput e
-        exact ⟨p2, b1, fun F => (b2 F).trans (Or.inl (h3 F))⟩
+        refine ⟨p2, b1, Or.inl (pause_after (R := Lex4) (x := r2.pend) (y := r.pend) (fun a b => a.trans b) h3 ?_)⟩
+        exact b2
       · obtain ⟨s, b1, b2, b3⟩ := hin.done e
         exact ⟨s, b1, b2, fun F => (b3 F).trans (Or.inl (h3 F))⟩
     | needsInput =>
@@ -262,9 +279,11 @@ theorem runCmd_down {w : Nat} {k : USize} {last : Bool} {H : Hdr} {m : MetaBlock
     · obtain ⟨p2, b1, b2, b3, b4⟩ := hin.next e
       exact ⟨p2, b1, Nat.le_trans h1 b2, b3, fun F => (b4 F).trans_lt (h3 F)⟩
     · obtain ⟨p2, b1, b2⟩ := hin.needsInput e
-      exact ⟨p2, b1, fun F => (b2 F).trans (Or.inl (h3 F))⟩
+      refine ⟨p2, b1, Or.inl (pause_after (R := Lex4) (x := r2.pend) (y := r.pend) (fun a b => a.trans b) h3 ?_)⟩
+      exact b2
     · obtain ⟨p2, b1, b2⟩ := hin.needsOutput e
-      exact ⟨p2, b1, fun F => (b2 F).trans (Or.inl (h3 F))⟩
+      refine ⟨p2, b1, Or.inl (pause_after (R := Lex4) (x := r2.pend) (y := r.pend) (fun a b => a.trans b) h3 ?_)⟩
+      exact b2
     · obtain ⟨s, b1, b2, b3⟩ := hin.done e
       exact ⟨s, b1, b2, fun F => (b3 F).trans (Or.inl (h3 F))⟩
   | needsInput => exact hstep
@@ -387,71 +406,75 @@ private theorem down_next {p p' : SPhase} {bs bs' : List Bool} (hc : ∀ w l m q
       rfl
     | wbits | skip | hdr | cmds => exact hs.elim
 
-/-- A pause in a place leaves its measure no higher. -/
-private theorem down_pause {p p' : SPhase} {bs bs' : List Bool} (hc : ∀ w l m q, p ≠ .cmds w l m q) (hn : ∀ st, p ≠ .ended st)
-    (hs : SDownEq p p') (he : sLeave lenSem p bs = sLeave lenSem p' bs') (hb : ∀ w st, p = .mblock w st → bs' = bs) :
-    MLe (mOf p' bs') (mOf p bs) := by
+/-- A pause in a place leaves its measure lower, or the same with no more bytes waiting. -/
+private theorem down_pause {p p' : SPhase} {same : Prop} {B B' : List UInt8 → List Bool} (hc : ∀ w l m q, p ≠ .cmds w l m q) (hn : ∀ st, p ≠ .ended st)
+    (hs : SDownEq p p' same) (he : ∀ t, sLeave lenSem p (B t) = sLeave lenSem p' (B' t)) (hb : ∀ w st, p = .mblock w st → ∀ t, B' t = B t) :
+    (∀ t, MLt (mOf p' (B' t)) (mOf p (B t))) ∨ (same ∧ ∀ t, mOf p' (B' t) = mOf p (B t)) := by
   cases p with
   | cmds w l m q => exact absurd rfl (hc w l m q)
   | ended st => exact absurd rfl (hn st)
   | wbits =>
     cases p' with
     | wbits =>
-      have he' : lenSem.first bs = lenSem.first bs' := he
-      refine Or.inr ?_
-      show ((lenSem.first bs').getD 0, _) = ((lenSem.first bs).getD 0, _)
+      refine Or.inr ⟨hs, fun t => ?_⟩
+      have he' : lenSem.first (B t) = lenSem.first (B' t) := he t
+      show ((lenSem.first (B' t)).getD 0, _) = ((lenSem.first (B t)).getD 0, _)
       rw [he']
     | mblock | skip | raw | hdr | cmds | ended => exact hs.elim
   | mblock w st =>
-    rw [hb w st rfl]
     cases p' with
-    | mblock => exact Or.inr rfl
+    | mblock => exact Or.inr ⟨hs, fun t => by rw [hb w st rfl t]; rfl⟩
     | wbits | skip | raw | hdr | cmds | ended => exact hs.elim
   | hdr w st l mlen g q =>
     cases p' with
     | hdr w2 st2 l2 mlen2 g2 q2 =>
-      have he' : hrest (hdrK w (lenSem.after w l) st mlen) g q bs = hrest (hdrK w2 (lenSem.after w2 l2) st2 mlen2) g2 q2 bs' := he
-      have hq : q2 = q := hs
+      obtain ⟨hq, hsame⟩ := hs
       subst hq
-      refine Or.inr ?_
-      show ((hrest (hdrK w2 (lenSem.after w2 l2) st2 mlen2) g2 q2 bs').getD 0, _) = ((hrest (hdrK w (lenSem.after w l) st mlen) g q2 bs).getD 0, _)
+      refine Or.inr ⟨hsame, fun t => ?_⟩
+      have he' : hrest (hdrK w (lenSem.after w l) st mlen) g q2 (B t) = hrest (hdrK w2 (lenSem.after w2 l2) st2 mlen2) g2 q2 (B' t) := he t
+      show ((hrest (hdrK w2 (lenSem.after w2 l2) st2 mlen2) g2 q2 (B' t)).getD 0, _) = ((hrest (hdrK w (lenSem.after w l) st mlen) g q2 (B t)).getD 0, _)
       rw [he']
     | wbits | mblock | skip | raw | cmds | ended => exact hs.elim
   | skip w st l n =>
     cases p' with
     | skip w2 st2 l2 n2 =>
-      have he' : skipK (lenSem.after w l) st n bs = skipK (lenSem.after w2 l2) st2 n2 bs' := he
-      have hle : n2 ≤ n := hs
-      have hv : (skipK (lenSem.after w2 l2) st2 n2 bs').getD 0 = (skipK (lenSem.after w l) st n bs).getD 0 := by rw [he']
-      by_cases hne : n2 = n
+      have hv : ∀ t, (skipK (lenSem.after w2 l2) st2 n2 (B' t)).getD 0 = (skipK (lenSem.after w l) st n (B t)).getD 0 := by
+        intro t
+        have he' : skipK (lenSem.after w l) st n (B t) = skipK (lenSem.after w2 l2) st2 n2 (B' t) := he t
+        rw [he']
+      rcases hs with hlt | ⟨hne, hsame⟩
+      · exact Or.inl fun t => Or.inr ⟨hv t, Or.inr ⟨rfl, Or.inl (Or.inl hlt)⟩⟩
       · subst hne
-        refine Or.inr ?_
-        show ((skipK (lenSem.after w2 l2) st2 n2 bs').getD 0, _) = ((skipK (lenSem.after w l) st n2 bs).getD 0, _)
+        refine Or.inr ⟨hsame, fun t => ?_⟩
+        show ((skipK (lenSem.after w2 l2) st2 n2 (B' t)).getD 0, _) = ((skipK (lenSem.after w l) st n2 (B t)).getD 0, _)
         rw [hv]
-      · exact Or.inl (Or.inr ⟨hv, Or.inr ⟨rfl, Or.inl (Or.inl (by show n2 < n; omega))⟩⟩)
     | wbits | mblock | raw | hdr | cmds | ended => exact hs.elim
   | raw w st l n =>
     cases p' with
     | raw w2 st2 l2 n2 =>
-      have he' : rawK (lenSem.after w l) st n bs = rawK (lenSem.after w2 l2) st2 n2 bs' := he
-      have hle : n2 ≤ n := hs
-      have hv : (rawK (lenSem.after w2 l2) st2 n2 bs').getD 0 = (rawK (lenSem.after w l) st n bs).getD 0 := by rw [he']
-      by_cases hne : n2 = n
+      have hv : ∀ t, (rawK (lenSem.after w2 l2) st2 n2 (B' t)).getD 0 = (rawK (lenSem.after w l) st n (B t)).getD 0 := by
+        intro t
+        have he' : rawK (lenSem.after w l) st n (B t) = rawK (lenSem.after w2 l2) st2 n2 (B' t) := he t
+        rw [he']
+      rcases hs with hlt | ⟨hne, hsame⟩
+      · exact Or.inl fun t => Or.inr ⟨hv t, Or.inr ⟨rfl, Or.inl (Or.inl hlt)⟩⟩
       · subst hne
-        refine Or.inr ?_
-        show ((rawK (lenSem.after w2 l2) st2 n2 bs').getD 0, _) = ((rawK (lenSem.after w l) st n2 bs).getD 0, _)
+        refine Or.inr ⟨hsame, fun t => ?_⟩
+        show ((rawK (lenSem.after w2 l2) st2 n2 (B' t)).getD 0, _) = ((rawK (lenSem.after w l) st n2 (B t)).getD 0, _)
         rw [hv]
-      · exact Or.inl (Or.inr ⟨hv, Or.inr ⟨rfl, Or.inl (Or.inl (by show n2 < n; omega))⟩⟩)
     | wbits | mblock | skip | hdr | cmds | ended => exact hs.elim
+
+/-- A pause's measure: lower for every future, or the same for every future with no more bytes waiting. -/
+def MPause (a : ByteArray) (stop : USize) (p p' : SPhase) (D : Dec) (pos : USize) (r : Dec) : Prop :=
+  (∀ t : List UInt8, MLt (mOf p' (r.bits a r.pos stop (bits t))) (mOf p (D.bits a pos stop (bits t)))) ∨
+    (r.cmd.pend = D.cmd.pend ∧ ∀ t : List UInt8, mOf p' (r.bits a r.pos stop (bits t)) = mOf p (D.bits a pos stop (bits t)))
 
 /-- What a stream step does to the measure. -/
 structure DDown (a : ByteArray) (stop : USize) (p : SPhase) (D : Dec) (pos : USize) (r : Dec) : Prop where
   next : r.status = .next → ∃ p', DRel r p' ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
     ∀ t : List UInt8, MLt (mOf p' (r.bits a r.pos stop (bits t))) (mOf p (D.bits a pos stop (bits t)))
-  needsInput : r.status = .needsInput → r.pos = stop ∧ ∃ p', DRel r p' ∧
-    ∀ t : List UInt8, MLe (mOf p' (r.bits a r.pos stop (bits t))) (mOf p (D.bits a pos stop (bits t)))
-  needsOutput : r.status = .needsOutput → ∃ p', DRel r p' ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧ r.cmd.pend.toNat = 2 ^ r.k.toNat ∧
-    ∀ t : List UInt8, MLe (mOf p' (r.bits a r.pos stop (bits t))) (mOf p (D.bits a pos stop (bits t)))
+  needsInput : r.status = .needsInput → r.pos = stop ∧ ∃ p', DRel r p' ∧ MPause a stop p p' D pos r
+  needsOutput : r.status = .needsOutput → ∃ p', DRel r p' ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧ r.cmd.pend.toNat = 2 ^ r.k.toNat ∧ MPause a stop p p' D pos r
 
 /-- Turns the commands' order into the measure's. -/
 private theorem mlt_of_lex {w : Nat} {l : Bool} {m : MetaBlockHeader} {p p' : Phase} {bs bs' : List Bool}
@@ -476,16 +499,13 @@ private theorem mlt_of_lex {w : Nat} {l : Bool} {m : MetaBlockHeader} {p p' : Ph
   simp only [Lex4, LexLt, MLt, Prod.mk.injEq, true_and] at h' ⊢
   omega
 
-private theorem mle_of_lex {w : Nat} {l : Bool} {m : MetaBlockHeader} {p p' : Phase} {bs bs' : List Bool}
-    (h : Lex4Eq (cMeas w l m p' bs') (cMeas w l m p bs)) : MLe (mOf (.cmds w l m p') bs') (mOf (.cmds w l m p) bs) := by
-  rcases h with h | h
-  · exact Or.inl (mlt_of_lex h)
-  · refine Or.inr ?_
-    have h1 : cVal w l m p' bs' = cVal w l m p bs := congrArg Prod.fst h
-    have h2 : rankC p' = rankC p := congrArg Prod.snd h
-    show ((cVal w l m p' bs').1, 2, (((cVal w l m p' bs').2, (rankC p').1), ((rankC p').2, 0))) =
-      ((cVal w l m p bs).1, 2, (((cVal w l m p bs).2, (rankC p).1), ((rankC p).2, 0)))
-    rw [h1, h2]
+private theorem meq_of_eq {w : Nat} {l : Bool} {m : MetaBlockHeader} {p p' : Phase} {bs bs' : List Bool}
+    (h : cMeas w l m p' bs' = cMeas w l m p bs) : mOf (.cmds w l m p') bs' = mOf (.cmds w l m p) bs := by
+  have h1 : cVal w l m p' bs' = cVal w l m p bs := congrArg Prod.fst h
+  have h2 : rankC p' = rankC p := congrArg Prod.snd h
+  show ((cVal w l m p' bs').1, 2, (((cVal w l m p' bs').2, (rankC p').1), ((rankC p').2, 0))) =
+    ((cVal w l m p bs).1, 2, (((cVal w l m p bs).2, (rankC p).1), ((rankC p).2, 0)))
+  rw [h1, h2]
 
 private theorem cmdBudget_ne : cmdBudget ≠ 0 := by
   intro e
@@ -518,13 +538,19 @@ theorem stepDCmds_down {w : Nat} {last : Bool} {m : MetaBlockHeader} {p : Phase}
     rw [hst] at hok
     dsimp only at hok ⊢
     obtain ⟨p', hR', h3⟩ := hstep.needsInput hst
-    exact ⟨fun e => DStatus.noConfusion e, fun _ => ⟨(hok.needsInput rfl).1, .cmds w last' m p', ⟨ht, hl, hlim, hH, hR'⟩, fun t => mle_of_lex (h3 _)⟩, fun e => DStatus.noConfusion e⟩
+    refine ⟨fun e => DStatus.noConfusion e, fun _ => ⟨(hok.needsInput rfl).1, .cmds w last' m p', ⟨ht, hl, hlim, hH, hR'⟩, ?_⟩, fun e => DStatus.noConfusion e⟩
+    rcases h3 with h | ⟨h1, h2⟩
+    · exact Or.inl fun t => mlt_of_lex (h _)
+    · exact Or.inr ⟨h1, fun t => meq_of_eq (h2 _)⟩
   | needsOutput =>
     rw [hst] at hok
     dsimp only at hok ⊢
     obtain ⟨p', hR', h3⟩ := hstep.needsOutput hst
     obtain ⟨_, _, h1, h2, _, h4, _, _, _⟩ := hok.needsOutput rfl
-    exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun _ => ⟨.cmds w last' m p', ⟨ht, hl, hlim, hH, hR'⟩, h1, h2, h4, fun t => mle_of_lex (h3 _)⟩⟩
+    refine ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun _ => ⟨.cmds w last' m p', ⟨ht, hl, hlim, hH, hR'⟩, h1, h2, h4, ?_⟩⟩
+    rcases h3 with h | ⟨h5, h6⟩
+    · exact Or.inl fun t => mlt_of_lex (h _)
+    · exact Or.inr ⟨h5, fun t => meq_of_eq (h6 _)⟩
   | bad =>
     dsimp only
     exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
@@ -590,9 +616,9 @@ theorem stepD_down {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {
     · obtain ⟨p', r1, r2, r3, r4, r5, _⟩ := h.next e
       exact ⟨p', r1, r2, r3, fun t => down_next hc' hn r5 (r4 t)⟩
     · obtain ⟨r1, _, p', r2, r3, _, r4, r5, _⟩ := h.needsInput e
-      exact ⟨r1, p', r2, fun t => down_pause hc' hn r4 (r3 t) (fun w st ep => r5 w st ep t)⟩
+      exact ⟨r1, p', r2, down_pause hc' hn r4 r3 r5⟩
     · obtain ⟨p', r1, r2, r3, r4, r5, r6, r7, _⟩ := h.needsOutput e
-      exact ⟨p', r1, r2, r3, r5, fun t => down_pause hc' hn r6 (r4 t) (fun w st ep => absurd ep (r7 w st))⟩
+      exact ⟨p', r1, r2, r3, r5, down_pause hc' hn r6 r4 (fun w st ep => absurd ep (r7 w st))⟩
 
 /-! ### The order is well founded -/
 

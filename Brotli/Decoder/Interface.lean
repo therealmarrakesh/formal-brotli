@@ -85,12 +85,14 @@ def Run.after (D : Machine σ) (x : List UInt8) (R : Run σ) (c : Call) : Run σ
     ended := R.ended || c.final }
 
 /-- A call the caller may make: the decoder hasn't stopped, the chunk is within the stream, and the end flag is
-set only with the whole of the rest of the stream, and stays set. -/
+set only with the whole of the rest of the stream, and stays set. The input array fits the machine's addresses, as
+every array that exists does. -/
 structure Run.Allowed (x : List UInt8) (R : Run σ) (c : Call) : Prop where
   running : R.status.stopped = false
   inside : R.read + c.size ≤ x.length
   whole : c.final = true → R.read + c.size = x.length
   stays : R.ended = true → c.final = true
+  fits : c.pre.length + c.size + c.post.length < USize.size
 
 /-- The runs a machine can reach on the stream `x`, under every way of delivering it. -/
 inductive Reaches (D : Machine σ) (limit : Nat) (x : List UInt8) : Run σ → Prop
@@ -171,7 +173,7 @@ theorem Reaches.continuation {D : Machine σ} {limit : Nat} {x : List UInt8} {R 
     have heq : R.after D (x.take o ++ t) c = R.after D x c := by
       simp only [Run.after, Run.reply, Run.input, chunk_continuation hk ha.inside]
     rw [← heq]
-    refine .call (ih he.1 (Nat.le_trans (Nat.le_max_left _ _) ho)) ⟨ha.running, ?_, ?_, ?_⟩
+    refine .call (ih he.1 (Nat.le_trans (Nat.le_max_left _ _) ho)) ⟨ha.running, ?_, ?_, ?_, ha.fits⟩
     · simp only [List.length_append, List.length_take]
       have := ha.inside
       omega
@@ -201,6 +203,22 @@ theorem Reaches.read_le {D : Machine σ} (ht : Truthful D) {limit : Nat} {x : Li
     simp only [Run.after]
     omega
 
+/-- After the end signal, what's left of the stream fits one array. -/
+private theorem Reaches.ended_rest {D : Machine σ} {limit : Nat} {x : List UInt8} {R : Run σ}
+    (h : Reaches D limit x R) : R.ended = true → x.length - R.read < USize.size := by
+  induction h with
+  | start => simp [Run.initial]
+  | @call R c hR ha ih =>
+    intro he
+    simp only [Run.after] at he ⊢
+    by_cases hR2 : R.ended = true
+    · have := ih hR2
+      omega
+    · have hc : c.final = true := by simpa [hR2] using he
+      have h1 := ha.whole hc
+      have h2 := ha.fits
+      omega
+
 private theorem reaches_stop_of_acc {D : Machine σ} (ht : Truthful D) {limit : Nat} {x : List UInt8}
     {R : Run σ} (hacc : Acc (Follows D limit x) R) :
     Reaches D limit x R → ∃ R', Reaches D limit x R' ∧ R'.status.stopped = true := by
@@ -211,9 +229,21 @@ private theorem reaches_stop_of_acc {D : Machine σ} (ht : Truthful D) {limit : 
     | true => exact ⟨R, hR, hs⟩
     | false =>
       have hle := hR.read_le ht
-      let c : Call := ⟨[], [], [], x.length - R.read, 1, true⟩
-      have ha : R.Allowed x c := ⟨hs, by simp only [c]; omega, fun _ => by simp only [c]; omega, fun _ => rfl⟩
-      have hans : R.Answers c := ⟨fun _ => Or.inr rfl, fun _ => by simp only [c]; omega⟩
+      have hrest := hR.ended_rest
+      have hsize := USize.size_pos
+      let n := min (x.length - R.read) (USize.size - 1)
+      let c : Call := ⟨[], [], [], n, 1, decide (x.length - R.read < USize.size)⟩
+      have ha : R.Allowed x c := by
+        refine ⟨hs, by simp only [c, n]; omega, fun hf => ?_, fun he => ?_, by simp only [c, n, List.length_nil]; omega⟩
+        · have hf' : x.length - R.read < USize.size := by simpa [c] using hf
+          simp only [c, n]
+          omega
+        · simpa [c] using hrest he
+      have hans : R.Answers c := by
+        refine ⟨fun _ => ?_, fun _ => by simp only [c]; omega⟩
+        by_cases h0 : x.length - R.read = 0
+        · exact Or.inr (by simp only [c]; simp only [decide_eq_true_eq]; omega)
+        · exact Or.inl (by simp only [c, n]; have := USize.le_size; omega)
       exact ih _ ⟨hR, c, ha, hans, rfl⟩ (.call hR ha)
 
 /-- From anywhere in a run, a caller answering the signals can reach a stopped decoder. -/

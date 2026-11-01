@@ -27,8 +27,8 @@ def rankC : Phase → Nat × Nat
 /-- A move from a place to the next: down a command, or out of a command's start. -/
 def Down (p p' : Phase) : Prop := (rankC p).1 = 0 ∨ LexLt (rankC p') (rankC p)
 
-/-- A pause from a place: the same place or further down. -/
-def DownEq (p p' : Phase) : Prop := (rankC p).1 = 0 ∨ LexLt (rankC p') (rankC p) ∨ rankC p' = rankC p
+/-- A pause from a place: further down, or as far down with no more bytes waiting. -/
+def DownEq (p p' : Phase) (st r : Cmd) : Prop := LexLt (rankC p') (rankC p) ∨ (rankC p' = rankC p ∧ r.pend = st.pend)
 
 /-- Settles `Down` for a move whose places are spelled out. -/
 macro "step_down" : tactic => `(tactic| first | exact Or.inl rfl | (simp only [Down, rankC, LexLt]; omega))
@@ -57,10 +57,10 @@ structure StepOk {α : Type} (w k : Nat) (m : MetaBlockHeader) (K : CommandState
     (∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K p' (stateBits r a r.pos stop F)) ∧ Down p p' ∧ OutStep p p' st r
   needsInput : r.status = .needsInput → r.pos = stop ∧ pos.toNat ≤ stop.toNat ∧ ∃ p', Rel w k m r p' ∧
     (∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K p' (stateBits r a r.pos stop F)) ∧
-    rest w m K p' (BitBuffer.mk r.word r.count).held = none ∧ DownEq p p' ∧ OutStep p p' st r
+    rest w m K p' (BitBuffer.mk r.word r.count).held = none ∧ DownEq p p' st r ∧ OutStep p p' st r
   needsOutput : r.status = .needsOutput → ∃ p', Rel w k m r p' ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
     (∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K p' (stateBits r a r.pos stop F)) ∧
-    r.pend.toNat = 2 ^ k ∧ DownEq p p' ∧ OutStep p p' st r
+    r.pend.toNat = 2 ^ k ∧ DownEq p p' st r ∧ OutStep p p' st r
   done : r.status = .done → ∃ s, Rel w k m r (.command s) ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
     (∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K (.command s) (stateBits r a r.pos stop F)) ∧
     s.remaining = 0 ∧ OutStep p (.command s) st r
@@ -90,13 +90,10 @@ theorem StepOk.ofBad (hs : r.status = .bad) (h : ∀ F, rest w m K p (stateBits 
 theorem StepOk.ofInput (hs : r.status = .needsInput) (hstop : r.pos = stop) (hle : pos.toNat ≤ stop.toNat) {p' : Phase}
     (hrel : Rel w k m r p')
     (h : ∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K p' (stateBits r a r.pos stop F))
-    (hn : rest w m K p' (BitBuffer.mk r.word r.count).held = none) (hd : DownEq p p') (hout : OutStep p p' st r) : StepOk w k m K a stop p st pos r :=
+    (hn : rest w m K p' (BitBuffer.mk r.word r.count).held = none) (hd : DownEq p p' st r) (hout : OutStep p p' st r) : StepOk w k m K a stop p st pos r :=
   ⟨fun e => StepStatus.noConfusion (hs.symm.trans e), fun _ => ⟨hstop, hle, p', hrel, h, hn, hd, hout⟩,
     fun e => StepStatus.noConfusion (hs.symm.trans e), fun e => StepStatus.noConfusion (hs.symm.trans e),
     fun e => StepStatus.noConfusion (hs.symm.trans e)⟩
-
-/-- A place is as far down as itself. -/
-theorem DownEq.self (p : Phase) : DownEq p p := Or.inr (Or.inr rfl)
 
 /-- The place a copy is at. -/
 theorem copyPhase_rank {w : Nat} {s : CommandState} {clen dcode d : Nat} {q : Phase} (h : copyPhase w s clen dcode d = some q) :
@@ -118,19 +115,25 @@ theorem copyPhase_rank {w : Nat} {s : CommandState} {clen dcode d : Nat} {q : Ph
 theorem StepOk.ofShort (hrel : Rel w k m st p) (hstop : pos = stop)
     (hn : rest w m K p (BitBuffer.mk st.word st.count).held = none) :
     StepOk w k m K a stop p st pos (markStep st pos .needsInput) :=
-  StepOk.ofInput rfl hstop (by rw [hstop]; exact Nat.le_refl _) (hrel.mark _ _) (fun _ => rfl) hn (DownEq.self p) ⟨[], rfl, rfl⟩
+  StepOk.ofInput rfl hstop (by rw [hstop]; exact Nat.le_refl _) (hrel.mark _ _) (fun _ => rfl) hn (Or.inr ⟨rfl, rfl⟩) ⟨[], rfl, rfl⟩
 
 /-- A step that found the window full, and changed nothing. -/
 theorem StepOk.ofFull (hrel : Rel w k m st p) (hp : pos.toNat ≤ stop.toNat) (hfull : st.pend.toNat = 2 ^ k) :
     StepOk w k m K a stop p st pos (markStep st pos .needsOutput) :=
   ⟨fun e => StepStatus.noConfusion e, fun e => StepStatus.noConfusion e,
-    fun _ => ⟨p, hrel.mark _ _, Nat.le_refl _, hp, fun _ => rfl, hfull, DownEq.self p, ⟨[], rfl, rfl⟩⟩,
+    fun _ => ⟨p, hrel.mark _ _, Nat.le_refl _, hp, (fun _ => rfl), hfull, Or.inr ⟨rfl, rfl⟩, ⟨[], rfl, rfl⟩⟩,
     fun e => StepStatus.noConfusion e, fun e => StepStatus.noConfusion e⟩
 
 /-- A move's bytes depend only on what was waiting before it. -/
 theorem OutStep.ofPend {p1 p2 : Phase} {st1 : Cmd} (h : OutStep p1 p2 st1 r) (he : st1.pend = st.pend) : OutStep p1 p2 st r := by
   obtain ⟨l, h1, h2⟩ := h
   exact ⟨l, h1, by rw [h2, he]⟩
+
+/-- A pause depends only on what was waiting before it. -/
+theorem DownEq.ofPend {p1 p2 : Phase} {st1 : Cmd} (h : DownEq p1 p2 st1 r) (he : st1.pend = st.pend) : DownEq p1 p2 st r := by
+  rcases h with h | ⟨h1, h2⟩
+  · exact Or.inl h
+  · exact Or.inr ⟨h1, h2.trans he⟩
 
 /-- A step taken after a refill is a step from before it. -/
 theorem StepOk.refilled {st1 : Cmd} {pos1 : USize} (h : StepOk w k m K a stop p st1 pos1 r)
@@ -141,10 +144,10 @@ theorem StepOk.refilled {st1 : Cmd} {pos1 : USize} (h : StepOk w k m K a stop p 
     exact ⟨p', hrel, Nat.le_trans h1 h3, h4, (fun F => by rw [hb]; exact h5 F), h6, h7.ofPend he⟩
   needsInput e := by
     obtain ⟨h3, _, p', hrel, h5, h6, h7, h8⟩ := h.needsInput e
-    exact ⟨h3, Nat.le_trans h1 h2, p', hrel, (fun F => by rw [hb]; exact h5 F), h6, h7, h8.ofPend he⟩
+    exact ⟨h3, Nat.le_trans h1 h2, p', hrel, (fun F => by rw [hb]; exact h5 F), h6, h7.ofPend he, h8.ofPend he⟩
   needsOutput e := by
     obtain ⟨p', hrel, h3, h4, h5, h6, h7, h8⟩ := h.needsOutput e
-    exact ⟨p', hrel, Nat.le_trans h1 h3, h4, (fun F => by rw [hb]; exact h5 F), h6, h7, h8.ofPend he⟩
+    exact ⟨p', hrel, Nat.le_trans h1 h3, h4, (fun F => by rw [hb]; exact h5 F), h6, h7.ofPend he, h8.ofPend he⟩
   done e := by
     obtain ⟨s, hrel, h3, h4, h5, h6, h7⟩ := h.done e
     exact ⟨s, hrel, Nat.le_trans h1 h3, h4, (fun F => by rw [hb]; exact h5 F), h6, h7.ofPend he⟩

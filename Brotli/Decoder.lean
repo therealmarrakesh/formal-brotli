@@ -38,6 +38,13 @@ import Brotli.Decoder.HeaderMap
 import Brotli.Decoder.HeaderDone
 import Brotli.Decoder.StreamRest
 import Brotli.Decoder.StreamStart
+import Brotli.Decoder.StreamRaw
+import Brotli.Decoder.StreamState
+import Brotli.Decoder.StreamCmds
+import Brotli.Decoder.StreamSteps
+import Brotli.Decoder.StreamRun
+import Brotli.Decoder.StreamOut
+import Brotli.Decoder.StreamCall
 
 /-!
 # Decoder

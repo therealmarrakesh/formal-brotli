@@ -179,7 +179,7 @@ theorem stepCmd_start {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a :
       pos.toNat ≤ (stepCmd H k a stop hs st pos).pos.toNat ∧ (stepCmd H k a stop hs st pos).pos.toNat ≤ stop.toNat ∧ s.remaining ≠ 0 ∧
       ∀ F, nextElement m.insertCopy s.insertCopy (stateBits st a pos stop F) =
         some (ic, stateBits (stepCmd H k a stop hs st pos) a (stepCmd H k a stop hs st pos).pos stop F)) ∧
-    ((stepCmd H k a stop hs st pos).status = .needsInput → Rel w k.toNat m (stepCmd H k a stop hs st pos) (.command s) ∧
+    ((stepCmd H k a stop hs st pos).status = .needsInput → Rel w k.toNat m (stepCmd H k a stop hs st pos) (.command s) ∧ (stepCmd H k a stop hs st pos).pend = st.pend ∧
       ∀ F, stateBits (stepCmd H k a stop hs st pos) a (stepCmd H k a stop hs st pos).pos stop F = stateBits st a pos stop F) ∧
     ((stepCmd H k a stop hs st pos).status = .done → Rel w k.toNat m (stepCmd H k a stop hs st pos) (.command s) ∧ s.remaining = 0 ∧
       ∀ F, stateBits (stepCmd H k a stop hs st pos) a (stepCmd H k a stop hs st pos).pos stop F = stateBits st a pos stop F) ∧
@@ -195,7 +195,8 @@ theorem stepCmd_start {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a :
     show (refill st.word st.count a pos stop hs hp).buf.held ++ (chunkBits a (refill st.word st.count a pos stop hs hp).pos.toNat stop.toNat ++ F) =
       (BitBuffer.mk st.word st.count).held ++ (chunkBits a pos.toNat stop.toNat ++ F)
     rw [← List.append_assoc, ← List.append_assoc, h4]
-  generalize ({ st with word := (refill st.word st.count a pos stop hs hp).word, count := (refill st.word st.count a pos stop hs hp).count } : Cmd) = st1 at hrel1 hb ⊢
+  have hpe : ({ st with word := (refill st.word st.count a pos stop hs hp).word, count := (refill st.word st.count a pos stop hs hp).count } : Cmd).pend = st.pend := rfl
+  generalize ({ st with word := (refill st.word st.count a pos stop hs hp).word, count := (refill st.word st.count a pos stop hs hp).count } : Cmd) = st1 at hrel1 hb hpe ⊢
   have hat : stepAt H k a stop hs st1 (refill st.word st.count a pos stop hs hp).pos = stepCommand H st1 (refill st.word st.count a pos stop hs hp).pos := by
     unfold stepAt
     rw [hrel1.2.1]
@@ -206,7 +207,7 @@ theorem stepCmd_start {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a :
     refine ⟨ic, r1, by rw [r2]; exact h2, by rw [r2]; exact h3, r3, fun F => ?_⟩
     rw [← hb F, r4 F]
   · rw [c2 e]
-    exact ⟨hrel1.mark _ _, hb⟩
+    exact ⟨hrel1.mark _ _, hpe, hb⟩
   · obtain ⟨e1, e2⟩ := c3 e
     rw [e1]
     exact ⟨hrel1.mark _ _, e2, hb⟩
