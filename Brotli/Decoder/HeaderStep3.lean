@@ -94,7 +94,7 @@ def stepHTrees (st : Hd) (pos : USize) : Hd :=
     if n < 2 then mapFinish { st with word := r.word, count := r.count, pos := pos, status := .next } n (zeroBytes (mapSizeFast st))
     else { st with word := r.word, count := r.count, pos := pos, status := .next, tag := .rlemax, ntrees := n }
 
-private theorem mapSizeFast_eq {st : Hd} {g : Gh} {isL : Bool} (hi : st.isL = isL) (hu : Upto st.d g (mapIdx isL)) :
+theorem mapSizeFast_eq {st : Hd} {g : Gh} {isL : Bool} (hi : st.isL = isL) (hu : Upto st.d g (mapIdx isL)) :
     mapSizeFast st = mapSize g isL ∧ mapSize g isL ≤ 16384 := by
   have hL := hu.cat .L (by cases isL <;> decide)
   have hD := hu.cat .D (by cases isL <;> decide)

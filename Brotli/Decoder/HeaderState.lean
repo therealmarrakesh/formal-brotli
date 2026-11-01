@@ -19,7 +19,7 @@ structure Tab where
   h32 : t.size < 2 ^ 32
   fits : TableFits t (USize.ofNat 0).toNat
 
-private theorem usize_zero' : (USize.ofNat 0).toNat = 0 := by
+theorem usize_zero' : (USize.ofNat 0).toNat = 0 := by
   rw [USize.toNat_ofNat', ← USize.size_eq_two_pow]
   exact Nat.zero_mod _
 
