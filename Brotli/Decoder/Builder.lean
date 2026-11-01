@@ -247,7 +247,7 @@ theorem zeroBytes_size {k : Nat} (h : k < 2 ^ 32) : (zeroBytes k).size = k := by
   rw [zeroBytes_data h]
   simp
 
-private theorem zeroBytes_get {k i : Nat} (h : k < 2 ^ 32) : (zeroBytes k).data[i]?.getD 0 = 0 := by
+theorem zeroBytes_get {k i : Nat} (h : k < 2 ^ 32) : (zeroBytes k).data[i]?.getD 0 = 0 := by
   rw [zeroBytes_data h, Array.getElem?_replicate]
   split <;> rfl
 
@@ -664,7 +664,7 @@ private theorem rootIdx {l c : UInt64} (hl : l.toNat ≤ 15) (hc : c.toNat < 2 ^
   rw [word_toUSize (by rw [and255]; omega), and255, revFast_toNat hl hc]
   rfl
 
-private theorem depthStep_rel {A : Array Nat} {D : ByteArray} (hm : ByteMatch A D) {s l c : UInt64} (hl : l.toNat ≤ 15)
+theorem depthStep_rel {A : Array Nat} {D : ByteArray} (hm : ByteMatch A D) {s l c : UInt64} (hl : l.toNat ≤ 15)
     (hc : c.toNat < 2 ^ l.toNat) :
     ByteMatch (recordDepth A s.toNat l.toNat c.toNat) (depthStep D s l c) := by
   unfold recordDepth depthStep
@@ -1035,23 +1035,73 @@ theorem rootsFast_eq {A O : Array Nat} {D off : ByteArray} (hD : ByteMatch A D) 
 
 /-! ### The builder -/
 
+/-- What a table takes, worked out before the arena grows. -/
+structure Plan where
+  nc : ByteArray
+  D : ByteArray
+  o : OffRun
+
+/-- Works out a table's sub-tables, from the `n` code lengths in `lens`. -/
+def planFast (lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) : Plan :=
+  let nc := firstCodesOf lens n hn
+  let D := walkCodes depthStep lens n hn 0 nc (zeroBytes 256)
+  ⟨nc, D, offsetsFast D (zeroBytes 512) (USize.ofNat 0) 0⟩
+
+/-- The bytes a table adds to the arena. -/
+@[inline] def Plan.bytes (p : Plan) : UInt64 := (256 + p.o.next) * 4
+
+/-- Appends a planned table to the arena. Its slots start at `t.size / 4`. -/
+def fillFast (t lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) (p : Plan) : ByteArray :=
+  let base := UInt64.ofNat (t.size / 4)
+  let t1 := pushZeros t p.bytes.toUSize
+  let t2 := walkCodes (writeCodeFast base p.D p.o.off) lens n hn 0 p.nc t1
+  rootsFast base p.D p.o.off 256 0 t2
+
 /-- Appends a canonical code's table to the arena, with the `n` code lengths in `lens`. Its slots start at
 `t.size / 4`. -/
 def buildFast (t lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) : ByteArray :=
-  let base := UInt64.ofNat (t.size / 4)
-  let nc := firstCodesOf lens n hn
-  let D := walkCodes depthStep lens n hn 0 nc (zeroBytes 256)
-  let o := offsetsFast D (zeroBytes 512) (USize.ofNat 0) 0
-  let t1 := pushZeros t ((256 + o.next) * 4).toUSize
-  let t2 := walkCodes (writeCodeFast base D o.off) lens n hn 0 nc t1
-  rootsFast base D o.off 256 0 t2
+  fillFast t lens n hn (planFast lens n hn)
+
+/-- A plan's bytes are what the table adds. -/
+theorem planFast_bytes {lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.size} (h64 : n.toNat < 65536)
+    (hC : Complete (.canonical (lensOf lens n.toNat))) :
+    (planFast lens n hn).bytes.toNat = 4 * (256 + offSum (depths (lensOf lens n.toNat)) 256) ∧
+      offSum (depths (lensOf lens n.toNat)) 256 ≤ 32768 := by
+  have hfirst := firstCodesOf_spec (hn := hn) h64 hC
+  unfold planFast Plan.bytes
+  dsimp only
+  generalize firstCodesOf lens n hn = nc at hfirst ⊢
+  have hDm : ByteMatch (depths (lensOf lens n.toNat)) (walkCodes depthStep lens n hn 0 nc (zeroBytes 256)) :=
+    walkCodes_rel (g := recordDepth) hC ByteMatch (by
+      intro a b s l c hr hs h0 hc
+      have hl15 : l.toNat ≤ 15 := hC.1 _ (List.mem_of_getElem? hs)
+      exact depthStep_rel hr hl15 (code_lt_two_pow (Nat.le_of_eq hC.2) hs h0 hl15 hc)) hfirst (by
+      refine ⟨zeroBytes_size (by decide), by simp, ?_⟩
+      intro r _
+      rw [zeroBytes_get (by decide)]
+      simp [Array.getD_eq_getD_getElem?, Array.getElem?_replicate]
+      split <;> rfl)
+  obtain ⟨_, dLe, _, _⟩ := depths_spec hC.1
+  have hoffs := offsetsFast_spec hDm dLe _ (USize.ofNat 0) (zeroBytes 512) 0 rfl
+    (by rw [usize_lit' (by decide)]; omega) (zeroBytes_size (by decide))
+    (by intro k hk; rw [usize_lit' (by decide)] at hk; omega)
+    (by rw [usize_lit' (by decide)]; rfl)
+  have o2 := hoffs.2.1
+  have hbound := offSum_bound dLe 256
+  generalize offsetsFast (walkCodes depthStep lens n hn 0 nc (zeroBytes 256)) (zeroBytes 512) (USize.ofNat 0) 0 = o at o2 ⊢
+  have hnext : (256 + o.next).toNat = 256 + offSum (depths (lensOf lens n.toNat)) 256 := by
+    rw [u64_add' (by rw [show (256 : UInt64).toNat = 256 from rfl, o2]; omega), o2]
+    rfl
+  refine ⟨?_, by omega⟩
+  rw [UInt64.toNat_mul, hnext, show (4 : UInt64).toNat = 4 from rfl, Nat.mod_eq_of_lt (by omega)]
+  omega
 
 /-- The running builder writes the bytes of `buildCanonical`, whose theorem says what they mean. -/
 theorem buildFast_eq {t lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.size} (h64 : n.toNat < 65536)
     (hC : Complete (.canonical (lensOf lens n.toNat))) (hsize : t.size + 4 * (256 + 32768) < 2 ^ 32) :
     buildFast t lens n hn = buildCanonical t (lensOf lens n.toNat) := by
   have hfirst := firstCodesOf_spec (hn := hn) h64 hC
-  unfold buildFast buildCanonical
+  unfold buildFast fillFast planFast Plan.bytes buildCanonical
   dsimp only
   generalize firstCodesOf lens n hn = nc at hfirst ⊢
   have hfold : ∀ {β γ : Type} {g : β → Nat → Nat → Nat → β} {f : γ → UInt64 → UInt64 → UInt64 → γ} (R : β → γ → Prop)
@@ -1144,5 +1194,187 @@ theorem buildSingleFast_eq {t : ByteArray} {sym : UInt64} (hsize : t.size + 4 * 
     show 4 * (t.size / 4 + k * 1) + 2 < _
     omega), hbase]
   rfl
+
+/-! ### Checking that a table fits -/
+
+/-- What one root slot needs for a lookup to stay within the array. -/
+def RootFits (t : ByteArray) (base q : Nat) : Prop :=
+  (slotAt t q).1 ≤ 8 ∨ ((slotAt t q).1 ≤ 15 ∧ 4 * (base + 256 + (slotAt t q).2 + 2 ^ ((slotAt t q).1 - 8)) ≤ t.size)
+
+/-- Checks one root slot. -/
+@[inline] def rootFitsFast (t : ByteArray) (size base q : UInt64) : Bool :=
+  let p := q * 4
+  let bits := (getU t p.toUSize).toUInt64
+  let val := (getU t (p + 1).toUSize).toUInt64 + 256 * (getU t (p + 2).toUSize).toUInt64
+  if bits ≤ 8 then true
+  else if bits ≤ 15 then (base + 256 + val + ((1 : UInt64) <<< (bits - 8))) * 4 ≤ size
+  else false
+
+private theorem rootFitsFast_iff {t : ByteArray} {base q : UInt64} (ht : t.size < 2 ^ 32) (hb : base.toNat < 2 ^ 30)
+    (hq : q.toNat < 2 ^ 30) :
+    rootFitsFast t (UInt64.ofNat t.size) base q = true ↔ RootFits t base.toNat q.toNat := by
+  have hp : (q * 4).toNat = 4 * q.toNat := by
+    rw [UInt64.toNat_mul, show (4 : UInt64).toNat = 4 from rfl, Nat.mod_eq_of_lt (by omega)]
+    omega
+  have hp1 : (q * 4 + 1).toNat = 4 * q.toNat + 1 := by
+    rw [u64_add' (by rw [hp, show (1 : UInt64).toNat = 1 from rfl]; omega), hp]
+    rfl
+  have hp2 : (q * 4 + 2).toNat = 4 * q.toNat + 2 := by
+    rw [u64_add' (by rw [hp, show (2 : UInt64).toNat = 2 from rfl]; omega), hp]
+    rfl
+  have hu0 : (q * 4).toUSize.toNat = 4 * q.toNat := by rw [word_toUSize (by rw [hp]; omega), hp]
+  have hu1 : (q * 4 + 1).toUSize.toNat = 4 * q.toNat + 1 := by rw [word_toUSize (by rw [hp1]; omega), hp1]
+  have hu2 : (q * 4 + 2).toUSize.toNat = 4 * q.toNat + 2 := by rw [word_toUSize (by rw [hp2]; omega), hp2]
+  have hsize : (UInt64.ofNat t.size).toNat = t.size := u64_lit (by omega)
+  have hbits : (getU t (q * 4).toUSize).toUInt64.toNat = (slotAt t q.toNat).1 := by
+    rw [UInt8.toNat_toUInt64, getU_toNat, hu0]
+    rfl
+  have hval : ((getU t (q * 4 + 1).toUSize).toUInt64 + 256 * (getU t (q * 4 + 2).toUSize).toUInt64).toNat = (slotAt t q.toNat).2 := by
+    have hlo : (getU t (q * 4 + 1).toUSize).toUInt64.toNat = (t.data[4 * q.toNat + 1]?.getD 0).toNat := by
+      rw [UInt8.toNat_toUInt64, getU_toNat, hu1]
+    have hhi : (getU t (q * 4 + 2).toUSize).toUInt64.toNat = (t.data[4 * q.toNat + 2]?.getD 0).toNat := by
+      rw [UInt8.toNat_toUInt64, getU_toNat, hu2]
+    have h1 := (t.data[4 * q.toNat + 1]?.getD 0).toNat_lt
+    have h2 := (t.data[4 * q.toNat + 2]?.getD 0).toNat_lt
+    have hm : (256 * (getU t (q * 4 + 2).toUSize).toUInt64).toNat = 256 * (t.data[4 * q.toNat + 2]?.getD 0).toNat := by
+      rw [UInt64.toNat_mul, show (256 : UInt64).toNat = 256 from rfl, hhi]
+      exact Nat.mod_eq_of_lt (by omega)
+    rw [u64_add' (by rw [hm, hlo]; omega), hm, hlo]
+    rfl
+  have hvlt : (slotAt t q.toNat).2 < 65536 := by
+    have h1 := (t.data[4 * q.toNat + 1]?.getD 0).toNat_lt
+    have h2 := (t.data[4 * q.toNat + 2]?.getD 0).toNat_lt
+    show (t.data[4 * q.toNat + 1]?.getD 0).toNat + 256 * (t.data[4 * q.toNat + 2]?.getD 0).toNat < 65536
+    omega
+  unfold rootFitsFast RootFits
+  dsimp only
+  generalize (getU t (q * 4).toUSize).toUInt64 = bits at hbits
+  generalize (getU t (q * 4 + 1).toUSize).toUInt64 + 256 * (getU t (q * 4 + 2).toUSize).toUInt64 = val at hval
+  have hv2 : val.toNat < 65536 := by
+    rw [hval]
+    exact hvlt
+  rw [← hbits, ← hval]
+  by_cases h8 : bits ≤ 8
+  · rw [ite_eq_left h8]
+    exact ⟨fun _ => Or.inl (UInt64.le_iff_toNat_le.mp h8), fun _ => rfl⟩
+  rw [ite_eq_right h8]
+  have h8' : ¬ bits.toNat ≤ 8 := fun h => h8 (UInt64.le_iff_toNat_le.mpr h)
+  by_cases h15 : bits ≤ 15
+  · rw [ite_eq_left h15]
+    have h15' : bits.toNat ≤ 15 := UInt64.le_iff_toNat_le.mp h15
+    have hsub : (bits - 8).toNat = bits.toNat - 8 := u64_sub' (by rw [show (8 : UInt64).toNat = 8 from rfl]; omega)
+    have hsh := one_shl (d := bits - 8) (by omega)
+    have hpw : 2 ^ (bits - 8).toNat ≤ 2 ^ 7 := Nat.pow_le_pow_right (by decide) (by omega)
+    have h27 : (2 : Nat) ^ 7 = 128 := rfl
+    have h1 : (base + 256).toNat = base.toNat + 256 := u64_add' (by rw [show (256 : UInt64).toNat = 256 from rfl]; omega)
+    have h2 : (base + 256 + val).toNat = base.toNat + 256 + val.toNat := by
+      rw [u64_add' (by rw [h1]; omega), h1]
+    have h3 : (base + 256 + val + ((1 : UInt64) <<< (bits - 8))).toNat = base.toNat + 256 + val.toNat + 2 ^ (bits.toNat - 8) := by
+      rw [u64_add' (by rw [h2, hsh]; omega), h2, hsh, hsub]
+    have h3lt : base.toNat + 256 + val.toNat + 2 ^ (bits.toNat - 8) < 2 ^ 31 := by
+      rw [hsub] at hpw
+      omega
+    have h4 : ((base + 256 + val + ((1 : UInt64) <<< (bits - 8))) * 4).toNat = 4 * (base.toNat + 256 + val.toNat + 2 ^ (bits.toNat - 8)) := by
+      rw [UInt64.toNat_mul, h3, show (4 : UInt64).toNat = 4 from rfl, Nat.mod_eq_of_lt (by omega)]
+      omega
+    rw [decide_eq_true_iff, UInt64.le_iff_toNat_le, h4, hsize]
+    constructor
+    · exact fun h => Or.inr ⟨h15', h⟩
+    · rintro (h | ⟨_, h⟩)
+      · exact absurd h h8'
+      · exact h
+  · rw [ite_eq_right h15]
+    have h15' : ¬ bits.toNat ≤ 15 := fun h => h15 (UInt64.le_iff_toNat_le.mpr h)
+    constructor
+    · exact fun h => Bool.noConfusion h
+    · rintro (h | ⟨h, _⟩)
+      · exact absurd h h8'
+      · exact absurd h h15'
+
+/-- Checks `n` root slots from `r`. -/
+def rootsFit (t : ByteArray) (size base : UInt64) (n r : UInt64) : Bool :=
+  if _hn : n = 0 then true
+  else
+    if rootFitsFast t size base (base + r) then rootsFit t size base (n - 1) (r + 1)
+    else false
+termination_by n.toNat
+decreasing_by
+  have hne : n.toNat ≠ 0 := fun e => _hn (UInt64.toNat_inj.mp (by rw [e]; rfl))
+  have h1 : (n - 1).toNat = n.toNat - 1 := u64_sub' (by rw [show (1 : UInt64).toNat = 1 from rfl]; omega)
+  omega
+
+private theorem rootsFit_iff {t : ByteArray} {base : UInt64} (ht : t.size < 2 ^ 32) (hb : base.toNat < 2 ^ 29) :
+    ∀ (N : Nat) (n r : UInt64), n.toNat = N → r.toNat + N ≤ 256 →
+    (rootsFit t (UInt64.ofNat t.size) base n r = true ↔ ∀ k, k < N → RootFits t base.toNat (base.toNat + r.toNat + k)) := by
+  intro N
+  induction N with
+  | zero =>
+    intro n r hn _
+    have hz : n = 0 := UInt64.toNat_inj.mp (by rw [hn]; rfl)
+    rw [rootsFit, dite_eq_left hz]
+    exact ⟨fun _ k hk => absurd hk (by omega), fun _ => rfl⟩
+  | succ N ih =>
+    intro n r hn hr
+    have hz : n ≠ 0 := fun e => by rw [e] at hn; exact Nat.succ_ne_zero _ hn.symm
+    have hn1 : (n - 1).toNat = N := by
+      rw [u64_sub' (by rw [show (1 : UInt64).toNat = 1 from rfl]; omega), hn]
+      rfl
+    have hr1 : (r + 1).toNat = r.toNat + 1 := u64_add' (by rw [show (1 : UInt64).toNat = 1 from rfl]; omega)
+    have hq : (base + r).toNat = base.toNat + r.toNat := u64_add' (by omega)
+    have hone := rootFitsFast_iff (base := base) (q := base + r) ht (by omega) (by rw [hq]; omega)
+    rw [hq] at hone
+    have hih := ih (n - 1) (r + 1) hn1 (by omega)
+    rw [hr1] at hih
+    rw [rootsFit, dite_eq_right hz]
+    by_cases hc : rootFitsFast t (UInt64.ofNat t.size) base (base + r) = true
+    · rw [ite_eq_left hc, hih]
+      constructor
+      · intro h k hk
+        cases k with
+        | zero => exact hone.mp hc
+        | succ j =>
+          have := h j (by omega)
+          rwa [show base.toNat + (r.toNat + 1) + j = base.toNat + r.toNat + (j + 1) by omega] at this
+      · intro h k hk
+        have := h (k + 1) (by omega)
+        rwa [show base.toNat + r.toNat + (k + 1) = base.toNat + (r.toNat + 1) + k by omega] at this
+    · rw [ite_eq_right hc]
+      constructor
+      · exact fun h => Bool.noConfusion h
+      · intro h
+        exact absurd (hone.mpr (h 0 (by omega))) hc
+
+/-- Checks once, when a table is built, what a lookup needs to be safe. -/
+def fitsFast (t : ByteArray) (base : UInt64) : Bool :=
+  if t.size < 4294967296 ∧ base.toNat < 536870912 ∧ 4 * (base.toNat + 256) ≤ t.size then
+    rootsFit t (UInt64.ofNat t.size) base 256 0
+  else false
+
+/-- The check says exactly that the table fits. -/
+theorem fitsFast_iff {t : ByteArray} {base : UInt64} (ht : t.size < 2 ^ 32) (hb : base.toNat < 2 ^ 29) :
+    fitsFast t base = true ↔ TableFits t base.toNat := by
+  have hall := rootsFit_iff ht hb 256 256 0 rfl (by show 0 + 256 ≤ 256; omega)
+  have hz : (0 : UInt64).toNat = 0 := rfl
+  rw [hz] at hall
+  unfold fitsFast
+  constructor
+  · intro h
+    by_cases c : t.size < 4294967296 ∧ base.toNat < 536870912 ∧ 4 * (base.toNat + 256) ≤ t.size
+    · rw [ite_eq_left c] at h
+      refine ⟨c.2.2, fun r hr hbig => ?_⟩
+      have := hall.mp h r hr
+      rw [Nat.add_zero] at this
+      rcases this with h8 | h15
+      · omega
+      · exact h15
+    · rw [ite_eq_right c] at h
+      exact Bool.noConfusion h
+  · intro h
+    rw [ite_eq_left ⟨by omega, by omega, h.root⟩]
+    refine hall.mpr fun k hk => ?_
+    rw [Nat.add_zero]
+    by_cases h8 : (slotAt t (base.toNat + k)).1 ≤ 8
+    · exact Or.inl h8
+    · exact Or.inr (h.sub k hk (by omega))
 
 end Brotli.Decoder
