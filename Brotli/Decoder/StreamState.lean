@@ -215,18 +215,40 @@ def Dec.held (D : Dec) : List Bool := (BitBuffer.mk D.word D.count).held
 /-- A state as a step leaves it. -/
 @[inline] def markD (D : Dec) (pos : USize) (s : DStatus) : Dec := { D with pos := pos, status := s }
 
-/-- A place that lowers what's left inside a meta-block's data or header. The command loop's places have their own measure. -/
+/-- Where a step can go from a place. The command loop's places have their own measure. -/
 def SDown : SPhase → SPhase → Prop
+  | .wbits, .mblock .. => True
+  | .wbits, _ => False
+  | .mblock .., .ended .. => True
+  | .mblock .., .skip .. => True
+  | .mblock .., .raw .. => True
+  | .mblock .., .hdr .. => True
+  | .mblock .., _ => False
   | .hdr _ _ _ _ _ p, .hdr _ _ _ _ _ p' => HDown p p'
+  | .hdr .., .cmds _ _ _ p => ∃ s, p = .command s
+  | .hdr .., _ => False
   | .skip _ _ _ n, .skip _ _ _ n' => n' < n
+  | .skip .., .mblock .. => True
+  | .skip .., .ended .. => True
+  | .skip .., _ => False
   | .raw _ _ _ n, .raw _ _ _ n' => n' < n
+  | .raw .., .mblock .. => True
+  | .raw .., .ended .. => True
+  | .raw .., _ => False
   | _, _ => True
 
-/-- A pause in a place, as far down as it was or further. -/
+/-- Where a step can pause from a place. -/
 def SDownEq : SPhase → SPhase → Prop
+  | .wbits, .wbits => True
+  | .wbits, _ => False
+  | .mblock .., .mblock .. => True
+  | .mblock .., _ => False
   | .hdr _ _ _ _ _ p, .hdr _ _ _ _ _ p' => p' = p
+  | .hdr .., _ => False
   | .skip _ _ _ n, .skip _ _ _ n' => n' ≤ n
+  | .skip .., _ => False
   | .raw _ _ _ n, .raw _ _ _ n' => n' ≤ n
+  | .raw .., _ => False
   | _, _ => True
 
 /-- What a stream step must do, for the input so far and whatever whole bytes follow. -/
@@ -234,9 +256,11 @@ structure DStepOk {α : Type} (S : Sem α) (a : ByteArray) (stop : USize) (p : S
   next : r.status = .next → ∃ p', DRel r p' ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
     (∀ t : List UInt8, sLeave S p (D.bits a pos stop (bits t)) = srest S p' (r.bits a r.pos stop (bits t))) ∧ SDown p p'
   needsInput : r.status = .needsInput → r.pos = stop ∧ pos.toNat ≤ stop.toNat ∧ ∃ p', DRel r p' ∧
-    (∀ t : List UInt8, sLeave S p (D.bits a pos stop (bits t)) = sLeave S p' (r.bits a r.pos stop (bits t))) ∧ sLeave S p' r.held = none ∧ SDownEq p p'
+    (∀ t : List UInt8, sLeave S p (D.bits a pos stop (bits t)) = sLeave S p' (r.bits a r.pos stop (bits t))) ∧ sLeave S p' r.held = none ∧ SDownEq p p' ∧
+    (∀ w st, p = .mblock w st → ∀ t : List UInt8, r.bits a r.pos stop (bits t) = D.bits a pos stop (bits t))
   needsOutput : r.status = .needsOutput → ∃ p', DRel r p' ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
-    (∀ t : List UInt8, sLeave S p (D.bits a pos stop (bits t)) = sLeave S p' (r.bits a r.pos stop (bits t))) ∧ r.cmd.pend.toNat = 2 ^ r.k.toNat ∧ SDownEq p p'
+    (∀ t : List UInt8, sLeave S p (D.bits a pos stop (bits t)) = sLeave S p' (r.bits a r.pos stop (bits t))) ∧ r.cmd.pend.toNat = 2 ^ r.k.toNat ∧ SDownEq p p' ∧
+    (∀ w st, p ≠ .mblock w st)
   memory : r.status = .memory → r.limit = D.limit
   bad : r.status = .bad → ∀ t : List UInt8, sLeave S p (D.bits a pos stop (bits t)) = none
 

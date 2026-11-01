@@ -281,6 +281,72 @@ theorem stepCommand_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {
         rw [rest_command_of hK _ h0', nextElement_single _ hcz hn']
         rfl
 
+/-- The start of a command in terms of the insert-and-copy element's block switch, whatever follows the command. -/
+theorem stepCommand_cases {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {a : ByteArray} {stop : USize} {s : CommandState} {st : Cmd} {pos : USize}
+    (hH : HdrRel H m) (hrel : Rel w k m st (.command s)) :
+    ((stepCommand H st pos).status = .next → ∃ ic, Rel w k m (stepCommand H st pos) (.insertCopy s ic) ∧ (stepCommand H st pos).pos = pos ∧ s.remaining ≠ 0 ∧
+      ∀ F, nextElement m.insertCopy s.insertCopy (stateBits st a pos stop F) =
+        some (ic, stateBits (stepCommand H st pos) a (stepCommand H st pos).pos stop F)) ∧
+    ((stepCommand H st pos).status = .needsInput → stepCommand H st pos = markStep st pos .needsInput) ∧
+    ((stepCommand H st pos).status = .done → stepCommand H st pos = markStep st pos .done ∧ s.remaining = 0) ∧
+    (stepCommand H st pos).status ≠ .needsOutput := by
+  obtain ⟨hC, htag, hprod⟩ := hrel
+  have hrem := hC.rem
+  unfold stepCommand
+  split
+  · rename_i h0
+    have h0N := u64_zero h0
+    exact ⟨fun h => StepStatus.noConfusion h, fun h => StepStatus.noConfusion h, fun _ => ⟨rfl, by omega⟩, fun h => StepStatus.noConfusion h⟩
+  · rename_i h0
+    have h0N := u64_ne h0
+    have h0' : s.remaining ≠ 0 := by omega
+    split
+    rotate_left
+    · rename_i hcnt
+      have hcntN := u64_ne hcnt
+      have hcs : s.insertCopy.count ≠ 0 := by
+        rw [hC.iRel.count]
+        exact hcntN
+      refine ⟨fun _ => ⟨{ s.insertCopy with count := s.insertCopy.count - 1 }, ⟨{ hC with iRel := hC.iRel.decr hcntN }, rfl, hprod⟩, rfl, h0', fun F => ?_⟩,
+        fun h => StepStatus.noConfusion h, fun h => StepStatus.noConfusion h, fun h => StepStatus.noConfusion h⟩
+      rw [nextElement_count _ hcs]
+      rfl
+    · rename_i hcnt
+      have hcntN : st.iCount.toNat = 0 := u64_zero hcnt
+      split
+      · rename_i hn
+        have hn' : 2 ≤ H.nI.toNat := UInt64.le_iff_toNat_le.mp hn
+        have hn2 : 2 ≤ m.insertCopy.n := by
+          rw [← hH.nI]
+          exact hn'
+        have hsp := blockSwitch_rel (h32 := H.lit.arena32) (hT := (H.swI hn').1) (hCt := (H.swI hn').2) hH.nI hH.catI
+          hH.ok.insertCopy hC.iRel hcntN hC.wf hn2
+        dsimp only at hsp ⊢
+        generalize blockSwitch _ _ _ _ _ _ _ _ _ _ _ = r at hsp ⊢
+        obtain ⟨hok, _, _⟩ := hsp
+        cases hs : r.status with
+        | ok =>
+          obtain ⟨hw, hlt, hc1, hc2, hnext⟩ := hok hs
+          have h256 := hH.ok.insertCopy.2.1
+          have hsize := hC.seenSize
+          have hi := seen_index (off := 256) (t := r.cur) (by omega) (by omega)
+          refine ⟨fun _ => ⟨⟨⟨st.iCur.toNat, r.cur.toNat⟩, r.blockCount.toNat - 1, r.cur.toNat :: s.insertCopy.seen⟩, ⟨?_, rfl, hprod⟩, rfl, h0', fun F => ?_⟩,
+            fun h => StepStatus.noConfusion h, fun h => StepStatus.noConfusion h, fun h => StepStatus.noConfusion h⟩
+          · exact { hC with
+              wf := hw
+              iRel := hC.iRel.switched (by omega) hi hlt (u64_sub_one hc1).symm
+              lRel := hC.lRel.marked (by rw [hi]; omega)
+              dRel := hC.dRel.marked (by rw [hi]; omega)
+              seenSize := by
+                show (markSeen st.seen _).size = _
+                rw [size_markSeen]
+                exact hsize }
+          · rw [stateBits_eq, hnext]
+            rfl
+        | short => exact ⟨fun h => StepStatus.noConfusion h, fun _ => rfl, fun h => StepStatus.noConfusion h, fun h => StepStatus.noConfusion h⟩
+        | bad => exact ⟨fun h => StepStatus.noConfusion h, fun h => StepStatus.noConfusion h, fun h => StepStatus.noConfusion h, fun h => StepStatus.noConfusion h⟩
+      · exact ⟨fun h => StepStatus.noConfusion h, fun h => StepStatus.noConfusion h, fun h => StepStatus.noConfusion h, fun h => StepStatus.noConfusion h⟩
+
 /-! ### The insert-and-copy element -/
 
 /-- A table's start, read from a table of starts. -/

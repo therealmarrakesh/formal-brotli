@@ -129,6 +129,88 @@ theorem stepCmd_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHea
       (chunkBits a (refill st.word st.count a pos stop hs hp).pos.toNat stop.toNat ++ F)
   rw [← List.append_assoc, ← List.append_assoc, h4]
 
+/-- A step away from a command's start needs nothing of what follows the command. -/
+theorem stepCmd_inside {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
+    {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {p : Phase} {st : Cmd} {pos : USize}
+    (hne : ∀ s, p ≠ .command s) (hH : HdrRel H m) (hrel : Rel w k.toNat m st p) (hp : pos.toNat ≤ stop.toNat) :
+    StepOk w k.toNat m K a stop p st pos (stepCmd H k a stop hs st pos) := by
+  unfold stepCmd
+  rw [dite_eq_left (USize.le_iff_toNat_le.mpr hp)]
+  obtain ⟨h1, h2, h3, h4, h5⟩ := refill_spec hs hp hrel.wf
+  dsimp only
+  have hat : ∀ {st1 : Cmd} {pos1 : USize}, Rel w k.toNat m st1 p → pos1.toNat ≤ stop.toNat → (56 < st1.count.toNat ∨ pos1 = stop) →
+      StepOk w k.toNat m K a stop p st1 pos1 (stepAt H k a stop hs st1 pos1) := by
+    intro st1 pos1 hrel1 hp1 hfull
+    unfold stepAt
+    cases p with
+    | literalSymbol => exact hrel1.elim
+    | command s => exact absurd rfl (hne s)
+    | insertCopy =>
+      rw [hrel1.2.1]
+      exact stepInsertCopy_ok hH hrel1 hp1 hfull
+    | copyLength =>
+      rw [hrel1.2.1]
+      exact stepCopyLength_ok hrel1 hp1 hfull
+    | literals =>
+      rw [hrel1.2.1]
+      exact stepLiterals_ok hH hrel1 hp1 hfull
+    | distance =>
+      rw [hrel1.2.1]
+      exact stepDistance_ok hH hrel1 hp1 hfull
+    | distanceSymbol =>
+      rw [hrel1.2.1]
+      exact stepDistanceSymbol_ok hH hrel1 hp1 hfull
+    | copy =>
+      rw [hrel1.2.1]
+      exact stepCopy_ok hrel1 hp1
+    | word =>
+      rw [hrel1.2.1]
+      exact stepWord_ok hrel1 hp1
+  refine (hat (hrel.withBits h1) h3 h5).refilled (fun F => ?_) h2 h3
+  show (BitBuffer.mk st.word st.count).held ++ (chunkBits a pos.toNat stop.toNat ++ F) =
+    (refill st.word st.count a pos stop hs hp).buf.held ++
+      (chunkBits a (refill st.word st.count a pos stop hs hp).pos.toNat stop.toNat ++ F)
+  rw [← List.append_assoc, ← List.append_assoc, h4]
+
+/-- A step from a command's start, in terms of its block switch. -/
+theorem stepCmd_start {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size}
+    {s : CommandState} {st : Cmd} {pos : USize} (hH : HdrRel H m) (hrel : Rel w k.toNat m st (.command s)) (hp : pos.toNat ≤ stop.toNat) :
+    ((stepCmd H k a stop hs st pos).status = .next → ∃ ic, Rel w k.toNat m (stepCmd H k a stop hs st pos) (.insertCopy s ic) ∧
+      pos.toNat ≤ (stepCmd H k a stop hs st pos).pos.toNat ∧ (stepCmd H k a stop hs st pos).pos.toNat ≤ stop.toNat ∧ s.remaining ≠ 0 ∧
+      ∀ F, nextElement m.insertCopy s.insertCopy (stateBits st a pos stop F) =
+        some (ic, stateBits (stepCmd H k a stop hs st pos) a (stepCmd H k a stop hs st pos).pos stop F)) ∧
+    ((stepCmd H k a stop hs st pos).status = .needsInput → Rel w k.toNat m (stepCmd H k a stop hs st pos) (.command s) ∧
+      ∀ F, stateBits (stepCmd H k a stop hs st pos) a (stepCmd H k a stop hs st pos).pos stop F = stateBits st a pos stop F) ∧
+    ((stepCmd H k a stop hs st pos).status = .done → Rel w k.toNat m (stepCmd H k a stop hs st pos) (.command s) ∧ s.remaining = 0 ∧
+      ∀ F, stateBits (stepCmd H k a stop hs st pos) a (stepCmd H k a stop hs st pos).pos stop F = stateBits st a pos stop F) ∧
+    (stepCmd H k a stop hs st pos).status ≠ .needsOutput := by
+  unfold stepCmd
+  rw [dite_eq_left (USize.le_iff_toNat_le.mpr hp)]
+  obtain ⟨h1, h2, h3, h4, h5⟩ := refill_spec hs hp hrel.wf
+  dsimp only
+  have hrel1 := hrel.withBits h1
+  have hb : ∀ F, stateBits { st with word := (refill st.word st.count a pos stop hs hp).word, count := (refill st.word st.count a pos stop hs hp).count } a
+      (refill st.word st.count a pos stop hs hp).pos stop F = stateBits st a pos stop F := by
+    intro F
+    show (refill st.word st.count a pos stop hs hp).buf.held ++ (chunkBits a (refill st.word st.count a pos stop hs hp).pos.toNat stop.toNat ++ F) =
+      (BitBuffer.mk st.word st.count).held ++ (chunkBits a pos.toNat stop.toNat ++ F)
+    rw [← List.append_assoc, ← List.append_assoc, h4]
+  generalize ({ st with word := (refill st.word st.count a pos stop hs hp).word, count := (refill st.word st.count a pos stop hs hp).count } : Cmd) = st1 at hrel1 hb ⊢
+  have hat : stepAt H k a stop hs st1 (refill st.word st.count a pos stop hs hp).pos = stepCommand H st1 (refill st.word st.count a pos stop hs hp).pos := by
+    unfold stepAt
+    rw [hrel1.2.1]
+  rw [hat]
+  obtain ⟨c1, c2, c3, c4⟩ := stepCommand_cases (a := a) (stop := stop) (pos := (refill st.word st.count a pos stop hs hp).pos) hH hrel1
+  refine ⟨fun e => ?_, fun e => ?_, fun e => ?_, c4⟩
+  · obtain ⟨ic, r1, r2, r3, r4⟩ := c1 e
+    refine ⟨ic, r1, by rw [r2]; exact h2, by rw [r2]; exact h3, r3, fun F => ?_⟩
+    rw [← hb F, r4 F]
+  · rw [c2 e]
+    exact ⟨hrel1.mark _ _, hb⟩
+  · obtain ⟨e1, e2⟩ := c3 e
+    rw [e1]
+    exact ⟨hrel1.mark _ _, e2, hb⟩
+
 /-- Steps until one pauses or finishes, or `n` have been taken. -/
 def runCmd (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (n : USize) (st : Cmd) (pos : USize) : Cmd :=
   if _hn : n = 0 then markStep st pos .next

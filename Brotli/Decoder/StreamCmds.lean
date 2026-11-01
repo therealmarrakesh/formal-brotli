@@ -142,9 +142,12 @@ def cmdBudget : USize := USize.ofNat 65536
 
 /-- The place in a meta-block's commands. -/
 def stepDCmds (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize) : Dec :=
+  let H := D.H
+  let k := D.k
+  let last := D.last
   let c := D.cmd
   let D0 := clearCmd D
-  let r := runCmd D.H D.k a stop hs cmdBudget c pos
+  let r := runCmd H k a stop hs cmdBudget c pos
   let rp := r.pos
   match r.status with
   | .next => { D0 with cmd := r, pos := rp, status := .next }
@@ -152,8 +155,8 @@ def stepDCmds (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : D
   | .needsOutput => { D0 with cmd := r, pos := rp, status := .needsOutput }
   | .bad => { D0 with cmd := r, pos := rp, status := .bad }
   | .done =>
-    if seenOk r.seen D.H.nL D.H.nI D.H.nD then
-      { D0 with cmd := r, pos := rp, status := .next, tag := if D.last then .ended else .mblock, H := Hdr.none }
+    if seenOk r.seen H.nL H.nI H.nD then
+      { D0 with cmd := r, pos := rp, status := .next, tag := if last then .ended else .mblock, H := Hdr.none }
     else { D0 with cmd := r, pos := rp, status := .bad }
 
 /-- The bits of a state outside a header. -/
@@ -189,12 +192,12 @@ theorem stepDCmds_ok {α : Type} {S : Sem α} {w : Nat} {last : Bool} {m : MetaB
   | needsInput =>
     dsimp only
     obtain ⟨h1, h2, p', hR', h3, h4⟩ := hstep.needsInput hst
-    exact ⟨fun e => DStatus.noConfusion e, fun _ => ⟨h1, h2, .cmds w last' m p', ⟨ht, hl, hlim, hH, hR'⟩, (fun t => h3 _), h4, trivial⟩, fun e => DStatus.noConfusion e,
+    exact ⟨fun e => DStatus.noConfusion e, fun _ => ⟨h1, h2, .cmds w last' m p', ⟨ht, hl, hlim, hH, hR'⟩, (fun t => h3 _), h4, trivial, fun _ _ e => SPhase.noConfusion e⟩, fun e => DStatus.noConfusion e,
       fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
   | needsOutput =>
     dsimp only
     obtain ⟨p', hR', h1, h2, h3, h4⟩ := hstep.needsOutput hst
-    exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun _ => ⟨.cmds w last' m p', ⟨ht, hl, hlim, hH, hR'⟩, h1, h2, (fun t => h3 _), h4, trivial⟩,
+    exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun _ => ⟨.cmds w last' m p', ⟨ht, hl, hlim, hH, hR'⟩, h1, h2, (fun t => h3 _), h4, trivial, fun _ _ e => SPhase.noConfusion e⟩,
       fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
   | bad =>
     dsimp only
