@@ -90,6 +90,21 @@ private theorem chunk_drop (input : ByteArray) (pos stop k : Nat) :
   congr 1
   omega
 
+/-- Skipping bytes of a chunk. -/
+theorem chunkBits_drop (input : ByteArray) (pos stop k : Nat) :
+    chunkBits input (pos + k) stop = (chunkBits input pos stop).drop (8 * k) := by
+  unfold chunkBits
+  rw [chunk_drop, bits_drop]
+
+/-- A chunk's length in bits. -/
+theorem chunkBits_length {input : ByteArray} {pos stop : Nat} (hs : stop ≤ input.size) : (chunkBits input pos stop).length = (stop - pos) * 8 := by
+  unfold chunkBits chunk
+  rw [bits_length]
+  have hsz : input.data.size = input.size := rfl
+  simp only [List.length_take, List.length_drop, Array.length_toList, hsz]
+  have : min (stop - pos) (input.size - pos) = stop - pos := by omega
+  rw [this]
+
 /-- The eight bytes `loadBuffer` reads, in order, are the chunk's first. -/
 private theorem chunk_eight {input : ByteArray} {pos stop : Nat} (h : pos + 8 ≤ stop) (hs : stop ≤ input.size) :
     ∃ xs, xs.length = 8 ∧ (∀ i : USize, i.toNat = pos → ∀ (h8 : i.toNat + 8 ≤ input.size)
