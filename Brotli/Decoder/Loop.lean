@@ -199,13 +199,12 @@ structure Flushed where
   buf : ByteArray
 
 /-- Adds up to `space` bytes waiting in the window to the caller's buffer, stopping where the ring wraps. -/
-def flushCmd (k : Nat) (st : Cmd) (buf : ByteArray) (space : Nat) : Flushed :=
-  let u := st.pend.toNat
-  if u = 0 ∨ space = 0 then ⟨st, buf⟩
+def flushCmd (k : USize) (st : Cmd) (buf : ByteArray) (space : USize) : Flushed :=
+  if st.pend = 0 ∨ space = 0 then ⟨st, buf⟩
   else
-    let start := ringStart (2 ^ k) st.wpos.toNat u
-    let len := min (min u space) (2 ^ k - start)
-    ⟨{ st with pend := USize.ofNat (u - len) }, emitRun st.ring buf start len⟩
+    let start := ringBack st.wpos st.pend (ringMask k) (ringSize k)
+    let len := usmin (usmin st.pend space) (ringSize k - start)
+    ⟨{ st with pend := st.pend - len }, emitRun st.ring buf start.toNat len.toNat⟩
 
 /-- Fewer bytes waiting keeps a state's place. -/
 theorem Rel.withPend {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {p : Phase} (h : Rel w k m st p) {x : USize}
@@ -259,34 +258,52 @@ theorem Rel.window {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {p : Phase} (h :
 
 /-- Flushing keeps the state's place, adds the next bytes waiting to the buffer, oldest first, and takes them off those
 waiting. It adds at least one byte when one is waiting and there is space. -/
-theorem flushCmd_spec {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {p : Phase} {buf : ByteArray} {space : Nat}
-    (h : Rel w k m st p) :
+theorem flushCmd_spec {w : Nat} {k : USize} {m : MetaBlockHeader} {st : Cmd} {p : Phase} {buf : ByteArray} {space : USize}
+    (h : Rel w k.toNat m st p) :
     let r := flushCmd k st buf space
-    ∃ len, len ≤ space ∧ len ≤ st.pend.toNat ∧ (st.pend.toNat ≠ 0 → space ≠ 0 → 1 ≤ len) ∧
-      r.st.pend.toNat = st.pend.toNat - len ∧ Rel w k m r.st p ∧
+    ∃ len, len ≤ space.toNat ∧ len ≤ st.pend.toNat ∧ (st.pend.toNat ≠ 0 → space.toNat ≠ 0 → 1 ≤ len) ∧
+      r.st.pend.toNat = st.pend.toNat - len ∧ Rel w k.toNat m r.st p ∧
       r.st.word = st.word ∧ r.st.count = st.count ∧
       r.buf.data.toList.map UInt8.toNat =
         buf.data.toList.map UInt8.toNat ++ ((p.out.take st.pend.toNat).reverse).take len := by
   obtain ⟨hring, hle, hout, hk⟩ := h.window
-  have hRmax : 2 ^ k ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
+  have hRmax : 2 ^ k.toNat ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
   have h24 : (2 : Nat) ^ 24 = 16777216 := by decide
-  have hRpos : 1 ≤ 2 ^ k := Nat.two_pow_pos _
+  have hRpos : 1 ≤ 2 ^ k.toNat := Nat.two_pow_pos _
   dsimp only
   unfold flushCmd
   dsimp only
   split
   · rename_i hz
-    refine ⟨0, Nat.zero_le _, Nat.zero_le _, by omega, rfl, h, rfl, rfl, by simp⟩
+    refine ⟨0, Nat.zero_le _, Nat.zero_le _, ?_, rfl, h, rfl, rfl, by simp⟩
+    intro h1 h2
+    rcases hz with hz | hz
+    · exact absurd (by rw [hz]; rfl) h1
+    · exact absurd (by rw [hz]; rfl) h2
   · rename_i hz
+    have hp0 : st.pend ≠ 0 := fun e => hz (Or.inl e)
+    have hs0 : space ≠ 0 := fun e => hz (Or.inr e)
+    have hpN := usize_ne hp0
+    have hsN := usize_ne hs0
     have hplt := hring.pos_lt
-    have hstart : ringStart (2 ^ k) st.wpos.toNat st.pend.toNat < 2 ^ k := by
+    have hback : (ringBack st.wpos st.pend (ringMask k) (ringSize k)).toNat = ringStart (2 ^ k.toNat) st.wpos.toNat st.pend.toNat :=
+      ringBack_toNat hk (ringMask_toNat hk) (ringSize_toNat hk) hplt (by omega) hle
+    have hstart : ringStart (2 ^ k.toNat) st.wpos.toNat st.pend.toNat < 2 ^ k.toNat := by
       unfold ringStart
       exact ringIdx_lt hplt (by omega)
-    generalize hlenD : min (min st.pend.toNat space) (2 ^ k - ringStart (2 ^ k) st.wpos.toNat st.pend.toNat) = len
-    have hpn : (USize.ofNat (st.pend.toNat - len)).toNat = st.pend.toNat - len := usize_ofNat' (by omega)
-    refine ⟨len, by omega, by omega, by omega, hpn, h.withPend (by rw [hpn]; omega), rfl, rfl, ?_⟩
-    show (emitRun st.ring buf _ len).data.toList.map UInt8.toNat = _
-    rw [emitRun_data _ _ (by rw [hring.size]; omega), List.map_append,
-      hring.emit_bytes (by omega) hle hout (by omega) (by omega)]
+    have hroom : (ringSize k - ringBack st.wpos st.pend (ringMask k) (ringSize k)).toNat =
+        2 ^ k.toNat - ringStart (2 ^ k.toNat) st.wpos.toNat st.pend.toNat := by
+      rw [USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr (by rw [hback, ringSize_toNat hk]; omega)), hback, ringSize_toNat hk]
+    have hlenN : (usmin (usmin st.pend space) (ringSize k - ringBack st.wpos st.pend (ringMask k) (ringSize k))).toNat =
+        min (min st.pend.toNat space.toNat) (2 ^ k.toNat - ringStart (2 ^ k.toNat) st.wpos.toNat st.pend.toNat) := by
+      rw [usmin_toNat, usmin_toNat, hroom]
+    have hpn : (st.pend - usmin (usmin st.pend space) (ringSize k - ringBack st.wpos st.pend (ringMask k) (ringSize k))).toNat =
+        st.pend.toNat - (usmin (usmin st.pend space) (ringSize k - ringBack st.wpos st.pend (ringMask k) (ringSize k))).toNat :=
+      USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr (by rw [hlenN]; omega))
+    refine ⟨_, by rw [hlenN]; omega, by rw [hlenN]; omega, fun _ _ => by rw [hlenN]; omega, hpn,
+      h.withPend (by rw [hpn]; omega), rfl, rfl, ?_⟩
+    show (emitRun st.ring buf _ _).data.toList.map UInt8.toNat = _
+    rw [emitRun_data _ _ (by rw [hring.size, hback, hlenN]; omega), List.map_append, hback,
+      hring.emit_bytes (by omega) hle hout (by rw [hlenN]; omega) (by rw [hlenN]; omega)]
 
 end Brotli.Decoder

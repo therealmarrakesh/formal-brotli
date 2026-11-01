@@ -12,30 +12,22 @@ namespace Brotli.Decoder
 
 open Brotli.Spec Brotli.Properties
 
-/-- A dictionary word's bytes. -/
-def wordBytes (word : List Nat) : ByteArray :=
-  (word.map Nat.toUInt8).toByteArray
+/-- Begins a word that has been built. -/
+def applyBuilt (st : Cmd) (pos : USize) (word : ByteArray) : Cmd :=
+  if st.remaining < word.usize.toUInt64 then markStep st pos .bad
+  else
+    { st with
+      remaining := st.remaining - word.usize.toUInt64, wordBuf := word, wordPos := 0
+      tag := .word, pos := pos, status := .next }
 
-private theorem wordBytes_data {word : List Nat} (h : ∀ b ∈ word, b < 256) :
-    (wordBytes word).data.toList.map UInt8.toNat = word := by
-  unfold wordBytes
-  simp only [List.data_toByteArray, List.toList_toArray]
-  exact map_toUInt8 word h
-
-private theorem wordBytes_size (word : List Nat) : (wordBytes word).size = word.length := by
-  simp [wordBytes, List.size_toByteArray]
+/-- Begins the dictionary word a distance selects. -/
+def applyWord (st : Cmd) (pos : USize) (wordId : UInt64) : Cmd :=
+  if h : dictValid st.clen wordId then applyBuilt st pos (dictBuild st.clen wordId h)
+  else markStep st pos .bad
 
 /-- Begins the copy a distance selects. -/
 def applyDistance (st : Cmd) (pos : USize) (dcode d : UInt64) : Cmd :=
-  if st.written.toUInt64 < d then
-    match dictWord st.clen.toNat d.toNat st.written.toNat with
-    | none => markStep st pos .bad
-    | some word =>
-      if st.remaining.toNat < word.length then markStep st pos .bad
-      else
-        { st with
-          remaining := st.remaining - UInt64.ofNat word.length, wordBuf := wordBytes word, wordPos := 0
-          tag := .word, pos := pos, status := .next }
+  if st.written.toUInt64 < d then applyWord st pos (d - (st.written.toUInt64 + 1))
   else if st.remaining < st.clen then markStep st pos .bad
   else if dcode = 0 then
     { st with remaining := st.remaining - st.clen, left := st.clen, dist := d, tag := .copy, pos := pos, status := .next }
@@ -43,6 +35,53 @@ def applyDistance (st : Cmd) (pos : USize) (dcode d : UInt64) : Cmd :=
     { st with
       remaining := st.remaining - st.clen, left := st.clen, dist := d, tag := .copy, pos := pos, status := .next
       d0 := d, d1 := st.d0, d2 := st.d1, d3 := st.d2 }
+
+/-- A built word, in the terms of `copyPhase`. -/
+private theorem word_cases {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {s : CommandState} {pos : USize} {wb : ByteArray}
+    (hC : Core w k m st s.output s.remaining s.distances s.insertCopy s.literal s.distance)
+    (hprod : s.produced = s.output.length) (hlen : (wb.data.toList.map UInt8.toNat).length + 1 ≤ 38) :
+    (((some (wb.data.toList.map UInt8.toNat)).bind fun word =>
+        if s.remaining < word.length then none
+        else some (Phase.word { s with
+          produced := s.produced + word.length
+          remaining := s.remaining - word.length } word)) = none ∧
+      (applyBuilt st pos wb).status = .bad) ∨
+      ∃ p, ((some (wb.data.toList.map UInt8.toNat)).bind fun word =>
+          if s.remaining < word.length then none
+          else some (Phase.word { s with
+            produced := s.produced + word.length
+            remaining := s.remaining - word.length } word)) = some p ∧
+        (applyBuilt st pos wb).status = .next ∧ (applyBuilt st pos wb).pos = pos ∧ (applyBuilt st pos wb).word = st.word ∧
+        (applyBuilt st pos wb).count = st.count ∧ Rel w k m (applyBuilt st pos wb) p := by
+  unfold applyBuilt
+  have hrem := hC.rem
+  have hmapLen : (wb.data.toList.map UInt8.toNat).length = wb.size := by
+    simp only [List.length_map, Array.length_toList]
+    rfl
+  have hsizeU : wb.usize.toUInt64.toNat = wb.size := by
+    rw [USize.toNat_toUInt64]
+    exact usize_ofNat' (by omega)
+  dsimp only [Option.bind]
+  by_cases hr : st.remaining < wb.usize.toUInt64
+  · have hrN := UInt64.lt_iff_toNat_lt.mp hr
+    have hr' : s.remaining < (wb.data.toList.map UInt8.toNat).length := by omega
+    rw [ite_eq_left hr, ite_eq_left hr']
+    exact Or.inl ⟨rfl, rfl⟩
+  · have hrN : ¬ st.remaining.toNat < wb.usize.toUInt64.toNat := fun e => hr (UInt64.lt_iff_toNat_lt.mpr e)
+    have hr' : ¬ s.remaining < (wb.data.toList.map UInt8.toNat).length := by omega
+    rw [ite_eq_right hr, ite_eq_right hr']
+    refine Or.inr ⟨_, rfl, rfl, rfl, rfl, rfl, ⟨?_, rfl, ?_, ?_, ?_, ?_⟩⟩
+    · refine { hC with rem := ?_ }
+      show (st.remaining - wb.usize.toUInt64).toNat = _
+      rw [u64_sub (by omega), hsizeU]
+      show _ = s.remaining - (wb.data.toList.map UInt8.toNat).length
+      omega
+    · show s.produced + (wb.data.toList.map UInt8.toNat).length = s.output.length + (wb.data.toList.map UInt8.toNat).length
+      omega
+    · rfl
+    · show wb.size ≤ 38
+      omega
+    · exact Nat.zero_le _
 
 /-- What `applyDistance` does: it rejects when `copyPhase` does, and otherwise stands for the place `copyPhase` gives,
 with the buffer unchanged. -/
@@ -66,34 +105,21 @@ theorem applyDistance_spec {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {s : Com
   subst hclen
   by_cases hdict : st.written.toNat < d.toNat
   · have hdU : st.written.toUInt64 < d := UInt64.lt_iff_toNat_lt.mpr hdict
-    rw [ite_eq_left hdU, copyPhase_word (by rw [hmax]; exact hdict), hmax, dictWord_eq]
-    cases hword : dictionaryWord st.clen.toNat d.toNat st.written.toNat with
-    | none => exact Or.inl ⟨rfl, rfl⟩
-    | some word =>
-      dsimp only [Option.bind]
-      have hlen := dictionaryWord_length hword
-      have hb := dictionaryWord_bytes hword
-      by_cases hr : st.remaining.toNat < word.length
-      · have hr' : s.remaining < word.length := by omega
-        rw [ite_eq_left hr, ite_eq_left hr']
-        exact Or.inl ⟨rfl, rfl⟩
-      · have hr' : ¬ s.remaining < word.length := by omega
-        rw [ite_eq_right hr, ite_eq_right hr']
-        have hu : (UInt64.ofNat word.length).toNat = word.length := u64_ofNat (by omega)
-        refine Or.inr ⟨_, rfl, rfl, rfl, rfl, rfl, ⟨?_, rfl, ?_, ?_, ?_, ?_⟩⟩
-        · refine { hC with rem := ?_ }
-          show (st.remaining - UInt64.ofNat word.length).toNat = _
-          rw [u64_sub (by rw [hu]; omega), hu]
-          show _ = s.remaining - word.length
-          omega
-        · show s.produced + word.length = s.output.length + word.length
-          omega
-        · show ((wordBytes word).data.toList.drop (0 : USize).toNat).map UInt8.toNat = word
-          exact wordBytes_data hb
-        · show (wordBytes word).size ≤ 38
-          rw [wordBytes_size]
-          omega
-        · exact Nat.zero_le _
+    have hwid : (d - (st.written.toUInt64 + 1)).toNat = d.toNat - (st.written.toNat + 1) := by
+      have h1 : (st.written.toUInt64 + 1).toNat = st.written.toNat + 1 := by
+        rw [UInt64.toNat_add, USize.toNat_toUInt64, show (1 : UInt64).toNat = 1 from rfl]
+        exact Nat.mod_eq_of_lt (by omega)
+      rw [u64_sub (by rw [h1]; omega), h1]
+    rw [ite_eq_left hdU, copyPhase_word (by rw [hmax]; exact hdict), hmax, dictBuild_spec hwid]
+    unfold applyWord
+    by_cases hv : dictValid st.clen (d - (st.written.toUInt64 + 1))
+    · rw [dite_eq_left hv, dite_eq_left hv]
+      have hsomeW := dictBuild_spec (clen := st.clen) hwid
+      rw [dite_eq_left hv] at hsomeW
+      generalize dictBuild st.clen (d - (st.written.toUInt64 + 1)) hv = wb at hsomeW ⊢
+      exact word_cases hC hprod (dictionaryWord_length hsomeW)
+    · rw [dite_eq_right hv, dite_eq_right hv]
+      exact Or.inl ⟨rfl, rfl⟩
   · have hdU : ¬ st.written.toUInt64 < d := fun e => hdict (UInt64.lt_iff_toNat_lt.mp e)
     rw [ite_eq_right hdU, copyPhase_copy (by rw [hmax]; exact hdict)]
     by_cases hr : st.remaining < st.clen
