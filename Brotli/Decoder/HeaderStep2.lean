@@ -12,7 +12,7 @@ namespace Brotli.Decoder
 open Brotli.Spec Brotli.Properties
 
 section
-variable {α : Type} {K : MetaBlockHeader → List Bool → Option α} {a : ByteArray} {stop : USize}
+variable {α : Type} {K : HK α} {a : ByteArray} {stop : USize}
 
 /-! ### A category's first block count -/
 
@@ -105,10 +105,13 @@ theorem stepHFirst_ok {i : Cat} {n : Nat} {tc cc : PrefixCode} {st : Hd} {g : Gh
     obtain ⟨b1, b2, b3, b4, _⟩ := catMoveOn_spec { st with
         word := r.word, count := r.count, pos := pos, status := .next
         d := st.d.setCount st.cat r.a }
+    have ha : Arr (catMoveOn { st with
+        word := r.word, count := r.count, pos := pos, status := .next
+        d := st.d.setCount st.cat r.a }) st := (catMoveOn_arr _).trans ⟨setCount_arrays _ _ _, rfl, rfl, rfl, rfl, rfl⟩
     generalize catMoveOn { st with
         word := r.word, count := r.count, pos := pos, status := .next
-        d := st.d.setCount st.cat r.a } = r2 at hrel2 b1 b2 b3 b4 ⊢
-    refine HStepOk.ofNext (hd := firstNext_down _ _ _ _) b4 hrel2 (by rw [b3]; exact Nat.le_refl _) (by rw [b3]; exact hp) (fun F => ?_)
+        d := st.d.setCount st.cat r.a } = r2 at hrel2 b1 b2 b3 b4 ha ⊢
+    refine HStepOk.ofNext (hd := firstNext_down _ _ _ _) (hm := HMove.ofArr ha (firstNext_cap _ _ _ _)) b4 hrel2 (by rw [b3]; exact Nat.le_refl _) (by rw [b3]; exact hp) (fun F => ?_)
     have e := hN (chunkBits a pos.toNat stop.toNat ++ F)
     rw [avail_mk, e, afterCat_eq, avail_mk, b1, b2, b3]
     rfl
@@ -238,8 +241,12 @@ theorem stepHNp_ok {st : Hd} {g : Gh} {pos : USize} (hrel : HRel st g .np) (hp :
     have hcL := hu.cat .L (by decide)
     have hwfL : g.m.literal.n ≤ 256 := hcL.wf.2.1
     have hnL : st.d.nL.toNat = g.m.literal.n := hcL.n
+    have hfs : (zeroBytes st.d.nL.toNat).size ≤ 16384 := by
+      rw [zeroBytes_size (by omega)]
+      omega
     refine HStepOk.ofNext (g' := { g with m := { g.m with npostfix := r.a.toNat, ndirect := r.b.toNat <<< r.a.toNat } })
-      (p' := .modes [] g.m.literal.n) rfl ⟨hw2, hu.npDone rfl hshift (by omega) hnd, rfl, rfl, hnL, by simp, ?_, by simp, by simp⟩
+      (p' := .modes [] g.m.literal.n) (hm := ⟨rfl, rfl, fun h => ⟨hfs, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩,
+        by simp only [capH, Option.isSome, Bool.false_eq_true, ↓reduceIte]; omega, Nat.zero_le _⟩) rfl ⟨hw2, hu.npDone rfl hshift (by omega) hnd, rfl, rfl, hnL, by simp, ?_, by simp, by simp⟩
       (Nat.le_refl _) hp (fun F => ?_)
     · show (zeroBytes st.d.nL.toNat).size = g.m.literal.n
       rw [zeroBytes_size (by omega), hnL]
@@ -297,7 +304,9 @@ theorem stepHModes_ok {done : List Nat} {left : Nat} {st : Hd} {g : Gh} {pos : U
       rfl
     subst hl0
     have hmap : MapOk st.fill done g.m.literal.n 4 := ⟨hsize, by omega, fun i hi => hat i (by omega), hlt⟩
-    refine HStepOk.ofNext (g' := { g with m := { g.m with contextModes := done } }) (p' := .trees true) rfl
+    refine HStepOk.ofNext (g' := { g with m := { g.m with contextModes := done } }) (p' := .trees true)
+      (hm := ⟨rfl, rfl, fun h => ⟨h.fill, h.lens, h.clLens, h.clt, h.mapT, by show st.fill.size ≤ 256; rw [hsize]; exact h256, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩,
+        by simp only [capH, Option.isSome, Bool.false_eq_true, ↓reduceIte]; omega, Nat.zero_le _⟩) rfl
       ⟨hw, hu.modesDone hmap, rfl, rfl⟩ (Nat.le_refl _) hp (fun F => ?_)
     exact hrest_modes_zero K g done _
   rw [ite_eq_right h0]
@@ -322,7 +331,9 @@ theorem stepHModes_ok {done : List Nat} {left : Nat} {st : Hd} {g : Gh} {pos : U
       rw [UInt64.toNat_toUInt8]
       omega
     have hsz' : (setU st.fill st.idx.toUSize v.toUInt8).size = g.m.literal.n := by rw [size_setU]; exact hsize
-    refine HStepOk.ofNext (g' := g) (p' := .modes (done ++ [v.toNat]) n) (hd := Or.inl (Or.inr ⟨rfl, Nat.lt_succ_self n⟩)) rfl
+    refine HStepOk.ofNext (g' := g) (p' := .modes (done ++ [v.toNat]) n) (hd := Or.inl (Or.inr ⟨rfl, Nat.lt_succ_self n⟩))
+      (hm := ⟨rfl, rfl, fun h => ⟨by show (setU st.fill st.idx.toUSize v.toUInt8).size ≤ 16384; rw [hsz']; omega, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩,
+        by simp only [capH, Option.isSome, Bool.false_eq_true, ↓reduceIte]; omega, Nat.zero_le _⟩) rfl
       ⟨hw1, hu, ht, by simpa using hi1, hl1, by simp only [List.length_append, List.length_singleton]; omega, hsz', ?_, ?_⟩
       (Nat.le_refl _) hp (fun F => ?_)
     · intro x hx

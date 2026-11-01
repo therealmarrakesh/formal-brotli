@@ -24,7 +24,7 @@ theorem clOrderLut_at {i : Nat} (h : i < 18) : ∃ x, codeLengthOrder[i]? = some
   exact h3
 
 section
-variable {α : Type} (K : MetaBlockHeader → List Bool → Option α)
+variable {α : Type} (K : HK α)
 
 /-- With no more code length symbols, one non-zero length gives a single-symbol code. -/
 theorem hrest_clens_nil (g : Gh) (o : Owner) (size : Nat) (acc : List (Nat × Nat)) (sum : Nat) (bs : List Bool) :
@@ -113,7 +113,8 @@ private theorem mem_lengthsOf_le {size : Nat} {P : List (Nat × Nat)} (h : ∀ p
 theorem clFinish_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {acc : List (Nat × Nat)}
     (hw : (BitBuffer.mk st.word st.count).Wf) (hu : Upto st.d g (ownerStage o)) (hs : SizeOk st size) (ho : OwnerRel st g size o)
     (hd : ClDone st acc) : HRel (clFinish st) g (.syms o size (codeLengthCode acc) ⟨[], 8, none⟩) ∧
-      (clFinish st).status = st.status ∧ (clFinish st).word = st.word ∧ (clFinish st).count = st.count ∧ (clFinish st).pos = st.pos := by
+      (clFinish st).status = st.status ∧ (clFinish st).word = st.word ∧ (clFinish st).count = st.count ∧ (clFinish st).pos = st.pos ∧
+      (clFinish st).d = st.d ∧ (HSize st → HSize (clFinish st)) := by
   have hbuilt : Built ByteArray.empty (clTable st) (codeLengthCode acc) ∧ (clTable st).size ≤ 132096 ∧ Complete (codeLengthCode acc) ∧
       (codeLengthCode acc).Symbols 18 := by
     unfold clTable
@@ -166,7 +167,8 @@ theorem clFinish_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {acc : List (Nat
   obtain ⟨hs1, hs2, hs3⟩ := hs
   have hzsize : (zeroBytes st.size.toNat).size = size := by
     rw [zeroBytes_size (by omega), hs1]
-  refine ⟨⟨hw, hu, rfl, ⟨hs1, hs2, hs3⟩, ho, ?_⟩, rfl, rfl, rfl, rfl⟩
+  refine ⟨⟨hw, hu, rfl, ⟨hs1, hs2, hs3⟩, ho, ?_⟩, rfl, rfl, rfl, rfl, rfl, fun h =>
+    ⟨h.fill, by show (zeroBytes st.size.toNat).size ≤ _; rw [hzsize]; exact hs3, h.clLens, hsize, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩⟩
   exact {
     table := by rw [usize_zero']; exact hB.ok
     complete := hC
@@ -247,7 +249,7 @@ private theorem apart_push {acc : List (Nat × Nat)} {x : Nat} {rest : List Nat}
     exact ⟨hx, (List.nodup_cons.mp hnd).1, hlen⟩
 
 section
-variable {α : Type} {K : MetaBlockHeader → List Bool → Option α} {a : ByteArray} {stop : USize}
+variable {α : Type} {K : HK α} {a : ByteArray} {stop : USize}
 
 theorem stepHClens_ok {o : Owner} {size : Nat} {order : List Nat} {acc : List (Nat × Nat)} {sum : Nat} {st : Hd} {g : Gh} {pos : USize}
     (hrel : HRel st g (.clens o size order acc sum)) (hp : pos.toNat ≤ stop.toNat) (hfull : 56 < st.count.toNat ∨ pos = stop) :
@@ -272,9 +274,11 @@ theorem stepHClens_ok {o : Owner} {size : Nat} {order : List Nat} {acc : List (N
       have hdone : ClDone { st with pos := pos, status := .next } acc :=
         { symLt := hc.symLt, one := fun _ => hc.nzOne hlen1, sz := fun h => absurd hnz h, sum := fun h => absurd hnz h,
           lens := fun h => absurd hnz h, keys := hc.keys, small := fun p hp => ⟨(hc.apart p hp).1, (hc.apart p hp).2.2⟩ }
-      obtain ⟨h1, h2, h3, h4, h5⟩ := clFinish_ok (st := { st with pos := pos, status := .next }) hw hu hs ho hdone
-      generalize clFinish { st with pos := pos, status := .next } = r2 at h1 h2 h3 h4 h5
-      refine HStepOk.ofNext h2 h1 (by rw [h5]; exact Nat.le_refl _) (by rw [h5]; exact hp) (fun F => ?_)
+      obtain ⟨h1, h2, h3, h4, h5, h6, h7⟩ := clFinish_ok (st := { st with pos := pos, status := .next }) hw hu hs ho hdone
+      have hsz : HSize st → HSize (clFinish { st with pos := pos, status := .next }) := fun h =>
+        h7 ⟨h.fill, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩
+      generalize clFinish { st with pos := pos, status := .next } = r2 at h1 h2 h3 h4 h5 h6 hsz
+      refine HStepOk.ofNext (hm := HMove.ofD h6 hsz (Nat.le_refl _)) h2 h1 (by rw [h5]; exact Nat.le_refl _) (by rw [h5]; exact hp) (fun F => ?_)
       rw [hrest_clens_nil, ite_eq_left hlen1, avail_mk, avail_mk, h3, h4, h5]
     · rw [ite_eq_right hnz]
       have hlen1 : ¬ (acc.filter (·.2 != 0)).length = 1 := by
@@ -404,15 +408,20 @@ theorem stepHClens_ok {o : Owner} {size : Nat} {order : List Nat} {acc : List (N
             lens := fun _ => hlensP
             keys := hkeys
             small := fun p hp => ⟨(happ p hp).1, (happ p hp).2.2⟩ }
-        obtain ⟨h1, h2, h3, h4, h5⟩ := clFinish_ok (st := { st with
+        obtain ⟨h1, h2, h3, h4, h5, h6, h7⟩ := clFinish_ok (st := { st with
             word := r.word, count := r.count, pos := pos, status := .next
             clLens := setLen st.clLens (getU clOrderLut st.clIdx.toUSize).toUInt64 r.a, clSum := st.clSum + ((32 : UInt64) >>> r.a)
             clNz := st.clNz + 1, clSym := (getU clOrderLut st.clIdx.toUSize).toUInt64, clIdx := st.clIdx + 1 }) hw2 hu hs ho hdone
+        have hsz : HSize st → HSize (clFinish { st with
+            word := r.word, count := r.count, pos := pos, status := .next
+            clLens := setLen st.clLens (getU clOrderLut st.clIdx.toUSize).toUInt64 r.a, clSum := st.clSum + ((32 : UInt64) >>> r.a)
+            clNz := st.clNz + 1, clSym := (getU clOrderLut st.clIdx.toUSize).toUInt64, clIdx := st.clIdx + 1 }) := fun h =>
+          h7 ⟨h.fill, h.lens, Nat.le_of_eq hlensP.sz, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩
         generalize clFinish { st with
             word := r.word, count := r.count, pos := pos, status := .next
             clLens := setLen st.clLens (getU clOrderLut st.clIdx.toUSize).toUInt64 r.a, clSum := st.clSum + ((32 : UInt64) >>> r.a)
-            clNz := st.clNz + 1, clSym := (getU clOrderLut st.clIdx.toUSize).toUInt64, clIdx := st.clIdx + 1 } = r2 at h1 h2 h3 h4 h5
-        refine HStepOk.ofNext h2 h1 (by rw [h5]; exact Nat.le_refl _) (by rw [h5]; exact hp) (fun F => ?_)
+            clNz := st.clNz + 1, clSym := (getU clOrderLut st.clIdx.toUSize).toUInt64, clIdx := st.clIdx + 1 } = r2 at h1 h2 h3 h4 h5 h6 hsz
+        refine HStepOk.ofNext (hm := HMove.ofD h6 hsz (Nat.le_refl _)) h2 h1 (by rw [h5]; exact Nat.le_refl _) (by rw [h5]; exact hp) (fun F => ?_)
         rw [avail_mk, hN]
         simp only [h0', h32', ↓reduceIte]
         rw [avail_mk, h3, h4, h5]
@@ -466,7 +475,8 @@ theorem stepHClens_ok {o : Owner} {size : Nat} {order : List Nat} {acc : List (N
                 show [(x, r.a.toNat)] = [((getU clOrderLut st.clIdx.toUSize).toUInt64.toNat, r.a.toNat)]
                 rw [hsym]
               symLt := by show (getU clOrderLut st.clIdx.toUSize).toUInt64.toNat < 18; rw [hsym]; exact hx18 }
-          refine HStepOk.ofNext (g' := g) (p' := .clens o size rest (acc ++ [(x, r.a.toNat)]) (sum + 32 >>> r.a.toNat)) rfl
+          refine HStepOk.ofNext (g' := g) (p' := .clens o size rest (acc ++ [(x, r.a.toNat)]) (sum + 32 >>> r.a.toNat))
+            (hm := HMove.ofD rfl (fun h => ⟨h.fill, h.lens, Nat.le_of_eq hlensP.sz, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩) (Nat.le_refl _)) rfl
             ⟨hw2, hu, ht, hs, ho, hrelN⟩ (Nat.le_refl _) hp (fun F => ?_)
           rw [avail_mk, hN]
           simp only [h0', h32', hgt', ↓reduceIte]

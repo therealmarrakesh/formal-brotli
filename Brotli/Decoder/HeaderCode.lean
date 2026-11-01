@@ -121,13 +121,13 @@ private theorem writeSimple_lens {size : Nat} (hs : size < 2 ^ 32) (r : Rd) (he 
   exact congrArg _ (((((z.set r.d 3 h4 (by decide)).set r.c 3 h3 (by decide))).set r.b 2 h2 (by decide)).set r.a 1 h1 (by decide)).eq.symm
 
 section
-variable {α : Type} {K : MetaBlockHeader → List Bool → Option α} {a : ByteArray} {stop : USize}
+variable {α : Type} {K : HK α} {a : ByteArray} {stop : USize}
 
 /-- A finished table is a step, given that what the state stands for before it is the code's owner. -/
 theorem TableDone.toStep {g : Gh} {o : Owner} {c : PrefixCode} {p : HPhase} {st st0 r : Hd} {pos : USize}
-    (h : TableDone K g o c st0 r) (h2 : st0.pos = pos) (hp : pos.toNat ≤ stop.toNat) (hmax : st0.d.arenaMax = st.d.arenaMax)
+    (h : TableDone K g o c st0 r) (h2 : st0.pos = pos) (hp : pos.toNat ≤ stop.toNat) (hd : st0.d = st.d) (hsz : HSize st → HSize st0)
     (heq : ∀ F, hrest K g p (availBits st.word st.count a pos stop F) = ownerK K g o c (availBits st0.word st0.count a pos stop F))
-    (hrank : (rankH p).1 = rankO o := by rfl) :
+    (hrank : (rankH p).1 = rankO o := by rfl) (hcap : capH p = capO o := by rfl) :
     HStepOk K a stop g p st pos r := by
   obtain ⟨⟨b1, b2, b3⟩, hnext, hother⟩ := h
   have hne : ∀ s : HStatus, s ≠ .next → s ≠ .memory → r.status = s → False := by
@@ -135,12 +135,16 @@ theorem TableDone.toStep {g : Gh} {o : Owner} {c : PrefixCode} {p : HPhase} {st 
     have := (hother (by rw [e]; exact h1)).1
     exact h2 (e.symm.trans this)
   refine ⟨fun e => ?_, fun e => ?_, fun e F => ?_, fun e => ?_, fun e => ?_⟩
-  · obtain ⟨g', p', h4, h5, h6⟩ := hnext e
-    refine ⟨g', p', h4, by rw [b3, h2]; exact Nat.le_refl _, by rw [b3, h2]; exact hp, (fun F => ?_), Or.inl (by rw [hrank]; exact h6)⟩
+  · obtain ⟨g', p', oc, h4, h5, h6, h7⟩ := hnext e
+    have hmv := h7 p hcap
+    refine ⟨g', p', oc, h4, by rw [b3, h2]; exact Nat.le_refl _, by rw [b3, h2]; exact hp, (fun F => ?_), Or.inl (by rw [hrank]; exact h6),
+      ⟨by rw [hmv.max, hd], by rw [hmv.grow, hd], fun hs => hmv.size (hsz hs), hmv.cap, hmv.one⟩⟩
     rw [heq F, avail_mk, h5, avail_mk, b1, b2, b3, h2]
   · exact (hne _ (fun e => HStatus.noConfusion e) (fun e => HStatus.noConfusion e) e).elim
   · exact (hne _ (fun e => HStatus.noConfusion e) (fun e => HStatus.noConfusion e) e).elim
-  · exact ((hother (by rw [e]; exact fun e => HStatus.noConfusion e)).2).trans hmax
+  · obtain ⟨_, _, h3, h4, h5, h6⟩ := hother (by rw [e]; exact fun e => HStatus.noConfusion e)
+    rw [hd] at h3
+    exact ⟨c, h3, h4, by rw [hcap]; exact h5, fun F => by rw [heq F]; exact h6 _⟩
   · exact (hne _ (fun e => HStatus.noConfusion e) (fun e => HStatus.noConfusion e) e).elim
 
 /-! ### The place at a prefix code's first bits -/
@@ -292,13 +296,17 @@ theorem stepHCode_ok {o : Owner} {size : Nat} {st : Hd} {g : Gh} {pos : USize} (
             word := r.word, count := r.count, pos := pos, status := .next
             lens := writeSimple (zeroBytes st.size.toNat) r }) (single := r.e == 0) (sym := r.a)
           hw2 hu hs ho rfl hsg hcn hlensEq hCc hsy
-        exact hdone.toStep rfl hp rfl (fun F => by
+        exact hdone.toStep rfl hp rfl (fun h => ⟨h.fill, by show (writeSimple (zeroBytes st.size.toNat) r).size ≤ _; rw [hlensEq]; exact hs3,
+            h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩) (fun F => by
           rw [avail_mk, hspec]
           exact hN _)
     · rw [ite_eq_right h1]
       have h1' : ¬ hskip.toNat = 1 := fun h => h1 (UInt64.toNat_inj.mp h)
       simp only [h1', ↓reduceIte] at hspec
       refine HStepOk.ofNext (g' := g) (p' := .clens o size (codeLengthOrder.drop hskip.toNat) [] 0) rfl
+        (hm := ⟨rfl, rfl, fun h => ⟨h.fill, h.lens, by show (zeroBytes 18).size ≤ _; rw [zeroBytes_size (by decide)]; exact Nat.le_refl _,
+          h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩,
+          by simp only [capH, Option.isSome, Bool.false_eq_true, ↓reduceIte]; omega, Nat.zero_le _⟩)
         ⟨hw1, hu, rfl, hs, ho, clStart_rel hhlt rfl rfl rfl rfl rfl⟩ (Nat.le_refl _) hp (fun F => ?_)
       rw [avail_mk, hspec]
       rfl

@@ -41,7 +41,7 @@ def stepH (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (st : Hd) 
   else markH st pos .bad
 
 section
-variable {α : Type} {K : MetaBlockHeader → List Bool → Option α} {a : ByteArray} {stop : USize}
+variable {α : Type} {K : HK α} {a : ByteArray} {stop : USize}
 
 theorem stepAtH_ok {g : Gh} {p : HPhase} {st : Hd} {pos : USize} (hrel : HRel st g p) (hp : pos.toNat ≤ stop.toNat)
     (hfull : 56 < st.count.toNat ∨ pos = stop) : HStepOk K a stop g p st pos (stepAtH st pos) := by
@@ -91,7 +91,7 @@ theorem stepH_ok {g : Gh} {p : HPhase} {st : Hd} {pos : USize} {hs : stop.toNat 
   rw [dite_eq_left (USize.le_iff_toNat_le.mpr hp)]
   obtain ⟨h1, h2, h3, h4, h5⟩ := refill_spec hs hp hrel.wf
   dsimp only
-  refine (stepAtH_ok (hrel.withBits h1) h3 h5).refilled (fun F => ?_) h2 h3 rfl
+  refine (stepAtH_ok (hrel.withBits h1) h3 h5).refilled (fun F => ?_) h2 h3 ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩
   show (BitBuffer.mk st.word st.count).held ++ (chunkBits a pos.toNat stop.toNat ++ F) =
     (refill st.word st.count a pos stop hs hp).buf.held ++
       (chunkBits a (refill st.word st.count a pos stop hs hp).pos.toNat stop.toNat ++ F)

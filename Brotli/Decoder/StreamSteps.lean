@@ -45,12 +45,12 @@ theorem stepDHdr_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {last 
   cases hst : r.status with
   | next =>
     dsimp only
-    obtain ⟨g', p', hR', h1, h2, h3, h4⟩ := hstep.next hst
-    exact ⟨fun _ => ⟨.hdr w st last mlen g' p', ⟨rfl, ⟨hall.win, hall.produced, hall.limit⟩, hl, hleft, hm1, hm2, hR'⟩, h1, h2, (fun t => h3 _), h4, ⟨[], rfl, rfl⟩⟩,
+    obtain ⟨g', p', oc, hR', h1, h2, h3, h4, _⟩ := hstep.next hst
+    exact ⟨fun _ => ⟨.hdr w st last mlen g' p', ⟨rfl, ⟨hall.win, hall.produced, hall.limit⟩, hl, hleft, hm1, hm2, hR'⟩, h1, h2, (fun t => (h3 _).trans (Wr_id (fun _ _ => rfl) oc _)), h4, ⟨[], rfl, rfl⟩⟩,
       fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
   | needsInput =>
     dsimp only
-    obtain ⟨h1, h2, hR', h3, h4⟩ := hstep.needsInput hst
+    obtain ⟨h1, h2, hR', h3, h4, _⟩ := hstep.needsInput hst
     exact ⟨fun e => DStatus.noConfusion e, fun _ => ⟨h1, h2, .hdr w st last mlen g p, ⟨rfl, ⟨hall.win, hall.produced, hall.limit⟩, hl, hleft, hm1, hm2, hR'⟩,
       (fun t => h3 _), h4, ⟨rfl, rfl⟩, (fun _ _ e => SPhase.noConfusion e), ⟨[], rfl, rfl⟩⟩, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
   | bad =>
@@ -62,7 +62,7 @@ theorem stepDHdr_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {last 
     exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun _ => rfl, fun e => DStatus.noConfusion e⟩
   | ready =>
     dsimp only
-    obtain ⟨g', hu, hw, h1, h2, h3⟩ := hstep.ready hst
+    obtain ⟨g', hu, hw, h1, h2, h3, _⟩ := hstep.ready hst
     obtain ⟨H', hmk, hrelH, _⟩ := mkHdr_ok hu
     rw [hmk]
     dsimp only

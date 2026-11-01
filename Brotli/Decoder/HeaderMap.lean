@@ -12,7 +12,7 @@ namespace Brotli.Decoder
 open Brotli.Spec Brotli.Properties
 
 section
-variable {α : Type} (K : MetaBlockHeader → List Bool → Option α)
+variable {α : Type} (K : HK α)
 
 /-- With no values left, the last bit is next. -/
 theorem hrest_vals_zero (g : Gh) (isL : Bool) (ntrees rlemax : Nat) (code : PrefixCode) (done : List Nat) (bs : List Bool) :
@@ -122,7 +122,7 @@ def stepHVals (st : Hd) (pos : USize) : Hd :=
           fill := setU fill idx.toUSize v.toUInt8 }
 
 section
-variable {α : Type} {K : MetaBlockHeader → List Bool → Option α} {a : ByteArray} {stop : USize}
+variable {α : Type} {K : HK α} {a : ByteArray} {stop : USize}
 
 theorem stepHVals_ok {isL : Bool} {ntrees rlemax : Nat} {code : PrefixCode} {done : List Nat} {left : Nat} {st : Hd} {g : Gh} {pos : USize}
     (hrel : HRel st g (.vals isL ntrees rlemax code done left)) (hp : pos.toNat ≤ stop.toNat) (hfull : 56 < st.count.toNat ∨ pos = stop) :
@@ -213,7 +213,10 @@ theorem stepHVals_ok {isL : Bool} {ntrees rlemax : Nat} {code : PrefixCode} {don
         rw [UInt64.toNat_toUInt8]
         omega
       refine HStepOk.ofNext (g' := g) (p' := .vals isL ntrees rlemax code (done ++ List.replicate r.b.toNat r.a.toNat) (left - r.b.toNat))
-        (hd := Or.inl (Or.inr ⟨rfl, show left - r.b.toNat < left by omega⟩)) rfl
+        (hd := Or.inl (Or.inr ⟨rfl, show left - r.b.toNat < left by omega⟩))
+        (hm := ⟨rfl, rfl, fun h => ⟨by show (setU st.fill st.idx.toUSize r.a.toUInt8).size ≤ _; rw [size_setU]; exact h.fill,
+          h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩,
+          by simp only [capH, Option.isSome, Bool.false_eq_true, ↓reduceIte]; omega, Nat.zero_le _⟩) rfl
         ⟨hw2, hu, ht, hi, hn, hr, h2, h256, h16, hok, hC, hsy, ?_, hleft2, ?_, ?_, ?_, ?_, ?_⟩ (Nat.le_refl _) hp (fun F => ?_)
       · show (st.idx + r.b).toNat = _
         rw [hidx2, hlen2]
@@ -594,7 +597,7 @@ private theorem not_le_lt3 {a k : UInt64} (h : ¬ k ≤ a) : a.toNat < k.toNat :
   Nat.lt_of_not_le fun e => h (UInt64.le_iff_toNat_le.mpr e)
 
 section
-variable {α : Type} {K : MetaBlockHeader → List Bool → Option α} {a : ByteArray} {stop : USize}
+variable {α : Type} {K : HK α} {a : ByteArray} {stop : USize}
 
 theorem stepHImtf_ok {isL : Bool} {ntrees : Nat} {vals : List Nat} {st : Hd} {g : Gh} {pos : USize}
     (hrel : HRel st g (.imtf isL ntrees vals)) (hp : pos.toNat ≤ stop.toNat) (hfull : 56 < st.count.toNat ∨ pos = stop) :
@@ -642,8 +645,10 @@ theorem stepHImtf_ok {isL : Bool} {ntrees : Nat} {vals : List Nat} {st : Hd} {g 
       have hrel2 := mapFinish_rel (st := { clearFill st with word := b1.word, count := b1.count, pos := pos, status := .next })
         (cmap := cmap) (ntrees := ntrees) (n := st.ntrees) (map := final) hw1 hi hu hfinal hn (by omega) h256
       obtain ⟨c1, c2, c3, c4⟩ := mapFinish_spec { clearFill st with word := b1.word, count := b1.count, pos := pos, status := .next } st.ntrees final
-      generalize mapFinish { clearFill st with word := b1.word, count := b1.count, pos := pos, status := .next } st.ntrees final = r2 at hrel2 c1 c2 c3 c4 ⊢
-      refine HStepOk.ofNext (hd := imtfNext_down _ _ _ _) c4 hrel2 (by rw [c3]; exact Nat.le_refl _) (by rw [c3]; exact hp) (fun F => ?_)
+      have hmv := mapFinish_move (st0 := st) (st := { clearFill st with word := b1.word, count := b1.count, pos := pos, status := .next }) (g := g) (p := .imtf isL ntrees vals)
+        (n := st.ntrees) (ntrees := ntrees) (cmap := cmap) (map := final) hi hu hfinal.sz ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩ (fun _ => Nat.zero_le _) (Nat.le_refl _)
+      generalize mapFinish { clearFill st with word := b1.word, count := b1.count, pos := pos, status := .next } st.ntrees final = r2 at hrel2 c1 c2 c3 c4 hmv ⊢
+      refine HStepOk.ofNext (hd := imtfNext_down _ _ _ _) (hm := hmv) c4 hrel2 (by rw [c3]; exact Nat.le_refl _) (by rw [c3]; exact hp) (fun F => ?_)
       rw [avail_mk, hspec, ite_eq_left (hocc.mp hc), afterMap_eq, avail_mk, c1, c2, c3]
     · rw [ite_eq_right hc]
       have hc' : ¬ (List.range ntrees).all cmap.contains = true := fun e => hc (hocc.mpr e)

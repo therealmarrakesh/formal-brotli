@@ -98,7 +98,7 @@ def stepHSyms (st : Hd) (pos : USize) : Hd :=
               repSym := sym, repCount := new, symSum := sum }
 
 section
-variable {α : Type} (K : MetaBlockHeader → List Bool → Option α)
+variable {α : Type} (K : HK α)
 
 /-- One more code length symbol. -/
 theorem hrest_syms_step (g : Gh) (o : Owner) (size : Nat) (clc : PrefixCode) (ls : LengthState) (bs : List Bool)
@@ -197,7 +197,7 @@ theorem lens_full {t : ByteArray} {A : List Nat} {size : Nat} (hs : t.size = siz
       omega)]
 
 section
-variable {α : Type} {K : MetaBlockHeader → List Bool → Option α} {a : ByteArray} {stop : USize}
+variable {α : Type} {K : HK α} {a : ByteArray} {stop : USize}
 
 theorem stepHSyms_ok {o : Owner} {size : Nat} {clc : PrefixCode} {ls : LengthState} {st : Hd} {g : Gh} {pos : USize}
     (hrel : HRel st g (.syms o size clc ls)) (hp : pos.toNat ≤ stop.toNat) (hfull : 56 < st.count.toNat ∨ pos = stop) :
@@ -228,7 +228,8 @@ theorem stepHSyms_ok {o : Owner} {size : Nat} {clc : PrefixCode} {ls : LengthSta
       omega
     have hdone := tableDone_ok K (st := { st with pos := pos, status := .next }) (c := .canonical (ls.lens ++ List.replicate (size - ls.lens.length) 0))
       (single := false) (sym := 0) hw hu hs ho rfl (fun e => Bool.noConfusion e) (fun _ => by rw [← hfullL]) hy.sz hC hsy
-    exact hdone.toStep rfl hp rfl (fun F => hrest_syms_done K g o size clc ls _ hlenLe hsum)
+    exact hdone.toStep rfl hp rfl (fun h => ⟨h.fill, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩)
+      (fun F => hrest_syms_done K g o size clc ls _ hlenLe hsum)
   rw [ite_eq_right h0]
   have hsumNe : lengthSum ls.lens ≠ 32768 := by
     rw [← hy.sumOk]
@@ -377,7 +378,8 @@ theorem stepHSyms_ok {o : Owner} {size : Nat} {clc : PrefixCode} {ls : LengthSta
           simp only [List.length_append, List.length_singleton]
           omega
         refine HStepOk.ofNext (g' := g) (p' := .syms o size clc (applyCodeLength ls r.a.toNat r.b.toNat))
-          (hd := Or.inr ⟨rfl, Or.inr ⟨rfl, hgrow⟩⟩) rfl
+          (hd := Or.inr ⟨rfl, Or.inr ⟨rfl, hgrow⟩⟩)
+          (hm := HMove.ofD rfl (fun h => ⟨h.fill, Nat.le_trans (Nat.le_of_eq hnew.sz) hs3, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩) (Nat.le_refl _)) rfl
           ⟨hw2, hu, ht, hs, ho, hnew⟩ (Nat.le_refl _) hp (fun F => ?_)
         rw [avail_mk, hN]
         simp only [hlt1, hbig2, ↓reduceIte]
@@ -611,7 +613,8 @@ theorem stepHSyms_ok {o : Owner} {size : Nat} {clc : PrefixCode} {ls : LengthSta
           simp only [List.length_append, List.length_replicate]
           omega
         refine HStepOk.ofNext (g' := g) (p' := .syms o size clc (applyCodeLength ls r.a.toNat r.b.toNat))
-          (hd := Or.inr ⟨rfl, Or.inr ⟨rfl, hshorter⟩⟩) rfl
+          (hd := Or.inr ⟨rfl, Or.inr ⟨rfl, hshorter⟩⟩)
+          (hm := HMove.ofD rfl (fun h => ⟨h.fill, Nat.le_trans (Nat.le_of_eq hnew.sz) hs3, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩) (Nat.le_refl _)) rfl
           ⟨hw2, hu, ht, hs, ho, hnew⟩ (Nat.le_refl _) hp (fun F => ?_)
         rw [avail_mk, hN]
         simp only [hover', hbig', ↓reduceIte]

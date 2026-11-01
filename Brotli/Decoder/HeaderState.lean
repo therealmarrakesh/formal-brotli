@@ -517,30 +517,175 @@ theorem treesNext_down (g : Gh) (isL : Bool) : HDown (.trees isL) (mapNextPhase 
 theorem imtfNext_down (g : Gh) (isL : Bool) (ntrees : Nat) (vals : List Nat) : HDown (.imtf isL ntrees vals) (mapNextPhase g isL) := by
   cases isL <;> simp only [mapNextPhase] <;> hstep_down
 
+/-- How many bytes a prefix code's table takes. -/
+def tableBytes : PrefixCode → Nat
+  | .single _ => 1024
+  | .canonical l => 4 * (256 + offSum (depths l) 256)
+
+/-- How many bytes a table takes, if there is one. -/
+def tableOf : Option PrefixCode → Nat
+  | none => 0
+  | some c => tableBytes c
+
+/-- What a table does to a header's reading, if there is one. -/
+def Wr {α : Type} (K : HK α) : Option PrefixCode → Option α → Option α
+  | none, x => x
+  | some c, x => K.w c x
+
+/-- For the spec's own reading, a table does nothing. -/
+theorem Wr_id {α : Type} {K : HK α} (hw : ∀ c x, K.w c x = x) (oc : Option PrefixCode) (x : Option α) : Wr K oc x = x := by
+  cases oc with
+  | none => rfl
+  | some c => exact hw c x
+
+/-- The bytes a header's reading holds outside the arena, with bounds set by the format. -/
+structure HSize (st : Hd) : Prop where
+  fill : st.fill.size ≤ 16384
+  lens : st.lens.size ≤ 704
+  clLens : st.clLens.size ≤ 18
+  clt : st.clt.t.size ≤ 132096
+  mapT : st.mapT.t.size ≤ 132096
+  modes : st.d.modes.size ≤ 256
+  lMap : st.d.lMap.size ≤ 16384
+  dMap : st.d.dMap.size ≤ 1024
+  litBase : st.d.litBase.size ≤ 1024
+  icBase : st.d.icBase.size ≤ 1024
+  dBase : st.d.dBase.size ≤ 1024
+
+/-- How many more tables an owner can add, this one's among them. -/
+def capO : Owner → Nat
+  | .type i _ => 770 + 2 * catN i
+  | .count i _ _ => 769 + 2 * catN i
+  | .map .. => 768
+  | .codes k _ left => 256 * ckN k + left + 1
+
+/-- How many more tables a header can add from a place. -/
+def capH : HPhase → Nat
+  | .cat i => 770 + 2 * catN i
+  | .code o _ => capO o
+  | .clens o .. => capO o
+  | .syms o .. => capO o
+  | .first i .. => 768 + 2 * catN i
+  | .codes k _ left => 256 * ckN k + left
+  | _ => 768
+
+/-- What a move does to what a header's reading holds. -/
+structure HMove (st r : Hd) (p p' : HPhase) (oc : Option PrefixCode) : Prop where
+  max : r.d.arenaMax = st.d.arenaMax
+  grow : r.d.arena.size = st.d.arena.size + tableOf oc
+  size : HSize st → HSize r
+  cap : capH p' + (if oc.isSome then 1 else 0) ≤ capH p
+  one : tableOf oc ≤ 132096
+
+/-- Settles `HMove` for a move that adds no table and leaves the arrays alone. -/
+macro "hstep_move" : tactic =>
+  `(tactic| exact ⟨rfl, rfl, fun h => ⟨h.fill, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩,
+    by simp only [capH, capO, catN, ckN, Option.isSome, Bool.false_eq_true, ↓reduceIte]; omega, Nat.zero_le _⟩)
+
+/-- Two settled records with the same arrays. -/
+structure SameArrays (d' d : Done) : Prop where
+  arena : d'.arena = d.arena
+  max : d'.arenaMax = d.arenaMax
+  modes : d'.modes = d.modes
+  lMap : d'.lMap = d.lMap
+  dMap : d'.dMap = d.dMap
+  litBase : d'.litBase = d.litBase
+  icBase : d'.icBase = d.icBase
+  dBase : d'.dBase = d.dBase
+
+theorem SameArrays.rfl' {d : Done} : SameArrays d d := ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+theorem setN_arrays (d : Done) (i : Cat) (v : UInt64) : SameArrays (d.setN i v) d := by
+  cases i <;> exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+theorem setCount_arrays (d : Done) (i : Cat) (v : UInt64) : SameArrays (d.setCount i v) d := by
+  cases i <;> exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+theorem setBaseT_arrays (d : Done) (i : Cat) (v : USize) : SameArrays (d.setBaseT i v) d := by
+  cases i <;> exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+theorem setBaseC_arrays (d : Done) (i : Cat) (v : USize) : SameArrays (d.setBaseC i v) d := by
+  cases i <;> exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- Two states holding the same arrays. -/
+structure Arr (r st : Hd) : Prop where
+  d : SameArrays r.d st.d
+  fill : r.fill = st.fill
+  lens : r.lens = st.lens
+  clLens : r.clLens = st.clLens
+  clt : r.clt = st.clt
+  mapT : r.mapT = st.mapT
+
+theorem Arr.trans {a b c : Hd} (h1 : Arr a b) (h2 : Arr b c) : Arr a c where
+  d := ⟨h1.d.arena.trans h2.d.arena, h1.d.max.trans h2.d.max, h1.d.modes.trans h2.d.modes, h1.d.lMap.trans h2.d.lMap, h1.d.dMap.trans h2.d.dMap,
+    h1.d.litBase.trans h2.d.litBase, h1.d.icBase.trans h2.d.icBase, h1.d.dBase.trans h2.d.dBase⟩
+  fill := h1.fill.trans h2.fill
+  lens := h1.lens.trans h2.lens
+  clLens := h1.clLens.trans h2.clLens
+  clt := h1.clt.trans h2.clt
+  mapT := h1.mapT.trans h2.mapT
+
+/-- A move that adds no table and keeps the arrays. -/
+theorem HMove.ofArr {st r : Hd} {p p' : HPhase} (h : Arr r st) (hc : capH p' ≤ capH p) : HMove st r p p' none where
+  max := h.d.max
+  grow := by rw [h.d.arena]; rfl
+  size hs := {
+    fill := by rw [h.fill]; exact hs.fill
+    lens := by rw [h.lens]; exact hs.lens
+    clLens := by rw [h.clLens]; exact hs.clLens
+    clt := by rw [h.clt]; exact hs.clt
+    mapT := by rw [h.mapT]; exact hs.mapT
+    modes := by rw [h.d.modes]; exact hs.modes
+    lMap := by rw [h.d.lMap]; exact hs.lMap
+    dMap := by rw [h.d.dMap]; exact hs.dMap
+    litBase := by rw [h.d.litBase]; exact hs.litBase
+    icBase := by rw [h.d.icBase]; exact hs.icBase
+    dBase := by rw [h.d.dBase]; exact hs.dBase }
+  cap := by simpa using hc
+  one := Nat.zero_le _
+
+/-- A move that adds no table and leaves the settled part alone. -/
+theorem HMove.ofD {st r : Hd} {p p' : HPhase} (hd : r.d = st.d) (hs : HSize st → HSize r) (hc : capH p' ≤ capH p) : HMove st r p p' none where
+  max := by rw [hd]
+  grow := by rw [hd]; rfl
+  size := hs
+  cap := by simpa using hc
+  one := Nat.zero_le _
+
+/-- After a category, no more tables to go. -/
+theorem catNext_cap (i : Cat) : capH (catNextPhase i) ≤ capH (.cat i) := by
+  cases i <;> simp only [catNextPhase, capH, catN] <;> omega
+
+/-- After a category's first count, no more tables to go. -/
+theorem firstNext_cap (i : Cat) (n : Nat) (tc cc : PrefixCode) : capH (catNextPhase i) ≤ capH (.first i n tc cc) := by
+  cases i <;> simp only [catNextPhase, capH, catN] <;> omega
+
 /-- What a header step must do. It is `StepOk` for a header's places, and a header is finished when all of it is read. -/
-structure HStepOk {α : Type} (K : MetaBlockHeader → List Bool → Option α) (a : ByteArray) (stop : USize) (g : Gh) (p : HPhase)
+structure HStepOk {α : Type} (K : HK α) (a : ByteArray) (stop : USize) (g : Gh) (p : HPhase)
     (st : Hd) (pos : USize) (r : Hd) : Prop where
-  next : r.status = .next → ∃ g' p', HRel r g' p' ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
-    (∀ F, hrest K g p (availBits st.word st.count a pos stop F) = hrest K g' p' (availBits r.word r.count a r.pos stop F)) ∧ HDown p p'
+  next : r.status = .next → ∃ g' p' oc, HRel r g' p' ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
+    (∀ F, hrest K g p (availBits st.word st.count a pos stop F) = Wr K oc (hrest K g' p' (availBits r.word r.count a r.pos stop F))) ∧ HDown p p' ∧ HMove st r p p' oc
   needsInput : r.status = .needsInput → r.pos = stop ∧ pos.toNat ≤ stop.toNat ∧ HRel r g p ∧
     (∀ F, hrest K g p (availBits st.word st.count a pos stop F) = hrest K g p (availBits r.word r.count a r.pos stop F)) ∧
-    hrest K g p (BitBuffer.mk r.word r.count).held = none
+    hrest K g p (BitBuffer.mk r.word r.count).held = none ∧ HMove st r p p none
   bad : r.status = .bad → ∀ F, hrest K g p (availBits st.word st.count a pos stop F) = none
-  memory : r.status = .memory → r.d.arenaMax = st.d.arenaMax
+  memory : r.status = .memory → ∃ c, st.d.arenaMax.toNat < st.d.arena.size + tableBytes c ∧ tableBytes c ≤ 132096 ∧ capH p ≠ 0 ∧
+    ∀ F, ∃ x, hrest K g p (availBits st.word st.count a pos stop F) = K.w c x
   ready : r.status = .ready → ∃ g', Upto r.d g' 10 ∧ (BitBuffer.mk r.word r.count).Wf ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
-    ∀ F, hrest K g p (availBits st.word st.count a pos stop F) = K g'.m (availBits r.word r.count a r.pos stop F)
+    (∀ F, hrest K g p (availBits st.word st.count a pos stop F) = K.k g'.m (availBits r.word r.count a r.pos stop F)) ∧ r.d.arenaMax = st.d.arenaMax ∧
+    r.d.arena.size = st.d.arena.size ∧ (HSize st → HSize r)
 
 section
-variable {α : Type} {K : MetaBlockHeader → List Bool → Option α} {a : ByteArray} {stop : USize} {g : Gh} {p : HPhase}
+variable {α : Type} {K : HK α} {a : ByteArray} {stop : USize} {g : Gh} {p : HPhase}
   {st : Hd} {pos : USize} {r : Hd}
 
 /-- A step that moved on. -/
 theorem HStepOk.ofNext (hs : r.status = .next) {g' : Gh} {p' : HPhase} (hrel : HRel r g' p') (h1 : pos.toNat ≤ r.pos.toNat)
     (h2 : r.pos.toNat ≤ stop.toNat)
     (h : ∀ F, hrest K g p (availBits st.word st.count a pos stop F) = hrest K g' p' (availBits r.word r.count a r.pos stop F))
-    (hd : HDown p p' := by hstep_down) :
+    (hd : HDown p p' := by hstep_down) (hm : HMove st r p p' none := by hstep_move) :
     HStepOk K a stop g p st pos r :=
-  ⟨fun _ => ⟨g', p', hrel, h1, h2, h, hd⟩, fun e => HStatus.noConfusion (hs.symm.trans e),
+  ⟨fun _ => ⟨g', p', none, hrel, h1, h2, h, hd, hm⟩, fun e => HStatus.noConfusion (hs.symm.trans e),
     fun e => HStatus.noConfusion (hs.symm.trans e), fun e => HStatus.noConfusion (hs.symm.trans e),
     fun e => HStatus.noConfusion (hs.symm.trans e)⟩
 
@@ -554,29 +699,56 @@ theorem HStepOk.ofBad (hs : r.status = .bad) (h : ∀ F, hrest K g p (availBits 
 theorem HStepOk.ofShort (hrel : HRel st g p) (hstop : pos = stop) (hn : hrest K g p (BitBuffer.mk st.word st.count).held = none) :
     HStepOk K a stop g p st pos (markH st pos .needsInput) :=
   ⟨fun e => HStatus.noConfusion e,
-    fun _ => ⟨hstop, by rw [hstop]; exact Nat.le_refl _, hrel.mark _ _, fun _ => rfl, hn⟩,
+    fun _ => ⟨hstop, by rw [hstop]; exact Nat.le_refl _, hrel.mark _ _, (fun _ => rfl), hn, by hstep_move⟩,
     fun e => HStatus.noConfusion e, fun e => HStatus.noConfusion e, fun e => HStatus.noConfusion e⟩
 
-/-- A step that's past the arena's limit. -/
-theorem HStepOk.ofMemory (hs : r.status = .memory) (h : r.d.arenaMax = st.d.arenaMax) : HStepOk K a stop g p st pos r :=
-  ⟨fun e => HStatus.noConfusion (hs.symm.trans e), fun e => HStatus.noConfusion (hs.symm.trans e),
-    fun e => HStatus.noConfusion (hs.symm.trans e), fun _ => h, fun e => HStatus.noConfusion (hs.symm.trans e)⟩
+/-- What a refill leaves alone. -/
+structure SameHeld (st1 st : Hd) : Prop where
+  d : st1.d = st.d
+  fill : st1.fill = st.fill
+  lens : st1.lens = st.lens
+  clLens : st1.clLens = st.clLens
+  clt : st1.clt = st.clt
+  mapT : st1.mapT = st.mapT
+
+theorem HSize.same {st1 st : Hd} (h : HSize st) (he : SameHeld st1 st) : HSize st1 where
+  fill := by rw [he.fill]; exact h.fill
+  lens := by rw [he.lens]; exact h.lens
+  clLens := by rw [he.clLens]; exact h.clLens
+  clt := by rw [he.clt]; exact h.clt
+  mapT := by rw [he.mapT]; exact h.mapT
+  modes := by rw [he.d]; exact h.modes
+  lMap := by rw [he.d]; exact h.lMap
+  dMap := by rw [he.d]; exact h.dMap
+  litBase := by rw [he.d]; exact h.litBase
+  icBase := by rw [he.d]; exact h.icBase
+  dBase := by rw [he.d]; exact h.dBase
+
+theorem HMove.same {st1 : Hd} {p1 p2 : HPhase} {oc : Option PrefixCode} (h : HMove st1 r p1 p2 oc) (he : SameHeld st1 st) : HMove st r p1 p2 oc where
+  max := by rw [h.max, he.d]
+  grow := by rw [h.grow, he.d]
+  size := fun hs => h.size (hs.same he)
+  cap := h.cap
+  one := h.one
 
 /-- A step taken after a refill is a step from before it. -/
 theorem HStepOk.refilled {st1 : Hd} {pos1 : USize} (h : HStepOk K a stop g p st1 pos1 r)
     (hb : ∀ F, availBits st.word st.count a pos stop F = availBits st1.word st1.count a pos1 stop F) (h1 : pos.toNat ≤ pos1.toNat)
-    (h2 : pos1.toNat ≤ stop.toNat) (hd : st1.d.arenaMax = st.d.arenaMax) : HStepOk K a stop g p st pos r where
+    (h2 : pos1.toNat ≤ stop.toNat) (he : SameHeld st1 st) : HStepOk K a stop g p st pos r where
   next e := by
-    obtain ⟨g', p', hrel, h3, h4, h5, h6⟩ := h.next e
-    exact ⟨g', p', hrel, Nat.le_trans h1 h3, h4, (fun F => by rw [hb]; exact h5 F), h6⟩
+    obtain ⟨g', p', oc, hrel, h3, h4, h5, h6, h7⟩ := h.next e
+    exact ⟨g', p', oc, hrel, Nat.le_trans h1 h3, h4, (fun F => by rw [hb]; exact h5 F), h6, h7.same he⟩
   needsInput e := by
-    obtain ⟨h3, _, hrel, h5, h6⟩ := h.needsInput e
-    exact ⟨h3, Nat.le_trans h1 h2, hrel, fun F => by rw [hb]; exact h5 F, h6⟩
+    obtain ⟨h3, _, hrel, h5, h6, h7⟩ := h.needsInput e
+    exact ⟨h3, Nat.le_trans h1 h2, hrel, (fun F => by rw [hb]; exact h5 F), h6, h7.same he⟩
   bad e := fun F => by rw [hb]; exact h.bad e F
-  memory e := by rw [h.memory e, hd]
+  memory e := by
+    obtain ⟨c, h3, h4, h5, h6⟩ := h.memory e
+    rw [he.d] at h3
+    exact ⟨c, h3, h4, h5, fun F => by rw [hb]; exact h6 F⟩
   ready e := by
-    obtain ⟨g', h3, h4, h5, h6, h7⟩ := h.ready e
-    exact ⟨g', h3, h4, Nat.le_trans h1 h5, h6, fun F => by rw [hb]; exact h7 F⟩
+    obtain ⟨g', h3, h4, h5, h6, h7, h8, h9, h10⟩ := h.ready e
+    exact ⟨g', h3, h4, Nat.le_trans h1 h5, h6, (fun F => by rw [hb]; exact h7 F), by rw [h8, he.d], by rw [h9, he.d], fun hs => h10 (hs.same he)⟩
 
 end
 

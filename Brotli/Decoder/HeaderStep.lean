@@ -26,7 +26,7 @@ theorem ROk.run {A β : Type} {spec : List Bool → Option (A × List Bool)} {b 
     rfl
 
 section
-variable {α : Type} {K : MetaBlockHeader → List Bool → Option α} {a : ByteArray} {stop : USize} {g : Gh} {p : HPhase}
+variable {α : Type} {K : HK α} {a : ByteArray} {stop : USize} {g : Gh} {p : HPhase}
   {st : Hd} {pos : USize}
 
 /-- A short read of fewer than 56 bits means the chunk is used up. -/
@@ -106,6 +106,10 @@ theorem catMoveOn_spec (s : Hd) : (catMoveOn s).word = s.word ∧ (catMoveOn s).
   unfold catMoveOn
   split <;> exact ⟨rfl, rfl, rfl, rfl, rfl⟩
 
+theorem catMoveOn_arr (s : Hd) : Arr (catMoveOn s) s := by
+  unfold catMoveOn
+  split <;> exact ⟨SameArrays.rfl', rfl, rfl, rfl, rfl, rfl⟩
+
 /-- The fields besides a category's are the same after setting it. -/
 private theorem setN_others (d : Done) (i : Cat) (v : UInt64) : ∀ j, j ≠ i →
     (d.setN i v).nOf j = d.nOf j ∧ (d.setN i v).countOf j = d.countOf j ∧ (d.setN i v).baseTOf j = d.baseTOf j ∧
@@ -177,7 +181,7 @@ def stepHCat (st : Hd) (pos : USize) : Hd :=
         word := r.word, count := r.count, pos := pos, status := .next, tag := .code, role := .type, size := n + 2
         d := st.d.setN st.cat n }
 
-theorem stepHCat_ok {i : Cat} {st : Hd} {g : Gh} {pos : USize} {α : Type} {K : MetaBlockHeader → List Bool → Option α} {a : ByteArray}
+theorem stepHCat_ok {i : Cat} {st : Hd} {g : Gh} {pos : USize} {α : Type} {K : HK α} {a : ByteArray}
     {stop : USize} (hrel : HRel st g (.cat i)) (hp : pos.toNat ≤ stop.toNat) (hfull : 56 < st.count.toNat ∨ pos = stop) :
     HStepOk K a stop g (.cat i) st pos (stepHCat st pos) := by
   obtain ⟨hw, hu, ht, hi⟩ := hrel
@@ -228,10 +232,17 @@ theorem stepHCat_ok {i : Cat} {st : Hd} {g : Gh} {pos : USize} {α : Type} {K : 
       obtain ⟨b1, b2, b3, b4, _⟩ := catMoveOn_spec { st with
           word := r.word, count := r.count, pos := pos, status := .next
           d := (st.d.setN st.cat r.a).setCount st.cat 16777216 }
+      have ha : Arr (catMoveOn { st with
+          word := r.word, count := r.count, pos := pos, status := .next
+          d := (st.d.setN st.cat r.a).setCount st.cat 16777216 }) st :=
+        (catMoveOn_arr _).trans ⟨⟨(setCount_arrays _ _ _).arena.trans (setN_arrays _ _ _).arena, (setCount_arrays _ _ _).max.trans (setN_arrays _ _ _).max,
+          (setCount_arrays _ _ _).modes.trans (setN_arrays _ _ _).modes, (setCount_arrays _ _ _).lMap.trans (setN_arrays _ _ _).lMap,
+          (setCount_arrays _ _ _).dMap.trans (setN_arrays _ _ _).dMap, (setCount_arrays _ _ _).litBase.trans (setN_arrays _ _ _).litBase,
+          (setCount_arrays _ _ _).icBase.trans (setN_arrays _ _ _).icBase, (setCount_arrays _ _ _).dBase.trans (setN_arrays _ _ _).dBase⟩, rfl, rfl, rfl, rfl, rfl⟩
       generalize catMoveOn { st with
           word := r.word, count := r.count, pos := pos, status := .next
-          d := (st.d.setN st.cat r.a).setCount st.cat 16777216 } = r2 at hrel2 b1 b2 b3 b4 ⊢
-      refine HStepOk.ofNext (hd := catNext_down _) b4 hrel2 (by rw [b3]; exact Nat.le_refl _) (by rw [b3]; exact hp) (fun F => ?_)
+          d := (st.d.setN st.cat r.a).setCount st.cat 16777216 } = r2 at hrel2 b1 b2 b3 b4 ha ⊢
+      refine HStepOk.ofNext (hd := catNext_down _) (hm := HMove.ofArr ha (catNext_cap _)) b4 hrel2 (by rw [b3]; exact Nat.le_refl _) (by rw [b3]; exact hp) (fun F => ?_)
       have e := hN (chunkBits a pos.toNat stop.toNat ++ F)
       rw [avail_mk, e]
       simp only [h2', ↓reduceIte]
@@ -244,7 +255,8 @@ theorem stepHCat_ok {i : Cat} {st : Hd} {g : Gh} {pos : USize} {α : Type} {K : 
       have hsz : (r.a + 2).toNat = r.a.toNat + 2 := by
         rw [UInt64.toNat_add, show (2 : UInt64).toNat = 2 from rfl]
         exact Nat.mod_eq_of_lt (by omega)
-      refine HStepOk.ofNext (g' := g) (p' := .code (.type st.cat r.a.toNat) (blockTypeAlphabetSize r.a.toNat)) rfl
+      refine HStepOk.ofNext (g' := g) (p' := .code (.type st.cat r.a.toNat) (blockTypeAlphabetSize r.a.toNat))
+        (hm := HMove.ofArr ⟨setN_arrays _ _ _, rfl, rfl, rfl, rfl, rfl⟩ (Nat.le_refl _)) rfl
         ⟨hw2, hu.setSame hd.1 hd.2 (setN_others st.d st.cat r.a), rfl, ⟨hsz, by unfold blockTypeAlphabetSize; omega, by unfold blockTypeAlphabetSize; omega⟩,
           rfl, rfl, by show ((st.d.setN st.cat r.a).nOf st.cat).toNat = _; rw [setN_nOf], by omega, hrange.2, rfl⟩
         (Nat.le_refl _) hp (fun F => ?_)

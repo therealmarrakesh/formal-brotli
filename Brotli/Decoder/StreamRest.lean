@@ -62,9 +62,9 @@ def cmdK (w : Nat) (A : StreamState → List Bool → Option α) (m : MetaBlockH
 def startState (st : StreamState) (mlen : Nat) (m : MetaBlockHeader) : CommandState :=
   ⟨st.output, st.produced, st.distances, mlen, .initial m.insertCopy, .initial m.literal, .initial m.distance⟩
 
-/-- What follows a header. -/
-def hdrK (w : Nat) (A : StreamState → List Bool → Option α) (st : StreamState) (mlen : Nat) (m : MetaBlockHeader) (bs : List Bool) : Option α :=
-  cmdK w A m (startState st mlen m) bs
+/-- What follows a header, with its tables doing nothing. -/
+def hdrK (w : Nat) (A : StreamState → List Bool → Option α) (st : StreamState) (mlen : Nat) : HK α :=
+  ⟨fun m bs => cmdK w A m (startState st mlen m) bs, fun _ x => x⟩
 
 /-- The commands' step lemma in these terms. -/
 theorem cmdK_step {w : Nat} {A : StreamState → List Bool → Option α} {m : MetaBlockHeader} (s : CommandState) (bs : List Bool) (h0 : s.remaining ≠ 0) :
@@ -93,7 +93,7 @@ private theorem readCompressed_form (w : Nat) (st : StreamState) (mlen : Nat) (b
 theorem readCompressed_eq {α : Type} (w : Nat) (A : StreamState → List Bool → Option α) (st : StreamState) (mlen : Nat) (g : Gh) (bs : List Bool) :
     (readCompressed w st mlen bs >>= fun p => A p.1 p.2) = hrest (hdrK w A st mlen) g (.cat .L) bs := by
   show _ = hCatL (hdrK w A st mlen) g bs
-  rw [← header_eq, readCompressed_form, bind_assoc]
+  rw [← header_eq (hdrK w A st mlen) (fun _ _ => rfl), readCompressed_form, bind_assoc]
   congr 1
   funext p
   rw [bind_assoc]

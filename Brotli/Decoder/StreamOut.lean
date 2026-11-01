@@ -22,122 +22,134 @@ theorem Ext.front {l a : List Nat} {y : List UInt8} (h : Ext (a ++ l) y) : Ext l
 
 /-! ### Through a header -/
 
-section
-variable {α : Type} {K : MetaBlockHeader → List Bool → Option α} {y : α}
-
 private theorem bind_some {β γ : Type} {x : Option β} {f : β → Option γ} {z : γ} (h : (x >>= f) = some z) : ∃ v, x = some v ∧ f v = some z :=
   Option.bind_eq_some_iff.mp h
 
-private theorem hCodesD_out {g : Gh} {done : List PrefixCode} {left : Nat} {bs : List Bool} (h : hCodesD K g done left bs = some y) : ∃ m b, K m b = some y := by
+section
+variable {α : Type} {K : HK α} {y : α} (hw : ∀ c x, K.w c x = x)
+include hw
+
+private theorem hCodesD_out {g : Gh} {done : List PrefixCode} {left : Nat} {bs : List Bool} (h : hCodesD K g done left bs = some y) : ∃ m b, K.k m b = some y := by
+  rw [hCodesD, hCodesR_id hw] at h
   obtain ⟨p, _, h⟩ := bind_some h
   exact ⟨_, _, h⟩
 
-private theorem hCodesI_out {g : Gh} {done : List PrefixCode} {left : Nat} {bs : List Bool} (h : hCodesI K g done left bs = some y) : ∃ m b, K m b = some y := by
+private theorem hCodesI_out {g : Gh} {done : List PrefixCode} {left : Nat} {bs : List Bool} (h : hCodesI K g done left bs = some y) : ∃ m b, K.k m b = some y := by
+  rw [hCodesI, hCodesR_id hw] at h
   obtain ⟨p, _, h⟩ := bind_some h
-  exact hCodesD_out h
+  exact hCodesD_out hw h
 
-private theorem hCodesL_out {g : Gh} {done : List PrefixCode} {left : Nat} {bs : List Bool} (h : hCodesL K g done left bs = some y) : ∃ m b, K m b = some y := by
+private theorem hCodesL_out {g : Gh} {done : List PrefixCode} {left : Nat} {bs : List Bool} (h : hCodesL K g done left bs = some y) : ∃ m b, K.k m b = some y := by
+  rw [hCodesL, hCodesR_id hw] at h
   obtain ⟨p, _, h⟩ := bind_some h
-  exact hCodesI_out h
+  exact hCodesI_out hw h
 
-private theorem hCodes_out {k : CK} {g : Gh} {done : List PrefixCode} {left : Nat} {bs : List Bool} (h : hCodes K k g done left bs = some y) : ∃ m b, K m b = some y := by
+private theorem hCodes_out {k : CK} {g : Gh} {done : List PrefixCode} {left : Nat} {bs : List Bool} (h : hCodes K k g done left bs = some y) : ∃ m b, K.k m b = some y := by
   cases k with
-  | L => exact hCodesL_out h
-  | I => exact hCodesI_out h
-  | D => exact hCodesD_out h
+  | L => exact hCodesL_out hw h
+  | I => exact hCodesI_out hw h
+  | D => exact hCodesD_out hw h
 
-private theorem afterMap_out {g : Gh} {isL : Bool} {ntrees : Nat} {cmap : List Nat} {bs : List Bool} (h : afterMap K g isL ntrees cmap bs = some y) : ∃ m b, K m b = some y := by
+private theorem afterMap_out {g : Gh} {isL : Bool} {ntrees : Nat} {cmap : List Nat} {bs : List Bool} (h : afterMap K g isL ntrees cmap bs = some y) : ∃ m b, K.k m b = some y := by
   unfold afterMap at h
   cases isL with
   | true =>
     obtain ⟨p, _, h⟩ := bind_some h
-    exact hCodesL_out h
-  | false => exact hCodesL_out h
+    exact hCodesL_out hw h
+  | false => exact hCodesL_out hw h
 
-private theorem hMap_out {g : Gh} {isL : Bool} {bs : List Bool} (h : hMap K g isL bs = some y) : ∃ m b, K m b = some y := by
+private theorem hMap_out {g : Gh} {isL : Bool} {bs : List Bool} (h : hMap K g isL bs = some y) : ∃ m b, K.k m b = some y := by
   obtain ⟨p, _, h⟩ := bind_some h
-  exact afterMap_out h
+  exact afterMap_out hw h
 
-private theorem hModes_out {g : Gh} {done : List Nat} {left : Nat} {bs : List Bool} (h : hModes K g done left bs = some y) : ∃ m b, K m b = some y := by
+private theorem hModes_out {g : Gh} {done : List Nat} {left : Nat} {bs : List Bool} (h : hModes K g done left bs = some y) : ∃ m b, K.k m b = some y := by
   obtain ⟨p, _, h⟩ := bind_some h
-  exact hMap_out h
+  exact hMap_out hw h
 
-private theorem hNp_out {g : Gh} {bs : List Bool} (h : hNp K g bs = some y) : ∃ m b, K m b = some y := by
+private theorem hNp_out {g : Gh} {bs : List Bool} (h : hNp K g bs = some y) : ∃ m b, K.k m b = some y := by
   obtain ⟨p, _, h⟩ := bind_some h
   obtain ⟨q, _, h⟩ := bind_some h
-  exact hModes_out h
+  exact hModes_out hw h
 
-private theorem hCatD_out {g : Gh} {bs : List Bool} (h : hCatD K g bs = some y) : ∃ m b, K m b = some y := by
+private theorem hCatD_out {g : Gh} {bs : List Bool} (h : hCatD K g bs = some y) : ∃ m b, K.k m b = some y := by
+  rw [hCatD, hCatR_id hw] at h
   obtain ⟨p, _, h⟩ := bind_some h
-  exact hNp_out h
+  exact hNp_out hw h
 
-private theorem hCatI_out {g : Gh} {bs : List Bool} (h : hCatI K g bs = some y) : ∃ m b, K m b = some y := by
+private theorem hCatI_out {g : Gh} {bs : List Bool} (h : hCatI K g bs = some y) : ∃ m b, K.k m b = some y := by
+  rw [hCatI, hCatR_id hw] at h
   obtain ⟨p, _, h⟩ := bind_some h
-  exact hCatD_out h
+  exact hCatD_out hw h
 
-private theorem hCatL_out {g : Gh} {bs : List Bool} (h : hCatL K g bs = some y) : ∃ m b, K m b = some y := by
+private theorem hCatL_out {g : Gh} {bs : List Bool} (h : hCatL K g bs = some y) : ∃ m b, K.k m b = some y := by
+  rw [hCatL, hCatR_id hw] at h
   obtain ⟨p, _, h⟩ := bind_some h
-  exact hCatI_out h
+  exact hCatI_out hw h
 
-private theorem afterCat_out {g : Gh} {i : Cat} {c : BlockCategory} {bs : List Bool} (h : afterCat K g i c bs = some y) : ∃ m b, K m b = some y := by
+private theorem afterCat_out {g : Gh} {i : Cat} {c : BlockCategory} {bs : List Bool} (h : afterCat K g i c bs = some y) : ∃ m b, K.k m b = some y := by
   cases i with
-  | L => exact hCatI_out h
-  | I => exact hCatD_out h
-  | D => exact hNp_out h
+  | L => exact hCatI_out hw h
+  | I => exact hCatD_out hw h
+  | D => exact hNp_out hw h
 
-private theorem oCount_out {g : Gh} {i : Cat} {n : Nat} {tc cc : PrefixCode} {bs : List Bool} (h : oCount K g i n tc cc bs = some y) : ∃ m b, K m b = some y := by
+private theorem oCount_out {g : Gh} {i : Cat} {n : Nat} {tc cc : PrefixCode} {bs : List Bool} (h : oCount K g i n tc cc bs = some y) : ∃ m b, K.k m b = some y := by
   obtain ⟨p, _, h⟩ := bind_some h
-  exact afterCat_out h
+  exact afterCat_out hw h
 
-private theorem afterVals_out {g : Gh} {isL : Bool} {ntrees : Nat} {vals : List Nat} {bs : List Bool} (h : afterVals K g isL ntrees vals bs = some y) : ∃ m b, K m b = some y := by
+private theorem afterVals_out {g : Gh} {isL : Bool} {ntrees : Nat} {vals : List Nat} {bs : List Bool} (h : afterVals K g isL ntrees vals bs = some y) : ∃ m b, K.k m b = some y := by
   obtain ⟨p, _, h⟩ := bind_some h
   generalize (if p.1 = 0 then vals else inverseMoveToFront vals) = v at h
   split at h
-  · exact afterMap_out h
+  · exact afterMap_out hw h
   · cases h
 
-private theorem ownerK_out {g : Gh} {o : Owner} {c : PrefixCode} {bs : List Bool} (h : ownerK K g o c bs = some y) : ∃ m b, K m b = some y := by
+private theorem ownerK_out {g : Gh} {o : Owner} {c : PrefixCode} {bs : List Bool} (h : ownerK K g o c bs = some y) : ∃ m b, K.k m b = some y := by
   cases o with
   | type i n =>
+    simp only [ownerK, hw] at h
     obtain ⟨p, _, h⟩ := bind_some h
-    exact oCount_out h
-  | count i n tc => exact oCount_out h
+    exact oCount_out hw h
+  | count i n tc =>
+    simp only [ownerK, hw] at h
+    exact oCount_out hw h
   | map isL ntrees rlemax =>
     obtain ⟨p, _, h⟩ := bind_some h
-    exact afterVals_out h
-  | codes k done left => exact hCodes_out h
+    exact afterVals_out hw h
+  | codes k done left =>
+    simp only [ownerK, hw] at h
+    exact hCodes_out hw h
 
 /-- From a place in a header, the only way to an output is through what follows the header. -/
-theorem hrest_out {g : Gh} {p : HPhase} {bs : List Bool} (h : hrest K g p bs = some y) : ∃ m b, K m b = some y := by
+theorem hrest_out {g : Gh} {p : HPhase} {bs : List Bool} (h : hrest K g p bs = some y) : ∃ m b, K.k m b = some y := by
   cases p with
   | cat i =>
     cases i with
-    | L => exact hCatL_out h
-    | I => exact hCatI_out h
-    | D => exact hCatD_out h
+    | L => exact hCatL_out hw h
+    | I => exact hCatI_out hw h
+    | D => exact hCatD_out hw h
   | code o size =>
     obtain ⟨q, _, h⟩ := bind_some h
-    exact ownerK_out h
+    exact ownerK_out hw h
   | clens o size order acc sum =>
     obtain ⟨q, _, h⟩ := bind_some h
     obtain ⟨r, _, h⟩ := bind_some h
-    exact ownerK_out h
+    exact ownerK_out hw h
   | syms o size clc st =>
     obtain ⟨q, _, h⟩ := bind_some h
-    exact ownerK_out h
-  | first i n tc cc => exact oCount_out h
-  | np => exact hNp_out h
-  | modes done left => exact hModes_out h
-  | trees isL => exact hMap_out h
+    exact ownerK_out hw h
+  | first i n tc cc => exact oCount_out hw h
+  | np => exact hNp_out hw h
+  | modes done left => exact hModes_out hw h
+  | trees isL => exact hMap_out hw h
   | rlemax isL ntrees =>
     obtain ⟨q, _, h⟩ := bind_some h
     obtain ⟨r, _, h⟩ := bind_some h
-    exact ownerK_out h
+    exact ownerK_out hw h
   | vals isL ntrees rlemax code done left =>
     obtain ⟨q, _, h⟩ := bind_some h
-    exact afterVals_out h
-  | imtf isL ntrees vals => exact afterVals_out h
-  | codes k done left => exact hCodes_out h
+    exact afterVals_out hw h
+  | imtf isL ntrees vals => exact afterVals_out hw h
+  | codes k done left => exact hCodes_out hw h
 
 end
 
@@ -281,7 +293,7 @@ theorem srest_out {p : SPhase} {bs : List Bool} {y : List UInt8} (h : srest spec
     obtain ⟨⟨bytes, r⟩, _, h⟩ := bind_some h
     exact (amK_out h : Ext (bytes.reverse ++ st.output) y).front
   | hdr w st l mlen g q =>
-    obtain ⟨m, b, h⟩ := hrest_out h
+    obtain ⟨m, b, h⟩ := hrest_out (fun _ _ => rfl) h
     exact (cmdK_out h : Ext (startState st mlen m).output y)
   | cmds w l m q => exact rest_out (fun _ _ hh => cmdK_out hh) h
   | ended st => exact endOf_out h
