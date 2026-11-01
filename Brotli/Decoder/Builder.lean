@@ -89,6 +89,18 @@ private theorem get_set_ne {t : ByteArray} {i j : Nat} {v : UInt8} (h : j ≠ i)
   rw [data_set]
   simp [Ne.symm h]
 
+/-- A byte written reads back. -/
+theorem setU_get_same {t : ByteArray} {i : USize} {v : UInt8} (h : i.toNat < t.size) :
+    (setU t i v).data[i.toNat]?.getD 0 = v := by
+  rw [setU_eq]
+  exact get_set_same h
+
+/-- Other bytes stay. -/
+theorem setU_get_ne {t : ByteArray} {i : USize} {v : UInt8} {j : Nat} (h : j ≠ i.toNat) :
+    (setU t i v).data[j]? = t.data[j]? := by
+  rw [setU_eq]
+  exact get_set_ne h
+
 private theorem usize_add' {a b : USize} (h : a.toNat + b.toNat < 2 ^ 32) : (a + b).toNat = a.toNat + b.toNat := by
   rw [USize.toNat_add, ← USize.size_eq_two_pow]
   have := USize.le_size
@@ -1303,7 +1315,7 @@ decreasing_by
   have h1 : (n - 1).toNat = n.toNat - 1 := u64_sub' (by rw [show (1 : UInt64).toNat = 1 from rfl]; omega)
   omega
 
-private theorem rootsFit_iff {t : ByteArray} {base : UInt64} (ht : t.size < 2 ^ 32) (hb : base.toNat < 2 ^ 29) :
+private theorem rootsFit_iff {t : ByteArray} {base : UInt64} (ht : t.size < 2 ^ 32) (hb : base.toNat + 256 ≤ 2 ^ 30) :
     ∀ (N : Nat) (n r : UInt64), n.toNat = N → r.toNat + N ≤ 256 →
     (rootsFit t (UInt64.ofNat t.size) base n r = true ↔ ∀ k, k < N → RootFits t base.toNat (base.toNat + r.toNat + k)) := by
   intro N
@@ -1346,22 +1358,23 @@ private theorem rootsFit_iff {t : ByteArray} {base : UInt64} (ht : t.size < 2 ^ 
 
 /-- Checks once, when a table is built, what a lookup needs to be safe. -/
 def fitsFast (t : ByteArray) (base : UInt64) : Bool :=
-  if t.size < 4294967296 ∧ base.toNat < 536870912 ∧ 4 * (base.toNat + 256) ≤ t.size then
+  if t.size < 4294967296 ∧ 4 * (base.toNat + 256) ≤ t.size then
     rootsFit t (UInt64.ofNat t.size) base 256 0
   else false
 
-/-- The check says exactly that the table fits. -/
-theorem fitsFast_iff {t : ByteArray} {base : UInt64} (ht : t.size < 2 ^ 32) (hb : base.toNat < 2 ^ 29) :
-    fitsFast t base = true ↔ TableFits t base.toNat := by
-  have hall := rootsFit_iff ht hb 256 256 0 rfl (by show 0 + 256 ≤ 256; omega)
-  have hz : (0 : UInt64).toNat = 0 := rfl
-  rw [hz] at hall
+/-- The check says exactly that the array is small enough and the table fits. -/
+theorem fitsFast_iff {t : ByteArray} {base : UInt64} :
+    fitsFast t base = true ↔ t.size < 2 ^ 32 ∧ TableFits t base.toNat := by
   unfold fitsFast
+  have hz : (0 : UInt64).toNat = 0 := rfl
   constructor
   · intro h
-    by_cases c : t.size < 4294967296 ∧ base.toNat < 536870912 ∧ 4 * (base.toNat + 256) ≤ t.size
+    by_cases c : t.size < 4294967296 ∧ 4 * (base.toNat + 256) ≤ t.size
     · rw [ite_eq_left c] at h
-      refine ⟨c.2.2, fun r hr hbig => ?_⟩
+      have ht : t.size < 2 ^ 32 := c.1
+      have hall := rootsFit_iff (base := base) ht (by omega) 256 256 0 rfl (by show 0 + 256 ≤ 256; omega)
+      rw [hz] at hall
+      refine ⟨ht, c.2, fun r hr hbig => ?_⟩
       have := hall.mp h r hr
       rw [Nat.add_zero] at this
       rcases this with h8 | h15
@@ -1369,8 +1382,11 @@ theorem fitsFast_iff {t : ByteArray} {base : UInt64} (ht : t.size < 2 ^ 32) (hb 
       · exact h15
     · rw [ite_eq_right c] at h
       exact Bool.noConfusion h
-  · intro h
-    rw [ite_eq_left ⟨by omega, by omega, h.root⟩]
+  · rintro ⟨ht, h⟩
+    have hr := h.root
+    rw [ite_eq_left ⟨ht, hr⟩]
+    have hall := rootsFit_iff (base := base) ht (by omega) 256 256 0 rfl (by show 0 + 256 ≤ 256; omega)
+    rw [hz] at hall
     refine hall.mpr fun k hk => ?_
     rw [Nat.add_zero]
     by_cases h8 : (slotAt t (base.toNat + k)).1 ≤ 8
