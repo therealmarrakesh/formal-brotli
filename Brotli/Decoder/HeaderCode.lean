@@ -188,6 +188,7 @@ theorem clStart_rel {hskip : UInt64} (hh : hskip.toNat < 4) {st : Hd} (h1 : st.c
   keys := by simp
   apart := by simp
   nz := by rw [h3]; rfl
+  nzLe := by rw [h3]; exact Nat.zero_le _
   nzOne := by simp
   symLt := by rw [h4]; decide
 

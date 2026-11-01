@@ -375,6 +375,7 @@ structure ClRel (st : Hd) (order : List Nat) (acc : List (Nat × Nat)) (sum : Na
   keys : (acc.map (·.1)).Nodup
   apart : ∀ p ∈ acc, p.1 < 18 ∧ p.1 ∉ order ∧ p.2 ≤ 5
   nz : st.clNz.toNat = (acc.filter (·.2 != 0)).length
+  nzLe : st.clNz.toNat ≤ st.clIdx.toNat
   nzOne : (acc.filter (·.2 != 0)).length = 1 → ∃ l, acc.filter (·.2 != 0) = [(st.clSym.toNat, l)]
   symLt : st.clSym.toNat < 18
 
