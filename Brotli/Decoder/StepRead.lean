@@ -214,7 +214,7 @@ theorem stepCommand_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {
   · rename_i h0
     have h0N := u64_zero h0
     exact ⟨fun h => StepStatus.noConfusion h, fun h => StepStatus.noConfusion h, fun h => StepStatus.noConfusion h,
-      fun _ => ⟨s, hrel0.mark _ _, Nat.le_refl _, hp, fun _ => rfl, by omega⟩, fun h => StepStatus.noConfusion h⟩
+      fun _ => ⟨s, hrel0.mark _ _, Nat.le_refl _, hp, (fun _ => rfl), by omega, ⟨[], rfl, rfl⟩⟩, fun h => StepStatus.noConfusion h⟩
   · rename_i h0
     have h0N := u64_ne h0
     have h0' : s.remaining ≠ 0 := by omega

@@ -187,12 +187,38 @@ theorem applyDistance_spec {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {s : Com
         · show s.produced + st.clen.toNat = s.output.length + st.clen.toNat
           omega
 
+/-- A copy adds nothing to the output yet. -/
+private theorem copyPhase_out {w : Nat} {s : CommandState} {clen dcode d : Nat} {q : Phase} (h : copyPhase w s clen dcode d = some q) :
+    q.out = s.output := by
+  unfold copyPhase at h
+  dsimp only at h
+  split at h
+  · obtain ⟨word, _, h⟩ := Option.bind_eq_some_iff.mp h
+    split at h
+    · cases h
+    · cases h
+      rfl
+  · split at h
+    · cases h
+    · cases h
+      rfl
+
+private theorem applyDistance_pend (st : Cmd) (pos : USize) (dcode d : UInt64) : (applyDistance st pos dcode d).pend = st.pend := by
+  unfold applyDistance applyWord applyBuilt
+  split
+  · split
+    · split <;> rfl
+    · rfl
+  · split
+    · rfl
+    · split <;> rfl
+
 /-- A distance's result, in the terms of a step. -/
 private theorem step_of_apply {α : Type} {w k : Nat} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
     {a : ByteArray} {stop : USize} {p : Phase} {st st1 : Cmd} {s : CommandState} {pos : USize} {clen : Nat} {dcode d : UInt64}
     (hC : Core w k m st1 s.output s.remaining s.distances s.insertCopy s.literal s.distance)
     (hprod : s.produced = s.output.length) (hclen : st1.clen.toNat = clen) (hd1 : 1 ≤ d.toNat) (hp : pos.toNat ≤ stop.toNat)
-    (hrank : 1 < (rankC p).1)
+    (hrank : 1 < (rankC p).1) (hpo : p.out = s.output) (hpe : st1.pend = st.pend)
     (hrest : ∀ F, rest w m K p (stateBits st a pos stop F) =
       copyPhase w s clen dcode.toNat d.toNat >>= fun q => rest w m K q (stateBits st1 a pos stop F)) :
     StepOk w k m K a stop p st pos (applyDistance st1 pos dcode d) := by
@@ -200,7 +226,8 @@ private theorem step_of_apply {α : Type} {w k : Nat} {m : MetaBlockHeader} {K :
   · refine StepOk.ofBad hs fun F => ?_
     rw [hrest, hn]
     rfl
-  · refine StepOk.ofNext (hd := Or.inr (Or.inl (by rw [copyPhase_rank hq]; exact hrank))) hs hR (by rw [hpos]; exact Nat.le_refl _) (by rw [hpos]; exact hp) fun F => ?_
+  · refine StepOk.ofNext (hd := Or.inr (Or.inl (by rw [copyPhase_rank hq]; exact hrank)))
+      (hout := ⟨[], by rw [copyPhase_out hq, hpo]; rfl, by rw [applyDistance_pend, hpe]; rfl⟩) hs hR (by rw [hpos]; exact Nat.le_refl _) (by rw [hpos]; exact hp) fun F => ?_
     rw [hrest, hq]
     show rest w m K q (stateBits st1 a pos stop F) = rest w m K q (stateBits _ a _ stop F)
     rw [hpos, stateBits_eq, stateBits_eq, hw, hc]
@@ -262,7 +289,7 @@ theorem stepDistance_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} 
         rfl
       · rw [ite_eq_right hz]
         have hne := u64_ne hz
-        refine step_of_apply (s := s) (clen := clen) hC hprod hclen (by omega) hp (by simp only [rankC]; omega) fun F => ?_
+        refine step_of_apply (s := s) (clen := clen) hC hprod hclen (by omega) hp (by simp only [rankC]; omega) rfl rfl fun F => ?_
         rw [rest_distance_implicit _ h0' hc, distanceOf_zero, ite_eq_right (by rw [h0d]; exact hne), h0d]
         rfl
     · rename_i himp
@@ -477,7 +504,7 @@ theorem distanceThrough_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeade
         rw [ite_eq_right hz] at hdE
         have hd1 := u64_ne hz
         refine step_of_apply (st1 := setBits st b2.word b2.count) (s := { s with distance := dist }) (clen := clen)
-          { hC with wf := hw2 } hprod hclen (by omega) hp (by simp only [rankC]; omega) fun F => ?_
+          { hC with wf := hw2 } hprod hclen (by omega) hp (by simp only [rankC]; omega) rfl rfl fun F => ?_
         rw [stateBits_eq, rest_distanceSymbol hindex hcode (hread hl _), hb1, hint]
         show (distanceOf m.npostfix m.ndirect s.distances (wordValue v) _ >>= _) = _
         rw [hdE]

@@ -33,22 +33,37 @@ def DownEq (p p' : Phase) : Prop := (rankC p).1 = 0 ∨ LexLt (rankC p') (rankC 
 /-- Settles `Down` for a move whose places are spelled out. -/
 macro "step_down" : tactic => `(tactic| first | exact Or.inl rfl | (simp only [Down, rankC, LexLt]; omega))
 
+/-- The bytes a place has produced so far, most recent first. -/
+def Phase.out : Phase → List Nat
+  | .command s => s.output
+  | .insertCopy s _ => s.output
+  | .copyLength s .. => s.output
+  | .literals _ _ _ _ _ _ _ out => out
+  | .literalSymbol _ _ _ _ _ _ _ out => out
+  | .distance s .. => s.output
+  | .distanceSymbol s .. => s.output
+  | .copy s .. => s.output
+  | .word s _ => s.output
+
+/-- A move's bytes: they go on the front of the output, and they're waiting to go out. -/
+def OutStep (p p' : Phase) (st r : Cmd) : Prop := ∃ l, p'.out = l ++ p.out ∧ r.pend.toNat = st.pend.toNat + l.length
+
 /-- What a step must do. Moving on keeps the state tied to `rest`, whatever bits follow. Needing input means the chunk
 is used up, and the spec rejects if no more bits come. Needing output means the window is full of bytes not yet handed
 over. Finishing means MLEN is reached at the start of a command. Rejecting means the spec rejects, whatever bits follow. -/
 structure StepOk {α : Type} (w k : Nat) (m : MetaBlockHeader) (K : CommandState → List Bool → Option α) (a : ByteArray)
     (stop : USize) (p : Phase) (st : Cmd) (pos : USize) (r : Cmd) : Prop where
   next : r.status = .next → ∃ p', Rel w k m r p' ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
-    (∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K p' (stateBits r a r.pos stop F)) ∧ Down p p'
+    (∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K p' (stateBits r a r.pos stop F)) ∧ Down p p' ∧ OutStep p p' st r
   needsInput : r.status = .needsInput → r.pos = stop ∧ pos.toNat ≤ stop.toNat ∧ ∃ p', Rel w k m r p' ∧
     (∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K p' (stateBits r a r.pos stop F)) ∧
-    rest w m K p' (BitBuffer.mk r.word r.count).held = none ∧ DownEq p p'
+    rest w m K p' (BitBuffer.mk r.word r.count).held = none ∧ DownEq p p' ∧ OutStep p p' st r
   needsOutput : r.status = .needsOutput → ∃ p', Rel w k m r p' ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
     (∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K p' (stateBits r a r.pos stop F)) ∧
-    r.pend.toNat = 2 ^ k ∧ DownEq p p'
+    r.pend.toNat = 2 ^ k ∧ DownEq p p' ∧ OutStep p p' st r
   done : r.status = .done → ∃ s, Rel w k m r (.command s) ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
     (∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K (.command s) (stateBits r a r.pos stop F)) ∧
-    s.remaining = 0
+    s.remaining = 0 ∧ OutStep p (.command s) st r
   bad : r.status = .bad → ∀ F, rest w m K p (stateBits st a pos stop F) = none
 
 section
@@ -59,9 +74,9 @@ variable {α : Type} {w k : Nat} {m : MetaBlockHeader} {K : CommandState → Lis
 theorem StepOk.ofNext (hs : r.status = .next) {p' : Phase} (hrel : Rel w k m r p') (h1 : pos.toNat ≤ r.pos.toNat)
     (h2 : r.pos.toNat ≤ stop.toNat)
     (h : ∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K p' (stateBits r a r.pos stop F))
-    (hd : Down p p' := by step_down) :
+    (hd : Down p p' := by step_down) (hout : OutStep p p' st r := by exact ⟨[], rfl, rfl⟩) :
     StepOk w k m K a stop p st pos r :=
-  ⟨fun _ => ⟨p', hrel, h1, h2, h, hd⟩, fun e => StepStatus.noConfusion (hs.symm.trans e),
+  ⟨fun _ => ⟨p', hrel, h1, h2, h, hd, hout⟩, fun e => StepStatus.noConfusion (hs.symm.trans e),
     fun e => StepStatus.noConfusion (hs.symm.trans e), fun e => StepStatus.noConfusion (hs.symm.trans e),
     fun e => StepStatus.noConfusion (hs.symm.trans e)⟩
 
@@ -75,8 +90,8 @@ theorem StepOk.ofBad (hs : r.status = .bad) (h : ∀ F, rest w m K p (stateBits 
 theorem StepOk.ofInput (hs : r.status = .needsInput) (hstop : r.pos = stop) (hle : pos.toNat ≤ stop.toNat) {p' : Phase}
     (hrel : Rel w k m r p')
     (h : ∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K p' (stateBits r a r.pos stop F))
-    (hn : rest w m K p' (BitBuffer.mk r.word r.count).held = none) (hd : DownEq p p') : StepOk w k m K a stop p st pos r :=
-  ⟨fun e => StepStatus.noConfusion (hs.symm.trans e), fun _ => ⟨hstop, hle, p', hrel, h, hn, hd⟩,
+    (hn : rest w m K p' (BitBuffer.mk r.word r.count).held = none) (hd : DownEq p p') (hout : OutStep p p' st r) : StepOk w k m K a stop p st pos r :=
+  ⟨fun e => StepStatus.noConfusion (hs.symm.trans e), fun _ => ⟨hstop, hle, p', hrel, h, hn, hd, hout⟩,
     fun e => StepStatus.noConfusion (hs.symm.trans e), fun e => StepStatus.noConfusion (hs.symm.trans e),
     fun e => StepStatus.noConfusion (hs.symm.trans e)⟩
 
@@ -103,34 +118,49 @@ theorem copyPhase_rank {w : Nat} {s : CommandState} {clen dcode d : Nat} {q : Ph
 theorem StepOk.ofShort (hrel : Rel w k m st p) (hstop : pos = stop)
     (hn : rest w m K p (BitBuffer.mk st.word st.count).held = none) :
     StepOk w k m K a stop p st pos (markStep st pos .needsInput) :=
-  StepOk.ofInput rfl hstop (by rw [hstop]; exact Nat.le_refl _) (hrel.mark _ _) (fun _ => rfl) hn (DownEq.self p)
+  StepOk.ofInput rfl hstop (by rw [hstop]; exact Nat.le_refl _) (hrel.mark _ _) (fun _ => rfl) hn (DownEq.self p) ⟨[], rfl, rfl⟩
 
 /-- A step that found the window full, and changed nothing. -/
 theorem StepOk.ofFull (hrel : Rel w k m st p) (hp : pos.toNat ≤ stop.toNat) (hfull : st.pend.toNat = 2 ^ k) :
     StepOk w k m K a stop p st pos (markStep st pos .needsOutput) :=
   ⟨fun e => StepStatus.noConfusion e, fun e => StepStatus.noConfusion e,
-    fun _ => ⟨p, hrel.mark _ _, Nat.le_refl _, hp, fun _ => rfl, hfull, DownEq.self p⟩,
+    fun _ => ⟨p, hrel.mark _ _, Nat.le_refl _, hp, fun _ => rfl, hfull, DownEq.self p, ⟨[], rfl, rfl⟩⟩,
     fun e => StepStatus.noConfusion e, fun e => StepStatus.noConfusion e⟩
+
+/-- A move's bytes depend only on what was waiting before it. -/
+theorem OutStep.ofPend {p1 p2 : Phase} {st1 : Cmd} (h : OutStep p1 p2 st1 r) (he : st1.pend = st.pend) : OutStep p1 p2 st r := by
+  obtain ⟨l, h1, h2⟩ := h
+  exact ⟨l, h1, by rw [h2, he]⟩
 
 /-- A step taken after a refill is a step from before it. -/
 theorem StepOk.refilled {st1 : Cmd} {pos1 : USize} (h : StepOk w k m K a stop p st1 pos1 r)
     (hb : ∀ F, stateBits st a pos stop F = stateBits st1 a pos1 stop F) (h1 : pos.toNat ≤ pos1.toNat)
-    (h2 : pos1.toNat ≤ stop.toNat) : StepOk w k m K a stop p st pos r where
+    (h2 : pos1.toNat ≤ stop.toNat) (he : st1.pend = st.pend) : StepOk w k m K a stop p st pos r where
   next e := by
-    obtain ⟨p', hrel, h3, h4, h5, h6⟩ := h.next e
-    exact ⟨p', hrel, Nat.le_trans h1 h3, h4, (fun F => by rw [hb]; exact h5 F), h6⟩
+    obtain ⟨p', hrel, h3, h4, h5, h6, h7⟩ := h.next e
+    exact ⟨p', hrel, Nat.le_trans h1 h3, h4, (fun F => by rw [hb]; exact h5 F), h6, h7.ofPend he⟩
   needsInput e := by
-    obtain ⟨h3, _, p', hrel, h5, h6, h7⟩ := h.needsInput e
-    exact ⟨h3, Nat.le_trans h1 h2, p', hrel, (fun F => by rw [hb]; exact h5 F), h6, h7⟩
+    obtain ⟨h3, _, p', hrel, h5, h6, h7, h8⟩ := h.needsInput e
+    exact ⟨h3, Nat.le_trans h1 h2, p', hrel, (fun F => by rw [hb]; exact h5 F), h6, h7, h8.ofPend he⟩
   needsOutput e := by
-    obtain ⟨p', hrel, h3, h4, h5, h6, h7⟩ := h.needsOutput e
-    exact ⟨p', hrel, Nat.le_trans h1 h3, h4, (fun F => by rw [hb]; exact h5 F), h6, h7⟩
+    obtain ⟨p', hrel, h3, h4, h5, h6, h7, h8⟩ := h.needsOutput e
+    exact ⟨p', hrel, Nat.le_trans h1 h3, h4, (fun F => by rw [hb]; exact h5 F), h6, h7, h8.ofPend he⟩
   done e := by
-    obtain ⟨s, hrel, h3, h4, h5, h6⟩ := h.done e
-    exact ⟨s, hrel, Nat.le_trans h1 h3, h4, fun F => by rw [hb]; exact h5 F, h6⟩
+    obtain ⟨s, hrel, h3, h4, h5, h6, h7⟩ := h.done e
+    exact ⟨s, hrel, Nat.le_trans h1 h3, h4, (fun F => by rw [hb]; exact h5 F), h6, h7.ofPend he⟩
   bad e := fun F => by rw [hb]; exact h.bad e F
 
 end
+
+/-- A backward copy goes on the front of the output. -/
+theorem copyBytes_front (d : Nat) : ∀ (n : Nat) (out : List Nat), ∃ l, copyBytes d n out = l ++ out ∧ l.length = n
+  | 0, out => ⟨[], by simp [copyBytes], rfl⟩
+  | n + 1, out => by
+    obtain ⟨l, h1, h2⟩ := copyBytes_front d n (out.getD (d - 1) 0 :: out)
+    refine ⟨l ++ [out.getD (d - 1) 0], ?_, by simp [h2]⟩
+    simp only [copyBytes]
+    rw [h1]
+    simp
 
 /-- `copyBytes` in two runs. -/
 theorem copyBytes_add (d : Nat) : ∀ (a b : Nat) (out : List Nat),
@@ -229,8 +259,12 @@ private theorem copy_after {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeade
   have hRmax : 2 ^ k.toNat ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
   have h24 : (2 : Nat) ^ 24 = 16777216 := by decide
   have hrunU : run.toUInt64.toNat = run.toNat := USize.toNat_toUInt64 _
+  obtain ⟨l, hl1, hl2⟩ := copyBytes_front d run.toNat s.output
+  have hpe : (finishCopy (clearRing st) r run (ringSize k) pos).pend.toNat = st.pend.toNat + l.length := by
+    rw [hl2]
+    exact pend_after hk hrunR
   refine StepOk.ofNext (p' := .copy { s with output := copyBytes d run.toNat s.output } d (n - run.toNat))
-    (hd := Or.inr (Or.inr ⟨rfl, show n - run.toNat < n by omega⟩)) rfl
+    (hd := Or.inr (Or.inr ⟨rfl, show n - run.toNat < n by omega⟩)) (hout := ⟨l, hl1, hpe⟩) rfl
     ⟨?_, htag, ?_, hdn, ?_, hd1, hdw, ?_⟩ (Nat.le_refl _) hp fun F => ?_
   · refine { hC with ring := h1, bytes := h3, ctx := h2, pendLe := ?_, pendOut := ?_, written := ?_ }
     · show (st.pend + run).toNat ≤ _
@@ -363,8 +397,12 @@ private theorem word_after {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeade
   have hlen : ((pending.take run.toNat).reverse ++ s.output).length = s.output.length + run.toNat := by
     simp only [List.length_append, List.length_reverse, List.length_take]
     omega
+  have hpe : (finishWord (clearRing st) r run (ringSize k) pos).pend.toNat = st.pend.toNat + (pending.take run.toNat).reverse.length := by
+    rw [List.length_reverse, List.length_take, Nat.min_eq_left (by omega)]
+    exact pend_after hk hrunR
   refine StepOk.ofNext (p' := .word { s with output := (pending.take run.toNat).reverse ++ s.output } (pending.drop run.toNat))
-    (hd := Or.inr (Or.inr ⟨rfl, show (pending.drop run.toNat).length < pending.length by rw [List.length_drop]; omega⟩)) rfl
+    (hd := Or.inr (Or.inr ⟨rfl, show (pending.drop run.toNat).length < pending.length by rw [List.length_drop]; omega⟩))
+    (hout := ⟨_, rfl, hpe⟩) rfl
     ⟨?_, htag, ?_, ?_, hsmall, ?_⟩ (Nat.le_refl _) hp fun F => ?_
   · refine { hC with ring := h1, bytes := h3, ctx := h2, pendLe := ?_, pendOut := ?_, written := ?_ }
     · show (st.pend + run).toNat ≤ _

@@ -224,7 +224,7 @@ theorem literalRun_spec {α : Type} {nTrees : Nat} {arena litBase lMap : ByteArr
       let r := literalRun C a stop hs mapBase modeOff mask k hmb hm hd hmask hk n word count pos wpos ring p1 p2 hp hw hsize hwp
       ∃ (lit' : BlockState) (out' : List Nat),
         r.left.toNat ≤ N ∧ lit'.types = lit.types ∧ lit'.seen = lit.seen ∧ lit'.count = lit.count - (N - r.left.toNat) ∧
-        out'.length = out.length + (N - r.left.toNat) ∧ RingOk r.ring k r.wpos.toNat out' ∧
+        out'.length = out.length + (N - r.left.toNat) ∧ (∃ l, out' = l ++ out) ∧ RingOk r.ring k r.wpos.toNat out' ∧
         contextBytes out' = (r.p1.toNat, r.p2.toNat) ∧ (BitBuffer.mk r.word r.count).Wf ∧
         pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧ (∀ b ∈ out', b < 256) ∧
         (∀ F, rest w m K (.literals s ic c ilen clen L lit out) (availBits word count a pos stop F) =
@@ -237,7 +237,7 @@ theorem literalRun_spec {α : Type} {nTrees : Nat} {arena litBase lMap : ByteArr
     intro n word count pos wpos ring p1 p2 hp hw hsize hwp L lit out hN _ _ _ hctx hring hbytes
     rw [literalRun, dite_eq_left (usize_zero hN)]
     have h0 : (0 : USize).toNat = 0 := rfl
-    exact ⟨lit, out, by simp, rfl, rfl, by simp, by simp, hring, hctx, hw,
+    exact ⟨lit, out, by simp, rfl, rfl, by simp, by simp, ⟨[], rfl⟩, hring, hctx, hw,
       Nat.le_refl _, hp, hbytes, fun F => by simp, fun h => absurd h0 h⟩
   | succ N ih =>
     intro n word count pos wpos ring p1 p2 hp hw hsize hwp L lit out hN hL hcount hcur hctx hring hbytes
@@ -315,8 +315,8 @@ theorem literalRun_spec {α : Type} {nTrees : Nat} {arena litBase lMap : ByteArr
           · exact hbytes b hb)
       dsimp only at hih
       generalize literalRun C a stop hs mapBase modeOff mask k hmb hm hd hmask hk (n - USize.ofNat 1) _ _ _ _ _ _ _ _ _ _ _ = run at hih ⊢
-      obtain ⟨lit', out', h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h13, h11, h12⟩ := hih
-      refine ⟨lit', out', Nat.le_succ_of_le h1, h2, h3, ?_, ?_, h6, h7, h8, by omega, h10, h13, ?_, ?_⟩
+      obtain ⟨lit', out', h1, h2, h3, h4, h5, ⟨l0, hl0⟩, h6, h7, h8, h9, h10, h13, h11, h12⟩ := hih
+      refine ⟨lit', out', Nat.le_succ_of_le h1, h2, h3, ?_, ?_, ⟨l0 ++ [_], by rw [hl0, List.append_assoc]; rfl⟩, h6, h7, h8, by omega, h10, h13, ?_, ?_⟩
       rotate_left 3
       · intro hne
         have eL : L' + 1 - (N + 1 - run.left.toNat) = L' - (N - run.left.toNat) := by omega
@@ -342,7 +342,7 @@ theorem literalRun_spec {α : Type} {nTrees : Nat} {arena litBase lMap : ByteArr
       have hnot : (refill word count a pos stop hs hp).count.toNat < (lookup arena _ (refill word count a pos stop hs hp).word hok.toTableFits C.arena32 &&& 63).toNat :=
         Nat.lt_of_not_le fun hle => hl (UInt64.le_iff_toNat_le.mpr hle)
       rw [hl63] at hnot
-      refine ⟨lit, out, by simp only; omega, rfl, rfl, by simp only; omega, by simp only; omega, hring, hctx, hrw, hrp1, hrp2, hbytes, ?_, ?_⟩
+      refine ⟨lit, out, by simp only; omega, rfl, rfl, by simp only; omega, by simp only; omega, ⟨[], rfl⟩, hring, hctx, hrw, hrp1, hrp2, hbytes, ?_, ?_⟩
       · intro F
         rw [hrest]
         simp only [hN, Nat.sub_self, Nat.sub_zero]

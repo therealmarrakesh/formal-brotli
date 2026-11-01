@@ -123,7 +123,7 @@ theorem stepCmd_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHea
   rw [dite_eq_left (USize.le_iff_toNat_le.mpr hp)]
   obtain ⟨h1, h2, h3, h4, h5⟩ := refill_spec hs hp hrel.wf
   dsimp only
-  refine (stepAt_ok hK hH (hrel.withBits h1) h3 h5).refilled (fun F => ?_) h2 h3
+  refine (stepAt_ok hK hH (hrel.withBits h1) h3 h5).refilled (fun F => ?_) h2 h3 rfl
   show (BitBuffer.mk st.word st.count).held ++ (chunkBits a pos.toNat stop.toNat ++ F) =
     (refill st.word st.count a pos stop hs hp).buf.held ++
       (chunkBits a (refill st.word st.count a pos stop hs hp).pos.toNat stop.toNat ++ F)
@@ -166,7 +166,7 @@ theorem stepCmd_inside {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBloc
     | word =>
       rw [hrel1.2.1]
       exact stepWord_ok hrel1 hp1
-  refine (hat (hrel.withBits h1) h3 h5).refilled (fun F => ?_) h2 h3
+  refine (hat (hrel.withBits h1) h3 h5).refilled (fun F => ?_) h2 h3 rfl
   show (BitBuffer.mk st.word st.count).held ++ (chunkBits a pos.toNat stop.toNat ++ F) =
     (refill st.word st.count a pos stop hs hp).buf.held ++
       (chunkBits a (refill st.word st.count a pos stop hs hp).pos.toNat stop.toNat ++ F)
@@ -229,17 +229,25 @@ decreasing_by
 structure RunOk {α : Type} (w k : Nat) (m : MetaBlockHeader) (K : CommandState → List Bool → Option α) (a : ByteArray)
     (stop : USize) (p : Phase) (st : Cmd) (pos : USize) (r : Cmd) : Prop where
   next : r.status = .next → ∃ p', Rel w k m r p' ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
-    ∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K p' (stateBits r a r.pos stop F)
+    (∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K p' (stateBits r a r.pos stop F)) ∧ OutStep p p' st r
   needsInput : r.status = .needsInput → r.pos = stop ∧ pos.toNat ≤ stop.toNat ∧ ∃ p', Rel w k m r p' ∧
     (∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K p' (stateBits r a r.pos stop F)) ∧
-    rest w m K p' (BitBuffer.mk r.word r.count).held = none
+    rest w m K p' (BitBuffer.mk r.word r.count).held = none ∧ OutStep p p' st r
   needsOutput : r.status = .needsOutput → ∃ p', Rel w k m r p' ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
     (∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K p' (stateBits r a r.pos stop F)) ∧
-    r.pend.toNat = 2 ^ k
+    r.pend.toNat = 2 ^ k ∧ OutStep p p' st r
   done : r.status = .done → ∃ s, Rel w k m r (.command s) ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
     (∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K (.command s) (stateBits r a r.pos stop F)) ∧
-    s.remaining = 0
+    s.remaining = 0 ∧ OutStep p (.command s) st r
   bad : r.status = .bad → ∀ F, rest w m K p (stateBits st a pos stop F) = none
+
+/-- Two moves' bytes together. -/
+theorem OutStep.trans {p p1 p2 : Phase} {st r1 r : Cmd} (h1 : OutStep p p1 st r1) (h2 : OutStep p1 p2 r1 r) : OutStep p p2 st r := by
+  obtain ⟨l1, a1, b1⟩ := h1
+  obtain ⟨l2, a2, b2⟩ := h2
+  refine ⟨l2 ++ l1, by rw [a2, a1, List.append_assoc], ?_⟩
+  rw [b2, b1, List.length_append]
+  omega
 
 section
 variable {α : Type} {w k : Nat} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α} {a : ByteArray} {stop : USize}
@@ -248,33 +256,33 @@ variable {α : Type} {w k : Nat} {m : MetaBlockHeader} {K : CommandState → Lis
 /-- One step is a run. -/
 theorem StepOk.toRun (h : StepOk w k m K a stop p st pos r) : RunOk w k m K a stop p st pos r where
   next e := by
-    obtain ⟨p', h1, h2, h3, h4, _⟩ := h.next e
-    exact ⟨p', h1, h2, h3, h4⟩
-  needsInput e := by
-    obtain ⟨h1, h2, p', h3, h4, h5, _⟩ := h.needsInput e
-    exact ⟨h1, h2, p', h3, h4, h5⟩
-  needsOutput e := by
-    obtain ⟨p', h1, h2, h3, h4, h5, _⟩ := h.needsOutput e
+    obtain ⟨p', h1, h2, h3, h4, _, h5⟩ := h.next e
     exact ⟨p', h1, h2, h3, h4, h5⟩
+  needsInput e := by
+    obtain ⟨h1, h2, p', h3, h4, h5, _, h6⟩ := h.needsInput e
+    exact ⟨h1, h2, p', h3, h4, h5, h6⟩
+  needsOutput e := by
+    obtain ⟨p', h1, h2, h3, h4, h5, _, h6⟩ := h.needsOutput e
+    exact ⟨p', h1, h2, h3, h4, h5, h6⟩
   done := h.done
   bad := h.bad
 
 /-- Two runs in a row, the first moving on, are one run. -/
 theorem RunOk.trans {r1 : Cmd} {p1 : Phase} (hle : pos.toNat ≤ r1.pos.toNat)
-    (h : ∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K p1 (stateBits r1 a r1.pos stop F))
+    (h : ∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K p1 (stateBits r1 a r1.pos stop F)) (ho : OutStep p p1 st r1)
     (h2 : RunOk w k m K a stop p1 r1 r1.pos r) : RunOk w k m K a stop p st pos r where
   next e := by
-    obtain ⟨p', hrel, h3, h4, h5⟩ := h2.next e
-    exact ⟨p', hrel, Nat.le_trans hle h3, h4, fun F => by rw [h]; exact h5 F⟩
+    obtain ⟨p', hrel, h3, h4, h5, h6⟩ := h2.next e
+    exact ⟨p', hrel, Nat.le_trans hle h3, h4, (fun F => by rw [h]; exact h5 F), ho.trans h6⟩
   needsInput e := by
-    obtain ⟨h3, h6, p', hrel, h5, h7⟩ := h2.needsInput e
-    exact ⟨h3, Nat.le_trans hle h6, p', hrel, fun F => by rw [h]; exact h5 F, h7⟩
+    obtain ⟨h3, h6, p', hrel, h5, h7, h8⟩ := h2.needsInput e
+    exact ⟨h3, Nat.le_trans hle h6, p', hrel, (fun F => by rw [h]; exact h5 F), h7, ho.trans h8⟩
   needsOutput e := by
-    obtain ⟨p', hrel, h3, h4, h5, h6⟩ := h2.needsOutput e
-    exact ⟨p', hrel, Nat.le_trans hle h3, h4, fun F => by rw [h]; exact h5 F, h6⟩
+    obtain ⟨p', hrel, h3, h4, h5, h6, h7⟩ := h2.needsOutput e
+    exact ⟨p', hrel, Nat.le_trans hle h3, h4, (fun F => by rw [h]; exact h5 F), h6, ho.trans h7⟩
   done e := by
-    obtain ⟨s, hrel, h3, h4, h5, h6⟩ := h2.done e
-    exact ⟨s, hrel, Nat.le_trans hle h3, h4, fun F => by rw [h]; exact h5 F, h6⟩
+    obtain ⟨s, hrel, h3, h4, h5, h6, h7⟩ := h2.done e
+    exact ⟨s, hrel, Nat.le_trans hle h3, h4, (fun F => by rw [h]; exact h5 F), h6, ho.trans h7⟩
   bad e := fun F => by rw [h]; exact h2.bad e F
 
 end
@@ -290,7 +298,7 @@ theorem runCmd_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHead
   | zero =>
     intro n p st pos hN hrel hp
     rw [runCmd, dite_eq_left (usize_zero hN)]
-    exact ⟨fun _ => ⟨p, hrel.mark _ _, Nat.le_refl _, hp, fun _ => rfl⟩, fun e => StepStatus.noConfusion e, fun e => StepStatus.noConfusion e,
+    exact ⟨fun _ => ⟨p, hrel.mark _ _, Nat.le_refl _, hp, (fun _ => rfl), ⟨[], rfl, rfl⟩⟩, fun e => StepStatus.noConfusion e, fun e => StepStatus.noConfusion e,
       fun e => StepStatus.noConfusion e, fun e => StepStatus.noConfusion e⟩
   | succ N ih =>
     intro n p st pos hN hrel hp
@@ -302,8 +310,8 @@ theorem runCmd_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHead
     generalize stepCmd H k a stop hs st pos = r at hstep
     cases hst : r.status with
     | next =>
-      obtain ⟨p', hR, h1, h2, h3, _⟩ := hstep.next hst
-      exact RunOk.trans h1 h3 (ih _ p' r r.pos (by omega) hR h2)
+      obtain ⟨p', hR, h1, h2, h3, _, h4⟩ := hstep.next hst
+      exact RunOk.trans h1 h3 h4 (ih _ p' r r.pos (by omega) hR h2)
     | needsInput => exact hstep.toRun
     | needsOutput => exact hstep.toRun
     | done => exact hstep.toRun
@@ -317,18 +325,6 @@ theorem stepCmd_commands {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {
   stepCmd_ok (fun _ bs h0 => commandsFrom_step bs h0) hH hrel hp
 
 /-! ### Handing bytes out -/
-
-/-- The bytes a place has produced so far, most recent first. -/
-def Phase.out : Phase → List Nat
-  | .command s => s.output
-  | .insertCopy s _ => s.output
-  | .copyLength s .. => s.output
-  | .literals _ _ _ _ _ _ _ out => out
-  | .literalSymbol _ _ _ _ _ _ _ out => out
-  | .distance s .. => s.output
-  | .distanceSymbol s .. => s.output
-  | .copy s .. => s.output
-  | .word s _ => s.output
 
 /-- What flushing returns. -/
 structure Flushed where
@@ -395,15 +391,13 @@ theorem Rel.window {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {p : Phase} (h :
 
 /-- Flushing keeps the state's place, adds the next bytes waiting to the buffer, oldest first, and takes them off those
 waiting. It adds at least one byte when one is waiting and there is space. -/
-theorem flushCmd_spec {w : Nat} {k : USize} {m : MetaBlockHeader} {st : Cmd} {p : Phase} {buf : ByteArray} {space : USize}
-    (h : Rel w k.toNat m st p) :
+theorem flushCmd_spec {k : USize} {st : Cmd} {out : List Nat} {buf : ByteArray} {space : USize}
+    (hring : RingOk st.ring k.toNat st.wpos.toNat out) (hle : st.pend.toNat ≤ 2 ^ k.toNat) (hout : st.pend.toNat ≤ out.length) (hk : k.toNat ≤ 24) :
     let r := flushCmd k st buf space
     ∃ len, len ≤ space.toNat ∧ len ≤ st.pend.toNat ∧ (st.pend.toNat ≠ 0 → space.toNat ≠ 0 → 1 ≤ len) ∧
-      r.st.pend.toNat = st.pend.toNat - len ∧ Rel w k.toNat m r.st p ∧
-      r.st.word = st.word ∧ r.st.count = st.count ∧
+      r.st.pend.toNat = st.pend.toNat - len ∧ r.st = { st with pend := r.st.pend } ∧
       r.buf.data.toList.map UInt8.toNat =
-        buf.data.toList.map UInt8.toNat ++ ((p.out.take st.pend.toNat).reverse).take len := by
-  obtain ⟨hring, hle, hout, hk⟩ := h.window
+        buf.data.toList.map UInt8.toNat ++ ((out.take st.pend.toNat).reverse).take len := by
   have hRmax : 2 ^ k.toNat ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
   have h24 : (2 : Nat) ^ 24 = 16777216 := by decide
   have hRpos : 1 ≤ 2 ^ k.toNat := Nat.two_pow_pos _
@@ -412,7 +406,7 @@ theorem flushCmd_spec {w : Nat} {k : USize} {m : MetaBlockHeader} {st : Cmd} {p 
   dsimp only
   split
   · rename_i hz
-    refine ⟨0, Nat.zero_le _, Nat.zero_le _, ?_, rfl, h, rfl, rfl, by simp⟩
+    refine ⟨0, Nat.zero_le _, Nat.zero_le _, ?_, rfl, rfl, by simp⟩
     intro h1 h2
     rcases hz with hz | hz
     · exact absurd (by rw [hz]; rfl) h1
@@ -437,8 +431,7 @@ theorem flushCmd_spec {w : Nat} {k : USize} {m : MetaBlockHeader} {st : Cmd} {p 
     have hpn : (st.pend - usmin (usmin st.pend space) (ringSize k - ringBack st.wpos st.pend (ringMask k) (ringSize k))).toNat =
         st.pend.toNat - (usmin (usmin st.pend space) (ringSize k - ringBack st.wpos st.pend (ringMask k) (ringSize k))).toNat :=
       USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr (by rw [hlenN]; omega))
-    refine ⟨_, by rw [hlenN]; omega, by rw [hlenN]; omega, fun _ _ => by rw [hlenN]; omega, hpn,
-      h.withPend (by rw [hpn]; omega), rfl, rfl, ?_⟩
+    refine ⟨_, by rw [hlenN]; omega, by rw [hlenN]; omega, fun _ _ => by rw [hlenN]; omega, hpn, rfl, ?_⟩
     show (emitRun st.ring buf _ _).data.toList.map UInt8.toNat = _
     rw [emitRun_data _ _ (by rw [hring.size, hback, hlenN]; omega), List.map_append, hback,
       hring.emit_bytes (by omega) hle hout (by rw [hlenN]; omega) (by rw [hlenN]; omega)]

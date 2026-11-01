@@ -176,11 +176,11 @@ theorem stepCmd_down {w : Nat} {k : USize} {last : Bool} {H : Hdr} {m : MetaBloc
     have hrk := rank_ne hne
     generalize stepCmd H k a stop hs st pos = r at hstep ⊢
     refine ⟨fun e => ?_, fun e => ?_, fun e => ?_, fun e => ?_⟩
-    · obtain ⟨p', r1, r2, r3, r4, r5⟩ := hstep.next e
+    · obtain ⟨p', r1, r2, r3, r4, r5, _⟩ := hstep.next e
       refine ⟨p', r1, r2, r3, fun F => Or.inr ⟨?_, r5.resolve_left hrk⟩⟩
       show (rest w m (cK w last m) p' _).getD (0, 0) = (rest w m (cK w last m) p _).getD (0, 0)
       rw [r4]
-    · obtain ⟨_, _, p', r1, r2, _, r3⟩ := hstep.needsInput e
+    · obtain ⟨_, _, p', r1, r2, _, r3, _⟩ := hstep.needsInput e
       refine ⟨p', r1, fun F => ?_⟩
       have hv : cVal w last m p' (stateBits r a r.pos stop F) = cVal w last m p (stateBits st a pos stop F) := by
         show (rest w m (cK w last m) p' _).getD (0, 0) = (rest w m (cK w last m) p _).getD (0, 0)
@@ -188,7 +188,7 @@ theorem stepCmd_down {w : Nat} {k : USize} {last : Bool} {H : Hdr} {m : MetaBloc
       rcases r3.resolve_left hrk with h | h
       · exact Or.inl (Or.inr ⟨hv, h⟩)
       · exact Or.inr (Prod.ext hv h)
-    · obtain ⟨p', r1, _, _, r2, _, r3⟩ := hstep.needsOutput e
+    · obtain ⟨p', r1, _, _, r2, _, r3, _⟩ := hstep.needsOutput e
       refine ⟨p', r1, fun F => ?_⟩
       have hv : cVal w last m p' (stateBits r a r.pos stop F) = cVal w last m p (stateBits st a pos stop F) := by
         show (rest w m (cK w last m) p' _).getD (0, 0) = (rest w m (cK w last m) p _).getD (0, 0)
@@ -196,7 +196,7 @@ theorem stepCmd_down {w : Nat} {k : USize} {last : Bool} {H : Hdr} {m : MetaBloc
       rcases r3.resolve_left hrk with h | h
       · exact Or.inl (Or.inr ⟨hv, h⟩)
       · exact Or.inr (Prod.ext hv h)
-    · obtain ⟨s, r1, _, _, r2, r3⟩ := hstep.done e
+    · obtain ⟨s, r1, _, _, r2, r3, _⟩ := hstep.done e
       refine ⟨s, r1, r3, fun F => Or.inl (Or.inr ⟨?_, Or.inl (Nat.pos_of_ne_zero hrk)⟩)⟩
       show (rest w m (cK w last m) (.command s) _).getD (0, 0) = (rest w m (cK w last m) p _).getD (0, 0)
       rw [r2]
@@ -523,7 +523,7 @@ theorem stepDCmds_down {w : Nat} {last : Bool} {m : MetaBlockHeader} {p : Phase}
     rw [hst] at hok
     dsimp only at hok ⊢
     obtain ⟨p', hR', h3⟩ := hstep.needsOutput hst
-    obtain ⟨_, _, h1, h2, _, h4, _⟩ := hok.needsOutput rfl
+    obtain ⟨_, _, h1, h2, _, h4, _, _, _⟩ := hok.needsOutput rfl
     exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun _ => ⟨.cmds w last' m p', ⟨ht, hl, hlim, hH, hR'⟩, h1, h2, h4, fun t => mle_of_lex (h3 _)⟩⟩
   | bad =>
     dsimp only
@@ -587,11 +587,11 @@ theorem stepD_down {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {
     have h := stepD_ok lenSem (a := a) (hs := hs) hrel he hp
     generalize stepD a stop hs D = r at h
     refine ⟨fun e => ?_, fun e => ?_, fun e => ?_⟩
-    · obtain ⟨p', r1, r2, r3, r4, r5⟩ := h.next e
+    · obtain ⟨p', r1, r2, r3, r4, r5, _⟩ := h.next e
       exact ⟨p', r1, r2, r3, fun t => down_next hc' hn r5 (r4 t)⟩
-    · obtain ⟨r1, _, p', r2, r3, _, r4, r5⟩ := h.needsInput e
+    · obtain ⟨r1, _, p', r2, r3, _, r4, r5, _⟩ := h.needsInput e
       exact ⟨r1, p', r2, fun t => down_pause hc' hn r4 (r3 t) (fun w st ep => r5 w st ep t)⟩
-    · obtain ⟨p', r1, r2, r3, r4, r5, r6, r7⟩ := h.needsOutput e
+    · obtain ⟨p', r1, r2, r3, r4, r5, r6, r7, _⟩ := h.needsOutput e
       exact ⟨p', r1, r2, r3, r5, fun t => down_pause hc' hn r6 (r4 t) (fun w st ep => absurd ep (r7 w st))⟩
 
 /-! ### The order is well founded -/

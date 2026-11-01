@@ -142,7 +142,7 @@ private theorem literals_after {α : Type} {w : Nat} {k : USize} {m : MetaBlockH
     (hrun0 : run.toNat ≠ 0) (hrunL : run.toNat ≤ n) (hrunC : run.toNat ≤ st.lCount.toNat) (hrunR : run.toNat + st.pend.toNat ≤ 2 ^ k.toNat)
     (hspec : ∃ (lit' : BlockState) (out' : List Nat),
       r.left.toNat ≤ run.toNat ∧ lit'.types = lit.types ∧ lit'.seen = lit.seen ∧ lit'.count = lit.count - (run.toNat - r.left.toNat) ∧
-      out'.length = out.length + (run.toNat - r.left.toNat) ∧ RingOk r.ring k.toNat r.wpos.toNat out' ∧
+      out'.length = out.length + (run.toNat - r.left.toNat) ∧ (∃ l, out' = l ++ out) ∧ RingOk r.ring k.toNat r.wpos.toNat out' ∧
       contextBytes out' = (r.p1.toNat, r.p2.toNat) ∧ (BitBuffer.mk r.word r.count).Wf ∧
       pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧ (∀ b ∈ out', b < 256) ∧
       (∀ F, rest w m K (.literals s ic c ilen clen n lit out) (availBits st.word st.count a pos stop F) =
@@ -150,7 +150,7 @@ private theorem literals_after {α : Type} {w : Nat} {k : USize} {m : MetaBlockH
       (r.left.toNat ≠ 0 → r.pos = stop ∧
         rest w m K (.literals s ic c ilen clen (n - (run.toNat - r.left.toNat)) lit' out') (BitBuffer.mk r.word r.count).held = none)) :
     StepOk w k.toNat m K a stop (.literals s ic c ilen clen n lit out) st pos (finishLiterals (clearRing st) r run (ringSize k)) := by
-  obtain ⟨lit', out', h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13⟩ := hspec
+  obtain ⟨lit', out', h1, h2, h3, h4, h5, ⟨lx, hlx⟩, h6, h7, h8, h9, h10, h11, h12, h13⟩ := hspec
   have hk := hC.k24
   have hRmax : 2 ^ k.toNat ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
   have h24 : (2 : Nat) ^ 24 = 16777216 := by decide
@@ -188,15 +188,24 @@ private theorem literals_after {α : Type} {w : Nat} {k : USize} {m : MetaBlockH
     · show (st.left - (run - r.left).toUInt64).toNat = _
       rw [u64_sub (by rw [huU]; omega), huU]
       omega
+  have hoAll : OutStep (.literals s ic c ilen clen n lit out) (.literals s ic c ilen clen (n - (run.toNat - r.left.toNat)) lit' out') st
+      (finishLiterals (clearRing st) r run (ringSize k)) := by
+    refine ⟨lx, hlx, ?_⟩
+    have hll : lx.length = run.toNat - r.left.toNat := by
+      have := congrArg List.length hlx
+      rw [List.length_append] at this
+      omega
+    show (st.pend + (run - r.left)).toNat = _
+    rw [pend_after hk (by rw [huN]; omega), huN, hll]
   by_cases hz : r.left = 0
   · have hz0 : r.left.toNat = 0 := by rw [hz]; rfl
     have hdn : (rankC (.literals s ic c ilen clen (n - (run.toNat - r.left.toNat)) lit' out')).2 < (rankC (.literals s ic c ilen clen n lit out)).2 := by
       simp only [rankC]
       split <;> split <;> omega
     exact StepOk.ofNext (p' := .literals s ic c ilen clen (n - (run.toNat - r.left.toNat)) lit' out')
-      (hd := Or.inr (Or.inr ⟨rfl, hdn⟩)) (by show (if r.left = 0 then _ else _) = _; rw [ite_eq_left hz]) hnew h9 h10 fun F => h12 F
+      (hd := Or.inr (Or.inr ⟨rfl, hdn⟩)) (hout := hoAll) (by show (if r.left = 0 then _ else _) = _; rw [ite_eq_left hz]) hnew h9 h10 fun F => h12 F
   · obtain ⟨hstop, hnone⟩ := h13 (usize_ne hz)
-    refine StepOk.ofInput (by show (if r.left = 0 then _ else _) = _; rw [ite_eq_right hz]) hstop hp hnew (fun F => h12 F) hnone ?_
+    refine StepOk.ofInput (by show (if r.left = 0 then _ else _) = _; rw [ite_eq_right hz]) hstop hp hnew (fun F => h12 F) hnone ?_ hoAll
     by_cases hu : run.toNat - r.left.toNat = 0
     · refine Or.inr (Or.inr ?_)
       simp only [rankC, hu, h4, Nat.sub_zero]
