@@ -7,6 +7,7 @@ import Brotli.Decoder.Hit
 import Brotli.Decoder.Slots
 import Brotli.Decoder.Codes
 import Brotli.Decoder.Table
+import Brotli.Decoder.Builder
 import Brotli.Decoder.Lookup
 import Brotli.Decoder.Window
 import Brotli.Decoder.ContextLut

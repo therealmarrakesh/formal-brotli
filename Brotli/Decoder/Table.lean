@@ -107,7 +107,7 @@ private theorem code_some {lens : List Nat} {s l : Nat} (hs : lens[s]? = some l)
     ∃ c, code lens s = some c := by
   simp [code, hs, h0]
 
-private theorem rootOf_lt (l c : Nat) : rootOf l c < 256 := Nat.mod_lt _ (by decide)
+theorem rootOf_lt (l c : Nat) : rootOf l c < 256 := Nat.mod_lt _ (by decide)
 
 /-- What `depths` gives. -/
 theorem depths_spec {lens : List Nat} (hl : ∀ l ∈ lens, l ≤ 15) :
@@ -277,7 +277,7 @@ private theorem subSize_le {d : Nat} (h : d ≤ 7) : subSize d ≤ 128 := by
   · omega
   · exact Nat.pow_le_pow_right (by decide) h
 
-private theorem offSum_bound {D : Array Nat} (hD : ∀ r, D.getD r 0 ≤ 7) : ∀ i, offSum D i ≤ 128 * i
+theorem offSum_bound {D : Array Nat} (hD : ∀ r, D.getD r 0 ≤ 7) : ∀ i, offSum D i ≤ 128 * i
   | 0 => by simp [offSum]
   | i + 1 => by
     have := offSum_bound hD i
@@ -586,7 +586,20 @@ private theorem slotAt_writeCode (hC : Complete (.canonical lens)) {off : Array 
       have := slotPos_lt (D := depths lens) w
       omega
 
-private theorem size_writeCode (base : Nat) (D off : Array Nat) (t : ByteArray) (s l c : Nat) :
+/-- A code word's slots are in the array. -/
+theorem written_in (hC : Complete (.canonical lens)) {off : Array Nat}
+    (hoff : ∀ i, i < 256 → off.getD i 0 = offSum (depths lens) i) {s l c base : Nat} {t : ByteArray}
+    (hs : lens[s]? = some l) (h0 : l ≠ 0) (hc : code lens s = some c)
+    (hsize : 4 * (base + 256 + offSum (depths lens) 256) ≤ t.size) {k : Nat}
+    (hk : k < (if l ≤ 8 then 2 ^ (8 - l) else 2 ^ ((depths lens).getD (rootOf l c) 0 - (l - 8)))) :
+    4 * (if l ≤ 8 then base + revBits l c + k * 2 ^ l
+         else base + 256 + off.getD (rootOf l c) 0 + revBits l c / 256 + k * 2 ^ (l - 8)) + 2 < t.size := by
+  obtain ⟨w, _, ew⟩ := written_hit hC hoff (base := base) hs h0 hc hk
+  rw [ew]
+  have := slotPos_lt (D := depths lens) w
+  omega
+
+theorem size_writeCode' (base : Nat) (D off : Array Nat) (t : ByteArray) (s l c : Nat) :
     (writeCode base D off t s l c).size = t.size := by
   unfold writeCode
   split <;> exact size_writeRange ..
@@ -716,7 +729,7 @@ theorem buildCanonical_spec {t : ByteArray} (hC : Complete (.canonical lens)) (h
       have hsize : 4 * (base + 256 + offSum (depths lens) 256) ≤ t'.size := by
         rw [h1, hs1]
         omega
-      refine ⟨by rw [size_writeCode, h1], ?_, ?_⟩
+      refine ⟨by rw [size_writeCode', h1], ?_, ?_⟩
       · intro q hq
         rw [(slotAt_writeCode hC oAt hg h0 hc hslt hsize q).2 (by
           rintro ⟨w, _, e⟩

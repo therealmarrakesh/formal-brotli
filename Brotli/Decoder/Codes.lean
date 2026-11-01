@@ -15,7 +15,7 @@ open Brotli.Spec
 def lengthCounts (lens : List Nat) : Array Nat :=
   lens.foldl (fun cs l => cs.setIfInBounds l (cs.getD l 0 + 1)) (Array.replicate 16 0)
 
-private theorem getD_set {cs : Array Nat} {l n v : Nat} (hl : l < cs.size) :
+theorem getD_set {cs : Array Nat} {l n v : Nat} (hl : l < cs.size) :
     (cs.setIfInBounds l v).getD n 0 = if n = l then v else cs.getD n 0 := by
   by_cases h : n = l
   · subst h

@@ -808,6 +808,17 @@ private theorem nextCode_sum (lens : List Nat) : ∀ l, 1 ≤ l → l ≤ 15 →
       Nat.shiftLeft_eq, show 15 - (l + 1) = (15 - (l + 2)) + 1 by omega, Nat.pow_succ]
     grind
 
+/-- Under Kraft's inequality, the codes of a length end by `2 ^ len`. -/
+theorem nextCode_add_le {lens : List Nat} (hkraft : lengthSum lens ≤ 32768) {len : Nat} (h1 : 1 ≤ len) (hmax : len ≤ 15) :
+    nextCode lens len + blCount lens len ≤ 2 ^ len := by
+  have hsum := nextCode_sum lens len h1 hmax
+  have hle := lengthSumUpTo_le len hmax lens
+  have hpow : 2 ^ len * 2 ^ (15 - len) = 32768 := by
+    rw [← Nat.pow_add, show len + (15 - len) = 15 by omega]
+  have : (nextCode lens len + blCount lens len) * 2 ^ (15 - len) ≤ 2 ^ len * 2 ^ (15 - len) := by
+    omega
+  exact Nat.le_of_mul_le_mul_right this (Nat.two_pow_pos _)
+
 /-- Under Kraft's inequality, a used symbol's code is less than `2 ^ len`. -/
 theorem code_lt_two_pow {lens : List Nat} (hkraft : lengthSum lens ≤ 32768)
     {s len c : Nat} (hs : lens[s]? = some len) (h0 : len ≠ 0) (hmax : len ≤ 15)
