@@ -10,6 +10,7 @@ import Brotli.Decoder.Table
 import Brotli.Decoder.Lookup
 import Brotli.Decoder.Window
 import Brotli.Decoder.ContextLut
+import Brotli.Decoder.Fixed
 import Brotli.Decoder.Literals
 import Brotli.Decoder.Reader
 import Brotli.Decoder.Block

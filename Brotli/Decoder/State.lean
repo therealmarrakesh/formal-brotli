@@ -1,5 +1,6 @@
 import Brotli.Decoder.Literals
 import Brotli.Decoder.Block
+import Brotli.Decoder.Fixed
 import Brotli.Properties.Lookups
 
 /-!
@@ -26,7 +27,22 @@ inductive Tag where
   | word
   deriving DecidableEq
 
-/-- The loop's state between steps. -/
+/-- How a step ended. -/
+inductive StepStatus where
+  /-- It moved on, to another place or further through the same one. -/
+  | next
+  /-- It needs more input: the chunk is used up and the bits held can't finish the next read. -/
+  | needsInput
+  /-- The window is full of bytes not yet handed over. -/
+  | needsOutput
+  /-- The meta-block's commands are finished. -/
+  | done
+  /-- The spec rejects, whatever bits follow. -/
+  | bad
+  deriving DecidableEq
+
+/-- The loop's state between steps. A step returns it with the input position and how the step ended, so that a step
+updates it in place and returns nothing else. -/
 structure Cmd where
   word : UInt64
   count : UInt64
@@ -64,6 +80,8 @@ structure Cmd where
   dist : UInt64
   wordBuf : ByteArray
   wordPos : USize
+  pos : USize
+  status : StepStatus
 
 /-- A meta-block's fast header. -/
 structure Hdr where
@@ -87,6 +105,8 @@ structure Hdr where
   baseCD : USize
   npostfix : UInt64
   ndirect : UInt64
+  npLe : npostfix.toNat ≤ 3
+  ndLe : ndirect.toNat ≤ 120
   lit : LitChecked arena litBase lMap treesL.toNat
   lMapSize : lMap.size = 64 * nL.toNat
   modesSize : modes.size = nL.toNat
@@ -193,25 +213,38 @@ def Rel (w k : Nat) (m : MetaBlockHeader) (st : Cmd) : Phase → Prop
       (st.wordBuf.data.toList.drop st.wordPos.toNat).map UInt8.toNat = pending ∧ st.wordBuf.size ≤ 38 ∧
       st.wordPos.toNat ≤ st.wordBuf.size
 
-/-- How a step ended. -/
-inductive StepStatus where
-  /-- It moved on, to another place or further through the same one. -/
-  | next
-  /-- It needs more input: the chunk is used up and the bits held can't finish the next read. -/
-  | needsInput
-  /-- The window is full of bytes not yet handed over. -/
-  | needsOutput
-  /-- The meta-block's commands are finished. -/
-  | done
-  /-- The spec rejects, whatever bits follow. -/
-  | bad
-  deriving DecidableEq
+/-- A state as a step leaves it. -/
+@[inline] def markStep (st : Cmd) (pos : USize) (s : StepStatus) : Cmd := { st with pos := pos, status := s }
 
-/-- A step's result. -/
-structure Stepped where
-  st : Cmd
-  pos : USize
-  status : StepStatus
+/-- A step's position and status don't matter to `Rel`. -/
+theorem Rel.mark {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {p : Phase} (h : Rel w k m st p) (pos : USize) (s : StepStatus) :
+    Rel w k m (markStep st pos s) p := by
+  cases p with
+  | literalSymbol => exact h.elim
+  | command =>
+    obtain ⟨hC, hr⟩ := h
+    exact ⟨{ hC with }, hr⟩
+  | insertCopy =>
+    obtain ⟨hC, hr⟩ := h
+    exact ⟨{ hC with }, hr⟩
+  | copyLength =>
+    obtain ⟨hC, hr⟩ := h
+    exact ⟨{ hC with }, hr⟩
+  | literals =>
+    obtain ⟨hC, hr⟩ := h
+    exact ⟨{ hC with }, hr⟩
+  | distance =>
+    obtain ⟨hC, hr⟩ := h
+    exact ⟨{ hC with }, hr⟩
+  | distanceSymbol =>
+    obtain ⟨hC, hr⟩ := h
+    exact ⟨{ hC with }, hr⟩
+  | copy =>
+    obtain ⟨hC, hr⟩ := h
+    exact ⟨{ hC with }, hr⟩
+  | word =>
+    obtain ⟨hC, hr⟩ := h
+    exact ⟨{ hC with }, hr⟩
 
 /-- The bits a state and position stand for, then any future. -/
 def stateBits (st : Cmd) (a : ByteArray) (pos stop : USize) (F : List Bool) : List Bool :=

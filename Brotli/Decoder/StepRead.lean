@@ -30,25 +30,43 @@ theorem stateBits_eq (st : Cmd) (a : ByteArray) (pos stop : USize) (F : List Boo
 
 /-! ### Block states -/
 
-/-- Marks a block type as having occurred. -/
-@[inline] def markSeen (seen : ByteArray) (off t : Nat) : ByteArray := seen.set! (off + t) 1
+/-- Marks a block type as having occurred, at flag `i`. -/
+@[inline] def markSeen (seen : ByteArray) (i : USize) : ByteArray :=
+  if h : i.toNat < seen.size then seen.uset i 1 h else seen
 
-private theorem data_set (t : ByteArray) (i : Nat) (v : UInt8) : (t.set! i v).data = t.data.setIfInBounds i v := by
+private theorem data_uset (t : ByteArray) (i : USize) (v : UInt8) (h : i.toNat < t.size) :
+    (t.uset i v h).data = t.data.set i.toNat v h := by
   cases t
   rfl
 
-theorem size_markSeen (seen : ByteArray) (off t : Nat) : (markSeen seen off t).size = seen.size := by
-  show (markSeen seen off t).data.size = seen.data.size
-  simp [markSeen, data_set]
+theorem size_markSeen (seen : ByteArray) (i : USize) : (markSeen seen i).size = seen.size := by
+  unfold markSeen
+  split
+  · rename_i h
+    show (seen.uset i 1 h).data.size = seen.data.size
+    rw [data_uset, Array.size_set]
+  · rfl
 
-private theorem flag_same {seen : ByteArray} {off t : Nat} (h : off + t < seen.size) :
-    ((markSeen seen off t).data[off + t]?.getD 0) = 1 := by
-  have hs : seen.size = seen.data.size := rfl
-  simp [markSeen, data_set, ← hs, h]
+private theorem flag_same {seen : ByteArray} {i : USize} (h : i.toNat < seen.size) :
+    ((markSeen seen i).data[i.toNat]?.getD 0) = 1 := by
+  unfold markSeen
+  rw [dite_eq_left h, data_uset]
+  simp
 
-private theorem flag_other {seen : ByteArray} {off t i : Nat} (h : i ≠ off + t) :
-    (markSeen seen off t).data[i]? = seen.data[i]? := by
-  simp [markSeen, data_set, Ne.symm h]
+private theorem flag_other {seen : ByteArray} {i : USize} {j : Nat} (h : j ≠ i.toNat) :
+    (markSeen seen i).data[j]? = seen.data[j]? := by
+  unfold markSeen
+  split
+  · rw [data_uset, Array.getElem?_set, ite_eq_right (Ne.symm h)]
+  · rfl
+
+/-- The position of a block type's flag. -/
+theorem seen_index {off : Nat} {t : UInt64} (hoff : off ≤ 512) (ht : t.toNat < 256) :
+    (USize.ofNat off + t.toUSize).toNat = off + t.toNat := by
+  have hu : t.toUSize.toNat = t.toNat := word_toUSize (by omega)
+  rw [USize.toNat_add, usize_ofNat' (by omega), hu, ← USize.size_eq_two_pow]
+  have := USize.le_size
+  exact Nat.mod_eq_of_lt (by omega)
 
 /-- A block state's count going down by one. -/
 theorem BlockRel.decr {seen : ByteArray} {off : Nat} {cur prev count : UInt64} {st : BlockState} {c : BlockCategory}
@@ -59,10 +77,10 @@ theorem BlockRel.decr {seen : ByteArray} {off : Nat} {cur prev count : UInt64} {
   rw [u64_sub_one (by omega), b.count]
 
 /-- A block switch, for the category whose flags it marks. -/
-theorem BlockRel.switched {seen : ByteArray} {off : Nat} {cur prev count next cnt : UInt64} {st : BlockState}
+theorem BlockRel.switched {seen : ByteArray} {off : Nat} {i : USize} {cur prev count next cnt : UInt64} {st : BlockState}
     {c : BlockCategory} {v : Nat} (b : BlockRel seen off cur prev count st c) (hoff : off + 256 ≤ seen.size)
-    (hn : next.toNat < c.n) (hv : v = cnt.toNat) : BlockRel (markSeen seen off next.toNat) off next cur cnt
-      ⟨⟨cur.toNat, next.toNat⟩, v, next.toNat :: st.seen⟩ c := by
+    (hi : i.toNat = off + next.toNat) (hn : next.toNat < c.n) (hv : v = cnt.toNat) :
+    BlockRel (markSeen seen i) off next cur cnt ⟨⟨cur.toNat, next.toNat⟩, v, next.toNat :: st.seen⟩ c := by
   refine ⟨rfl, rfl, hv, ⟨fun _ => ?_, hn, ?_⟩, ?_⟩
   · have := b.wf.2.1
     rw [b.cur] at this
@@ -74,10 +92,10 @@ theorem BlockRel.switched {seen : ByteArray} {off : Nat} {cur prev count next cn
   · intro t ht
     by_cases he : t = next.toNat
     · subst he
-      rw [flag_same (by omega)]
+      rw [← hi, flag_same (by omega)]
       simp
-    · have hi : off + t ≠ off + next.toNat := by omega
-      rw [flag_other hi]
+    · have hne : off + t ≠ i.toNat := by omega
+      rw [flag_other hne]
       have hm := b.flags t ht
       constructor
       · intro hf
@@ -88,9 +106,9 @@ theorem BlockRel.switched {seen : ByteArray} {off : Nat} {cur prev count next cn
         · exact hm.mpr hf
 
 /-- Marking another category's flag leaves a block state's flags alone. -/
-theorem BlockRel.marked {seen : ByteArray} {off off' t' : Nat} {cur prev count : UInt64} {st : BlockState} {c : BlockCategory}
-    (b : BlockRel seen off cur prev count st c) (hdis : ∀ t, t < 256 → off + t ≠ off' + t') :
-    BlockRel (markSeen seen off' t') off cur prev count st c := by
+theorem BlockRel.marked {seen : ByteArray} {off : Nat} {i : USize} {cur prev count : UInt64} {st : BlockState} {c : BlockCategory}
+    (b : BlockRel seen off cur prev count st c) (hdis : ∀ t, t < 256 → off + t ≠ i.toNat) :
+    BlockRel (markSeen seen i) off cur prev count st c := by
   refine { b with flags := ?_ }
   intro t ht
   rw [flag_other (hdis t ht)]
@@ -129,7 +147,7 @@ theorem nextElement_single {c : BlockCategory} {st : BlockState} (bs : List Bool
 /-- A block switch in the terms of a block state's fields. -/
 theorem blockSwitch_rel {arena : ByteArray} {h32 : arena.size < 2 ^ 32} {tBase cBase : USize}
     {hT : TableFits arena tBase.toNat} {hCt : TableFits arena cBase.toNat} {seen : ByteArray} {off : Nat}
-    {cur prev count word bcount : UInt64} {st : BlockState} {c : BlockCategory} {n : Nat} (hnn : n = c.n)
+    {cur prev count word bcount : UInt64} {st : BlockState} {c : BlockCategory} {n : UInt64} (hnn : n.toNat = c.n)
     (cat : CatRel arena tBase cBase c) (hcw : c.Wf) (b : BlockRel seen off cur prev count st c) (hz : count.toNat = 0)
     (hw : (BitBuffer.mk word bcount).Wf) (hn2 : 2 ≤ c.n) :
     let r := blockSwitch arena h32 tBase cBase hT hCt n cur prev word bcount
@@ -150,31 +168,29 @@ theorem blockSwitch_rel {arena : ByteArray} {h32 : arena.size < 2 ^ 32} {tBase c
     (word := word) (count := bcount) hnn (cat.type hn2).1 (cat.count hn2).1 (cat.type hn2).2.1 (cat.count hn2).2.1 hw hn2 h256
     (cat.type hn2).2.2 (cat.count hn2).2.2 (by rw [← b.cur]; exact b.wf.2.1) (by rw [← b.prev]; exact b.wf.1 hn2) st.seen
   rw [← hst] at hsp
-  dsimp only at hsp ⊢
-  obtain ⟨h1, h2, h3⟩ := hsp
-  exact ⟨fun e => by
-      obtain ⟨a1, a2, _, a4, a5, a6⟩ := h1 e
-      exact ⟨a1, a2, a4, a5, a6⟩, h2, h3⟩
+  exact hsp
 
 /-! ### The start of a command -/
 
 /-- The start of a command: finish at MLEN, otherwise the insert-and-copy element's block switch. -/
-def stepCommand (H : Hdr) (st : Cmd) (pos : USize) : Stepped :=
-  if st.remaining.toNat = 0 then ⟨st, pos, .done⟩
-  else if st.iCount.toNat ≠ 0 then ⟨{ st with iCount := st.iCount - 1, tag := .insertCopy }, pos, .next⟩
-  else if hn : 2 ≤ H.nI.toNat then
-    let r := blockSwitch H.arena H.lit.arena32 H.baseTI H.baseCI (H.swI hn).1 (H.swI hn).2 H.nI.toNat st.iCur st.iPrev
-      st.word st.count
-    match r.status with
-    | .ok =>
-      let seen := st.seen
-      let st0 := clearSeen st
-      ⟨{ st0 with
+def stepCommand (H : Hdr) (st : Cmd) (pos : USize) : Cmd :=
+  if st.remaining = 0 then markStep st pos .done
+  else if st.iCount = 0 then
+    if hn : 2 ≤ H.nI then
+      let hn' := UInt64.le_iff_toNat_le.mp hn
+      let r := blockSwitch H.arena H.lit.arena32 H.baseTI H.baseCI (H.swI hn').1 (H.swI hn').2 H.nI st.iCur st.iPrev
+        st.word st.count
+      match r.status with
+      | .ok =>
+        let seen := st.seen
+        let st0 := clearSeen st
+        { st0 with
           word := r.word, count := r.count, iCur := r.cur, iPrev := st0.iCur, iCount := r.blockCount - 1
-          seen := markSeen seen 256 r.cur.toNat, tag := .insertCopy }, pos, .next⟩
-    | .short => ⟨st, pos, .needsInput⟩
-    | .bad => ⟨st, pos, .bad⟩
-  else ⟨st, pos, .bad⟩
+          seen := markSeen seen (USize.ofNat 256 + r.cur.toUSize), tag := .insertCopy, pos := pos, status := .next }
+      | .short => markStep st pos .needsInput
+      | .bad => markStep st pos .bad
+    else markStep st pos .bad
+  else { st with iCount := st.iCount - 1, tag := .insertCopy, pos := pos, status := .next }
 
 /-- The start of a command, in the spec's terms. -/
 theorem rest_command_of {α : Type} {w : Nat} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
@@ -196,30 +212,36 @@ theorem stepCommand_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {
   unfold stepCommand
   split
   · rename_i h0
+    have h0N := u64_zero h0
     exact ⟨fun h => StepStatus.noConfusion h, fun h => StepStatus.noConfusion h, fun h => StepStatus.noConfusion h,
-      fun _ => ⟨s, hrel0, Nat.le_refl _, hp, fun _ => rfl, by omega⟩, fun h => StepStatus.noConfusion h⟩
+      fun _ => ⟨s, hrel0.mark _ _, Nat.le_refl _, hp, fun _ => rfl, by omega⟩, fun h => StepStatus.noConfusion h⟩
   · rename_i h0
+    have h0N := u64_ne h0
     have h0' : s.remaining ≠ 0 := by omega
     split
+    rotate_left
     · rename_i hcnt
+      have hcntN := u64_ne hcnt
       have hcs : s.insertCopy.count ≠ 0 := by
         rw [hC.iRel.count]
-        exact hcnt
+        exact hcntN
       refine StepOk.ofNext (p' := .insertCopy s { s.insertCopy with count := s.insertCopy.count - 1 }) rfl
-        ⟨{ hC with iRel := hC.iRel.decr hcnt }, rfl, hprod⟩ (Nat.le_refl _) hp fun F => ?_
+        ⟨{ hC with iRel := hC.iRel.decr hcntN }, rfl, hprod⟩ (Nat.le_refl _) hp fun F => ?_
       rw [stateBits_eq, rest_command_of hK _ h0', nextElement_count _ hcs]
       rfl
     · rename_i hcnt
+      have hcntN : st.iCount.toNat = 0 := u64_zero hcnt
       have hcz : s.insertCopy.count = 0 := by
         rw [hC.iRel.count]
-        omega
+        exact hcntN
       split
       · rename_i hn
+        have hn' : 2 ≤ H.nI.toNat := UInt64.le_iff_toNat_le.mp hn
         have hn2 : 2 ≤ m.insertCopy.n := by
           rw [← hH.nI]
-          exact hn
-        have hsp := blockSwitch_rel (h32 := H.lit.arena32) (hT := (H.swI hn).1) (hCt := (H.swI hn).2) hH.nI hH.catI
-          hH.ok.insertCopy hC.iRel (by omega) hC.wf hn2
+          exact hn'
+        have hsp := blockSwitch_rel (h32 := H.lit.arena32) (hT := (H.swI hn').1) (hCt := (H.swI hn').2) hH.nI hH.catI
+          hH.ok.insertCopy hC.iRel hcntN hC.wf hn2
         dsimp only at hsp ⊢
         generalize blockSwitch _ _ _ _ _ _ _ _ _ _ _ = r at hsp ⊢
         obtain ⟨hok, hshort, hbad⟩ := hsp
@@ -228,21 +250,25 @@ theorem stepCommand_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {
           obtain ⟨hw, hlt, hc1, hc2, hnext⟩ := hok hs
           have h256 := hH.ok.insertCopy.2.1
           have hsize := hC.seenSize
+          have hi := seen_index (off := 256) (t := r.cur) (by omega) (by omega)
           refine StepOk.ofNext (p' := .insertCopy s ⟨⟨st.iCur.toNat, r.cur.toNat⟩, r.blockCount.toNat - 1,
             r.cur.toNat :: s.insertCopy.seen⟩) rfl ⟨?_, rfl, hprod⟩ (Nat.le_refl _) hp fun F => ?_
           · exact { hC with
               wf := hw
-              iRel := hC.iRel.switched (by omega) hlt (u64_sub_one hc1).symm
-              lRel := hC.lRel.marked (by omega)
-              dRel := hC.dRel.marked (by omega)
-              seenSize := by rw [show _ = (markSeen st.seen 256 r.cur.toNat).size from rfl, size_markSeen]; exact hsize }
+              iRel := hC.iRel.switched (by omega) hi hlt (u64_sub_one hc1).symm
+              lRel := hC.lRel.marked (by rw [hi]; omega)
+              dRel := hC.dRel.marked (by rw [hi]; omega)
+              seenSize := by
+                show (markSeen st.seen _).size = _
+                rw [size_markSeen]
+                exact hsize }
           · rw [stateBits_eq, rest_command_of hK _ h0', hnext]
             rfl
         | short =>
           obtain ⟨_, _, hc54, hnone⟩ := hshort hs
           refine StepOk.ofShort hrel0 (hfull.resolve_left (by omega)) ?_
-          · rw [rest_command_of hK _ h0', hnone]
-            rfl
+          rw [rest_command_of hK _ h0', hnone]
+          rfl
         | bad =>
           refine StepOk.ofBad rfl fun F => ?_
           rw [stateBits_eq, rest_command_of hK _ h0', hbad hs]
@@ -250,7 +276,7 @@ theorem stepCommand_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {
       · rename_i hn
         have hn' : m.insertCopy.n < 2 := by
           rw [← hH.nI]
-          omega
+          exact Nat.lt_of_not_le fun e => hn (UInt64.le_iff_toNat_le.mpr e)
         refine StepOk.ofBad rfl fun F => ?_
         rw [rest_command_of hK _ h0', nextElement_single _ hcz hn']
         rfl
@@ -266,29 +292,33 @@ theorem tableBase_toNat {t : ByteArray} {i : UInt64} (h : 4 * i.toNat + 4 ≤ t.
   unfold tableBase
   rw [word_toUSize (by rw [slotWord_toNat]; exact u32At_lt _ _), slotWord_toNat, word_toUSize (by omega)]
 
+/-- The element, once its symbol is looked up. -/
+@[inline] def insertStep (st : Cmd) (pos : USize) (v : UInt64) : Cmd :=
+  if wordBits v ≤ st.count then
+    if hc : wordSym v < 704 then
+      let b1 := (BitBuffer.mk st.word st.count).drop (wordBits v)
+      let row := insertRow (wordSym v) (lt704 hc)
+      if rowBits row ≤ b1.count then
+        let b2 := b1.drop (rowBits row)
+        let cr := copyRow (wordSym v) (lt704 hc)
+        { st with
+          word := b2.word, count := b2.count, code := wordSym v
+          ilen := rowBase row + b1.peek (rowBits row), copyBits := rowBits cr, copyBase := rowBase cr
+          tag := .copyLength, pos := pos, status := .next }
+      else markStep st pos .needsInput
+    else markStep st pos .bad
+  else markStep st pos .needsInput
+
 /-- The element's symbol and insert extra bits. -/
-def stepInsertCopy (H : Hdr) (st : Cmd) (pos : USize) : Stepped :=
-  if ht : st.iCur.toNat < H.nI.toNat then
+def stepInsertCopy (H : Hdr) (st : Cmd) (pos : USize) : Cmd :=
+  if ht : st.iCur < H.nI then
+    have ht' := UInt64.lt_iff_toNat_lt.mp ht
     have hb : 4 * st.iCur.toNat + 4 ≤ H.icBase.size := by
       rw [H.icSize]
       omega
-    let v := lookup H.arena (tableBase H.icBase st.iCur hb H.ic32) st.word
-      (by rw [tableBase_toNat]; exact H.icFits _ ht) H.lit.arena32
-    if wordBits v ≤ st.count then
-      if hc : wordValue v < 704 then
-        let b1 := (BitBuffer.mk st.word st.count).drop (wordBits v)
-        let row := insertRow (wordValue v) hc
-        if rowBits row ≤ b1.count then
-          let b2 := b1.drop (rowBits row)
-          let cr := copyRow (wordValue v) hc
-          ⟨{ st with
-              word := b2.word, count := b2.count, code := UInt64.ofNat (wordValue v)
-              ilen := rowBase row + b1.peek (rowBits row), copyBits := rowBits cr, copyBase := rowBase cr
-              tag := .copyLength }, pos, .next⟩
-        else ⟨st, pos, .needsInput⟩
-      else ⟨st, pos, .bad⟩
-    else ⟨st, pos, .needsInput⟩
-  else ⟨st, pos, .bad⟩
+    insertStep st pos (lookup H.arena (tableBase H.icBase st.iCur hb H.ic32) st.word
+      (by rw [tableBase_toNat]; exact H.icFits _ ht') H.lit.arena32)
+  else markStep st pos .bad
 
 /-- The element, once its symbol is read. -/
 theorem rest_insertCopy_row {α : Type} {w : Nat} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
@@ -319,9 +349,9 @@ private theorem insertCopy_next {α : Type} {w k : Nat} {m : MetaBlockHeader} {K
     (hrest : ∀ F, rest w m K (.insertCopy s ic) (stateBits st a pos stop F) =
       rest w m K (.copyLength s ic sym ilenN copyBitsN copyBaseN) (b2.held ++ (chunkBits a pos.toNat stop.toNat ++ F))) :
     StepOk w k m K a stop (.insertCopy s ic) st pos
-      ⟨{ st with
-          word := b2.word, count := b2.count, code := code, ilen := ilen, copyBits := copyBits, copyBase := copyBase
-          tag := .copyLength }, pos, .next⟩ :=
+      { st with
+        word := b2.word, count := b2.count, code := code, ilen := ilen, copyBits := copyBits, copyBase := copyBase
+        tag := .copyLength, pos := pos, status := .next } :=
   StepOk.ofNext (p' := .copyLength s ic sym ilenN copyBitsN copyBaseN) rfl
     ⟨{ hC with wf := hw }, rfl, hprod, h1, h2, h3, h4, h5, h6⟩ (Nat.le_refl _) hp hrest
 
@@ -338,7 +368,7 @@ theorem stepInsertCopy_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader
   obtain ⟨code, hcode, hok, hcomp, hsym⟩ := hH.ic _ ht
   have hcur : ic.types.cur = st.iCur.toNat := hC.iRel.cur
   unfold stepInsertCopy
-  rw [dite_eq_left ht]
+  rw [dite_eq_left (UInt64.lt_iff_toNat_lt.mpr ht)]
   dsimp only
   have hb : 4 * st.iCur.toNat + 4 ≤ H.icBase.size := by
     rw [H.icSize]
@@ -350,23 +380,30 @@ theorem stepInsertCopy_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader
   generalize lookup H.arena _ st.word _ _ = v at h15 hread hshort ⊢
   have hcount := hC.wf.count_le
   have hcount' : st.count.toNat ≤ 64 := hcount
+  unfold insertStep
   split
   · rename_i hl
     have hl' := UInt64.le_iff_toNat_le.mp hl
-    have hc : wordValue v < 704 := decodeSymbol_lt hsym (hread hl [])
-    rw [dite_eq_left hc]
+    have hcN : wordValue v < 704 := decodeSymbol_lt hsym (hread hl [])
+    have hcS : (wordSym v).toNat < 704 := hcN
+    have hcU : wordSym v < 704 :=
+      UInt64.lt_iff_toNat_lt.mpr (by rw [show (704 : UInt64).toNat = 704 from rfl]; exact hcS)
+    rw [dite_eq_left hcU]
+    dsimp only
     have hw1 := BitBuffer.drop_wf hC.wf (wordBits_lt v) hl'
     have hc1 : ((BitBuffer.mk st.word st.count).drop (wordBits v)).count.toNat = st.count.toNat - (wordBits v).toNat :=
       drop_count hl'
-    obtain ⟨hib, hibase⟩ := insertRow_fields hc
-    obtain ⟨hcb, hcbase⟩ := copyRow_fields hc
-    obtain ⟨s1, s2, s3, s4⟩ := cmdRow_small hc
+    obtain ⟨hib, hibase⟩ : (rowBits (insertRow (wordSym v) (lt704 hcU))).toNat = (cmdRow (wordValue v)).1 ∧
+        (rowBase (insertRow (wordSym v) (lt704 hcU))).toNat = (cmdRow (wordValue v)).2.1 := insertRow_fields (lt704 hcU)
+    obtain ⟨hcb, hcbase⟩ : (rowBits (copyRow (wordSym v) (lt704 hcU))).toNat = (cmdRow (wordValue v)).2.2.1 ∧
+        (rowBase (copyRow (wordSym v) (lt704 hcU))).toNat = (cmdRow (wordValue v)).2.2.2 := copyRow_fields (lt704 hcU)
+    obtain ⟨s1, s2, s3, s4⟩ := cmdRow_small hcN
     generalize hb1 : (BitBuffer.mk st.word st.count).drop (wordBits v) = b1 at hw1 hc1 ⊢
-    -- The rows and the symbol stay abstract here: the kernel can't reduce the table they read, and `omega`'s proofs make
-    -- it try.
-    generalize insertRow (wordValue v) hc = row at hib hibase ⊢
-    generalize copyRow (wordValue v) hc = cr at hcb hcbase ⊢
-    generalize wordValue v = sym at hc hread hib hibase hcb hcbase s1 s2 s3 s4 ⊢
+    -- The rows and the symbol stay abstract here: the kernel can't reduce the table they read.
+    generalize insertRow (wordSym v) (lt704 hcU) = row at hib hibase ⊢
+    generalize copyRow (wordSym v) (lt704 hcU) = cr at hcb hcbase ⊢
+    have hE : (wordSym v).toNat = wordValue v := rfl
+    generalize wordValue v = sym at hcN hE hread hib hibase hcb hcbase s1 s2 s3 s4 ⊢
     generalize hrow : cmdRow sym = cells at hib hibase hcb hcbase s1 s2 s3 s4 ⊢
     split
     · rename_i hle
@@ -381,9 +418,8 @@ theorem stepInsertCopy_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader
       rw [hib] at hint
       -- Abstract too, or the kernel, comparing the new state with the old field by field, unfolds the shift.
       generalize b1.drop (rowBits row) = b2 at hw2 hint ⊢
-      refine insertCopy_next hC hprod hw2 hp (u64_ofNat (by omega)) (by rw [u64_add (by omega), hibase]) hcb hcbase s3 s4
-        fun F => ?_
-      rw [stateBits_eq, rest_insertCopy_row hcur hcode (hread hl _) hc, hb1, hrow, hint]
+      refine insertCopy_next hC hprod hw2 hp hE (by rw [u64_add (by omega), hibase]) hcb hcbase s3 s4 fun F => ?_
+      rw [stateBits_eq, rest_insertCopy_row hcur hcode (hread hl _) hcN, hb1, hrow, hint]
       rfl
     · rename_i hle
       have hnot : b1.count.toNat < cells.1 := by
@@ -392,7 +428,7 @@ theorem stepInsertCopy_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader
       refine StepOk.ofShort hrel0 (hfull.resolve_left (by omega)) ?_
       have hd := hread hl []
       rw [List.append_nil, List.append_nil] at hd
-      rw [rest_insertCopy_row hcur hcode hd hc, hb1, hrow, readInt_short hnot]
+      rw [rest_insertCopy_row hcur hcode hd hcN, hb1, hrow, readInt_short hnot]
       rfl
   · rename_i hl
     have hnot : st.count.toNat < (wordBits v).toNat := Nat.lt_of_not_le fun h => hl (UInt64.le_iff_toNat_le.mpr h)
@@ -401,16 +437,16 @@ theorem stepInsertCopy_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader
 /-! ### The copy length -/
 
 /-- The copy extra bits, which begin the literals. -/
-def stepCopyLength (st : Cmd) (pos : USize) : Stepped :=
+def stepCopyLength (st : Cmd) (pos : USize) : Cmd :=
   if st.copyBits ≤ st.count then
-    if st.remaining.toNat < st.ilen.toNat then ⟨st, pos, .bad⟩
+    if st.remaining < st.ilen then markStep st pos .bad
     else
       let b := (BitBuffer.mk st.word st.count)
       let b1 := b.drop st.copyBits
-      ⟨{ st with
-          word := b1.word, count := b1.count, clen := st.copyBase + b.peek st.copyBits, left := st.ilen
-          tag := .literals }, pos, .next⟩
-  else ⟨st, pos, .needsInput⟩
+      { st with
+        word := b1.word, count := b1.count, clen := st.copyBase + b.peek st.copyBits, left := st.ilen
+        tag := .literals, pos := pos, status := .next }
+  else markStep st pos .needsInput
 
 /-- The copy length's step does its job. -/
 theorem stepCopyLength_ok {α : Type} {w k : Nat} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
@@ -430,11 +466,13 @@ theorem stepCopyLength_ok {α : Type} {w k : Nat} {m : MetaBlockHeader} {K : Com
     rw [show st.copyBits.toNat = copyBits from hbits] at hint
     split
     · rename_i hlt
+      have hlt' := UInt64.lt_iff_toNat_lt.mp hlt
       refine StepOk.ofBad rfl fun F => ?_
       rw [stateBits_eq, rest_copyLength, hint]
       show (if s.remaining < ilen then none else _) = none
       rw [ite_eq_left (by omega)]
     · rename_i hlt
+      have hlt' : ¬ st.remaining.toNat < st.ilen.toNat := fun e => hlt (UInt64.lt_iff_toNat_lt.mpr e)
       have hpeek : ((BitBuffer.mk st.word st.count).peek st.copyBits).toNat < 2 ^ copyBits := by
         rw [BitBuffer.peek_toNat _ hk64, show st.copyBits.toNat = copyBits from hbits]
         exact Nat.mod_lt _ (Nat.two_pow_pos _)

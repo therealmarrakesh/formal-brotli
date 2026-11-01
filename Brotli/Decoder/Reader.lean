@@ -16,8 +16,16 @@ open Brotli.Spec Brotli.Properties
 it is at most 15. -/
 @[inline] def wordBits (v : UInt64) : UInt64 := v &&& 63
 
+/-- A lookup word's symbol. -/
+@[inline] def wordSym (v : UInt64) : UInt64 := (v >>> 8) &&& 65535
+
 /-- A lookup word's value. -/
-@[inline] def wordValue (v : UInt64) : Nat := ((v >>> 8) &&& 65535).toNat
+def wordValue (v : UInt64) : Nat := (wordSym v).toNat
+
+theorem wordValue_lt (v : UInt64) : wordValue v < 2 ^ 16 := by
+  unfold wordValue wordSym
+  rw [UInt64.toNat_and, show (65535 : UInt64).toNat = 2 ^ 16 - 1 from rfl, Nat.and_two_pow_sub_one_eq_mod]
+  exact Nat.mod_lt _ (Nat.two_pow_pos _)
 
 theorem wordBits_lt (v : UInt64) : (wordBits v).toNat < 64 := by
   unfold wordBits
@@ -34,7 +42,7 @@ theorem wordBits_eq (v : UInt64) (h : v.toNat % 256 ≤ 15) : (wordBits v).toNat
   omega
 
 theorem wordValue_eq (v : UInt64) : wordValue v = v.toNat / 256 % 65536 := by
-  unfold wordValue
+  unfold wordValue wordSym
   rw [UInt64.toNat_and, show (65535 : UInt64).toNat = 2 ^ 16 - 1 from rfl, Nat.and_two_pow_sub_one_eq_mod,
     UInt64.toNat_shiftRight, Nat.shiftRight_eq_div_pow]
   rfl

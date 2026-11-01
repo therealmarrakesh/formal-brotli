@@ -3,6 +3,7 @@ import Brotli.Decoder.Refill
 import Brotli.Decoder.Lookup
 import Brotli.Decoder.Window
 import Brotli.Decoder.ContextLut
+import Brotli.Decoder.Copy
 
 /-!
 # The literal loop
@@ -34,7 +35,7 @@ structure LitRun where
   ring : ByteArray
   p1 : UInt8
   p2 : UInt8
-  left : Nat
+  left : USize
 
 private theorem usize_add {a b : USize} (h : a.toNat + b.toNat < 2 ^ 32) : (a + b).toNat = a.toNat + b.toNat := by
   rw [USize.toNat_add, ← USize.size_eq_two_pow]
@@ -72,11 +73,11 @@ theorem cid_lt {modeOff : USize} {p1 p2 : UInt8} (hm : modeOff.toNat + 512 ≤ 2
 def literalRun {nTrees : Nat} {arena litBase lMap : ByteArray} (C : LitChecked arena litBase lMap nTrees)
     (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (mapBase modeOff mask : USize) (k : Nat)
     (hmb : mapBase.toNat + 64 ≤ lMap.size) (hm : modeOff.toNat + 512 ≤ 2048) (hd : modeOff.toNat % 512 = 0)
-    (hmask : mask.toNat = 2 ^ k - 1) (hk : k ≤ 24) :
-    (n : Nat) → (word count : UInt64) → (pos wpos : USize) → (ring : ByteArray) → (p1 p2 : UInt8) →
-    pos.toNat ≤ stop.toNat → (BitBuffer.mk word count).Wf → ring.size = 2 ^ k → wpos.toNat < 2 ^ k → LitRun
-  | 0, word, count, pos, wpos, ring, p1, p2, _, _, _, _ => ⟨word, count, pos, wpos, ring, p1, p2, 0⟩
-  | n + 1, word, count, pos, wpos, ring, p1, p2, hp, hw, hsize, hwp =>
+    (hmask : mask.toNat = 2 ^ k - 1) (hk : k ≤ 24) (n : USize) (word count : UInt64) (pos wpos : USize) (ring : ByteArray)
+    (p1 p2 : UInt8) (hp : pos.toNat ≤ stop.toNat) (hw : (BitBuffer.mk word count).Wf) (hsize : ring.size = 2 ^ k)
+    (hwp : wpos.toNat < 2 ^ k) : LitRun :=
+  if hn : n = 0 then ⟨word, count, pos, wpos, ring, p1, p2, 0⟩
+  else
     let r := refill word count a pos stop hs hp
     let rw := r.word
     let rc := r.count
@@ -114,9 +115,14 @@ def literalRun {nTrees : Nat} {arena litBase lMap : ByteArray} (C : LitChecked a
         rw [USize.toNat_and, hmask, Nat.and_two_pow_sub_one_eq_mod]
         exact Nat.mod_lt _ (Nat.two_pow_pos _)
       let b := (BitBuffer.mk rw rc).drop l
-      literalRun C a stop hs mapBase modeOff mask k hmb hm hd hmask hk n b.word b.count rp (ringNext wpos mask) ring'
+      literalRun C a stop hs mapBase modeOff mask k hmb hm hd hmask hk (n - USize.ofNat 1) b.word b.count rp (ringNext wpos mask) ring'
         byte p1 hspec.2.2.1 (BitBuffer.drop_wf hspec.1 hl63 (UInt64.le_iff_toNat_le.mp hl)) hsize' hnext
-    else ⟨rw, rc, rp, wpos, ring, p1, p2, n + 1⟩
+    else ⟨rw, rc, rp, wpos, ring, p1, p2, n⟩
+termination_by n.toNat
+decreasing_by
+  have := usize_pred hn
+  have := usize_ne hn
+  omega
 
 /-! ### What the loop does -/
 
@@ -210,30 +216,34 @@ theorem literalRun_spec {α : Type} {nTrees : Nat} {arena litBase lMap : ByteArr
     {w : Nat} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α} (R : LitRel arena litBase lMap nTrees m)
     {t : Nat} (hmap : mapBase.toNat = 64 * t) (hmode : m.contextModes[t]? = some (modeOff.toNat / 512))
     (s : CommandState) (ic : BlockState) (c ilen clen : Nat) :
-    ∀ (n : Nat) (word count : UInt64) (pos wpos : USize) (ring : ByteArray) (p1 p2 : UInt8)
+    ∀ (N : Nat) (n : USize) (word count : UInt64) (pos wpos : USize) (ring : ByteArray) (p1 p2 : UInt8)
       (hp : pos.toNat ≤ stop.toNat) (hw : (BitBuffer.mk word count).Wf) (hsize : ring.size = 2 ^ k)
       (hwp : wpos.toNat < 2 ^ k) (L : Nat) (lit : BlockState) (out : List Nat),
-      n ≤ L → n ≤ lit.count → lit.types.cur = t → contextBytes out = (p1.toNat, p2.toNat) →
+      n.toNat = N → N ≤ L → N ≤ lit.count → lit.types.cur = t → contextBytes out = (p1.toNat, p2.toNat) →
       RingOk ring k wpos.toNat out → (∀ b ∈ out, b < 256) →
       let r := literalRun C a stop hs mapBase modeOff mask k hmb hm hd hmask hk n word count pos wpos ring p1 p2 hp hw hsize hwp
       ∃ (lit' : BlockState) (out' : List Nat),
-        r.left ≤ n ∧ lit'.types = lit.types ∧ lit'.seen = lit.seen ∧ lit'.count = lit.count - (n - r.left) ∧
-        out'.length = out.length + (n - r.left) ∧ RingOk r.ring k r.wpos.toNat out' ∧
+        r.left.toNat ≤ N ∧ lit'.types = lit.types ∧ lit'.seen = lit.seen ∧ lit'.count = lit.count - (N - r.left.toNat) ∧
+        out'.length = out.length + (N - r.left.toNat) ∧ RingOk r.ring k r.wpos.toNat out' ∧
         contextBytes out' = (r.p1.toNat, r.p2.toNat) ∧ (BitBuffer.mk r.word r.count).Wf ∧
         pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧ (∀ b ∈ out', b < 256) ∧
         (∀ F, rest w m K (.literals s ic c ilen clen L lit out) (availBits word count a pos stop F) =
-          rest w m K (.literals s ic c ilen clen (L - (n - r.left)) lit' out') (availBits r.word r.count a r.pos stop F)) ∧
-        (r.left ≠ 0 → r.pos = stop ∧
-          rest w m K (.literals s ic c ilen clen (L - (n - r.left)) lit' out') (BitBuffer.mk r.word r.count).held = none) := by
-  intro n
-  induction n with
+          rest w m K (.literals s ic c ilen clen (L - (N - r.left.toNat)) lit' out') (availBits r.word r.count a r.pos stop F)) ∧
+        (r.left.toNat ≠ 0 → r.pos = stop ∧
+          rest w m K (.literals s ic c ilen clen (L - (N - r.left.toNat)) lit' out') (BitBuffer.mk r.word r.count).held = none) := by
+  intro N
+  induction N with
   | zero =>
-    intro word count pos wpos ring p1 p2 hp hw hsize hwp L lit out _ _ _ hctx hring hbytes
-    exact ⟨lit, out, by simp [literalRun], rfl, rfl, by simp [literalRun], by simp [literalRun], hring, hctx, hw,
-      Nat.le_refl _, hp, hbytes, fun F => by simp [literalRun], fun h => absurd (by simp [literalRun]) h⟩
-  | succ n ih =>
-    intro word count pos wpos ring p1 p2 hp hw hsize hwp L lit out hL hcount hcur hctx hring hbytes
-    rw [literalRun]
+    intro n word count pos wpos ring p1 p2 hp hw hsize hwp L lit out hN _ _ _ hctx hring hbytes
+    rw [literalRun, dite_eq_left (usize_zero hN)]
+    have h0 : (0 : USize).toNat = 0 := rfl
+    exact ⟨lit, out, by simp, rfl, rfl, by simp, by simp, hring, hctx, hw,
+      Nat.le_refl _, hp, hbytes, fun F => by simp, fun h => absurd h0 h⟩
+  | succ N ih =>
+    intro n word count pos wpos ring p1 p2 hp hw hsize hwp L lit out hN hL hcount hcur hctx hring hbytes
+    have hn : n ≠ 0 := fun e => by rw [e] at hN; exact Nat.succ_ne_zero _ hN.symm
+    have hpred := usize_pred hn
+    rw [literalRun, dite_eq_right hn]
     dsimp only
     obtain ⟨hrw, hrp1, hrp2, hbits, hdisj⟩ := refill_spec hs hp hw
     have hcidlt : (cidFast modeOff p1 p2 hm).toNat < 64 := cid_lt hm hd
@@ -290,26 +300,26 @@ theorem literalRun_spec {α : Type} {nTrees : Nat} {arena litBase lMap : ByteArr
         rw [hl63]
         omega
       have hleCount := UInt64.le_iff_toNat_le.mp hl
-      have hih := ih
+      have hih := ih (n - USize.ofNat 1)
         ((BitBuffer.mk (refill word count a pos stop hs hp).word (refill word count a pos stop hs hp).count).drop
           (lookup arena _ (refill word count a pos stop hs hp).word hok.toTableFits C.arena32 &&& 63)).word
         ((BitBuffer.mk (refill word count a pos stop hs hp).word (refill word count a pos stop hs hp).count).drop
           (lookup arena _ (refill word count a pos stop hs hp).word hok.toTableFits C.arena32 &&& 63)).count
         (refill word count a pos stop hs hp).pos (ringNext wpos mask) _ _ p1 hrp2
         (BitBuffer.drop_wf hrw hdropLt hleCount) hsizeNew hnextLt L' { lit with count := lit.count - 1 } _
-        (by omega) (by show n ≤ lit.count - 1; omega) hcur (by rw [contextBytes_cons, hctx]) hringNew
+        (by omega) (by omega) (by show N ≤ lit.count - 1; omega) hcur (by rw [contextBytes_cons, hctx]) hringNew
         (by
           intro b hb
           rcases List.mem_cons.mp hb with rfl | hb
           · exact UInt8.toNat_lt _
           · exact hbytes b hb)
       dsimp only at hih
-      generalize literalRun C a stop hs mapBase modeOff mask k hmb hm hd hmask hk n _ _ _ _ _ _ _ _ _ _ _ = run at hih ⊢
+      generalize literalRun C a stop hs mapBase modeOff mask k hmb hm hd hmask hk (n - USize.ofNat 1) _ _ _ _ _ _ _ _ _ _ _ = run at hih ⊢
       obtain ⟨lit', out', h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h13, h11, h12⟩ := hih
       refine ⟨lit', out', Nat.le_succ_of_le h1, h2, h3, ?_, ?_, h6, h7, h8, by omega, h10, h13, ?_, ?_⟩
       rotate_left 3
       · intro hne
-        have eL : L' + 1 - (n + 1 - run.left) = L' - (n - run.left) := by omega
+        have eL : L' + 1 - (N + 1 - run.left.toNat) = L' - (N - run.left.toNat) := by omega
         rw [eL]
         exact h12 hne
       · rw [h4]
@@ -323,7 +333,7 @@ theorem literalRun_spec {α : Type} {nTrees : Nat} {arena litBase lMap : ByteArr
         have hc' := drop_count (b := BitBuffer.mk (refill word count a pos stop hs hp).word (refill word count a pos stop hs hp).count) hleCount
         have e1 : (refill word count a pos stop hs hp).buf.held =
             lowBits (refill word count a pos stop hs hp).word.toNat (refill word count a pos stop hs hp).count.toNat := rfl
-        have eL : L' + 1 - (n + 1 - run.left) = L' - (n - run.left) := by omega
+        have eL : L' + 1 - (N + 1 - run.left.toNat) = L' - (N - run.left.toNat) := by omega
         rw [hrest, e1, hstep, eL, ← h11 F]
         unfold availBits
         simp only [BitBuffer.held]
@@ -332,17 +342,17 @@ theorem literalRun_spec {α : Type} {nTrees : Nat} {arena litBase lMap : ByteArr
       have hnot : (refill word count a pos stop hs hp).count.toNat < (lookup arena _ (refill word count a pos stop hs hp).word hok.toTableFits C.arena32 &&& 63).toNat :=
         Nat.lt_of_not_le fun hle => hl (UInt64.le_iff_toNat_le.mpr hle)
       rw [hl63] at hnot
-      refine ⟨lit, out, by simp, rfl, rfl, by simp, by simp, hring, hctx, hrw, hrp1, hrp2, hbytes, ?_, ?_⟩
+      refine ⟨lit, out, by simp only; omega, rfl, rfl, by simp only; omega, by simp only; omega, hring, hctx, hrw, hrp1, hrp2, hbytes, ?_, ?_⟩
       · intro F
         rw [hrest]
-        simp only [Nat.sub_self, Nat.sub_zero]
+        simp only [hN, Nat.sub_self, Nat.sub_zero]
         rfl
       · intro _
         refine ⟨?_, ?_⟩
         · rcases hdisj with h | h
           · omega
           · exact h
-        · simp only [Nat.sub_self, Nat.sub_zero]
+        · simp only [hN, Nat.sub_self, Nat.sub_zero]
           have hlit : lit.count ≠ 0 := by omega
           obtain ⟨L', rfl⟩ : ∃ L', L = L' + 1 := ⟨L - 1, by omega⟩
           have hmapget : literalPrefixCodeIndex m.literalMap t

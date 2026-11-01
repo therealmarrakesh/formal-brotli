@@ -48,6 +48,94 @@ private theorem data_uset (a : ByteArray) (i : USize) (v : UInt8) (h : i.toNat <
   cases a
   rfl
 
+/-- A window's size. -/
+@[inline] def ringSize (k : USize) : USize := USize.ofNat 1 <<< k
+
+/-- A window's mask. -/
+@[inline] def ringMask (k : USize) : USize := ringSize k - USize.ofNat 1
+
+theorem ringSize_toNat {k : USize} (hk : k.toNat ≤ 24) : (ringSize k).toNat = 2 ^ k.toNat := by
+  have h32 := USize.le_size
+  have hb : 32 ≤ System.Platform.numBits := by
+    rcases System.Platform.numBits_eq with h | h <;> omega
+  have hp : 2 ^ k.toNat ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
+  have h24 : (2 : Nat) ^ 24 = 16777216 := by decide
+  have hm : k.toNat % System.Platform.numBits = k.toNat := Nat.mod_eq_of_lt (by omega)
+  unfold ringSize
+  rw [USize.toNat_shiftLeft, usize_ofNat (by decide), hm, Nat.shiftLeft_eq, Nat.one_mul, ← USize.size_eq_two_pow]
+  exact Nat.mod_eq_of_lt (by omega)
+
+theorem ringMask_toNat {k : USize} (hk : k.toNat ≤ 24) : (ringMask k).toNat = 2 ^ k.toNat - 1 := by
+  unfold ringMask
+  have hpos : 1 ≤ 2 ^ k.toNat := Nat.two_pow_pos _
+  rw [usize_sub (by rw [usize_ofNat (by decide)]; show _ ≤ (ringSize k).toNat; rw [ringSize_toNat hk]; exact hpos),
+    usize_ofNat (by decide)]
+  show (ringSize k).toNat - 1 = _
+  rw [ringSize_toNat hk]
+
+/-- The checks on a window that a loop's entry needs. -/
+@[inline] def winCheck (k wpos : USize) (ring : ByteArray) : Bool :=
+  decide (k ≤ USize.ofNat 24) && decide (ring.size = (ringSize k).toNat) && decide (wpos < ringSize k)
+
+theorem winCheck_k {k wpos : USize} {ring : ByteArray} (h : winCheck k wpos ring = true) : k.toNat ≤ 24 := by
+  simp only [winCheck, Bool.and_eq_true, decide_eq_true_eq] at h
+  have := USize.le_iff_toNat_le.mp h.1.1
+  rwa [usize_ofNat (by decide)] at this
+
+theorem winCheck_size {k wpos : USize} {ring : ByteArray} (h : winCheck k wpos ring = true) : ring.size = 2 ^ k.toNat := by
+  have hk := winCheck_k h
+  simp only [winCheck, Bool.and_eq_true, decide_eq_true_eq] at h
+  rw [h.1.2, ringSize_toNat hk]
+
+theorem winCheck_pos {k wpos : USize} {ring : ByteArray} (h : winCheck k wpos ring = true) : wpos.toNat < 2 ^ k.toNat := by
+  have hk := winCheck_k h
+  simp only [winCheck, Bool.and_eq_true, decide_eq_true_eq] at h
+  have := USize.lt_iff_toNat_lt.mp h.2
+  rwa [ringSize_toNat hk] at this
+
+theorem winCheck_of {k wpos : USize} {ring : ByteArray} (hk : k.toNat ≤ 24) (hs : ring.size = 2 ^ k.toNat)
+    (hp : wpos.toNat < 2 ^ k.toNat) : winCheck k wpos ring = true := by
+  simp only [winCheck, Bool.and_eq_true, decide_eq_true_eq]
+  refine ⟨⟨USize.le_iff_toNat_le.mpr ?_, ?_⟩, USize.lt_iff_toNat_lt.mpr ?_⟩
+  · rw [usize_ofNat (by decide)]
+    exact hk
+  · rw [ringSize_toNat hk]
+    exact hs
+  · rw [ringSize_toNat hk]
+    exact hp
+
+/-- The smaller of two positions. -/
+@[inline] def usmin (a b : USize) : USize := if a ≤ b then a else b
+
+theorem usmin_toNat (a b : USize) : (usmin a b).toNat = min a.toNat b.toNat := by
+  unfold usmin
+  by_cases h : a ≤ b
+  · have h' := USize.le_iff_toNat_le.mp h
+    rw [ite_eq_left h]
+    omega
+  · have h' : ¬ a.toNat ≤ b.toNat := fun e => h (USize.le_iff_toNat_le.mpr e)
+    rw [ite_eq_right h]
+    omega
+
+/-- The bytes waiting to go out, after more were written. -/
+theorem pend_after {pend run : USize} {k : Nat} (hk : k ≤ 24) (h : pend.toNat + run.toNat ≤ 2 ^ k) :
+    (pend + run).toNat = pend.toNat + run.toNat := by
+  have hp : 2 ^ k ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
+  have h24 : (2 : Nat) ^ 24 = 16777216 := by decide
+  exact usize_add (by omega)
+
+/-- The window's bytes written, after more were written. -/
+theorem written_after {w written run : USize} {W : Nat} {k : USize} (hk : k.toNat ≤ 24) (hw : W + 16 = 2 ^ k.toNat)
+    (hwr : written.toNat ≤ W) (hrun : run.toNat ≤ 2 ^ k.toNat) (hw' : w = ringSize k - USize.ofNat 16) :
+    (usmin w (written + run)).toNat = min W (written.toNat + run.toNat) := by
+  have hp : 2 ^ k.toNat ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
+  have h24 : (2 : Nat) ^ 24 = 16777216 := by decide
+  have hwN : w.toNat = W := by
+    subst hw'
+    rw [usize_sub (by rw [usize_ofNat (by decide), ringSize_toNat hk]; omega), usize_ofNat (by decide), ringSize_toNat hk]
+    omega
+  rw [usmin_toNat, hwN, usize_add (by omega)]
+
 /-- Writes the next byte. -/
 @[inline] def ringWrite (ring : ByteArray) (pos : USize) (v : UInt8) (h : pos.toNat < ring.size) : ByteArray :=
   ring.uset pos v h

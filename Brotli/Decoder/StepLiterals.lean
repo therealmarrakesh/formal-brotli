@@ -13,10 +13,10 @@ open Brotli.Spec Brotli.Properties
 
 /-- A cheap check that a buffer is well formed, for the literal loop's entry. -/
 @[inline] def wfCheck (word count : UInt64) : Bool :=
-  count ≤ 64 && (count == 64 || word >>> count == 0)
+  decide (count ≤ 64) && (decide (count = 64) || decide (word >>> count = 0))
 
 theorem wfCheck_wf {word count : UInt64} (h : wfCheck word count = true) : (BitBuffer.mk word count).Wf := by
-  simp only [wfCheck, Bool.and_eq_true, Bool.or_eq_true, decide_eq_true_eq, beq_iff_eq] at h
+  simp only [wfCheck, Bool.and_eq_true, Bool.or_eq_true, decide_eq_true_eq] at h
   obtain ⟨h1, h2⟩ := h
   have hc := UInt64.le_iff_toNat_le.mp h1
   have h64 : (64 : UInt64).toNat = 64 := rfl
@@ -36,7 +36,7 @@ theorem wfCheck_of_wf {word count : UInt64} (h : (BitBuffer.mk word count).Wf) :
   have hc : count.toNat ≤ 64 := h.count_le
   have hw : word.toNat < 2 ^ count.toNat := h.word_lt
   have h64 : (64 : UInt64).toNat = 64 := rfl
-  simp only [wfCheck, Bool.and_eq_true, Bool.or_eq_true, decide_eq_true_eq, beq_iff_eq]
+  simp only [wfCheck, Bool.and_eq_true, Bool.or_eq_true, decide_eq_true_eq]
   refine ⟨UInt64.le_iff_toNat_le.mpr (by rw [h64]; exact hc), ?_⟩
   by_cases he : count.toNat = 64
   · exact Or.inl (UInt64.toNat_inj.mp (by rw [he]; rfl))
@@ -44,84 +44,115 @@ theorem wfCheck_of_wf {word count : UInt64} (h : (BitBuffer.mk word count).Wf) :
     rw [UInt64.toNat_shiftRight, Nat.mod_eq_of_lt (by omega), Nat.shiftRight_eq_div_pow]
     exact Nat.div_eq_of_lt hw
 
+/-- A literal step's new state, around the loop's result. Not inlined, so the state stays live across the loop and is
+reused here. -/
+@[noinline] def finishLiterals (st0 : Cmd) (r : LitRun) (run size : USize) : Cmd :=
+  let used := run - r.left
+  { st0 with
+    word := r.word, count := r.count, ring := r.ring, wpos := r.wpos, p1 := r.p1, p2 := r.p2
+    left := st0.left - used.toUInt64, lCount := st0.lCount - used.toUInt64, remaining := st0.remaining - used.toUInt64
+    pend := st0.pend + used
+    written := usmin (size - USize.ofNat 16) (st0.written + used)
+    pos := r.pos, status := if r.left = 0 then .next else .needsInput }
+
+private theorem cur_small {H : Hdr} {t : UInt64} (ht : t.toNat < H.nL.toNat) : t.toNat < 2 ^ 26 := by
+  have h1 := H.lit.map32
+  have h2 := H.lMapSize
+  omega
+
+private theorem cur_usize {H : Hdr} {t : UInt64} (ht : t.toNat < H.nL.toNat) : t.toUSize.toNat = t.toNat := by
+  have := cur_small ht
+  exact word_toUSize (by omega)
+
+private theorem mapBase_toNat {H : Hdr} {t : UInt64} (ht : t.toNat < H.nL.toNat) : (t <<< 6).toUSize.toNat = 64 * t.toNat := by
+  have hs := cur_small ht
+  have hv : (t <<< 6).toNat = 64 * t.toNat := by
+    rw [UInt64.toNat_shiftLeft, show (6 : UInt64).toNat % 64 = 6 from rfl, Nat.shiftLeft_eq]
+    have : t.toNat * 2 ^ 6 = 64 * t.toNat := by omega
+    rw [this]
+    exact Nat.mod_eq_of_lt (by omega)
+  rw [word_toUSize (by rw [hv]; omega), hv]
+
+private theorem modeOff_toNat {m : UInt8} (h : m.toNat < 4) : (m.toUInt64 <<< 9).toUSize.toNat = 512 * m.toNat := by
+  have hv : (m.toUInt64 <<< 9).toNat = 512 * m.toNat := by
+    rw [UInt64.toNat_shiftLeft, show (9 : UInt64).toNat % 64 = 9 from rfl, Nat.shiftLeft_eq, UInt8.toNat_toUInt64]
+    have : m.toNat * 2 ^ 9 = 512 * m.toNat := by omega
+    rw [this]
+    exact Nat.mod_eq_of_lt (by omega)
+  rw [word_toUSize (by rw [hv]; omega), hv]
+
 /-- Runs the literal loop. -/
-def literalsRun (H : Hdr) (w k : Nat) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (st : Cmd) (pos : USize) : Stepped :=
-  let run := min st.left.toNat (min st.lCount.toNat (2 ^ k - st.pend.toNat))
-  if ht : st.lCur.toNat < H.nL.toNat then
+def literalsRun (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (st : Cmd) (pos : USize) : Cmd :=
+  if ht : st.lCur < H.nL then
+    have ht' := UInt64.lt_iff_toNat_lt.mp ht
     have hm : st.lCur.toUSize.toNat < H.modes.size := by
-      rw [word_toUSize (by have := H.lit.map32; have := H.lMapSize; omega), H.modesSize]
-      exact ht
-    let mode := H.modes.uget st.lCur.toUSize hm
-    let mapBase := USize.ofNat (64 * st.lCur.toNat)
-    let modeOff := USize.ofNat (512 * mode.toNat)
-    if h : mapBase.toNat + 64 ≤ H.lMap.size ∧ modeOff.toNat + 512 ≤ 2048 ∧ modeOff.toNat % 512 = 0 ∧
-        (USize.ofNat (2 ^ k - 1)).toNat = 2 ^ k - 1 ∧ k ≤ 24 ∧ pos.toNat ≤ stop.toNat ∧ st.ring.size = 2 ^ k ∧
-        st.wpos.toNat < 2 ^ k ∧ wfCheck st.word st.count = true then
+      rw [cur_usize ht', H.modesSize]
+      exact ht'
+    have hmLt := H.modesLt _ hm
+    if h : winCheck k st.wpos st.ring = true ∧ pos ≤ stop ∧ wfCheck st.word st.count = true then
+      let run := (umin st.left (umin st.lCount (ringSize k - st.pend).toUInt64)).toUSize
       let ring := st.ring
       let st0 := clearRing st
-      let r := literalRun H.lit a stop hs mapBase modeOff (USize.ofNat (2 ^ k - 1)) k h.1 h.2.1 h.2.2.1 h.2.2.2.1 h.2.2.2.2.1
-        run st0.word st0.count pos st0.wpos ring st0.p1 st0.p2 h.2.2.2.2.2.1 (wfCheck_wf h.2.2.2.2.2.2.2.2) h.2.2.2.2.2.2.1
-        h.2.2.2.2.2.2.2.1
-      let used := UInt64.ofNat (run - r.left)
-      ⟨{ st0 with
-          word := r.word, count := r.count, ring := r.ring, wpos := r.wpos, p1 := r.p1, p2 := r.p2
-          left := st0.left - used, lCount := st0.lCount - used, remaining := st0.remaining - used
-          pend := USize.ofNat (st0.pend.toNat + (run - r.left))
-          written := USize.ofNat (min w (st0.written.toNat + (run - r.left))) },
-        r.pos, if r.left = 0 then .next else .needsInput⟩
-    else ⟨st, pos, .bad⟩
-  else ⟨st, pos, .bad⟩
+      let r := literalRun H.lit a stop hs (st.lCur <<< 6).toUSize ((H.modes.uget st.lCur.toUSize hm).toUInt64 <<< 9).toUSize
+        (ringMask k) k.toNat
+        (by
+          rw [mapBase_toNat ht', H.lMapSize]
+          omega)
+        (by
+          rw [modeOff_toNat hmLt]
+          omega)
+        (by
+          rw [modeOff_toNat hmLt]
+          omega)
+        (ringMask_toNat (winCheck_k h.1)) (winCheck_k h.1) run st0.word st0.count pos st0.wpos ring st0.p1 st0.p2
+        (USize.le_iff_toNat_le.mp h.2.1) (wfCheck_wf h.2.2) (winCheck_size h.1) (winCheck_pos h.1)
+      finishLiterals st0 r run (ringSize k)
+    else markStep st pos .bad
+  else markStep st pos .bad
 
 /-- A step in a command's literals. -/
-def stepLiterals (H : Hdr) (w k : Nat) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (st : Cmd) (pos : USize) :
-    Stepped :=
-  if st.left.toNat = 0 then ⟨{ st with tag := .distance }, pos, .next⟩
-  else if st.lCount.toNat = 0 then
-    if hn : 2 ≤ H.nL.toNat then
-      let r := blockSwitch H.arena H.lit.arena32 H.baseTL H.baseCL (H.swL hn).1 (H.swL hn).2 H.nL.toNat st.lCur st.lPrev
+def stepLiterals (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (st : Cmd) (pos : USize) : Cmd :=
+  if st.left = 0 then { st with tag := .distance, pos := pos, status := .next }
+  else if st.lCount = 0 then
+    if hn : 2 ≤ H.nL then
+      let hn' := UInt64.le_iff_toNat_le.mp hn
+      let r := blockSwitch H.arena H.lit.arena32 H.baseTL H.baseCL (H.swL hn').1 (H.swL hn').2 H.nL st.lCur st.lPrev
         st.word st.count
       match r.status with
       | .ok =>
         let seen := st.seen
         let st0 := clearSeen st
-        ⟨{ st0 with
-            word := r.word, count := r.count, lCur := r.cur, lPrev := st0.lCur, lCount := r.blockCount
-            seen := markSeen seen 0 r.cur.toNat }, pos, .next⟩
-      | .short => ⟨st, pos, .needsInput⟩
-      | .bad => ⟨st, pos, .bad⟩
-    else ⟨st, pos, .bad⟩
-  else if 2 ^ k - st.pend.toNat = 0 then ⟨st, pos, .needsOutput⟩
-  else literalsRun H w k a stop hs st pos
+        { st0 with
+          word := r.word, count := r.count, lCur := r.cur, lPrev := st0.lCur, lCount := r.blockCount
+          seen := markSeen seen (USize.ofNat 0 + r.cur.toUSize), pos := pos, status := .next }
+      | .short => markStep st pos .needsInput
+      | .bad => markStep st pos .bad
+    else markStep st pos .bad
+  else if ringSize k ≤ st.pend then markStep st pos .needsOutput
+  else literalsRun H k a stop hs st pos
 
 /-- What follows the literal loop, whatever it returned. -/
-private theorem literals_after {α : Type} {w k : Nat} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
+private theorem literals_after {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
     {a : ByteArray} {stop : USize} {s : CommandState} {ic : BlockState} {c ilen clen n : Nat} {lit : BlockState}
     {out : List Nat} {st : Cmd} {pos : USize}
-    (hC : Core w k m st out (s.remaining - (ilen - n)) s.distances ic lit s.distance) (htag : st.tag = .literals)
+    (hC : Core w k.toNat m st out (s.remaining - (ilen - n)) s.distances ic lit s.distance) (htag : st.tag = .literals)
     (hprod : s.produced = s.output.length) (hcode : st.code.toNat = c) (hilen : st.ilen.toNat = ilen)
     (hclen : st.clen.toNat = clen) (hleft : st.left.toNat = n) (hnle : n ≤ ilen) (hirem : ilen ≤ s.remaining)
-    (hlen : out.length + n = s.output.length + ilen) (hp : pos.toNat ≤ stop.toNat) (r : LitRun) {run : Nat}
-    (hrunL : run ≤ n) (hrunC : run ≤ st.lCount.toNat) (hrunR : run + st.pend.toNat ≤ 2 ^ k)
+    (hlen : out.length + n = s.output.length + ilen) (hp : pos.toNat ≤ stop.toNat) (r : LitRun) {run : USize}
+    (hrunL : run.toNat ≤ n) (hrunC : run.toNat ≤ st.lCount.toNat) (hrunR : run.toNat + st.pend.toNat ≤ 2 ^ k.toNat)
     (hspec : ∃ (lit' : BlockState) (out' : List Nat),
-      r.left ≤ run ∧ lit'.types = lit.types ∧ lit'.seen = lit.seen ∧ lit'.count = lit.count - (run - r.left) ∧
-      out'.length = out.length + (run - r.left) ∧ RingOk r.ring k r.wpos.toNat out' ∧
+      r.left.toNat ≤ run.toNat ∧ lit'.types = lit.types ∧ lit'.seen = lit.seen ∧ lit'.count = lit.count - (run.toNat - r.left.toNat) ∧
+      out'.length = out.length + (run.toNat - r.left.toNat) ∧ RingOk r.ring k.toNat r.wpos.toNat out' ∧
       contextBytes out' = (r.p1.toNat, r.p2.toNat) ∧ (BitBuffer.mk r.word r.count).Wf ∧
       pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧ (∀ b ∈ out', b < 256) ∧
       (∀ F, rest w m K (.literals s ic c ilen clen n lit out) (availBits st.word st.count a pos stop F) =
-        rest w m K (.literals s ic c ilen clen (n - (run - r.left)) lit' out') (availBits r.word r.count a r.pos stop F)) ∧
-      (r.left ≠ 0 → r.pos = stop ∧
-        rest w m K (.literals s ic c ilen clen (n - (run - r.left)) lit' out') (BitBuffer.mk r.word r.count).held = none)) :
-    StepOk w k m K a stop (.literals s ic c ilen clen n lit out) st pos
-      ⟨{ st with
-          word := r.word, count := r.count, ring := r.ring, wpos := r.wpos, p1 := r.p1, p2 := r.p2
-          left := st.left - UInt64.ofNat (run - r.left), lCount := st.lCount - UInt64.ofNat (run - r.left)
-          remaining := st.remaining - UInt64.ofNat (run - r.left)
-          pend := USize.ofNat (st.pend.toNat + (run - r.left))
-          written := USize.ofNat (min w (st.written.toNat + (run - r.left))) },
-        r.pos, if r.left = 0 then .next else .needsInput⟩ := by
+        rest w m K (.literals s ic c ilen clen (n - (run.toNat - r.left.toNat)) lit' out') (availBits r.word r.count a r.pos stop F)) ∧
+      (r.left.toNat ≠ 0 → r.pos = stop ∧
+        rest w m K (.literals s ic c ilen clen (n - (run.toNat - r.left.toNat)) lit' out') (BitBuffer.mk r.word r.count).held = none)) :
+    StepOk w k.toNat m K a stop (.literals s ic c ilen clen n lit out) st pos (finishLiterals (clearRing st) r run (ringSize k)) := by
   obtain ⟨lit', out', h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13⟩ := hspec
   have hk := hC.k24
-  have hRmax : 2 ^ k ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
+  have hRmax : 2 ^ k.toNat ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
   have h24 : (2 : Nat) ^ 24 = 16777216 := by decide
   have hwin := hC.win
   have hrem := hC.rem
@@ -129,116 +160,107 @@ private theorem literals_after {α : Type} {w k : Nat} {m : MetaBlockHeader} {K 
   have hpo := hC.pendOut
   have hwri := hC.written
   have hlcount : lit.count = st.lCount.toNat := hC.lRel.count
-  generalize hu : run - r.left = used at h4 h5 h12 h13 ⊢
-  have hused : used ≤ run := by omega
-  have huU : (UInt64.ofNat used).toNat = used := u64_ofNat (by omega)
-  have hnew : Rel w k m
-      { st with
-        word := r.word, count := r.count, ring := r.ring, wpos := r.wpos, p1 := r.p1, p2 := r.p2
-        left := st.left - UInt64.ofNat used, lCount := st.lCount - UInt64.ofNat used
-        remaining := st.remaining - UInt64.ofNat used
-        pend := USize.ofNat (st.pend.toNat + used)
-        written := USize.ofNat (min w (st.written.toNat + used)) }
-      (.literals s ic c ilen clen (n - used) lit' out') := by
+  have huN : (run - r.left).toNat = run.toNat - r.left.toNat :=
+    USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr h1)
+  have huU : (run - r.left).toUInt64.toNat = run.toNat - r.left.toNat := by
+    rw [USize.toNat_toUInt64, huN]
+  have hnew : Rel w k.toNat m (finishLiterals (clearRing st) r run (ringSize k))
+      (.literals s ic c ilen clen (n - (run.toNat - r.left.toNat)) lit' out') := by
     refine ⟨?_, htag, hprod, hcode, hilen, hclen, ?_, by omega, hirem, by omega⟩
     · refine { hC with
         wf := h8, ring := h6, bytes := h11, ctx := h7, pendLe := ?_, pendOut := ?_, written := ?_, rem := ?_
         lRel := hC.lRel.run h2 h3 ?_ }
-      · show (USize.ofNat (st.pend.toNat + used)).toNat ≤ _
-        rw [usize_ofNat' (by omega)]
+      · show (st.pend + (run - r.left)).toNat ≤ _
+        rw [pend_after hk (by rw [huN]; omega), huN]
         omega
-      · show (USize.ofNat (st.pend.toNat + used)).toNat ≤ _
-        rw [usize_ofNat' (by omega), h5]
+      · show (st.pend + (run - r.left)).toNat ≤ _
+        rw [pend_after hk (by rw [huN]; omega), huN, h5]
         omega
-      · show (USize.ofNat (min w (st.written.toNat + used))).toNat = _
-        rw [usize_ofNat' (by omega), h5, hwri]
+      · show (usmin (ringSize k - USize.ofNat 16) (st.written + (run - r.left))).toNat = _
+        rw [written_after hk hwin (by omega) (by rw [huN]; omega) rfl, huN, h5, hwri]
         omega
-      · show (st.remaining - UInt64.ofNat used).toNat = _
+      · show (st.remaining - (run - r.left).toUInt64).toNat = _
         rw [u64_sub (by rw [huU]; omega), huU]
         omega
-      · show lit'.count = (st.lCount - UInt64.ofNat used).toNat
+      · show lit'.count = (st.lCount - (run - r.left).toUInt64).toNat
         rw [u64_sub (by rw [huU]; omega), huU, h4]
         omega
-    · show (st.left - UInt64.ofNat used).toNat = _
+    · show (st.left - (run - r.left).toUInt64).toNat = _
       rw [u64_sub (by rw [huU]; omega), huU]
       omega
-  split
-  · exact StepOk.ofNext rfl hnew h9 h10 fun F => h12 F
-  · rename_i hne
-    obtain ⟨hstop, hnone⟩ := h13 hne
-    exact StepOk.ofInput rfl hstop hp hnew (fun F => h12 F) hnone
+  by_cases hz : r.left = 0
+  · refine StepOk.ofNext (p' := .literals s ic c ilen clen (n - (run.toNat - r.left.toNat)) lit' out')
+      (by show (if r.left = 0 then _ else _) = _; rw [ite_eq_left hz]) hnew h9 h10 fun F => h12 F
+  · obtain ⟨hstop, hnone⟩ := h13 (usize_ne hz)
+    exact StepOk.ofInput (by show (if r.left = 0 then _ else _) = _; rw [ite_eq_right hz]) hstop hp hnew (fun F => h12 F) hnone
 
 /-- The literal loop's step does its job. -/
-theorem literalsRun_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
+theorem literalsRun_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
     {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {s : CommandState} {ic : BlockState} {c ilen clen n : Nat}
     {lit : BlockState} {out : List Nat} {st : Cmd} {pos : USize} (hH : HdrRel H m)
-    (hrel : Rel w k m st (.literals s ic c ilen clen n lit out)) (hp : pos.toNat ≤ stop.toNat) :
-    StepOk w k m K a stop (.literals s ic c ilen clen n lit out) st pos (literalsRun H w k a stop hs st pos) := by
+    (hrel : Rel w k.toNat m st (.literals s ic c ilen clen n lit out)) (hp : pos.toNat ≤ stop.toNat) :
+    StepOk w k.toNat m K a stop (.literals s ic c ilen clen n lit out) st pos (literalsRun H k a stop hs st pos) := by
   obtain ⟨hC, htag, hprod, hcode, hilen, hclen, hleft, hnle, hirem, hlen⟩ := hrel
   have hk := hC.k24
-  have hRmax : 2 ^ k ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
+  have hRmax : 2 ^ k.toNat ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
   have h24 : (2 : Nat) ^ 24 = 16777216 := by decide
-  have hRpos : 1 ≤ 2 ^ k := Nat.two_pow_pos _
-  have hwin := hC.win
-  have hrem := hC.rem
   have hple := hC.pendLe
-  have hpo := hC.pendOut
-  have hwri := hC.written
   have ht : st.lCur.toNat < H.nL.toNat := by
     rw [hH.nL, ← hC.lRel.cur]
     exact hC.lRel.wf.2.1
-  have hmap32 := H.lit.map32
-  have hmapSize := H.lMapSize
-  have hLt : st.lCur.toNat < 2 ^ 32 := by omega
-  have hum : st.lCur.toUSize.toNat = st.lCur.toNat := word_toUSize hLt
+  have hum := cur_usize ht
   have hm : st.lCur.toUSize.toNat < H.modes.size := by
     rw [hum, H.modesSize]
     exact ht
   have hmodeLt := H.modesLt _ hm
   have hmodeSpec := hH.modes _ hm
   rw [hum] at hmodeSpec
-  have hmapB : (USize.ofNat (64 * st.lCur.toNat)).toNat = 64 * st.lCur.toNat := usize_ofNat' (by omega)
-  have hmodeO : (USize.ofNat (512 * (H.modes.uget st.lCur.toUSize hm).toNat)).toNat =
-      512 * (H.modes.uget st.lCur.toUSize hm).toNat := usize_ofNat' (by omega)
+  have hmapB := mapBase_toNat ht
+  have hmodeO := modeOff_toNat hmodeLt
   unfold literalsRun
-  dsimp only
-  rw [dite_eq_left ht]
-  have hguard : (USize.ofNat (64 * st.lCur.toNat)).toNat + 64 ≤ H.lMap.size ∧
-      (USize.ofNat (512 * (H.modes.uget st.lCur.toUSize hm).toNat)).toNat + 512 ≤ 2048 ∧
-      (USize.ofNat (512 * (H.modes.uget st.lCur.toUSize hm).toNat)).toNat % 512 = 0 ∧
-      (USize.ofNat (2 ^ k - 1)).toNat = 2 ^ k - 1 ∧ k ≤ 24 ∧ pos.toNat ≤ stop.toNat ∧ st.ring.size = 2 ^ k ∧
-      st.wpos.toNat < 2 ^ k ∧ wfCheck st.word st.count = true :=
-    ⟨by omega, by omega, by omega, usize_ofNat' (by omega), hk, hp, hC.ring.size, hC.ring.pos_lt, wfCheck_of_wf hC.wf⟩
+  rw [dite_eq_left (UInt64.lt_iff_toNat_lt.mpr ht)]
+  have hguard : winCheck k st.wpos st.ring = true ∧ pos ≤ stop ∧ wfCheck st.word st.count = true :=
+    ⟨winCheck_of hk hC.ring.size hC.ring.pos_lt, USize.le_iff_toNat_le.mpr hp, wfCheck_of_wf hC.wf⟩
   rw [dite_eq_left hguard]
   dsimp only [clearRing]
   have hmodeNat : m.contextModes[st.lCur.toNat]? =
-      some ((USize.ofNat (512 * (H.modes.uget st.lCur.toUSize hm).toNat)).toNat / 512) := by
+      some (((H.modes.uget st.lCur.toUSize hm).toUInt64 <<< 9).toUSize.toNat / 512) := by
     rw [hmodeO, hmodeSpec]
     congr 1
     omega
-  generalize hrunD : min st.left.toNat (min st.lCount.toNat (2 ^ k - st.pend.toNat)) = run
+  have hrunU : (umin st.left (umin st.lCount (ringSize k - st.pend).toUInt64)).toUSize.toNat =
+      min st.left.toNat (min st.lCount.toNat (2 ^ k.toNat - st.pend.toNat)) := by
+    rw [word_toUSize (by rw [umin_toNat, umin_toNat, room_toNat hk hple]; omega), umin_toNat, umin_toNat, room_toNat hk hple]
   have hlcount : lit.count = st.lCount.toNat := hC.lRel.count
-  have hspec := literalRun_spec H.lit hs hguard.1 hguard.2.1 hguard.2.2.1 hguard.2.2.2.1 hk hH.lit
-    (w := w) (K := K) (t := st.lCur.toNat) hmapB hmodeNat s ic c ilen clen run st.word st.count pos st.wpos st.ring st.p1 st.p2
-    hp (wfCheck_wf hguard.2.2.2.2.2.2.2.2) hguard.2.2.2.2.2.2.1 hguard.2.2.2.2.2.2.2.1 n lit out (by omega) (by omega)
+  have hspec := literalRun_spec H.lit hs (mapBase := (st.lCur <<< 6).toUSize)
+    (modeOff := ((H.modes.uget st.lCur.toUSize hm).toUInt64 <<< 9).toUSize) (mask := ringMask k) (k := k.toNat)
+    (by
+      rw [mapBase_toNat ht, H.lMapSize]
+      omega)
+    (by rw [hmodeO]; omega) (by rw [hmodeO]; omega) (ringMask_toNat hk) hk hH.lit
+    (w := w) (K := K) (t := st.lCur.toNat) hmapB hmodeNat s ic c ilen clen _
+    (umin st.left (umin st.lCount (ringSize k - st.pend).toUInt64)).toUSize st.word st.count pos st.wpos st.ring st.p1 st.p2
+    hp hC.wf hC.ring.size hC.ring.pos_lt n lit out rfl (by omega) (by omega)
     hC.lRel.cur hC.ctx hC.ring hC.bytes
   dsimp only at hspec
   exact literals_after hC htag hprod hcode hilen hclen hleft hnle hirem hlen hp _ (by omega) (by omega) (by omega) hspec
 
 /-- The literals' step does its job. -/
-theorem stepLiterals_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
+theorem stepLiterals_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
     {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {s : CommandState} {ic : BlockState} {c ilen clen n : Nat}
     {lit : BlockState} {out : List Nat} {st : Cmd} {pos : USize} (hH : HdrRel H m)
-    (hrel : Rel w k m st (.literals s ic c ilen clen n lit out)) (hp : pos.toNat ≤ stop.toNat)
+    (hrel : Rel w k.toNat m st (.literals s ic c ilen clen n lit out)) (hp : pos.toNat ≤ stop.toNat)
     (hfull : 56 < st.count.toNat ∨ pos = stop) :
-    StepOk w k m K a stop (.literals s ic c ilen clen n lit out) st pos (stepLiterals H w k a stop hs st pos) := by
+    StepOk w k.toNat m K a stop (.literals s ic c ilen clen n lit out) st pos (stepLiterals H k a stop hs st pos) := by
   have hrel0 := hrel
   obtain ⟨hC, htag, hprod, hcode, hilen, hclen, hleft, hnle, hirem, hlen⟩ := hrel
   have hrem := hC.rem
   unfold stepLiterals
   split
   · rename_i hz
-    have hn0 : n = 0 := by omega
+    have hn0 : n = 0 := by
+      have := u64_zero hz
+      omega
     subst hn0
     refine StepOk.ofNext (p' := .distance (withLiterals s ic lit out ilen) c clen) rfl ⟨?_, rfl, ?_, hcode, hclen⟩
       (Nat.le_refl _) hp fun F => rest_literals_distance _
@@ -248,20 +270,23 @@ theorem stepLiterals_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} 
     · show s.produced + ilen = out.length
       omega
   · rename_i hnz
+    have hnzN := u64_ne hnz
     have hn0 : n ≠ 0 := by omega
     obtain ⟨n', rfl⟩ : ∃ n', n = n' + 1 := ⟨n - 1, by omega⟩
     split
     · rename_i hcnt
+      have hcntN := u64_zero hcnt
       have hcz : lit.count = 0 := by
         rw [hC.lRel.count]
-        exact hcnt
+        exact hcntN
       split
       · rename_i hn
+        have hn' : 2 ≤ H.nL.toNat := UInt64.le_iff_toNat_le.mp hn
         have hn2 : 2 ≤ m.literal.n := by
           rw [← hH.nL]
-          exact hn
-        have hsp := blockSwitch_rel (h32 := H.lit.arena32) (hT := (H.swL hn).1) (hCt := (H.swL hn).2) hH.nL hH.catL
-          hH.ok.literal hC.lRel hcnt hC.wf hn2
+          exact hn'
+        have hsp := blockSwitch_rel (h32 := H.lit.arena32) (hT := (H.swL hn').1) (hCt := (H.swL hn').2) hH.nL hH.catL
+          hH.ok.literal hC.lRel hcntN hC.wf hn2
         dsimp only at hsp ⊢
         generalize blockSwitch _ _ _ _ _ _ _ _ _ _ _ = r at hsp ⊢
         obtain ⟨hok, hshort, hbad⟩ := hsp
@@ -270,15 +295,19 @@ theorem stepLiterals_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} 
           obtain ⟨hw, hlt, hc1, hc2, hnext⟩ := hok hst
           have h256 := hH.ok.literal.2.1
           have hsize := hC.seenSize
+          have hi := seen_index (off := 0) (t := r.cur) (by omega) (by omega)
           refine StepOk.ofNext (p' := .literals s ic c ilen clen (n' + 1)
             ⟨⟨st.lCur.toNat, r.cur.toNat⟩, r.blockCount.toNat, r.cur.toNat :: lit.seen⟩ out) rfl
             ⟨?_, htag, hprod, hcode, hilen, hclen, hleft, hnle, hirem, hlen⟩ (Nat.le_refl _) hp fun F => ?_
           · exact { hC with
               wf := hw
-              lRel := hC.lRel.switched (by omega) hlt rfl
-              iRel := hC.iRel.marked (by omega)
-              dRel := hC.dRel.marked (by omega)
-              seenSize := by rw [show _ = (markSeen st.seen 0 r.cur.toNat).size from rfl, size_markSeen]; exact hsize }
+              lRel := hC.lRel.switched (by omega) hi hlt rfl
+              iRel := hC.iRel.marked (by rw [hi]; omega)
+              dRel := hC.dRel.marked (by rw [hi]; omega)
+              seenSize := by
+                show (markSeen st.seen _).size = _
+                rw [size_markSeen]
+                exact hsize }
           · rw [stateBits_eq, stateBits_eq, rest_literal, rest_literal, hnext,
               nextElement_count (st := ⟨⟨st.lCur.toNat, r.cur.toNat⟩, r.blockCount.toNat, r.cur.toNat :: lit.seen⟩) _
                 (by show r.blockCount.toNat ≠ 0; omega)]
@@ -294,17 +323,14 @@ theorem stepLiterals_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} 
       · rename_i hn
         have hn' : m.literal.n < 2 := by
           rw [← hH.nL]
-          omega
+          exact Nat.lt_of_not_le fun e => hn (UInt64.le_iff_toNat_le.mpr e)
         refine StepOk.ofBad rfl fun F => ?_
         rw [rest_literal, nextElement_single _ hcz hn']
         rfl
     · rename_i hcnt
       split
       · rename_i hroom
-        have hle := hC.pendLe
-        exact ⟨fun h => StepStatus.noConfusion h, fun h => StepStatus.noConfusion h,
-          fun _ => ⟨_, hrel0, Nat.le_refl _, hp, fun _ => rfl, by show st.pend.toNat = _; omega⟩,
-          fun h => StepStatus.noConfusion h, fun h => StepStatus.noConfusion h⟩
+        exact StepOk.ofFull hrel0 hp (full_iff hC.k24 hC.pendLe hroom)
       · rename_i hroom
         exact literalsRun_ok hH hrel0 hp
 
