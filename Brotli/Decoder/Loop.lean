@@ -143,18 +143,73 @@ decreasing_by
   have := usize_ne _hn
   omega
 
+/-- What steps together must do: what `StepOk` asks of one, apart from how far down the places go. -/
+structure RunOk {α : Type} (w k : Nat) (m : MetaBlockHeader) (K : CommandState → List Bool → Option α) (a : ByteArray)
+    (stop : USize) (p : Phase) (st : Cmd) (pos : USize) (r : Cmd) : Prop where
+  next : r.status = .next → ∃ p', Rel w k m r p' ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
+    ∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K p' (stateBits r a r.pos stop F)
+  needsInput : r.status = .needsInput → r.pos = stop ∧ pos.toNat ≤ stop.toNat ∧ ∃ p', Rel w k m r p' ∧
+    (∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K p' (stateBits r a r.pos stop F)) ∧
+    rest w m K p' (BitBuffer.mk r.word r.count).held = none
+  needsOutput : r.status = .needsOutput → ∃ p', Rel w k m r p' ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
+    (∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K p' (stateBits r a r.pos stop F)) ∧
+    r.pend.toNat = 2 ^ k
+  done : r.status = .done → ∃ s, Rel w k m r (.command s) ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
+    (∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K (.command s) (stateBits r a r.pos stop F)) ∧
+    s.remaining = 0
+  bad : r.status = .bad → ∀ F, rest w m K p (stateBits st a pos stop F) = none
+
+section
+variable {α : Type} {w k : Nat} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α} {a : ByteArray} {stop : USize}
+  {p : Phase} {st : Cmd} {pos : USize} {r : Cmd}
+
+/-- One step is a run. -/
+theorem StepOk.toRun (h : StepOk w k m K a stop p st pos r) : RunOk w k m K a stop p st pos r where
+  next e := by
+    obtain ⟨p', h1, h2, h3, h4, _⟩ := h.next e
+    exact ⟨p', h1, h2, h3, h4⟩
+  needsInput e := by
+    obtain ⟨h1, h2, p', h3, h4, h5, _⟩ := h.needsInput e
+    exact ⟨h1, h2, p', h3, h4, h5⟩
+  needsOutput e := by
+    obtain ⟨p', h1, h2, h3, h4, h5, _⟩ := h.needsOutput e
+    exact ⟨p', h1, h2, h3, h4, h5⟩
+  done := h.done
+  bad := h.bad
+
+/-- Two runs in a row, the first moving on, are one run. -/
+theorem RunOk.trans {r1 : Cmd} {p1 : Phase} (hle : pos.toNat ≤ r1.pos.toNat)
+    (h : ∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K p1 (stateBits r1 a r1.pos stop F))
+    (h2 : RunOk w k m K a stop p1 r1 r1.pos r) : RunOk w k m K a stop p st pos r where
+  next e := by
+    obtain ⟨p', hrel, h3, h4, h5⟩ := h2.next e
+    exact ⟨p', hrel, Nat.le_trans hle h3, h4, fun F => by rw [h]; exact h5 F⟩
+  needsInput e := by
+    obtain ⟨h3, h6, p', hrel, h5, h7⟩ := h2.needsInput e
+    exact ⟨h3, Nat.le_trans hle h6, p', hrel, fun F => by rw [h]; exact h5 F, h7⟩
+  needsOutput e := by
+    obtain ⟨p', hrel, h3, h4, h5, h6⟩ := h2.needsOutput e
+    exact ⟨p', hrel, Nat.le_trans hle h3, h4, fun F => by rw [h]; exact h5 F, h6⟩
+  done e := by
+    obtain ⟨s, hrel, h3, h4, h5, h6⟩ := h2.done e
+    exact ⟨s, hrel, Nat.le_trans hle h3, h4, fun F => by rw [h]; exact h5 F, h6⟩
+  bad e := fun F => by rw [h]; exact h2.bad e F
+
+end
+
 /-- Any number of steps together does what one step must. -/
 theorem runCmd_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
     {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size}
     (hK : ∀ s bs, s.remaining ≠ 0 → K s bs = readCommand w m s bs >>= fun (s1, b) => K s1 b) (hH : HdrRel H m) :
     ∀ (N : Nat) (n : USize) (p : Phase) (st : Cmd) (pos : USize), n.toNat = N → Rel w k.toNat m st p → pos.toNat ≤ stop.toNat →
-      StepOk w k.toNat m K a stop p st pos (runCmd H k a stop hs n st pos) := by
+      RunOk w k.toNat m K a stop p st pos (runCmd H k a stop hs n st pos) := by
   intro N
   induction N with
   | zero =>
     intro n p st pos hN hrel hp
     rw [runCmd, dite_eq_left (usize_zero hN)]
-    exact StepOk.ofNext rfl (hrel.mark _ _) (Nat.le_refl _) hp fun _ => rfl
+    exact ⟨fun _ => ⟨p, hrel.mark _ _, Nat.le_refl _, hp, fun _ => rfl⟩, fun e => StepStatus.noConfusion e, fun e => StepStatus.noConfusion e,
+      fun e => StepStatus.noConfusion e, fun e => StepStatus.noConfusion e⟩
   | succ N ih =>
     intro n p st pos hN hrel hp
     have hn : n ≠ 0 := fun e => by rw [e] at hN; exact Nat.succ_ne_zero _ hN.symm
@@ -165,12 +220,12 @@ theorem runCmd_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHead
     generalize stepCmd H k a stop hs st pos = r at hstep
     cases hst : r.status with
     | next =>
-      obtain ⟨p', hR, h1, h2, h3⟩ := hstep.next hst
-      exact StepOk.trans h1 h3 (ih _ p' r r.pos (by omega) hR h2)
-    | needsInput => exact hstep
-    | needsOutput => exact hstep
-    | done => exact hstep
-    | bad => exact hstep
+      obtain ⟨p', hR, h1, h2, h3, _⟩ := hstep.next hst
+      exact RunOk.trans h1 h3 (ih _ p' r r.pos (by omega) hR h2)
+    | needsInput => exact hstep.toRun
+    | needsOutput => exact hstep.toRun
+    | done => exact hstep.toRun
+    | bad => exact hstep.toRun
 
 /-- `stepCmd_ok` for the spec's own commands. -/
 theorem stepCmd_commands {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a : ByteArray} {stop : USize}

@@ -181,7 +181,8 @@ theorem stepHVals_ok {isL : Bool} {ntrees rlemax : Nat} {code : PrefixCode} {don
     by_cases hz : r.a = 0
     · rw [ite_eq_left hz]
       have hz' : r.a.toNat = 0 := by rw [hz]; rfl
-      refine HStepOk.ofNext (g' := g) (p' := .vals isL ntrees rlemax code (done ++ List.replicate r.b.toNat r.a.toNat) (left - r.b.toNat)) rfl
+      refine HStepOk.ofNext (g' := g) (p' := .vals isL ntrees rlemax code (done ++ List.replicate r.b.toNat r.a.toNat) (left - r.b.toNat))
+        (hd := Or.inl (Or.inr ⟨rfl, show left - r.b.toNat < left by omega⟩)) rfl
         ⟨hw2, hu, ht, hi, hn, hr, h2, h256, h16, hok, hC, hsy, ?_, hleft2, ?_, hsz, ?_, ?_, ?_⟩ (Nat.le_refl _) hp (fun F => ?_)
       · show (st.idx + r.b).toNat = _
         rw [hidx2, hlen2]
@@ -211,7 +212,8 @@ theorem stepHVals_ok {isL : Bool} {ntrees rlemax : Nat} {code : PrefixCode} {don
       have hbyte : r.a.toUInt8.toNat = r.a.toNat := by
         rw [UInt64.toNat_toUInt8]
         omega
-      refine HStepOk.ofNext (g' := g) (p' := .vals isL ntrees rlemax code (done ++ List.replicate r.b.toNat r.a.toNat) (left - r.b.toNat)) rfl
+      refine HStepOk.ofNext (g' := g) (p' := .vals isL ntrees rlemax code (done ++ List.replicate r.b.toNat r.a.toNat) (left - r.b.toNat))
+        (hd := Or.inl (Or.inr ⟨rfl, show left - r.b.toNat < left by omega⟩)) rfl
         ⟨hw2, hu, ht, hi, hn, hr, h2, h256, h16, hok, hC, hsy, ?_, hleft2, ?_, ?_, ?_, ?_, ?_⟩ (Nat.le_refl _) hp (fun F => ?_)
       · show (st.idx + r.b).toNat = _
         rw [hidx2, hlen2]
@@ -641,7 +643,7 @@ theorem stepHImtf_ok {isL : Bool} {ntrees : Nat} {vals : List Nat} {st : Hd} {g 
         (cmap := cmap) (ntrees := ntrees) (n := st.ntrees) (map := final) hw1 hi hu hfinal hn (by omega) h256
       obtain ⟨c1, c2, c3, c4⟩ := mapFinish_spec { clearFill st with word := b1.word, count := b1.count, pos := pos, status := .next } st.ntrees final
       generalize mapFinish { clearFill st with word := b1.word, count := b1.count, pos := pos, status := .next } st.ntrees final = r2 at hrel2 c1 c2 c3 c4 ⊢
-      refine HStepOk.ofNext c4 hrel2 (by rw [c3]; exact Nat.le_refl _) (by rw [c3]; exact hp) (fun F => ?_)
+      refine HStepOk.ofNext (hd := imtfNext_down _ _ _ _) c4 hrel2 (by rw [c3]; exact Nat.le_refl _) (by rw [c3]; exact hp) (fun F => ?_)
       rw [avail_mk, hspec, ite_eq_left (hocc.mp hc), afterMap_eq, avail_mk, c1, c2, c3]
     · rw [ite_eq_right hc]
       have hc' : ¬ (List.range ntrees).all cmap.contains = true := fun e => hc (hocc.mpr e)

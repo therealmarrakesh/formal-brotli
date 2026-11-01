@@ -45,36 +45,41 @@ theorem metaK_step (w : Nat) (st : StreamState) (bs : List Bool) :
     unfold amK
     cases last <;> rfl
 
-/-- What follows a meta-block's commands. -/
-def finishC (w : Nat) (last : Bool) (m : MetaBlockHeader) (s : CommandState) (bs : List Bool) : Option (List UInt8) :=
+section
+variable {α : Type}
+
+/-- What follows a meta-block's commands, with `A` what follows the meta-block. -/
+def finishC (A : StreamState → List Bool → Option α) (m : MetaBlockHeader) (s : CommandState) (bs : List Bool) : Option α :=
   if usesEveryType m.literal s.literal && usesEveryType m.insertCopy s.insertCopy && usesEveryType m.distance s.distance then
-    amK w last ⟨s.output, s.produced, s.distances⟩ bs
+    A ⟨s.output, s.produced, s.distances⟩ bs
   else none
 
 /-- The commands from a state, and on. -/
-def cmdK (w : Nat) (last : Bool) (m : MetaBlockHeader) (s : CommandState) (bs : List Bool) : Option (List UInt8) :=
-  commandsFrom w m s bs >>= fun p => finishC w last m p.1 p.2
+def cmdK (w : Nat) (A : StreamState → List Bool → Option α) (m : MetaBlockHeader) (s : CommandState) (bs : List Bool) : Option α :=
+  commandsFrom w m s bs >>= fun p => finishC A m p.1 p.2
 
 /-- A meta-block's commands from their start. -/
 def startState (st : StreamState) (mlen : Nat) (m : MetaBlockHeader) : CommandState :=
   ⟨st.output, st.produced, st.distances, mlen, .initial m.insertCopy, .initial m.literal, .initial m.distance⟩
 
 /-- What follows a header. -/
-def hdrK (w : Nat) (st : StreamState) (last : Bool) (mlen : Nat) (m : MetaBlockHeader) (bs : List Bool) : Option (List UInt8) :=
-  cmdK w last m (startState st mlen m) bs
+def hdrK (w : Nat) (A : StreamState → List Bool → Option α) (st : StreamState) (mlen : Nat) (m : MetaBlockHeader) (bs : List Bool) : Option α :=
+  cmdK w A m (startState st mlen m) bs
 
 /-- The commands' step lemma in these terms. -/
-theorem cmdK_step {w : Nat} {last : Bool} {m : MetaBlockHeader} (s : CommandState) (bs : List Bool) (h0 : s.remaining ≠ 0) :
-    cmdK w last m s bs = readCommand w m s bs >>= fun (s1, b) => cmdK w last m s1 b := by
+theorem cmdK_step {w : Nat} {A : StreamState → List Bool → Option α} {m : MetaBlockHeader} (s : CommandState) (bs : List Bool) (h0 : s.remaining ≠ 0) :
+    cmdK w A m s bs = readCommand w m s bs >>= fun (s1, b) => cmdK w A m s1 b := by
   unfold cmdK
   rw [commandsFrom_step bs h0, bind_assoc]
 
 /-- At MLEN, the commands are done. -/
-theorem cmdK_stop {w : Nat} {last : Bool} {m : MetaBlockHeader} (s : CommandState) (bs : List Bool) (h0 : s.remaining = 0) :
-    cmdK w last m s bs = finishC w last m s bs := by
+theorem cmdK_stop {w : Nat} {A : StreamState → List Bool → Option α} {m : MetaBlockHeader} (s : CommandState) (bs : List Bool) (h0 : s.remaining = 0) :
+    cmdK w A m s bs = finishC A m s bs := by
   unfold cmdK
   rw [commandsFrom_stop bs h0]
   rfl
+
+end
 
 /-- A compressed meta-block with the fuel settled. -/
 private theorem readCompressed_form (w : Nat) (st : StreamState) (mlen : Nat) (bs : List Bool) :
@@ -85,9 +90,9 @@ private theorem readCompressed_form (w : Nat) (st : StreamState) (mlen : Nat) (b
   simp only [readCompressed, commandsFrom, startState]
 
 /-- A compressed meta-block in these terms. -/
-theorem readCompressed_eq (w : Nat) (st : StreamState) (last : Bool) (mlen : Nat) (g : Gh) (bs : List Bool) :
-    (readCompressed w st mlen bs >>= fun p => amK w last p.1 p.2) = hrest (hdrK w st last mlen) g (.cat .L) bs := by
-  show _ = hCatL (hdrK w st last mlen) g bs
+theorem readCompressed_eq {α : Type} (w : Nat) (A : StreamState → List Bool → Option α) (st : StreamState) (mlen : Nat) (g : Gh) (bs : List Bool) :
+    (readCompressed w st mlen bs >>= fun p => A p.1 p.2) = hrest (hdrK w A st mlen) g (.cat .L) bs := by
+  show _ = hCatL (hdrK w A st mlen) g bs
   rw [← header_eq, readCompressed_form, bind_assoc]
   congr 1
   funext p
@@ -142,20 +147,20 @@ def metaStart (bs : List Bool) : Option (MetaStart × List Bool) :=
     if l.1 = 0 then msBody false l.2
     else readInt 1 l.2 >>= fun e => if e.1 = 1 then some (.lastEmpty, e.2) else msBody true e.2
 
-/-- What follows the start of a meta-block. -/
-def afterStart (w : Nat) (st : StreamState) (h : MetaStart) (bs : List Bool) : Option (List UInt8) :=
+/-- What follows the start of a meta-block, with `T` what follows the meta-block, by whether it is the last. -/
+def afterStart {α : Type} (w : Nat) (T : Bool → StreamState → List Bool → Option α) (st : StreamState) (h : MetaStart) (bs : List Bool) : Option α :=
   match h with
-  | .lastEmpty => endOf st bs
+  | .lastEmpty => T true st bs
   | .metadata last skip =>
-    readFill bs >>= fun b => if b.length < skip * 8 then none else amK w last st (b.drop (skip * 8))
+    readFill bs >>= fun b => if b.length < skip * 8 then none else T last st (b.drop (skip * 8))
   | .data last mlen unc =>
     if unc then
       readFill bs >>= fun b => readBytes mlen b >>= fun p =>
-        amK w last ⟨p.1.reverse ++ st.output, st.produced + mlen, st.distances⟩ p.2
-    else readCompressed w st mlen bs >>= fun p => amK w last p.1 p.2
+        T last ⟨p.1.reverse ++ st.output, st.produced + mlen, st.distances⟩ p.2
+    else readCompressed w st mlen bs >>= fun p => T last p.1 p.2
 
-private theorem body_eq (w : Nat) (st : StreamState) (last : Bool) (bs : List Bool) :
-    (readMetaBlockBody w st last bs >>= fun p => amK w last p.1 p.2) = msBody last bs >>= fun p => afterStart w st p.1 p.2 := by
+private theorem body_eq {α : Type} (w : Nat) (T : Bool → StreamState → List Bool → Option α) (st : StreamState) (last : Bool) (bs : List Bool) :
+    (readMetaBlockBody w st last bs >>= fun p => T last p.1 p.2) = msBody last bs >>= fun p => afterStart w T st p.1 p.2 := by
   unfold readMetaBlockBody readMNIBBLES msBody
   show ((readInt 2 bs >>= _) >>= _) >>= _ = (readInt 2 bs >>= _) >>= _
   cases readInt 2 bs with
@@ -197,7 +202,7 @@ private theorem body_eq (w : Nat) (st : StreamState) (last : Bool) (bs : List Bo
                 | some b5 =>
                   generalize (if n = 0 then 0 else x + 1) = sk
                   show ((if b5.length < sk * 8 then none else some (b5.drop (sk * 8))) >>= fun b => some (st, b)) >>=
-                      (fun p => amK w last p.1 p.2) = (if b5.length < sk * 8 then none else amK w last st (b5.drop (sk * 8)))
+                      (fun p => T last p.1 p.2) = (if b5.length < sk * 8 then none else T last st (b5.drop (sk * 8)))
                   by_cases hl : b5.length < sk * 8
                   · rw [ite_eq_left hl, ite_eq_left hl]
                     rfl
@@ -245,15 +250,14 @@ private theorem body_eq (w : Nat) (st : StreamState) (last : Bool) (bs : List Bo
                   cases readBytes (x + 1) b4 with
                   | none => rfl
                   | some b5 => rfl
-              · show ((if u = 1 then _ else _) >>= _) = afterStart w st (.data false (x + 1) (decide (u = 1))) b3
+              · show ((if u = 1 then _ else _) >>= _) = afterStart w T st (.data false (x + 1) (decide (u = 1))) b3
                 rw [ite_eq_right h1]
                 unfold afterStart
                 simp only [h1, decide_false, Bool.false_eq_true, ↓reduceIte]
 
-/-- The meta-blocks from here, as a meta-block's start and what follows it. -/
-theorem metaK_start (w : Nat) (st : StreamState) (bs : List Bool) :
-    metaK w st bs = metaStart bs >>= fun p => afterStart w st p.1 p.2 := by
-  rw [metaK_step]
+/-- One meta-block and what follows it, as a meta-block's start and what follows that. -/
+theorem block_start {α : Type} (w : Nat) (T : Bool → StreamState → List Bool → Option α) (st : StreamState) (bs : List Bool) :
+    (readMetaBlock w st bs >>= fun p => T p.1.2 p.1.1 p.2) = metaStart bs >>= fun p => afterStart w T st p.1 p.2 := by
   unfold readMetaBlock metaStart
   show ((readInt 1 bs >>= _) >>= _) = (readInt 1 bs >>= _) >>= _
   cases readInt 1 bs with
@@ -278,5 +282,10 @@ theorem metaK_start (w : Nat) (st : StreamState) (bs : List Bool) :
         · show ((if e = 1 then _ else _) >>= _) = ((if e = 1 then _ else _) >>= _)
           rw [ite_eq_right h1, ite_eq_right h1, ← body_eq, bind_assoc]
           congr 1
+
+/-- The meta-blocks from here, as a meta-block's start and what follows it. -/
+theorem metaK_start (w : Nat) (st : StreamState) (bs : List Bool) :
+    metaK w st bs = metaStart bs >>= fun p => afterStart w (amK w) st p.1 p.2 := by
+  rw [metaK_step, block_start]
 
 end Brotli.Decoder

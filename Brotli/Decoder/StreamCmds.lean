@@ -167,16 +167,16 @@ theorem Dec.held_cmd {D : Dec} (h : D.tag ≠ .hdr) : D.held = (BitBuffer.mk D.c
   unfold Dec.held Dec.word Dec.count
   cases ht : D.tag <;> first | exact absurd ht h | rfl
 
-theorem stepDCmds_ok {w : Nat} {last : Bool} {m : MetaBlockHeader} {p : Phase} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec}
+theorem stepDCmds_ok {α : Type} {S : Sem α} {w : Nat} {last : Bool} {m : MetaBlockHeader} {p : Phase} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec}
     {pos : USize} (hrel : DRel D (.cmds w last m p)) (hp : pos.toNat ≤ stop.toNat) :
-    DStepOk a stop (.cmds w last m p) D pos (stepDCmds a stop hs D pos) := by
+    DStepOk S a stop (.cmds w last m p) D pos (stepDCmds a stop hs D pos) := by
   obtain ⟨tag, cmd, hd, H, k, last', left, limit, pos', status⟩ := D
   obtain ⟨ht, hl, hlim, hH, hR⟩ := hrel
   have ht' : tag = .cmds := ht
   subst ht'
   have hl0 : last' = last := hl
   subst hl0
-  have hstep := runCmd_ok (hs := hs) (K := cmdK w last' m) (a := a) (fun s bs h0 => cmdK_step s bs h0) hH _ cmdBudget p cmd pos rfl hR hp
+  have hstep := runCmd_ok (hs := hs) (K := cmdK w (S.after w last') m) (a := a) (fun s bs h0 => cmdK_step s bs h0) hH _ cmdBudget p cmd pos rfl hR hp
   unfold stepDCmds
   dsimp only
   generalize runCmd H k a stop hs cmdBudget cmd pos = r at hstep
@@ -184,17 +184,17 @@ theorem stepDCmds_ok {w : Nat} {last : Bool} {m : MetaBlockHeader} {p : Phase} {
   | next =>
     dsimp only
     obtain ⟨p', hR', h1, h2, h3⟩ := hstep.next hst
-    exact ⟨fun _ => ⟨.cmds w last' m p', ⟨ht, hl, hlim, hH, hR'⟩, h1, h2, fun t => h3 _⟩, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e,
+    exact ⟨fun _ => ⟨.cmds w last' m p', ⟨ht, hl, hlim, hH, hR'⟩, h1, h2, (fun t => h3 _), trivial⟩, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e,
       fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
   | needsInput =>
     dsimp only
     obtain ⟨h1, h2, p', hR', h3, h4⟩ := hstep.needsInput hst
-    exact ⟨fun e => DStatus.noConfusion e, fun _ => ⟨h1, h2, .cmds w last' m p', ⟨ht, hl, hlim, hH, hR'⟩, fun t => h3 _, h4⟩, fun e => DStatus.noConfusion e,
+    exact ⟨fun e => DStatus.noConfusion e, fun _ => ⟨h1, h2, .cmds w last' m p', ⟨ht, hl, hlim, hH, hR'⟩, (fun t => h3 _), h4, trivial⟩, fun e => DStatus.noConfusion e,
       fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
   | needsOutput =>
     dsimp only
     obtain ⟨p', hR', h1, h2, h3, h4⟩ := hstep.needsOutput hst
-    exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun _ => ⟨.cmds w last' m p', ⟨ht, hl, hlim, hH, hR'⟩, h1, h2, fun t => h3 _, h4⟩,
+    exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun _ => ⟨.cmds w last' m p', ⟨ht, hl, hlim, hH, hR'⟩, h1, h2, (fun t => h3 _), h4, trivial⟩,
       fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
   | bad =>
     dsimp only
@@ -208,27 +208,27 @@ theorem stepDCmds_ok {w : Nat} {last : Bool} {m : MetaBlockHeader} {p : Phase} {
       rw [hsee] at hc
       obtain ⟨hC, _, hprod⟩ := hR'
       have hwin := hC.toWin
-      have hfin : ∀ F, rest w m (cmdK w last' m) p (stateBits cmd a pos stop F) =
-          amK w last' ⟨s.output, s.produced, s.distances⟩ (stateBits r a r.pos stop F) := by
+      have hfin : ∀ F, rest w m (cmdK w (S.after w last') m) p (stateBits cmd a pos stop F) =
+          S.after w last' ⟨s.output, s.produced, s.distances⟩ (stateBits r a r.pos stop F) := by
         intro F
         rw [h3 F]
-        show cmdK w last' m s _ = _
+        show cmdK w (S.after w last') m s _ = _
         rw [cmdK_stop _ _ h4]
         unfold finishC
         rw [ite_eq_left hc]
       cases last' with
       | true =>
-        exact ⟨fun _ => ⟨.ended ⟨s.output, s.produced, s.distances⟩, ⟨rfl, hC.wf, w, ⟨hwin, hprod, hlim⟩⟩, h1, h2, fun t => hfin _⟩, fun e => DStatus.noConfusion e,
+        exact ⟨fun _ => ⟨.ended ⟨s.output, s.produced, s.distances⟩, ⟨rfl, hC.wf, w, ⟨hwin, hprod, hlim⟩⟩, h1, h2, (fun t => (hfin _).trans (S.after_true ..)), trivial⟩, fun e => DStatus.noConfusion e,
           fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
       | false =>
-        exact ⟨fun _ => ⟨.mblock w ⟨s.output, s.produced, s.distances⟩, ⟨rfl, hC.wf, ⟨hwin, hprod, hlim⟩⟩, h1, h2, fun t => hfin _⟩, fun e => DStatus.noConfusion e,
+        exact ⟨fun _ => ⟨.mblock w ⟨s.output, s.produced, s.distances⟩, ⟨rfl, hC.wf, ⟨hwin, hprod, hlim⟩⟩, h1, h2, (fun t => (hfin _).trans (S.after_false ..)), trivial⟩, fun e => DStatus.noConfusion e,
           fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
     · rw [ite_eq_right hc]
       rw [hsee] at hc
       refine ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun _ t => ?_⟩
-      show rest w m (cmdK w last' m) p (stateBits cmd a pos stop (bits t)) = _
+      show rest w m (cmdK w (S.after w last') m) p (stateBits cmd a pos stop (bits t)) = _
       rw [h3]
-      show cmdK w last' m s _ = _
+      show cmdK w (S.after w last') m s _ = _
       rw [cmdK_stop _ _ h4]
       unfold finishC
       rw [ite_eq_right hc]

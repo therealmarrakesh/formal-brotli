@@ -21,18 +21,60 @@ inductive SPhase where
   | cmds (w : Nat) (last : Bool) (m : MetaBlockHeader) (p : Phase)
   | ended (st : StreamState)
 
-/-- What the spec still has to do from a place in a stream. -/
-def srest : SPhase → List Bool → Option (List UInt8)
-  | .wbits, bs => readWBITS bs >>= fun p => metaK (windowSize p.1) ⟨[], 0, initialDistances⟩ p.2
-  | .mblock w st, bs => metaK w st bs
-  | .skip w st last n, bs => skipK w st last n bs
-  | .raw w st last n, bs => rawK w st last n bs
-  | .hdr w st last mlen g p, bs => hrest (hdrK w st last mlen) g p bs
-  | .cmds w last m p, bs => rest w m (cmdK w last m) p bs
-  | .ended st, bs => endOf st bs
+/-- What a stream's places are worth: what follows a meta-block, and what a place gives that isn't inside one. The spec's
+own worth is its output. Another is what the termination measure counts. -/
+structure Sem (α : Type) where
+  /-- What follows a meta-block, by whether it is the last. -/
+  after : Nat → Bool → StreamState → List Bool → Option α
+  /-- The place at a meta-block's start. -/
+  block : Nat → StreamState → List Bool → Option α
+  /-- The place at the stream's end. -/
+  finish : StreamState → List Bool → Option α
+  /-- The place at the stream's first bits. -/
+  first : List Bool → Option α
+  after_true : ∀ w st bs, after w true st bs = finish st bs
+  after_false : ∀ w st bs, after w false st bs = block w st bs
+  first_eq : ∀ bs, first bs = readWBITS bs >>= fun p => block (windowSize p.1) ⟨[], 0, initialDistances⟩ p.2
+
+/-- The spec's own worth: a place's output. -/
+def specSem : Sem (List UInt8) where
+  after := amK
+  block := metaK
+  finish := endOf
+  first bs := readWBITS bs >>= fun p => metaK (windowSize p.1) ⟨[], 0, initialDistances⟩ p.2
+  after_true _ _ _ := rfl
+  after_false _ _ _ := rfl
+  first_eq _ := rfl
+
+/-- What a place is worth on arriving at it. -/
+def srest {α : Type} (S : Sem α) : SPhase → List Bool → Option α
+  | .wbits, bs => S.first bs
+  | .mblock w st, bs => S.block w st bs
+  | .skip w st last n, bs => skipK (S.after w last) st n bs
+  | .raw w st last n, bs => rawK (S.after w last) st n bs
+  | .hdr w st last mlen g p, bs => hrest (hdrK w (S.after w last) st mlen) g p bs
+  | .cmds w last m p, bs => rest w m (cmdK w (S.after w last) m) p bs
+  | .ended st, bs => S.finish st bs
+
+/-- What a place does on leaving it: a meta-block's start reads that meta-block. It differs from the worth on arriving only
+for a worth that isn't the output. -/
+def sLeave {α : Type} (S : Sem α) : SPhase → List Bool → Option α
+  | .mblock w st, bs => metaStart bs >>= fun p => afterStart w (S.after w) st p.1 p.2
+  | p, bs => srest S p bs
+
+/-- For the spec's own worth, the two are the same. -/
+theorem sLeave_spec (p : SPhase) (bs : List Bool) : sLeave specSem p bs = srest specSem p bs := by
+  cases p with
+  | mblock w st => exact (metaK_start w st bs).symm
+  | wbits => rfl
+  | skip => rfl
+  | raw => rfl
+  | hdr => rfl
+  | cmds => rfl
+  | ended => rfl
 
 /-- `decode` is the first place. -/
-theorem decode_srest (input : List UInt8) : decode input = srest .wbits (bits input) := by
+theorem decode_srest (input : List UInt8) : decode input = srest specSem .wbits (bits input) := by
   rw [decode_metaK]
   rfl
 
@@ -173,15 +215,29 @@ def Dec.held (D : Dec) : List Bool := (BitBuffer.mk D.word D.count).held
 /-- A state as a step leaves it. -/
 @[inline] def markD (D : Dec) (pos : USize) (s : DStatus) : Dec := { D with pos := pos, status := s }
 
+/-- A place that lowers what's left inside a meta-block's data or header. The command loop's places have their own measure. -/
+def SDown : SPhase → SPhase → Prop
+  | .hdr _ _ _ _ _ p, .hdr _ _ _ _ _ p' => HDown p p'
+  | .skip _ _ _ n, .skip _ _ _ n' => n' < n
+  | .raw _ _ _ n, .raw _ _ _ n' => n' < n
+  | _, _ => True
+
+/-- A pause in a place, as far down as it was or further. -/
+def SDownEq : SPhase → SPhase → Prop
+  | .hdr _ _ _ _ _ p, .hdr _ _ _ _ _ p' => p' = p
+  | .skip _ _ _ n, .skip _ _ _ n' => n' ≤ n
+  | .raw _ _ _ n, .raw _ _ _ n' => n' ≤ n
+  | _, _ => True
+
 /-- What a stream step must do, for the input so far and whatever whole bytes follow. -/
-structure DStepOk (a : ByteArray) (stop : USize) (p : SPhase) (D : Dec) (pos : USize) (r : Dec) : Prop where
+structure DStepOk {α : Type} (S : Sem α) (a : ByteArray) (stop : USize) (p : SPhase) (D : Dec) (pos : USize) (r : Dec) : Prop where
   next : r.status = .next → ∃ p', DRel r p' ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
-    ∀ t : List UInt8, srest p (D.bits a pos stop (bits t)) = srest p' (r.bits a r.pos stop (bits t))
+    (∀ t : List UInt8, sLeave S p (D.bits a pos stop (bits t)) = srest S p' (r.bits a r.pos stop (bits t))) ∧ SDown p p'
   needsInput : r.status = .needsInput → r.pos = stop ∧ pos.toNat ≤ stop.toNat ∧ ∃ p', DRel r p' ∧
-    (∀ t : List UInt8, srest p (D.bits a pos stop (bits t)) = srest p' (r.bits a r.pos stop (bits t))) ∧ srest p' r.held = none
+    (∀ t : List UInt8, sLeave S p (D.bits a pos stop (bits t)) = sLeave S p' (r.bits a r.pos stop (bits t))) ∧ sLeave S p' r.held = none ∧ SDownEq p p'
   needsOutput : r.status = .needsOutput → ∃ p', DRel r p' ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
-    (∀ t : List UInt8, srest p (D.bits a pos stop (bits t)) = srest p' (r.bits a r.pos stop (bits t))) ∧ r.cmd.pend.toNat = 2 ^ r.k.toNat
+    (∀ t : List UInt8, sLeave S p (D.bits a pos stop (bits t)) = sLeave S p' (r.bits a r.pos stop (bits t))) ∧ r.cmd.pend.toNat = 2 ^ r.k.toNat ∧ SDownEq p p'
   memory : r.status = .memory → r.limit = D.limit
-  bad : r.status = .bad → ∀ t : List UInt8, srest p (D.bits a pos stop (bits t)) = none
+  bad : r.status = .bad → ∀ t : List UInt8, sLeave S p (D.bits a pos stop (bits t)) = none
 
 end Brotli.Decoder

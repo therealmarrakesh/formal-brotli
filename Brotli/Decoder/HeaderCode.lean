@@ -126,7 +126,8 @@ variable {α : Type} {K : MetaBlockHeader → List Bool → Option α} {a : Byte
 /-- A finished table is a step, given that what the state stands for before it is the code's owner. -/
 theorem TableDone.toStep {g : Gh} {o : Owner} {c : PrefixCode} {p : HPhase} {st st0 r : Hd} {pos : USize}
     (h : TableDone K g o c st0 r) (h2 : st0.pos = pos) (hp : pos.toNat ≤ stop.toNat) (hmax : st0.d.arenaMax = st.d.arenaMax)
-    (heq : ∀ F, hrest K g p (availBits st.word st.count a pos stop F) = ownerK K g o c (availBits st0.word st0.count a pos stop F)) :
+    (heq : ∀ F, hrest K g p (availBits st.word st.count a pos stop F) = ownerK K g o c (availBits st0.word st0.count a pos stop F))
+    (hrank : (rankH p).1 = rankO o := by rfl) :
     HStepOk K a stop g p st pos r := by
   obtain ⟨⟨b1, b2, b3⟩, hnext, hother⟩ := h
   have hne : ∀ s : HStatus, s ≠ .next → s ≠ .memory → r.status = s → False := by
@@ -134,8 +135,8 @@ theorem TableDone.toStep {g : Gh} {o : Owner} {c : PrefixCode} {p : HPhase} {st 
     have := (hother (by rw [e]; exact h1)).1
     exact h2 (e.symm.trans this)
   refine ⟨fun e => ?_, fun e => ?_, fun e F => ?_, fun e => ?_, fun e => ?_⟩
-  · obtain ⟨g', p', h4, h5⟩ := hnext e
-    refine ⟨g', p', h4, by rw [b3, h2]; exact Nat.le_refl _, by rw [b3, h2]; exact hp, fun F => ?_⟩
+  · obtain ⟨g', p', h4, h5, h6⟩ := hnext e
+    refine ⟨g', p', h4, by rw [b3, h2]; exact Nat.le_refl _, by rw [b3, h2]; exact hp, (fun F => ?_), Or.inl (by rw [hrank]; exact h6)⟩
     rw [heq F, avail_mk, h5, avail_mk, b1, b2, b3, h2]
   · exact (hne _ (fun e => HStatus.noConfusion e) (fun e => HStatus.noConfusion e) e).elim
   · exact (hne _ (fun e => HStatus.noConfusion e) (fun e => HStatus.noConfusion e) e).elim

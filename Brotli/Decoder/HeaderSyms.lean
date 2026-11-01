@@ -372,7 +372,12 @@ theorem stepHSyms_ok {o : Owner} {size : Nat} {clc : PrefixCode} {ls : LengthSta
             rep := rfl
             sumOk := hsumU
             sumLe := Nat.le_of_not_lt hbig' }
-        refine HStepOk.ofNext (g' := g) (p' := .syms o size clc (applyCodeLength ls r.a.toNat r.b.toNat)) rfl
+        have hgrow : size + 1 - (applyCodeLength ls r.a.toNat r.b.toNat).lens.length < size + 1 - ls.lens.length := by
+          rw [happly]
+          simp only [List.length_append, List.length_singleton]
+          omega
+        refine HStepOk.ofNext (g' := g) (p' := .syms o size clc (applyCodeLength ls r.a.toNat r.b.toNat))
+          (hd := Or.inr ⟨rfl, Or.inr ⟨rfl, hgrow⟩⟩) rfl
           ⟨hw2, hu, ht, hs, ho, hnew⟩ (Nat.le_refl _) hp (fun F => ?_)
         rw [avail_mk, hN]
         simp only [hlt1, hbig2, ↓reduceIte]
@@ -601,7 +606,12 @@ theorem stepHSyms_ok {o : Owner} {size : Nat} {clc : PrefixCode} {ls : LengthSta
               omega⟩
             sumOk := hsumU
             sumLe := Nat.le_of_not_lt hbigN }
-        refine HStepOk.ofNext (g' := g) (p' := .syms o size clc (applyCodeLength ls r.a.toNat r.b.toNat)) rfl
+        have hshorter : size + 1 - (applyCodeLength ls r.a.toNat r.b.toNat).lens.length < size + 1 - ls.lens.length := by
+          rw [happly]
+          simp only [List.length_append, List.length_replicate]
+          omega
+        refine HStepOk.ofNext (g' := g) (p' := .syms o size clc (applyCodeLength ls r.a.toNat r.b.toNat))
+          (hd := Or.inr ⟨rfl, Or.inr ⟨rfl, hshorter⟩⟩) rfl
           ⟨hw2, hu, ht, hs, ho, hnew⟩ (Nat.le_refl _) hp (fun F => ?_)
         rw [avail_mk, hN]
         simp only [hover', hbig', ↓reduceIte]

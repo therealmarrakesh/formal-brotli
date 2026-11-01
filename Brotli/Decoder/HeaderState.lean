@@ -454,11 +454,74 @@ theorem HRel.withBits {st : Hd} {g : Gh} {p : HPhase} (h : HRel st g p) {word co
 
 /-! ### What a step must do -/
 
+/-- A category's place among the three. -/
+def catN : Cat → Nat
+  | .L => 2
+  | .I => 1
+  | .D => 0
+
+/-- A group of codes' place among the three. -/
+def ckN : CK → Nat
+  | .L => 2
+  | .I => 1
+  | .D => 0
+
+/-- A context map's place among the two. -/
+def mapN : Bool → Nat
+  | true => 5
+  | false => 0
+
+/-- How far from the header's end a prefix code's owner is. -/
+def rankO : Owner → Nat × Nat
+  | .type i _ => (17 + 4 * catN i, 0)
+  | .count i _ _ => (16 + 4 * catN i, 0)
+  | .map isL _ _ => (5 + mapN isL, 0)
+  | .codes k _ left => (ckN k, 2 * left + 1)
+
+/-- How far from the header's end a place is: where it is in the header, then where it is in a prefix code. -/
+def rankH : HPhase → (Nat × Nat) × (Nat × Nat)
+  | .cat i => ((18 + 4 * catN i, 0), (0, 0))
+  | .code o _ => (rankO o, (3, 0))
+  | .clens o _ order _ _ => (rankO o, (2, order.length))
+  | .syms o size _ st => (rankO o, (1, size + 1 - st.lens.length))
+  | .first i .. => ((15 + 4 * catN i, 0), (0, 0))
+  | .np => ((14, 0), (0, 0))
+  | .modes _ left => ((13, left), (0, 0))
+  | .trees isL => ((7 + mapN isL, 0), (0, 0))
+  | .rlemax isL _ => ((6 + mapN isL, 0), (0, 0))
+  | .vals isL _ _ _ _ left => ((4 + mapN isL, left), (0, 0))
+  | .imtf isL _ _ => ((3 + mapN isL, 0), (0, 0))
+  | .codes k _ left => ((ckN k, 2 * left), (0, 0))
+
+/-- A move nearer to the header's end. -/
+def HDown (p p' : HPhase) : Prop :=
+  LexLt (rankH p').1 (rankH p).1 ∨ ((rankH p').1 = (rankH p).1 ∧ LexLt (rankH p').2 (rankH p).2)
+
+/-- Settles `HDown` for a move whose places are spelled out. -/
+macro "hstep_down" : tactic =>
+  `(tactic| (simp only [HDown, rankH, rankO, catN, ckN, mapN, LexLt, Prod.mk.injEq, List.length_cons, true_and]; omega))
+
+/-- After a category, nearer to the header's end. -/
+theorem catNext_down (i : Cat) : HDown (.cat i) (catNextPhase i) := by
+  cases i <;> simp only [catNextPhase] <;> hstep_down
+
+/-- After a category's first count, nearer to the header's end. -/
+theorem firstNext_down (i : Cat) (n : Nat) (tc cc : PrefixCode) : HDown (.first i n tc cc) (catNextPhase i) := by
+  cases i <;> simp only [catNextPhase] <;> hstep_down
+
+/-- After a context map's number of trees, nearer to the header's end. -/
+theorem treesNext_down (g : Gh) (isL : Bool) : HDown (.trees isL) (mapNextPhase g isL) := by
+  cases isL <;> simp only [mapNextPhase] <;> hstep_down
+
+/-- After a context map's last bit, nearer to the header's end. -/
+theorem imtfNext_down (g : Gh) (isL : Bool) (ntrees : Nat) (vals : List Nat) : HDown (.imtf isL ntrees vals) (mapNextPhase g isL) := by
+  cases isL <;> simp only [mapNextPhase] <;> hstep_down
+
 /-- What a header step must do. It is `StepOk` for a header's places, and a header is finished when all of it is read. -/
 structure HStepOk {α : Type} (K : MetaBlockHeader → List Bool → Option α) (a : ByteArray) (stop : USize) (g : Gh) (p : HPhase)
     (st : Hd) (pos : USize) (r : Hd) : Prop where
   next : r.status = .next → ∃ g' p', HRel r g' p' ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
-    ∀ F, hrest K g p (availBits st.word st.count a pos stop F) = hrest K g' p' (availBits r.word r.count a r.pos stop F)
+    (∀ F, hrest K g p (availBits st.word st.count a pos stop F) = hrest K g' p' (availBits r.word r.count a r.pos stop F)) ∧ HDown p p'
   needsInput : r.status = .needsInput → r.pos = stop ∧ pos.toNat ≤ stop.toNat ∧ HRel r g p ∧
     (∀ F, hrest K g p (availBits st.word st.count a pos stop F) = hrest K g p (availBits r.word r.count a r.pos stop F)) ∧
     hrest K g p (BitBuffer.mk r.word r.count).held = none
@@ -474,9 +537,10 @@ variable {α : Type} {K : MetaBlockHeader → List Bool → Option α} {a : Byte
 /-- A step that moved on. -/
 theorem HStepOk.ofNext (hs : r.status = .next) {g' : Gh} {p' : HPhase} (hrel : HRel r g' p') (h1 : pos.toNat ≤ r.pos.toNat)
     (h2 : r.pos.toNat ≤ stop.toNat)
-    (h : ∀ F, hrest K g p (availBits st.word st.count a pos stop F) = hrest K g' p' (availBits r.word r.count a r.pos stop F)) :
+    (h : ∀ F, hrest K g p (availBits st.word st.count a pos stop F) = hrest K g' p' (availBits r.word r.count a r.pos stop F))
+    (hd : HDown p p' := by hstep_down) :
     HStepOk K a stop g p st pos r :=
-  ⟨fun _ => ⟨g', p', hrel, h1, h2, h⟩, fun e => HStatus.noConfusion (hs.symm.trans e),
+  ⟨fun _ => ⟨g', p', hrel, h1, h2, h, hd⟩, fun e => HStatus.noConfusion (hs.symm.trans e),
     fun e => HStatus.noConfusion (hs.symm.trans e), fun e => HStatus.noConfusion (hs.symm.trans e),
     fun e => HStatus.noConfusion (hs.symm.trans e)⟩
 
@@ -503,8 +567,8 @@ theorem HStepOk.refilled {st1 : Hd} {pos1 : USize} (h : HStepOk K a stop g p st1
     (hb : ∀ F, availBits st.word st.count a pos stop F = availBits st1.word st1.count a pos1 stop F) (h1 : pos.toNat ≤ pos1.toNat)
     (h2 : pos1.toNat ≤ stop.toNat) (hd : st1.d.arenaMax = st.d.arenaMax) : HStepOk K a stop g p st pos r where
   next e := by
-    obtain ⟨g', p', hrel, h3, h4, h5⟩ := h.next e
-    exact ⟨g', p', hrel, Nat.le_trans h1 h3, h4, fun F => by rw [hb]; exact h5 F⟩
+    obtain ⟨g', p', hrel, h3, h4, h5, h6⟩ := h.next e
+    exact ⟨g', p', hrel, Nat.le_trans h1 h3, h4, (fun F => by rw [hb]; exact h5 F), h6⟩
   needsInput e := by
     obtain ⟨h3, _, hrel, h5, h6⟩ := h.needsInput e
     exact ⟨h3, Nat.le_trans h1 h2, hrel, fun F => by rw [hb]; exact h5 F, h6⟩

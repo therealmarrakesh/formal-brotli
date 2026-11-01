@@ -108,7 +108,7 @@ theorem stepHFirst_ok {i : Cat} {n : Nat} {tc cc : PrefixCode} {st : Hd} {g : Gh
     generalize catMoveOn { st with
         word := r.word, count := r.count, pos := pos, status := .next
         d := st.d.setCount st.cat r.a } = r2 at hrel2 b1 b2 b3 b4 ⊢
-    refine HStepOk.ofNext b4 hrel2 (by rw [b3]; exact Nat.le_refl _) (by rw [b3]; exact hp) (fun F => ?_)
+    refine HStepOk.ofNext (hd := firstNext_down _ _ _ _) b4 hrel2 (by rw [b3]; exact Nat.le_refl _) (by rw [b3]; exact hp) (fun F => ?_)
     have e := hN (chunkBits a pos.toNat stop.toNat ++ F)
     rw [avail_mk, e, afterCat_eq, avail_mk, b1, b2, b3]
     rfl
@@ -322,7 +322,7 @@ theorem stepHModes_ok {done : List Nat} {left : Nat} {st : Hd} {g : Gh} {pos : U
       rw [UInt64.toNat_toUInt8]
       omega
     have hsz' : (setU st.fill st.idx.toUSize v.toUInt8).size = g.m.literal.n := by rw [size_setU]; exact hsize
-    refine HStepOk.ofNext (g' := g) (p' := .modes (done ++ [v.toNat]) n) rfl
+    refine HStepOk.ofNext (g' := g) (p' := .modes (done ++ [v.toNat]) n) (hd := Or.inl (Or.inr ⟨rfl, Nat.lt_succ_self n⟩)) rfl
       ⟨hw1, hu, ht, by simpa using hi1, hl1, by simp only [List.length_append, List.length_singleton]; omega, hsz', ?_, ?_⟩
       (Nat.le_refl _) hp (fun F => ?_)
     · intro x hx

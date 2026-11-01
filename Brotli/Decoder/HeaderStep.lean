@@ -231,7 +231,7 @@ theorem stepHCat_ok {i : Cat} {st : Hd} {g : Gh} {pos : USize} {α : Type} {K : 
       generalize catMoveOn { st with
           word := r.word, count := r.count, pos := pos, status := .next
           d := (st.d.setN st.cat r.a).setCount st.cat 16777216 } = r2 at hrel2 b1 b2 b3 b4 ⊢
-      refine HStepOk.ofNext b4 hrel2 (by rw [b3]; exact Nat.le_refl _) (by rw [b3]; exact hp) (fun F => ?_)
+      refine HStepOk.ofNext (hd := catNext_down _) b4 hrel2 (by rw [b3]; exact Nat.le_refl _) (by rw [b3]; exact hp) (fun F => ?_)
       have e := hN (chunkBits a pos.toNat stop.toNat ++ F)
       rw [avail_mk, e]
       simp only [h2', ↓reduceIte]

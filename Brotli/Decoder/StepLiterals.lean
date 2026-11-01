@@ -139,7 +139,7 @@ private theorem literals_after {α : Type} {w : Nat} {k : USize} {m : MetaBlockH
     (hprod : s.produced = s.output.length) (hcode : st.code.toNat = c) (hilen : st.ilen.toNat = ilen)
     (hclen : st.clen.toNat = clen) (hleft : st.left.toNat = n) (hnle : n ≤ ilen) (hirem : ilen ≤ s.remaining)
     (hlen : out.length + n = s.output.length + ilen) (hp : pos.toNat ≤ stop.toNat) (r : LitRun) {run : USize}
-    (hrunL : run.toNat ≤ n) (hrunC : run.toNat ≤ st.lCount.toNat) (hrunR : run.toNat + st.pend.toNat ≤ 2 ^ k.toNat)
+    (hrun0 : run.toNat ≠ 0) (hrunL : run.toNat ≤ n) (hrunC : run.toNat ≤ st.lCount.toNat) (hrunR : run.toNat + st.pend.toNat ≤ 2 ^ k.toNat)
     (hspec : ∃ (lit' : BlockState) (out' : List Nat),
       r.left.toNat ≤ run.toNat ∧ lit'.types = lit.types ∧ lit'.seen = lit.seen ∧ lit'.count = lit.count - (run.toNat - r.left.toNat) ∧
       out'.length = out.length + (run.toNat - r.left.toNat) ∧ RingOk r.ring k.toNat r.wpos.toNat out' ∧
@@ -189,16 +189,27 @@ private theorem literals_after {α : Type} {w : Nat} {k : USize} {m : MetaBlockH
       rw [u64_sub (by rw [huU]; omega), huU]
       omega
   by_cases hz : r.left = 0
-  · refine StepOk.ofNext (p' := .literals s ic c ilen clen (n - (run.toNat - r.left.toNat)) lit' out')
-      (by show (if r.left = 0 then _ else _) = _; rw [ite_eq_left hz]) hnew h9 h10 fun F => h12 F
+  · have hz0 : r.left.toNat = 0 := by rw [hz]; rfl
+    have hdn : (rankC (.literals s ic c ilen clen (n - (run.toNat - r.left.toNat)) lit' out')).2 < (rankC (.literals s ic c ilen clen n lit out)).2 := by
+      simp only [rankC]
+      split <;> split <;> omega
+    exact StepOk.ofNext (p' := .literals s ic c ilen clen (n - (run.toNat - r.left.toNat)) lit' out')
+      (hd := Or.inr (Or.inr ⟨rfl, hdn⟩)) (by show (if r.left = 0 then _ else _) = _; rw [ite_eq_left hz]) hnew h9 h10 fun F => h12 F
   · obtain ⟨hstop, hnone⟩ := h13 (usize_ne hz)
-    exact StepOk.ofInput (by show (if r.left = 0 then _ else _) = _; rw [ite_eq_right hz]) hstop hp hnew (fun F => h12 F) hnone
+    refine StepOk.ofInput (by show (if r.left = 0 then _ else _) = _; rw [ite_eq_right hz]) hstop hp hnew (fun F => h12 F) hnone ?_
+    by_cases hu : run.toNat - r.left.toNat = 0
+    · refine Or.inr (Or.inr ?_)
+      simp only [rankC, hu, h4, Nat.sub_zero]
+    · refine Or.inr (Or.inl (Or.inr ⟨rfl, ?_⟩))
+      simp only [rankC]
+      split <;> split <;> omega
 
 /-- The literal loop's step does its job. -/
 theorem literalsRun_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
     {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {s : CommandState} {ic : BlockState} {c ilen clen n : Nat}
     {lit : BlockState} {out : List Nat} {st : Cmd} {pos : USize} (hH : HdrRel H m)
-    (hrel : Rel w k.toNat m st (.literals s ic c ilen clen n lit out)) (hp : pos.toNat ≤ stop.toNat) :
+    (hrel : Rel w k.toNat m st (.literals s ic c ilen clen n lit out)) (hp : pos.toNat ≤ stop.toNat)
+    (hl0 : st.left.toNat ≠ 0) (hc0 : st.lCount.toNat ≠ 0) (hroom : st.pend.toNat < 2 ^ k.toNat) :
     StepOk w k.toNat m K a stop (.literals s ic c ilen clen n lit out) st pos (literalsRun H k a stop hs st pos) := by
   obtain ⟨hC, htag, hprod, hcode, hilen, hclen, hleft, hnle, hirem, hlen⟩ := hrel
   have hk := hC.k24
@@ -243,7 +254,7 @@ theorem literalsRun_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBloc
     hp hC.wf hC.ring.size hC.ring.pos_lt n lit out rfl (by omega) (by omega)
     hC.lRel.cur hC.ctx hC.ring hC.bytes
   dsimp only at hspec
-  exact literals_after hC htag hprod hcode hilen hclen hleft hnle hirem hlen hp _ (by omega) (by omega) (by omega) hspec
+  exact literals_after hC htag hprod hcode hilen hclen hleft hnle hirem hlen hp _ (by omega) (by omega) (by omega) (by omega) hspec
 
 /-- The literals' step does its job. -/
 theorem stepLiterals_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
@@ -296,8 +307,14 @@ theorem stepLiterals_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlo
           have h256 := hH.ok.literal.2.1
           have hsize := hC.seenSize
           have hi := seen_index (off := 0) (t := r.cur) (by omega) (by omega)
+          have hdn : (rankC (.literals s ic c ilen clen (n' + 1) ⟨⟨st.lCur.toNat, r.cur.toNat⟩, r.blockCount.toNat, r.cur.toNat :: lit.seen⟩ out)).2 <
+              (rankC (.literals s ic c ilen clen (n' + 1) lit out)).2 := by
+            simp only [rankC, hcz, ↓reduceIte]
+            rw [ite_eq_right (show ¬ r.blockCount.toNat = 0 by omega)]
+            omega
           refine StepOk.ofNext (p' := .literals s ic c ilen clen (n' + 1)
-            ⟨⟨st.lCur.toNat, r.cur.toNat⟩, r.blockCount.toNat, r.cur.toNat :: lit.seen⟩ out) rfl
+            ⟨⟨st.lCur.toNat, r.cur.toNat⟩, r.blockCount.toNat, r.cur.toNat :: lit.seen⟩ out)
+            (hd := Or.inr (Or.inr ⟨rfl, hdn⟩)) rfl
             ⟨?_, htag, hprod, hcode, hilen, hclen, hleft, hnle, hirem, hlen⟩ (Nat.le_refl _) hp fun F => ?_
           · exact { hC with
               wf := hw
@@ -332,6 +349,6 @@ theorem stepLiterals_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlo
       · rename_i hroom
         exact StepOk.ofFull hrel0 hp (full_iff hC.k24 hC.pendLe hroom)
       · rename_i hroom
-        exact literalsRun_ok hH hrel0 hp
+        exact literalsRun_ok hH hrel0 hp hnzN (u64_ne hcnt) (room_pos hC.k24 hroom)
 
 end Brotli.Decoder

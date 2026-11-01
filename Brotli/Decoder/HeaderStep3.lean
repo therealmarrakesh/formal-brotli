@@ -149,7 +149,7 @@ theorem stepHTrees_ok {isL : Bool} {st : Hd} {g : Gh} {pos : USize} (hrel : HRel
         (zeroBytes (mapSizeFast st))
       generalize mapFinish { st with word := r.word, count := r.count, pos := pos, status := .next } r.a
         (zeroBytes (mapSizeFast st)) = r2 at hrel2 b1 b2 b3 b4 ⊢
-      refine HStepOk.ofNext b4 hrel2 (by rw [b3]; exact Nat.le_refl _) (by rw [b3]; exact hp) (fun F => ?_)
+      refine HStepOk.ofNext (hd := treesNext_down _ _) b4 hrel2 (by rw [b3]; exact Nat.le_refl _) (by rw [b3]; exact hp) (fun F => ?_)
       have e := hN (chunkBits a pos.toNat stop.toNat ++ F)
       rw [avail_mk, e]
       simp only [h2', ↓reduceIte]
@@ -384,7 +384,8 @@ theorem stepHCodes_ok {k : CK} {done : List PrefixCode} {left : Nat} {st : Hd} {
       rfl
     obtain ⟨hs1, hs2, hs3⟩ := ckSizeFast_eq hu
     subst hk
-    refine HStepOk.ofNext (g' := g) (p' := .code (.codes st.ck done n) (ckSize st.ck g)) rfl
+    refine HStepOk.ofNext (g' := g) (p' := .code (.codes st.ck done n) (ckSize st.ck g))
+      (hd := Or.inl (Or.inr ⟨rfl, show 2 * n + 1 < 2 * (n + 1) by omega⟩)) rfl
       ⟨hw, hu, rfl, ⟨hs1, hs2, hs3⟩, rfl, rfl, hidx, hl1, rfl, by omega, h256, hpart⟩ (Nat.le_refl _) hp (fun F => ?_)
     exact hrest_codes_succ K st.ck g done n _
 

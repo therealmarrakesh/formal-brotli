@@ -14,6 +14,9 @@ namespace Brotli.Decoder
 
 open Brotli.Spec
 
+/-- Lexicographically lower. -/
+def LexLt (a b : Nat × Nat) : Prop := a.1 < b.1 ∨ (a.1 = b.1 ∧ a.2 < b.2)
+
 /-! ### The commands without fuel -/
 
 private theorem readCommandsWith_fuel (w : Nat) (h : MetaBlockHeader) : ∀ (f f' : Nat) (s : CommandState)
