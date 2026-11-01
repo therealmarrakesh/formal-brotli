@@ -388,7 +388,8 @@ structure SymRel (st : Hd) (size : Nat) (clc : PrefixCode) (ls : LengthState) : 
   ln : st.ln.toNat = ls.lens.length
   le : ls.lens.length ≤ size
   /-- The lengths so far, with zeros after them. -/
-  lens : lensOf st.lens size = ls.lens ++ List.replicate (size - ls.lens.length) 0
+  at_ : ∀ i, i < ls.lens.length → ls.lens[i]? = some (st.lens.data[i]?.getD 0).toNat
+  zero : ∀ i, ls.lens.length ≤ i → st.lens.data[i]?.getD 0 = 0
   small : ∀ l ∈ ls.lens, l ≤ 15
   prev : st.prevLen.toNat = ls.prev
   prevOk : 1 ≤ ls.prev ∧ ls.prev ≤ 15

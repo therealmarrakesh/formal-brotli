@@ -166,9 +166,6 @@ theorem clFinish_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {acc : List (Nat
   obtain ⟨hs1, hs2, hs3⟩ := hs
   have hzsize : (zeroBytes st.size.toNat).size = size := by
     rw [zeroBytes_size (by omega), hs1]
-  have hzlens : lensOf (zeroBytes st.size.toNat) size = List.replicate size 0 := by
-    rw [hs1, (LensIs.zero (by omega)).eq]
-    simp [lengthsOf, List.map_const']
   refine ⟨⟨hw, hu, rfl, ⟨hs1, hs2, hs3⟩, ho, ?_⟩, rfl, rfl, rfl, rfl⟩
   exact {
     table := by rw [usize_zero']; exact hB.ok
@@ -177,7 +174,8 @@ theorem clFinish_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {acc : List (Nat
     sz := hzsize
     ln := rfl
     le := by simp
-    lens := by simpa using hzlens
+    at_ := by simp
+    zero := fun i _ => zeroBytes_get (by omega)
     small := by simp
     prev := rfl
     prevOk := by simp
