@@ -729,6 +729,30 @@ theorem simpleFast_ok {size bits : UInt64} {b0 : BitBuffer} (hw : b0.Wf) (hb : b
   · rw [ite_eq_right h2]
     exact ROk.intShort (not_le_lt h2) (by decide)
 
+/-- A read's four values fit an array index. -/
+def SmallVals (r : Rd) : Prop := r.a.toNat < 2 ^ 32 ∧ r.b.toNat < 2 ^ 32 ∧ r.c.toNat < 2 ^ 32 ∧ r.d.toNat < 2 ^ 32
+
+/-- A simple code's symbols fit an array index. -/
+theorem simpleFast_small (size bits : UInt64) (b0 : BitBuffer) (hb : bits.toNat ≤ 10) : SmallVals (simpleFast size bits b0) := by
+  have hpeek : ∀ b : BitBuffer, (b.peek bits).toNat < 2 ^ 32 := by
+    intro b
+    have h1 := peek_lt b (k := bits) (by omega)
+    have h2 : 2 ^ bits.toNat ≤ 2 ^ 10 := Nat.pow_le_pow_right (by decide) hb
+    have h3 : (2 : Nat) ^ 10 = 1024 := rfl
+    omega
+  have hz : (0 : UInt64).toNat < 2 ^ 32 := by decide
+  have hite : ∀ {c : Prop} [Decidable c] {x y : Rd}, SmallVals x → SmallVals y → SmallVals (if c then x else y) := by
+    intro c _ x y hx hy
+    by_cases h : c
+    · rw [ite_eq_left h]
+      exact hx
+    · rw [ite_eq_right h]
+      exact hy
+  unfold simpleFast
+  dsimp only
+  repeat' refine hite ?_ ?_
+  all_goals refine ⟨?_, ?_, ?_, ?_⟩ <;> first | exact hz | exact hpeek _
+
 /-- `ALPHABET_BITS`, as a chain of comparisons. -/
 @[inline] def alphabetBitsFast (size : UInt64) : UInt64 :=
   if size ≤ 1 then 0
