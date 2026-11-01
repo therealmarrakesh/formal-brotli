@@ -622,7 +622,7 @@ theorem stepD_down {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {
 
 /-! ### The order is well founded -/
 
-private theorem plex_wf {α β : Type} {ra : α → α → Prop} {rb : β → β → Prop} (ha : WellFounded ra) (hb : WellFounded rb) :
+theorem plex_wf {α β : Type} {ra : α → α → Prop} {rb : β → β → Prop} (ha : WellFounded ra) (hb : WellFounded rb) :
     WellFounded (fun x y : α × β => ra x.1 y.1 ∨ (x.1 = y.1 ∧ rb x.2 y.2)) := by
   refine Subrelation.wf (r := Prod.Lex ra rb) ?_ (Prod.lex ⟨ra, ha⟩ ⟨rb, hb⟩).wf
   intro x y h

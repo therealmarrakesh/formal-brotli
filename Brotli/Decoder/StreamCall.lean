@@ -439,8 +439,9 @@ theorem endCheck_ok {a : ByteArray} {stop : USize} (hs : stop.toNat ≤ a.size) 
       ((endCheck D stop final buf).status = .needsInput → final = false ∧ (endCheck D stop final buf).pos = stop ∧
         (endCheck D stop final buf).D.pos = (endCheck D stop final buf).pos ∧ DRel (endCheck D stop final buf).D (.ended st) ∧
         (endCheck D stop final buf).D.cmd.pend = D.cmd.pend ∧
-        ∀ t : List UInt8, endOf st (D.bits a D.pos stop (bits t)) =
+        (∀ t : List UInt8, endOf st (D.bits a D.pos stop (bits t)) =
           endOf st ((endCheck D stop final buf).D.bits a (endCheck D stop final buf).pos stop (bits t))) ∧
+        ∃ n, ∀ t : List UInt8, (D.bits a D.pos stop (bits t)).length = ((endCheck D stop final buf).D.bits a (endCheck D stop final buf).pos stop (bits t)).length + n) ∧
       ((endCheck D stop final buf).status = .done → final = true ∧ (endCheck D stop final buf).pos = stop ∧
         endOf st (D.bits a D.pos stop (bits [])) = some (st.output.reverse.map Nat.toUInt8)) ∧
       ((endCheck D stop final buf).status = .rejected → ∀ t : List UInt8, endOf st (D.bits a D.pos stop (bits t)) = none) ∧
@@ -478,19 +479,26 @@ theorem endCheck_ok {a : ByteArray} {stop : USize} (hs : stop.toNat ≤ a.size) 
         rw [hall, endOf_whole st (by rw [bits_length]; simp)]
         rfl
       | false =>
-        refine ⟨Nat.le_refl _, hp, rfl, ⟨.ended st, ?_⟩, fun _ => ⟨rfl, hps, rfl, ?_, rfl, fun t => ?_⟩, fun e => Status.noConfusion e, fun e => Status.noConfusion e, fun e => Status.noConfusion e, fun e => Status.noConfusion e⟩
-        · obtain ⟨a1, _, w, a3⟩ := hrel
-          exact ⟨a1, fa2, w, ⟨{ a3.win with }, a3.produced, a3.limit⟩⟩
-        · obtain ⟨a1, _, w, a3⟩ := hrel
-          exact ⟨a1, fa2, w, ⟨{ a3.win with }, a3.produced, a3.limit⟩⟩
-        · rw [hall]
-          generalize hb1 : (BitBuffer.mk D.cmd.word D.cmd.count).drop (D.cmd.count &&& 7) = b1 at hheld
-          have hb2 : Dec.bits { D with cmd := { D.cmd with word := b1.word, count := b1.count }, status := .needsInput } a D.pos stop (bits t) =
+        generalize hb1 : (BitBuffer.mk D.cmd.word D.cmd.count).drop (D.cmd.count &&& 7) = b1 at hheld fa2
+        have hb2 : ∀ t : List UInt8, Dec.bits { D with cmd := { D.cmd with word := b1.word, count := b1.count }, status := .needsInput } a D.pos stop (bits t) = bits t := by
+          intro t
+          have e : Dec.bits { D with cmd := { D.cmd with word := b1.word, count := b1.count }, status := .needsInput } a D.pos stop (bits t) =
               b1.held ++ (chunkBits a D.pos.toNat stop.toNat ++ bits t) :=
             Dec.bits_cmd (D := { D with cmd := { D.cmd with word := b1.word, count := b1.count }, status := .needsInput }) hne a D.pos stop (bits t)
-          show _ = endOf st (Dec.bits { D with cmd := { D.cmd with word := b1.word, count := b1.count }, status := .needsInput } a D.pos stop (bits t))
-          rw [hb2, hheld, hchunk]
+          rw [e, hheld, hchunk]
           rfl
+        have hrelN : DRel { D with cmd := { D.cmd with word := b1.word, count := b1.count }, status := .needsInput } (.ended st) := by
+          obtain ⟨a1, _, w, a3⟩ := hrel
+          exact ⟨a1, fa2, w, ⟨{ a3.win with }, a3.produced, a3.limit⟩⟩
+        show D.pos.toNat ≤ D.pos.toNat ∧ D.pos.toNat ≤ stop.toNat ∧ buf = buf ∧ (∃ p', DRel { D with cmd := { D.cmd with word := b1.word, count := b1.count }, status := .needsInput } p') ∧ _ ∧ _ ∧ _ ∧ _ ∧ _
+        refine ⟨Nat.le_refl _, hp, rfl, ⟨.ended st, hrelN⟩, fun _ => ⟨rfl, hps, rfl, hrelN, rfl, fun t => ?_, (BitBuffer.mk D.cmd.word D.cmd.count).count.toNat, fun t => ?_⟩, fun e => Status.noConfusion e, fun e => Status.noConfusion e, fun e => Status.noConfusion e, fun e => Status.noConfusion e⟩
+        · rw [hall]
+          show _ = endOf st (Dec.bits { D with cmd := { D.cmd with word := b1.word, count := b1.count }, status := .needsInput } a D.pos stop (bits t))
+          rw [hb2]
+        · show _ = (Dec.bits { D with cmd := { D.cmd with word := b1.word, count := b1.count }, status := .needsInput } a D.pos stop (bits t)).length + _
+          rw [hb2, hb, hchunk]
+          simp only [List.nil_append, List.length_append, BitBuffer.held, lowBits_length]
+          omega
     · rw [ite_eq_right hc]
       refine ⟨Nat.le_refl _, hp, rfl, hd, fun e => Status.noConfusion e, fun e => Status.noConfusion e, fun _ t => ?_, fun e => Status.noConfusion e, fun e => Status.noConfusion e⟩
       rw [hb, hfill, ite_eq_left (show (BitBuffer.mk D.cmd.word D.cmd.count).peek ((BitBuffer.mk D.cmd.word D.cmd.count).count &&& 7) = 0 from hz)]
@@ -658,7 +666,7 @@ theorem afterRun_ok {a : ByteArray} {stop : USize} (hs : stop.toNat ≤ a.size) 
         rw [heq, a8, a9]
         rfl
       refine ⟨Nat.le_trans (by rw [a8]; exact b1) c1, c2, c4, _, by rw [c3]; exact a7, by rw [flush_length hR a1]; exact a2, fun e => ?_, fun e => absurd e c8, fun e => ?_, (fun e t _ => ?_), fun e => absurd e c9⟩
-      · obtain ⟨d1, d2, d3, d4, d5, d6⟩ := c5 e
+      · obtain ⟨d1, d2, d3, d4, d5, d6, _⟩ := c5 e
         refine ⟨d1, d2, d3, .ended st, d4, ?_, fun t => ?_⟩
         · unfold Pend at hE2 ⊢
           rw [d5]
@@ -738,5 +746,231 @@ theorem callD_ok {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {fi
         exact callOk_full b1 b2 hR hE' heq hz
     · rw [dite_eq_right hO]
       exact afterRun_ok hs h.2 hE hr hO buf space
+
+/-! ### What a call does to the measure -/
+
+theorem MLt.trans {a b c : Meas} (h1 : MLt a b) (h2 : MLt b c) : MLt a c := by
+  rcases h1 with h | ⟨e1, h⟩
+  · rcases h2 with h' | ⟨e2, _⟩
+    · exact Or.inl (Nat.lt_trans h h')
+    · exact Or.inl (by rw [← e2]; exact h)
+  · rcases h2 with h' | ⟨e2, h'⟩
+    · exact Or.inl (by rw [e1]; exact h')
+    · refine Or.inr ⟨e1.trans e2, ?_⟩
+      rcases h with h | ⟨e3, h⟩
+      · rcases h' with h' | ⟨e4, _⟩
+        · exact Or.inl (Nat.lt_trans h h')
+        · exact Or.inl (by rw [← e4]; exact h)
+      · rcases h' with h' | ⟨e4, h'⟩
+        · exact Or.inl (by rw [e3]; exact h')
+        · exact Or.inr ⟨e3.trans e4, h.trans h'⟩
+
+/-- What the loop does to the measure. -/
+structure RunM (a : ByteArray) (stop : USize) (p : SPhase) (D r : Dec) : Prop where
+  next : r.status = .next → ∃ st, DRel r (.ended st) ∧ r.pos.toNat ≤ stop.toNat ∧ MPause a stop p (.ended st) D D.pos r
+  needsInput : r.status = .needsInput → ∃ p', DRel r p' ∧ MPause a stop p p' D D.pos r
+  needsOutput : r.status = .needsOutput → ∃ p', DRel r p' ∧ r.cmd.pend.toNat = 2 ^ r.k.toNat ∧ MPause a stop p p' D D.pos r
+
+/-- A step that moved on, then a pause, lowers the measure. -/
+private theorem MPause.after {a : ByteArray} {stop : USize} {p p1 p' : SPhase} {D r1 r : Dec}
+    (h1 : ∀ t : List UInt8, MLt (mOf p1 (r1.bits a r1.pos stop (bits t))) (mOf p (D.bits a D.pos stop (bits t)))) (h2 : MPause a stop p1 p' r1 r1.pos r) :
+    MPause a stop p p' D D.pos r := by
+  rcases h2 with h | ⟨_, h⟩
+  · exact Or.inl fun t => (h t).trans (h1 t)
+  · exact Or.inl fun t => by rw [h t]; exact h1 t
+
+/-- What the loop does to the measure. -/
+theorem runD_down {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} : ∀ (x : RunArg a stop hs) (p : SPhase), DRel x.D p →
+    RunM a stop p x.D (runD a stop hs x.D x.inv) := by
+  intro x
+  induction x using (runRel_wf a stop hs).induction with
+  | _ x ih =>
+    intro p hrel
+    obtain ⟨D, hinv⟩ := x
+    dsimp only at hrel ⊢
+    rw [runD]
+    by_cases he : D.tag = .ended
+    · rw [dite_eq_left he]
+      cases p with
+      | ended st =>
+        have hrel' : DRel { D with status := .next } (.ended st) := hrel.congr rfl rfl rfl rfl rfl rfl rfl rfl
+        exact ⟨fun _ => ⟨st, hrel', hinv.2, Or.inr ⟨rfl, fun t => rfl⟩⟩, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
+      | wbits => exact absurd (he.symm.trans hrel.1) (by decide)
+      | mblock => exact absurd (he.symm.trans hrel.1) (by decide)
+      | skip => exact absurd (he.symm.trans hrel.1) (by decide)
+      | raw => exact absurd (he.symm.trans hrel.1) (by decide)
+      | hdr => exact absurd (he.symm.trans hrel.1) (by decide)
+      | cmds => exact absurd (he.symm.trans hrel.1) (by decide)
+    · rw [dite_eq_right he]
+      dsimp only
+      have hstep := stepD_down (a := a) (hs := hs) hrel he hinv.2
+      by_cases hn : (stepD a stop hs D).status = .next
+      · rw [dite_eq_left hn]
+        obtain ⟨p', hR, _, _, h3⟩ := hstep.next hn
+        have hih := ih ⟨stepD a stop hs D, hinv.step he hn⟩ ⟨he, hn, rfl⟩ p' hR
+        dsimp only at hih
+        generalize runD a stop hs (stepD a stop hs D) (hinv.step he hn) = r at hih ⊢
+        refine ⟨fun e => ?_, fun e => ?_, fun e => ?_⟩
+        · obtain ⟨st, b1, b0, b2⟩ := hih.next e
+          exact ⟨st, b1, b0, MPause.after h3 b2⟩
+        · obtain ⟨p2, b1, b2⟩ := hih.needsInput e
+          exact ⟨p2, b1, MPause.after h3 b2⟩
+        · obtain ⟨p2, b1, b2, b3⟩ := hih.needsOutput e
+          exact ⟨p2, b1, b2, MPause.after h3 b3⟩
+      · rw [dite_eq_right hn]
+        refine ⟨fun e => absurd e hn, fun e => ?_, fun e => ?_⟩
+        · obtain ⟨_, p2, b1, b2⟩ := hstep.needsInput e
+          exact ⟨p2, b1, b2⟩
+        · obtain ⟨p2, b1, _, _, b2, b3⟩ := hstep.needsOutput e
+          exact ⟨p2, b1, b2, b3⟩
+
+/-- A call's effect on the measure, and on the bytes waiting: lower, or the same with fewer bytes waiting if some could go out. -/
+def MCall (a : ByteArray) (stop : USize) (p p' : SPhase) (D : Dec) (space : Nat) (o : Out) : Prop :=
+  (∀ t : List UInt8, MLt (mOf p' (o.D.bits a o.pos stop (bits t))) (mOf p (D.bits a D.pos stop (bits t)))) ∨
+    ((∀ t : List UInt8, mOf p' (o.D.bits a o.pos stop (bits t)) = mOf p (D.bits a D.pos stop (bits t))) ∧ o.D.cmd.pend.toNat ≤ D.cmd.pend.toNat ∧
+      (D.cmd.pend.toNat ≠ 0 → space ≠ 0 → o.D.cmd.pend.toNat < D.cmd.pend.toNat))
+
+/-- What a call does to the measure. -/
+structure CallM (a : ByteArray) (stop : USize) (p : SPhase) (D : Dec) (space : Nat) (o : Out) : Prop where
+  needsInput : o.status = .needsInput → o.D.cmd.pend = 0 ∧ ∃ p', DRel o.D p' ∧ MCall a stop p p' D space o
+  needsOutput : o.status = .needsOutput → o.D.cmd.pend ≠ 0 ∧ ∃ p', DRel o.D p' ∧ MCall a stop p p' D space o
+
+/-- Handing out a state's bytes, after a pause. -/
+private theorem mcall_flush {a : ByteArray} {stop : USize} {p p' : SPhase} {D r : Dec} {buf : ByteArray} {space : Nat} {status : Status} (hR : DRel r p')
+    (h : MPause a stop p p' D D.pos r) :
+    MCall a stop p p' D space ⟨(flushD r buf space).D, (flushD r buf space).buf, (flushD r buf space).D.pos, status⟩ := by
+  obtain ⟨len, a1, a2, _, _, a5, a6, _, a8, _, a9, _⟩ := flushD_spec hR buf space
+  rcases h with h | ⟨h1, h2⟩
+  · refine Or.inl fun t => ?_
+    show MLt (mOf p' (Dec.bits _ a (flushD r buf space).D.pos stop (bits t))) _
+    rw [a8, a9]
+    exact h t
+  · refine Or.inr ⟨fun t => ?_, ?_, fun h3 h4 => ?_⟩
+    · show mOf p' (Dec.bits _ a (flushD r buf space).D.pos stop (bits t)) = _
+      rw [a8, a9]
+      exact h2 t
+    · show (flushD r buf space).D.cmd.pend.toNat ≤ _
+      rw [a5, h1]
+      omega
+    · show (flushD r buf space).D.cmd.pend.toNat < _
+      rw [a5, ← h1] at *
+      by_cases h5 : r.cmd.pend.toNat - len = 0
+      · omega
+      · have := a6 h5
+        omega
+
+/-- What a call does with what the loop left, to the measure. -/
+theorem afterRun_down {a : ByteArray} {stop : USize} (hs : stop.toNat ≤ a.size) {final : Bool} {p : SPhase} {D r : Dec}
+    (hr : RunM a stop p D r) (hn : r.status ≠ .needsOutput) (buf : ByteArray) (space : Nat) : CallM a stop p D space (afterRun r stop final D.pos buf space) := by
+  unfold afterRun
+  cases hst : r.status with
+  | needsOutput => exact absurd hst hn
+  | bad => exact ⟨fun e => Status.noConfusion e, fun e => Status.noConfusion e⟩
+  | memory => exact ⟨fun e => Status.noConfusion e, fun e => Status.noConfusion e⟩
+  | needsInput =>
+    obtain ⟨p', hR, hm⟩ := hr.needsInput hst
+    obtain ⟨_, _, _, _, a4, _, _, _, _, _, _, _⟩ := flushD_spec hR buf space
+    dsimp only
+    by_cases hz : (flushD r buf space).D.cmd.pend = 0
+    · rw [ite_eq_left hz]
+      cases final with
+      | true => exact ⟨fun e => Status.noConfusion e, fun e => Status.noConfusion e⟩
+      | false => exact ⟨fun _ => ⟨hz, p', a4, mcall_flush hR hm⟩, fun e => Status.noConfusion e⟩
+    · rw [ite_eq_right hz]
+      exact ⟨fun e => Status.noConfusion e, fun _ => ⟨hz, p', a4, mcall_flush hR hm⟩⟩
+  | next =>
+    obtain ⟨st, hR, hp, hm⟩ := hr.next hst
+    obtain ⟨_, _, _, _, a4, _, _, _, a8, _, a9, _⟩ := flushD_spec hR buf space
+    dsimp only
+    by_cases hz : (flushD r buf space).D.cmd.pend = 0
+    · rw [ite_eq_left hz]
+      obtain ⟨_, _, _, _, c5, _, _, c8, _⟩ := endCheck_ok (a := a) hs (D := (flushD r buf space).D) a4 (by rw [a8]; exact hp) final (flushD r buf space).buf
+      generalize endCheck (flushD r buf space).D stop final (flushD r buf space).buf = o at c5 c8 ⊢
+      refine ⟨fun e => ?_, fun e => absurd e c8⟩
+      obtain ⟨_, _, _, d4, d5, _, n, d6⟩ := c5 e
+      have hz0 : o.D.cmd.pend = 0 := d5.trans hz
+      have hz0N : o.D.cmd.pend.toNat = 0 := by rw [hz0]; rfl
+      refine ⟨hz0, .ended st, d4, ?_⟩
+      have hf : ∀ t : List UInt8, (flushD r buf space).D.bits a (flushD r buf space).D.pos stop (bits t) = r.bits a r.pos stop (bits t) := by
+        intro t
+        rw [a8, a9]
+      by_cases hn0 : n = 0
+      · have he1 : ∀ t : List UInt8, mOf (.ended st) (o.D.bits a o.pos stop (bits t)) = mOf (.ended st) (r.bits a r.pos stop (bits t)) := by
+          intro t
+          have := d6 t
+          rw [hf] at this
+          show ((o.D.bits a o.pos stop (bits t)).length + 1, _) = ((r.bits a r.pos stop (bits t)).length + 1, _)
+          rw [this, hn0]
+        rcases hm with h | ⟨_, h⟩
+        · exact Or.inl fun t => by rw [he1]; exact h t
+        · exact Or.inr ⟨fun t => by rw [he1]; exact h t, by omega, fun h3 _ => by omega⟩
+      · have he2 : ∀ t : List UInt8, MLt (mOf (.ended st) (o.D.bits a o.pos stop (bits t))) (mOf (.ended st) (r.bits a r.pos stop (bits t))) := by
+          intro t
+          have := d6 t
+          rw [hf] at this
+          refine Or.inl ?_
+          show (o.D.bits a o.pos stop (bits t)).length + 1 < (r.bits a r.pos stop (bits t)).length + 1
+          omega
+        rcases hm with h | ⟨_, h⟩
+        · exact Or.inl fun t => (he2 t).trans (h t)
+        · exact Or.inl fun t => by rw [← h t]; exact he2 t
+    · rw [ite_eq_right hz]
+      exact ⟨fun e => Status.noConfusion e, fun _ => ⟨hz, .ended st, a4, mcall_flush hR hm⟩⟩
+
+/-- What a call does to the measure. -/
+theorem callD_down {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {final : Bool} : ∀ (space : Nat) (D : Dec) (h : DInv stop D) (p : SPhase) (buf : ByteArray),
+    DRel D p → CallM a stop p D space (callD a stop hs final D h buf space) := by
+  intro space
+  induction space using Nat.strongRecOn with
+  | _ space ih =>
+    intro D h p buf hrel
+    rw [callD]
+    dsimp only
+    have hr := runD_down (hs := hs) ⟨D, h⟩ p hrel
+    dsimp only at hr
+    by_cases hO : (runD a stop hs D h).status = .needsOutput
+    · rw [dite_eq_left hO]
+      obtain ⟨p', hR, hfull, hm⟩ := hr.needsOutput hO
+      obtain ⟨len, a1, a2, a3, a4, a5, _, _, a8, _, a9, _⟩ := flushD_spec hR buf space
+      by_cases hz : (flushD (runD a stop hs D h) buf space).D.cmd.pend = 0
+      · rw [ite_eq_left hz]
+        have hz0 : (flushD (runD a stop hs D h) buf space).D.cmd.pend.toNat = 0 := by rw [hz]; rfl
+        have hpos : 1 ≤ 2 ^ (runD a stop hs D h).k.toNat := Nat.two_pow_pos _
+        have hlt : (flushD (runD a stop hs D h) buf space).space < space := by
+          rw [a3]
+          omega
+        rw [dite_eq_left hlt]
+        have hin := ih _ hlt (flushD (runD a stop hs D h) buf space).D (flushD_inv (runD_full hO) buf space) p' (flushD (runD a stop hs D h) buf space).buf a4
+        generalize callD a stop hs final (flushD (runD a stop hs D h) buf space).D (flushD_inv (runD_full hO) buf space)
+          (flushD (runD a stop hs D h) buf space).buf (flushD (runD a stop hs D h) buf space).space = o at hin ⊢
+        have hf : ∀ t : List UInt8, (flushD (runD a stop hs D h) buf space).D.bits a (flushD (runD a stop hs D h) buf space).D.pos stop (bits t) =
+            (runD a stop hs D h).bits a (runD a stop hs D h).pos stop (bits t) := by
+          intro t
+          rw [a8, a9]
+        have hjoin : ∀ {p2 : SPhase}, MCall a stop p' p2 (flushD (runD a stop hs D h) buf space).D (flushD (runD a stop hs D h) buf space).space o → MCall a stop p p2 D space o := by
+          intro p2 hc
+          rcases hc with hc | ⟨hc1, hc2, _⟩
+          · refine Or.inl fun t => ?_
+            have hc' := hc t
+            rw [hf] at hc'
+            rcases hm with h1 | ⟨_, h1⟩
+            · exact hc'.trans (h1 t)
+            · rw [← h1 t]
+              exact hc'
+          · have hc1' : ∀ t : List UInt8, mOf p2 (o.D.bits a o.pos stop (bits t)) = mOf p' ((runD a stop hs D h).bits a (runD a stop hs D h).pos stop (bits t)) := by
+              intro t
+              rw [hc1, hf]
+            rcases hm with h1 | ⟨_, h1⟩
+            · exact Or.inl fun t => by rw [hc1']; exact h1 t
+            · exact Or.inr ⟨fun t => by rw [hc1', h1], by omega, fun _ _ => by omega⟩
+        refine ⟨fun e => ?_, fun e => ?_⟩
+        · obtain ⟨b1, p2, b2, b3⟩ := hin.needsInput e
+          exact ⟨b1, p2, b2, hjoin b3⟩
+        · obtain ⟨b1, p2, b2, b3⟩ := hin.needsOutput e
+          exact ⟨b1, p2, b2, hjoin b3⟩
+      · rw [ite_eq_right hz]
+        exact ⟨fun e => Status.noConfusion e, fun _ => ⟨hz, p', a4, mcall_flush hR hm⟩⟩
+    · rw [dite_eq_right hO]
+      exact afterRun_down hs hr hO buf space
 
 end Brotli.Decoder
