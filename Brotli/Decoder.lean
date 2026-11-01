@@ -15,6 +15,7 @@ import Brotli.Decoder.Fixed
 import Brotli.Decoder.Literals
 import Brotli.Decoder.Reader
 import Brotli.Decoder.Block
+import Brotli.Decoder.SmallRead
 import Brotli.Decoder.State
 import Brotli.Decoder.Copy
 import Brotli.Decoder.Step
