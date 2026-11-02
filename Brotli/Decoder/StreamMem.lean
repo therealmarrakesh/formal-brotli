@@ -13,13 +13,15 @@ open Brotli.Spec Brotli.Properties
 
 /-! ### The demand -/
 
-/-- What a state's fields and the buffers a header's reading needs cost. -/
-def fixedCost : Nat := 1048576
+/-- What a state holds besides its window and its arena: the bounds `HSize` and `HSmall` give, 768 bytes of block type flags,
+38 bytes of a dictionary word, and its fields. -/
+def fixedCost : Nat := 324600
 
 /-- What a state's fields cost. -/
 def fieldBytes : Nat := 1024
 
-/-- A header's reading, counting the bytes of its tables. -/
+/-- A header's reading, counting the bytes of its tables. A table's bytes are those of the decoder's own table layout, which
+`tableBytes` gives from the code's lengths, not a size RFC 7932 defines. -/
 def tableK : HK Nat := ⟨fun _ _ => some 0, fun c x => some (tableBytes c + x.getD 0)⟩
 
 /-- The bytes of the tables a meta-block's header needs, as far as its bits go. -/
