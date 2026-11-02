@@ -244,15 +244,67 @@ theorem pushZeros_eq : ∀ (N : Nat) (t : ByteArray) (n : USize), n.toNat = N �
     apply Array.toList_inj.mp
     simp [List.replicate_succ]
 
-/-- A scratch array of `k` zero bytes. -/
-@[inline] def zeroBytes (k : Nat) : ByteArray := pushZeros (ByteArray.emptyWithCapacity k) (USize.ofNat k)
+/-- An array's first `m` bytes, copied onto its end. -/
+theorem copy_self (t : ByteArray) {m : Nat} (hm : m ≤ t.size) :
+    (t.copySlice 0 t t.size m).data = t.data ++ t.data.extract 0 m := by
+  simp [ByteArray.copySlice]
+  rw [Array.extract_eq_self_of_le (by simp), Array.extract_empty_of_size_le_start (start := t.size + min m t.size) (by rw [ByteArray.size_data]; omega),
+    Array.append_empty]
+
+theorem copy_self_size (t : ByteArray) {m : Nat} (hm : m ≤ t.size) : (t.copySlice 0 t t.size m).size = t.size + m := by
+  have e := congrArg Array.size (copy_self t hm)
+  simp only [Array.size_append, Array.size_extract, ByteArray.size_data] at e
+  rw [e]
+  omega
+
+/-- Doubles the zeros in `t` until there are `k`, each step one `copySlice`. -/
+def growZeros (t : ByteArray) (k : Nat) : ByteArray :=
+  if _h : t.size = 0 ∨ k ≤ t.size then t
+  else growZeros (t.copySlice 0 t t.size (min t.size (k - t.size))) k
+termination_by k - t.size
+decreasing_by
+  rw [copy_self_size t (Nat.min_le_left _ _)]
+  omega
+
+theorem growZeros_data : ∀ (N : Nat) (t : ByteArray) (k : Nat), k - t.size = N → t.data = Array.replicate t.size 0 → 0 < t.size → t.size ≤ k →
+    (growZeros t k).data = Array.replicate k 0 := by
+  intro N
+  induction N using Nat.strongRecOn with
+  | _ N ih =>
+    intro t k hN ht h0 hk
+    rw [growZeros]
+    by_cases hc : t.size = 0 ∨ k ≤ t.size
+    · rw [dite_eq_left hc]
+      have : t.size = k := by omega
+      rw [ht, this]
+    · rw [dite_eq_right hc]
+      have hm : min t.size (k - t.size) ≤ t.size := Nat.min_le_left _ _
+      have e := copy_self t hm
+      rw [ht] at e
+      simp only [Array.extract_replicate, Array.replicate_append_replicate] at e
+      have hs := copy_self_size t hm
+      exact ih _ (by omega) _ k rfl (by rw [e, hs]; congr 1; omega) (by omega) (by omega)
+
+/-- A scratch array of `k` zero bytes: 64 pushed, then doubled. -/
+@[inline] def zeroBytes (k : Nat) : ByteArray := growZeros (pushZeros (ByteArray.emptyWithCapacity k) (USize.ofNat (min k 64))) k
 
 theorem zeroBytes_data {k : Nat} (h : k < 2 ^ 32) : (zeroBytes k).data = Array.replicate k 0 := by
   unfold zeroBytes
-  rw [pushZeros_eq k _ _ (usize_lit' h)]
-  apply Array.toList_inj.mp
-  simp [ByteArray.emptyWithCapacity]
-  rfl
+  have hb : (pushZeros (ByteArray.emptyWithCapacity k) (USize.ofNat (min k 64))).data = Array.replicate (min k 64) 0 := by
+    rw [pushZeros_eq (min k 64) _ _ (usize_lit' (by omega))]
+    apply Array.toList_inj.mp
+    simp [ByteArray.emptyWithCapacity]
+    rfl
+  generalize pushZeros (ByteArray.emptyWithCapacity k) (USize.ofNat (min k 64)) = t at hb
+  have hs : t.size = min k 64 := by
+    show t.data.size = _
+    rw [hb]
+    simp
+  by_cases hk : k = 0
+  · subst hk
+    rw [growZeros, dite_eq_left (Or.inl (by rw [hs]; rfl)), hb]
+    rfl
+  · exact growZeros_data _ t k rfl (by rw [hb, hs]) (by rw [hs]; omega) (by rw [hs]; omega)
 
 theorem zeroBytes_size {k : Nat} (h : k < 2 ^ 32) : (zeroBytes k).size = k := by
   show (zeroBytes k).data.size = k
