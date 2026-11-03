@@ -504,7 +504,7 @@ theorem stepDRaw_keeps (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.siz
     (stepDRaw a stop hs D pos).k = D.k ∧ (stepDRaw a stop hs D pos).limit = D.limit ∧ (stepDRaw a stop hs D pos).hd = D.hd ∧ (stepDRaw a stop hs D pos).H = D.H ∧
       (stepDRaw a stop hs D pos).status ≠ .memory ∧ ((stepDRaw a stop hs D pos).status ≠ .next → (stepDRaw a stop hs D pos).tag = D.tag) ∧
       (stepDRaw a stop hs D pos).tag ≠ .wbits ∧ (stepDRaw a stop hs D pos).tag ≠ .hdr ∧ (stepDRaw a stop hs D pos).tag ≠ .cmds := by
-  unfold stepDRaw moveOn
+  unfold stepDRaw takeRing moveOn
   dsimp only
   have h1 : D.tag ≠ .wbits ∧ D.tag ≠ .hdr ∧ D.tag ≠ .cmds := by rw [ht]; decide
   split
@@ -525,7 +525,7 @@ theorem stepDCmds_keeps (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.si
       (stepDCmds a stop hs D pos).status ≠ .memory ∧ ((stepDCmds a stop hs D pos).status ≠ .next → (stepDCmds a stop hs D pos).tag = D.tag) ∧
       (((stepDCmds a stop hs D pos).tag = D.tag ∧ (stepDCmds a stop hs D pos).H = D.H) ∨
         ((stepDCmds a stop hs D pos).tag ≠ .wbits ∧ (stepDCmds a stop hs D pos).tag ≠ .hdr ∧ (stepDCmds a stop hs D pos).tag ≠ .cmds ∧ (stepDCmds a stop hs D pos).H = Hdr.none)) := by
-  unfold stepDCmds
+  unfold stepDCmds takeCmd
   dsimp only
   generalize runCmd D.H D.k a stop hs cmdBudget D.cmd pos = r
   split
@@ -969,7 +969,7 @@ theorem hdr_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs
   | hdr w st last mlen g0 q0 =>
     have hD := stepDHdr_ok (S := demandSem) (a := a) (hs := hs) hrel hp
     have hH := stepH_ok (K := tableK) (a := a) (hs := hs) hR hp
-    unfold stepDHdr at hD ⊢
+    unfold stepDHdr takeHd at hD ⊢
     dsimp only at hD ⊢
     generalize stepH a stop hs D.hd D.pos = r at hH hD ⊢
     have hbitsAt : ∀ D' : Dec, D'.tag = .hdr → D'.hd = r → D'.pos = r.pos → D'.bits a D'.pos stop (bits t) = availBits r.word r.count a r.pos stop (bits t) := by

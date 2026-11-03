@@ -15,10 +15,10 @@ open Brotli.Spec Brotli.Properties
 
 /-- The place in a header. -/
 def stepDHdr (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize) : Dec :=
-  let h := D.hd
   let c := D.cmd
   let left := D.left
-  let D0 := clearHd D
+  match takeHd D with
+  | (h, D0) =>
   let r := stepH a stop hs h pos
   let rp := r.pos
   match r.status with
@@ -39,7 +39,7 @@ theorem stepDHdr_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {last 
   have ht' : tag = .hdr := ht
   subst ht'
   have hstep := stepH_ok (K := hdrK w (S.after w last) st mlen) (a := a) (hs := hs) hR hpos
-  unfold stepDHdr
+  unfold stepDHdr takeHd
   dsimp only
   generalize stepH a stop hs hd pos = r at hstep
   cases hst : r.status with
@@ -792,6 +792,11 @@ theorem stepDSkip_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {last
     pos := r.pos
     status := if r.left = 0 then .next else .needsInput }
 
+/-- A stream state's window, with the stream state and its command loop state emptied of it, as `takeCmd` takes the command
+loop state. -/
+@[noinline] def takeRing (D : Dec) : { t : ByteArray × Dec × Cmd // t.1 = D.cmd.ring } :=
+  ⟨(D.cmd.ring, clearCmd D, clearRing D.cmd), rfl⟩
+
 /-- The place in uncompressed bytes. -/
 def stepDRaw (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize) : Dec :=
   let left := D.left
@@ -808,14 +813,13 @@ def stepDRaw (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : De
         let wpos := c.wpos
         let p1 := c.p1
         let p2 := c.p2
-        let ring := c.ring
         have hsize := winCheck_size h.1
         have hwp := winCheck_pos h.1
-        let D0 := clearCmd D
-        let c1 := clearRing c
+        match takeRing D with
+        | ⟨(ring, D0, c1), he⟩ =>
         rawFinish D0 c1 left n
           (rawRun a stop hs (ringMask k) k.toNat (winCheck_k h.1) (ringMask_toNat (winCheck_k h.1)) n word count pos ring wpos p1 p2
-            (USize.le_iff_toNat_le.mp h.2) hsize hwp)
+            (USize.le_iff_toNat_le.mp h.2) ((congrArg ByteArray.size he).trans hsize) hwp)
     else { D with pos := pos, status := .bad }
 
 theorem rawFinish_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {last : Bool} {left : Nat} {a : ByteArray} {stop : USize} {cmd : Cmd} {hd : Hd} {H : Hdr} {k : USize}

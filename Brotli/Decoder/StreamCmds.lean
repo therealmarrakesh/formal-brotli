@@ -138,6 +138,14 @@ def Hd.none : Hd := ⟨0, 0, 0, .next, .cat, Done.none, .L, .type, true, .L, 0, 
 /-- Empties a stream state's header machine state, so that what it writes is held once. -/
 @[noinline] def clearHd (D : Dec) : Dec := { D with hd := Hd.none }
 
+/-- A stream state's command loop state, and the stream state emptied of it. A step that writes the window takes the state
+this way: the step needs the call's result, so the stream state lets go of the window first, while the compiler may move a
+plain `let D0 := clearCmd D` past the step and leave the window held twice while it writes. -/
+@[noinline] def takeCmd (D : Dec) : Cmd × Dec := (D.cmd, clearCmd D)
+
+/-- A stream state's header machine state, and the stream state emptied of it, as `takeCmd` takes the command loop state. -/
+@[noinline] def takeHd (D : Dec) : Hd × Dec := (D.hd, clearHd D)
+
 /-- Steps the commands take before the outer loop looks at them. -/
 def cmdBudget : USize := USize.ofNat 65536
 
@@ -146,8 +154,8 @@ def stepDCmds (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : D
   let H := D.H
   let k := D.k
   let last := D.last
-  let c := D.cmd
-  let D0 := clearCmd D
+  match takeCmd D with
+  | (c, D0) =>
   let r := runCmd H k a stop hs cmdBudget c pos
   let rp := r.pos
   match r.status with
@@ -181,7 +189,7 @@ theorem stepDCmds_ok {α : Type} {S : Sem α} {w : Nat} {last : Bool} {m : MetaB
   have hl0 : last' = last := hl
   subst hl0
   have hstep := runCmd_ok (hs := hs) (K := cmdK w (S.after w last') m) (a := a) (fun s bs h0 => cmdK_step s bs h0) hH _ cmdBudget p cmd pos rfl hR hp
-  unfold stepDCmds
+  unfold stepDCmds takeCmd
   dsimp only
   generalize runCmd H k a stop hs cmdBudget cmd pos = r at hstep
   cases hst : r.status with

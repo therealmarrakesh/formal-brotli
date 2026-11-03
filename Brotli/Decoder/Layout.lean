@@ -596,7 +596,7 @@ theorem stepDRaw_same {s t : Dec} (he : s.er = t.er) {p1 p2 : USize} (h : Same a
   generalize t.pos = q0
   generalize t.cmd.pos = q1
   generalize t.hd.pos = q2
-  unfold stepDRaw moveOn rawFinish clearCmd clearRing
+  unfold stepDRaw takeRing moveOn rawFinish clearCmd clearRing
   dsimp only
   by_cases hl : s.left = 0
   · rw [ite_eq_left hl, ite_eq_left hl]
@@ -628,7 +628,7 @@ theorem stepDHdr_same {s t : Dec} (he : s.er = t.er) {p1 p2 : USize} (h : Same a
   generalize t.hd.pos = q2
   obtain ⟨e, hS⟩ := stepH_same hs1 hs2 (s := s.hd) (t := { s.hd with pos := q2 }) rfl h
   have e' := hd_er e
-  unfold stepDHdr clearHd
+  unfold stepDHdr takeHd clearHd
   dsimp only at e' hS ⊢
   rw [e']
   generalize (stepH a2 e2 hs2 { s.hd with pos := q2 } p2).pos = q3 at hS ⊢
@@ -646,7 +646,7 @@ theorem stepDCmds_same {s t : Dec} (he : s.er = t.er) {p1 p2 : USize} (h : Same 
   generalize t.hd.pos = q2
   obtain ⟨e, hS⟩ := runCmd_same s.H s.k hs1 hs2 _ cmdBudget (s := s.cmd) (t := { s.cmd with pos := q1 }) rfl rfl h
   have e' := cmd_er e
-  unfold stepDCmds clearCmd
+  unfold stepDCmds takeCmd clearCmd
   dsimp only at e' hS ⊢
   rw [e']
   generalize (runCmd s.H s.k a2 e2 hs2 cmdBudget { s.cmd with pos := q1 } p2).pos = q3 at hS ⊢

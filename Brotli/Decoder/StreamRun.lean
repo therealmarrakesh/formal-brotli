@@ -525,7 +525,7 @@ theorem stepDCmds_down {w : Nat} {last : Bool} {m : MetaBlockHeader} {p : Phase}
   have hl0 : last' = last := hl
   subst hl0
   have hstep := runCmd_down (last := last') (a := a) (stop := stop) (hs := hs) cmdBudget_ne hH hR hp
-  unfold stepDCmds at hok ⊢
+  unfold stepDCmds takeCmd at hok ⊢
   dsimp only at hok ⊢
   generalize runCmd H k a stop hs cmdBudget cmd pos = r at hstep hok
   cases hst : r.status with

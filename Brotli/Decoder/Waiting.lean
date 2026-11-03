@@ -304,7 +304,7 @@ theorem stepDSkip_pendLe (stop : USize) (D : Dec) (pos : USize) : PendLeD D (ste
 
 theorem stepDRaw_pendLe (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize) :
     PendLeD D (stepDRaw a stop hs D pos) := by
-  unfold PendLeD stepDRaw moveOn rawFinish clearCmd clearRing
+  unfold PendLeD stepDRaw takeRing moveOn rawFinish clearCmd clearRing
   try dsimp only
   by_cases h0 : D.left = 0
   · rw [ite_eq_left h0]
@@ -320,13 +320,13 @@ theorem stepDRaw_pendLe (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.si
 
 theorem stepDHdr_pendLe (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize) :
     PendLeD D (stepDHdr a stop hs D pos) := by
-  unfold PendLeD stepDHdr clearHd cmdStart
+  unfold PendLeD stepDHdr takeHd clearHd cmdStart
   keepD_tac
 
 theorem stepDCmds_pendLe (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize) :
     PendLeD D (stepDCmds a stop hs D pos) := by
   have h := runCmd_pendLe D.H D.k a stop hs _ cmdBudget D.cmd pos rfl
-  unfold PendLeD stepDCmds clearCmd
+  unfold PendLeD stepDCmds takeCmd clearCmd
   try dsimp only
   repeat' (first | split_all | exact h)
 

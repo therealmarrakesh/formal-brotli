@@ -246,12 +246,14 @@ theorem stepDSkip_lim : stepDSkip stop (decSet D l a) pos = decSet (stepDSkip st
 
 theorem stepDCmds_lim : stepDCmds ar stop hs (decSet D l a) pos = decSet (stepDCmds ar stop hs D pos) l a := by
   show stepDCmds ar stop hs { D with limit := l, hd := hdSet D.hd a } pos = _
-  simp only [stepDCmds, clearCmd]
-  (repeat' split) <;> first | rfl | contradiction | (simp_all [decSet, hdSet]; done)
+  simp only [stepDCmds, takeCmd, clearCmd]
+  (repeat' split) <;> first | rfl | contradiction | (simp_all [decSet, hdSet]; done) |
+    (by_cases hc : seenOk (runCmd D.H D.k ar stop hs cmdBudget D.cmd pos).seen D.H.nL D.H.nI D.H.nD = true <;>
+      simp only [hc, ↓reduceIte] <;> rfl)
 
 theorem stepDRaw_lim : stepDRaw ar stop hs (decSet D l a) pos = decSet (stepDRaw ar stop hs D pos) l a := by
   show stepDRaw ar stop hs { D with limit := l, hd := hdSet D.hd a } pos = _
-  simp only [stepDRaw, moveOn, clearCmd, rawFinish]
+  simp only [stepDRaw, takeRing, moveOn, clearCmd, rawFinish]
   (repeat' split) <;> first | rfl | contradiction | (simp_all [decSet, hdSet]; done)
 
 theorem stepDMeta_lim : DLim (stepDMeta ar stop hs (decSet D l a) pos) (stepDMeta ar stop hs D pos) := by
@@ -287,7 +289,7 @@ theorem stepDWbits_lim : DLim (stepDWbits ar stop hs (decSet D l a) pos) (stepDW
 
 theorem stepDHdr_lim : DLim (stepDHdr ar stop hs (decSet D l a) pos) (stepDHdr ar stop hs D pos) := by
   show DLim (stepDHdr ar stop hs { D with limit := l, hd := hdSet D.hd a } pos) _
-  simp only [stepDHdr, clearHd]
+  simp only [stepDHdr, takeHd, clearHd]
   have hr := stepH_lim D.hd a pos ar stop hs
   generalize stepH ar stop hs (hdSet D.hd a) pos = r1 at hr ⊢
   generalize stepH ar stop hs D.hd pos = r2 at hr ⊢

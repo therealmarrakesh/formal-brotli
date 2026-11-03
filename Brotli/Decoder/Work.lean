@@ -286,7 +286,7 @@ theorem stepDCmds_count {w : Nat} {last : Bool} {m : MetaBlockHeader} {q0 : Phas
     runCmd_count (w := w) (hs := hs) hH _ cmdBudget cmd q0 pos' rfl hR hp (bits t)
   have hr' := ReachN.cmds (last := last') hr
   dsimp only at g3 hr' ⊢
-  unfold stepDCmds
+  unfold stepDCmds takeCmd
   dsimp only
   generalize runCmd H k a stop hs cmdBudget cmd pos' = rc at g4 g5 g6
   cases hst : rc.status with
