@@ -504,6 +504,142 @@ theorem sAgree : ∀ p, Agrees (srest specSem) (fun y _ => some y) (sStep p) (sr
         unfold readEnd
         rw [e, readFill_of_whole (readFill_whole e)]
 
+/-! ### Any worth along the reading in order
+
+A step of the reading in order that goes on keeps what a place is worth on leaving it, for any worth whose value at the
+stream's end ignores the fill bits. A worth that isn't the output can drop at a meta-block's start, where leaving is worth
+less than arriving: the demand counts the header's tables only on arriving. -/
+
+section
+variable {α : Type} (S : Sem α)
+
+private theorem srest_afterBlockS (w : Nat) (last : Bool) (st : StreamState) (bs : List Bool) :
+    srest S (afterBlock w last st) bs = S.after w last st bs := by
+  cases last
+  · exact (S.after_false w st bs).symm
+  · exact (S.after_true w st bs).symm
+
+private theorem startAgreeS (w : Nat) (st : StreamState) :
+    ∀ ms, Agrees (srest S) (fun _ _ => none) (startPlace w st ms) (afterStart w (S.after w) st ms)
+  | .lastEmpty => agrees_congr (agrees_next (SPhase.ended st)) fun bs => S.after_true w st bs
+  | .metadata last skip => agrees_fill (.skip w st last skip) (fun _ => rfl) (fun _ => rfl)
+  | .data last mlen _ =>
+    agrees_congr (agrees_ite (agrees_fill (.raw w st last mlen) (fun _ => rfl) (fun _ => rfl))
+      (agrees_congr (agrees_next _) fun bs => readCompressed_eq w (S.after w last) st mlen Gh.start bs)) fun _ => rfl
+
+/-- Each step of the reading in order away from the stream's end says what leaving its place is worth. -/
+theorem sAgreeS : ∀ p, (∀ st, p ≠ .ended st) → Agrees (srest S) (fun _ _ => none) (sStep p) (sLeave S p)
+  | .wbits, _ => agrees_congr (agrees_readIn fun _ => agrees_next _) fun bs => S.first_eq bs
+  | .mblock w st, _ => agrees_readIn (startAgreeS S w st)
+  | .skip w st last 0, _ => agrees_congr (agrees_next _) fun bs => by
+      show skipK (S.after w last) st 0 bs = srest S (afterBlock w last st) bs
+      rw [srest_afterBlockS]
+      show (if bs.length < 0 * 8 then none else S.after w last st (bs.drop (0 * 8))) = _
+      simp
+  | .skip w st last (n + 1), _ => agrees_congr (agrees_readIn fun _ => agrees_next _) fun bs => skipK_succ _ st n bs
+  | .raw w st last 0, _ => agrees_congr (agrees_next _) fun bs => by
+      show rawK (S.after w last) st 0 bs = srest S (afterBlock w last st) bs
+      rw [srest_afterBlockS]
+      rfl
+  | .raw w st last (n + 1), _ => agrees_congr (agrees_readIn fun _ => agrees_next _) fun bs => rawK_succ _ st n bs
+  | .hdr w st last mlen g p, _ => fun bs => by
+    obtain ⟨hn, hx, hb, hs⟩ := hAgree (hdrK w (S.after w last) st mlen) (fun _ _ => rfl) g p bs
+    cases e : hStepP (g, p) bs with
+    | next q' b =>
+      have h' : sStep (.hdr w st last mlen g p) bs = .next (.hdr w st last mlen q'.1 q'.2) b := by
+        simp only [sStep, show hStep g p bs = _ from e]
+      rw [h']
+      exact ⟨(fun _ _ h => by cases h; exact hn q' b e), (fun _ _ h => by cases h), (fun h => by cases h), (fun h => by cases h)⟩
+    | exit m' b =>
+      have h' : sStep (.hdr w st last mlen g p) bs = .next (.cmds w last m' (.command (startState st mlen m'))) b := by
+        simp only [sStep, show hStep g p bs = _ from e]
+      rw [h']
+      exact ⟨(fun _ _ h => by cases h; exact hx m' b e), (fun _ _ h => by cases h), (fun h => by cases h), (fun h => by cases h)⟩
+    | bad =>
+      have h' : sStep (.hdr w st last mlen g p) bs = .bad := by simp only [sStep, show hStep g p bs = _ from e]
+      rw [h']
+      exact ⟨(fun _ _ h => by cases h), (fun _ _ h => by cases h), (fun _ => hb e), (fun h => by cases h)⟩
+    | short =>
+      have h' : sStep (.hdr w st last mlen g p) bs = .short := by simp only [sStep, show hStep g p bs = _ from e]
+      rw [h']
+      exact ⟨(fun _ _ h => by cases h), (fun _ _ h => by cases h), (fun h => by cases h), (fun _ => hs e)⟩
+  | .cmds w last m p, _ => fun bs => by
+    obtain ⟨hn, hx, hb, hs⟩ := cAgree w m (S.after w last) p bs
+    cases e : cStep w m p bs with
+    | next p' b =>
+      have h' : sStep (.cmds w last m p) bs = .next (.cmds w last m p') b := by simp only [sStep, e]
+      rw [h']
+      exact ⟨(fun _ _ h => by cases h; exact hn p' b e), (fun _ _ h => by cases h), (fun h => by cases h), (fun h => by cases h)⟩
+    | exit s b =>
+      have hf := hx s b e
+      unfold finishC at hf
+      by_cases hc : (usesEveryType m.literal s.literal && usesEveryType m.insertCopy s.insertCopy &&
+          usesEveryType m.distance s.distance) = true
+      · have h' : sStep (.cmds w last m p) bs = .next (afterBlock w last ⟨s.output, s.produced, s.distances⟩) b := by
+          simp only [sStep, e, hc, ↓reduceIte]
+        rw [ite_eq_left hc] at hf
+        rw [h']
+        refine ⟨(fun _ _ h => ?_), (fun _ _ h => by cases h), (fun h => by cases h), (fun h => by cases h)⟩
+        cases h
+        rw [srest_afterBlockS]
+        exact hf
+      · have h' : sStep (.cmds w last m p) bs = .bad := by
+          simp only [sStep, e]
+          exact ite_eq_right hc
+        rw [ite_eq_right hc] at hf
+        rw [h']
+        exact ⟨(fun _ _ h => by cases h), (fun _ _ h => by cases h), (fun _ => hf), (fun h => by cases h)⟩
+    | bad =>
+      have h' : sStep (.cmds w last m p) bs = .bad := by simp only [sStep, e]
+      rw [h']
+      exact ⟨(fun _ _ h => by cases h), (fun _ _ h => by cases h), (fun _ => hb e), (fun h => by cases h)⟩
+    | short =>
+      have h' : sStep (.cmds w last m p) bs = .short := by simp only [sStep, e]
+      rw [h']
+      exact ⟨(fun _ _ h => by cases h), (fun _ _ h => by cases h), (fun h => by cases h), (fun _ => hs e)⟩
+  | .ended st, h => absurd rfl (h st)
+
+/-- A worth whose value at the stream's end ignores the fill bits. -/
+def FillFree : Prop := ∀ st bs b, readFill bs = some b → S.finish st bs = S.finish st b
+
+/-- A step of the reading in order that goes on goes from what leaving its place is worth to what arriving at the next is. -/
+theorem sNext (hf : FillFree S) {p q : SPhase} {bs c : List Bool} (h : sStep p bs = .next q c) : sLeave S p bs = srest S q c := by
+  cases p
+  case ended st =>
+    by_cases hm : bs.length % 8 = 0
+    · have h' : sStep (.ended st) bs = if bs.isEmpty then .exit (st.output.reverse.map Nat.toUInt8) bs else .bad := by
+        simp only [sStep, hm, ↓reduceIte]
+      rw [h'] at h
+      split at h <;> cases h
+    · cases e : readFill bs with
+      | none =>
+        have h' : sStep (.ended st) bs = .bad := by simp only [sStep, hm, ↓reduceIte, e]
+        rw [h'] at h
+        cases h
+      | some b =>
+        have h' : sStep (.ended st) bs = .next (.ended st) b := by simp only [sStep, hm, ↓reduceIte, e]
+        rw [h'] at h
+        cases h
+        exact hf st bs _ e
+  all_goals exact ((sAgreeS S _ (fun _ e => SPhase.noConfusion e)) bs).1 q c h
+
+end
+
+/-- What the demand counts ignores the fill bits at the stream's end. -/
+theorem demand_fillFree : FillFree demandSem := fun _ _ _ _ => rfl
+
+/-- The demand of what the reading in order has still to read never grows as it goes on. -/
+theorem demand_reach {p q : SPhase} {bs c : List Bool} (h : Reach sStep p bs q c) :
+    (srest demandSem q c).getD 0 ≤ (srest demandSem p bs).getD 0 := by
+  induction h with
+  | refl => exact Nat.le_refl _
+  | @next p0 b0 p1 b1 _ _ hs _ ih =>
+    refine Nat.le_trans ih ?_
+    rw [← sNext demandSem demand_fillFree hs]
+    cases p0 with
+    | mblock w st => exact leave_le w st b0
+    | _ => exact Nat.le_refl _
+
 /-! ### What the reading in order says about `decode` -/
 
 /-- The reading in order keeps what the spec still has to do. -/

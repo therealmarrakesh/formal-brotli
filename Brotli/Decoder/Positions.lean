@@ -411,6 +411,31 @@ theorem stepH_bad {g : Gh} {p : HPhase} {st : Hd} {pos : USize} (hrel : HRel st 
   rw [avail_mk, ← List.append_assoc, ← l1]
   exact hbad
 
+/-- A header step that goes on does so on the bits it held and the bytes its refill took, whatever follows them: what the
+place it started at is worth is what the place it got to is worth, with the table of any code it read. -/
+theorem stepH_next {g : Gh} {p : HPhase} {st : Hd} {pos : USize} (hrel : HRel st g p) (hp : pos.toNat ≤ stop.toNat)
+    (hn : (stepH a stop hs st pos).status = .next) :
+    ∃ g' p' oc, HRel (stepH a stop hs st pos) g' p' ∧ HMove st (stepH a stop hs st pos) p p' oc ∧
+      pos.toNat ≤ (stepH a stop hs st pos).pos.toNat ∧ (stepH a stop hs st pos).pos.toNat ≤ stop.toNat ∧
+      ∀ F, hrest K g p (availBits st.word st.count a pos (stepH a stop hs st pos).pos F) =
+        Wr K oc (hrest K g' p' ((BitBuffer.mk (stepH a stop hs st pos).word (stepH a stop hs st pos).count).held ++ F)) := by
+  unfold stepH at hn ⊢
+  rw [dite_eq_left (USize.le_iff_toNat_le.mpr hp)] at hn ⊢
+  obtain ⟨h1, h2, h3, _, _⟩ := refill_spec hs hp hrel.wf
+  obtain ⟨l1, _⟩ := refill_local hs hp hrel.wf
+  dsimp only at hn ⊢
+  generalize refill st.word st.count a pos stop hs hp = R at h1 h2 h3 l1 hn ⊢
+  have e2 : (stepAtH { st with word := R.word, count := R.count } R.pos).pos = R.pos :=
+    (congrArg Hd.pos (stepAtH_pos _ R.pos)).trans rfl
+  have hok := stepAtH_ok (K := K) (a := a) (stop := R.pos) (hrel.withBits h1) (Nat.le_refl _) (Or.inr rfl)
+  obtain ⟨g', p', oc, hR, _, _, hW, _, hM, _⟩ := hok.next hn
+  refine ⟨g', p', oc, hR, ⟨hM.max, hM.grow, fun hz => hM.size { hz with }, hM.cap, hM.one⟩, by rw [e2]; exact h2,
+    by rw [e2]; exact h3, fun F => ?_⟩
+  have h := hW F
+  rw [avail_mk, chunkBits_self, List.nil_append, avail_mk, e2, chunkBits_self, List.nil_append] at h
+  rw [avail_mk, e2, ← List.append_assoc, ← l1]
+  exact h
+
 /-- A header step that reports the limit decides on the bits it held and the bytes its refill took, whatever follows them:
 at most 64 bits from the first bit it held. -/
 theorem stepH_memory {g : Gh} {p : HPhase} {st : Hd} {pos : USize} (hrel : HRel st g p) (hp : pos.toNat ≤ stop.toNat)
