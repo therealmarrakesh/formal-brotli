@@ -1,4 +1,5 @@
 import Brotli.Decoder.Progress
+import Brotli.Decoder.Waiting
 
 /-!
 # The decoder's work
@@ -110,14 +111,16 @@ theorem ReachN.cmds {w : Nat} {last : Bool} {m : MetaBlockHeader} {n : Nat} {p q
 theorem stepCmd_count {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a : ByteArray} {stop : USize}
     {hs : stop.toNat ≤ a.size} {p : Phase} {st : Cmd} {pos : USize} (hH : HdrRel H m) (hrel : Rel w k.toNat m st p)
     (hp : pos.toNat ≤ stop.toNat) (hn : (stepCmd H k a stop hs st pos).status = .next) :
-    ∃ p', Rel w k.toNat m (stepCmd H k a stop hs st pos) p' ∧ (stepCmd H k a stop hs st pos).pos.toNat ≤ stop.toNat ∧
-      pos.toNat ≤ (stepCmd H k a stop hs st pos).pos.toNat ∧
+    ∃ p', Rel w k.toNat m (stepCmd H k a stop hs st pos) p' ∧ OutStep p p' st (stepCmd H k a stop hs st pos) ∧
+      (stepCmd H k a stop hs st pos).pos.toNat ≤ stop.toNat ∧ pos.toNat ≤ (stepCmd H k a stop hs st pos).pos.toNat ∧
       ∀ F, ∃ n, 1 ≤ n ∧ ReachN (cStep w m) n p (stateBits st a pos stop F) p'
         (stateBits (stepCmd H k a stop hs st pos) a (stepCmd H k a stop hs st pos).pos stop F) := by
   by_cases hc : ∃ s, p = .command s
   · obtain ⟨s, rfl⟩ := hc
     obtain ⟨ic, hR, h1, h2, h0, hne⟩ := (stepCmd_start (hs := hs) hH hrel hp).1 hn
-    refine ⟨.insertCopy s ic, hR, h2, h1, fun F => ⟨1, Nat.le_refl _, .next ?_ (.refl _ _)⟩⟩
+    have hout : OutStep (.command s) (.insertCopy s ic) st (stepCmd H k a stop hs st pos) :=
+      ⟨[], rfl, by rw [stepCmd_pend_command hrel.2.1]; rfl⟩
+    refine ⟨.insertCopy s ic, hR, hout, h2, h1, fun F => ⟨1, Nat.le_refl _, .next ?_ (.refl _ _)⟩⟩
     rw [cStep_command _ h0]
     have hsw : ¬ (s.insertCopy.count = 0 ∧ m.insertCopy.n < 2) := fun e => by
       have := hne F
@@ -125,7 +128,7 @@ theorem stepCmd_count {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a :
       cases this
     rw [nextIn_some hsw (hne F)]
   · have hok := stepCmd_ok (K := commandsFrom w m) (fun s bs h0 => commandsFrom_step bs h0) (hs := hs) hH hrel hp
-    obtain ⟨p', hR, h1, h2, _, hd, _, hj⟩ := hok.next hn
+    obtain ⟨p', hR, h1, h2, _, hd, hout, hj⟩ := hok.next hn
     have hr : (rankC p).1 ≠ 0 := by
       cases p with
       | command s => exact absurd ⟨s, rfl⟩ hc
@@ -133,7 +136,7 @@ theorem stepCmd_count {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a :
         simp only [rankC]
         omega
     have hlt : LexLt (rankC p') (rankC p) := hd.resolve_left hr
-    refine ⟨p', hR, h2, h1, fun F => (hj F).count_pos fun ⟨e1, _⟩ => ?_⟩
+    refine ⟨p', hR, hout, h2, h1, fun F => (hj F).count_pos fun ⟨e1, _⟩ => ?_⟩
     rw [e1] at hlt
     simp only [LexLt] at hlt
     omega
@@ -142,7 +145,8 @@ theorem stepCmd_count {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a :
 it doesn't reject, and up to the state its last step starts from when it does. -/
 theorem runCmd_count {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size}
     (hH : HdrRel H m) : ∀ (N : Nat) (n : USize) (st : Cmd) (p : Phase) (pos : USize), n.toNat = N → Rel w k.toNat m st p →
-      pos.toNat ≤ stop.toNat → ∀ F, ∃ c q st' pos', Rel w k.toNat m st' q ∧ pos.toNat ≤ pos'.toNat ∧ pos'.toNat ≤ stop.toNat ∧
+      pos.toNat ≤ stop.toNat → ∀ F, ∃ c q st' pos', Rel w k.toNat m st' q ∧ OutStep p q st st' ∧ PendLe st st' ∧
+        pos.toNat ≤ pos'.toNat ∧ pos'.toNat ≤ stop.toNat ∧
         ReachN (cStep w m) c p (stateBits st a pos stop F) q (stateBits st' a pos' stop F) ∧ runCmdSteps H k a stop hs n st pos ≤ c + 1 ∧
         ((runCmd H k a stop hs n st pos).status ≠ .bad → st' = runCmd H k a stop hs n st pos ∧ pos' = (runCmd H k a stop hs n st pos).pos) ∧
         ((runCmd H k a stop hs n st pos).status = .done → ∃ s, q = .command s ∧ s.remaining = 0) ∧
@@ -154,7 +158,8 @@ theorem runCmd_count {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a : 
     have hz : n = 0 := usize_zero hN
     have e : runCmd H k a stop hs n st pos = markStep st pos .next := by rw [runCmd, dite_eq_left hz]
     rw [e]
-    refine ⟨0, p, markStep st pos .next, pos, hrel.mark _ _, Nat.le_refl _, hp, .refl _ _, ?_, fun _ => ⟨rfl, rfl⟩,
+    refine ⟨0, p, markStep st pos .next, pos, hrel.mark _ _, ⟨[], rfl, rfl⟩, PendLe.keep rfl rfl, Nat.le_refl _, hp, .refl _ _, ?_,
+      fun _ => ⟨rfl, rfl⟩,
       fun h => StepStatus.noConfusion h, fun _ h => absurd hz h⟩
     rw [runCmdSteps, dite_eq_left hz]
     omega
@@ -175,29 +180,32 @@ theorem runCmd_count {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a : 
     rw [hsteps, hrun]
     cases hst : (stepCmd H k a stop hs st pos).status
     case next =>
-      obtain ⟨p1, hR1, h1, h2, hc1⟩ := stepCmd_count (hs := hs) hH hrel hp hst
+      obtain ⟨p1, hR1, o1, h1, h2, hc1⟩ := stepCmd_count (hs := hs) hH hrel hp hst
       obtain ⟨n1, hn1, hr1⟩ := hc1 F
-      obtain ⟨c2, q, st', pos', hq, g1, g2, hr2, g3, g4, g5, _⟩ := ih (n - USize.ofNat 1) _ p1 _ (by omega) hR1 h1 F
-      refine ⟨n1 + c2, q, st', pos', hq, by omega, g2, hr1.trans hr2, ?_, g4, g5, fun _ _ => by omega⟩
+      obtain ⟨c2, q, st', pos', hq, o2, l2, g1, g2, hr2, g3, g4, g5, _⟩ := ih (n - USize.ofNat 1) _ p1 _ (by omega) hR1 h1 F
+      refine ⟨n1 + c2, q, st', pos', hq, o1.trans o2, (stepCmd_pendLe H k a stop hs st pos).trans l2, by omega, g2,
+        hr1.trans hr2, ?_, g4, g5, fun _ _ => by omega⟩
       show runCmdSteps H k a stop hs (n - USize.ofNat 1) (stepCmd H k a stop hs st pos) (stepCmd H k a stop hs st pos).pos + 1 ≤ _
       omega
     case needsInput =>
-      obtain ⟨b1, _, p', hR', _, _, _, _, hj, _⟩ := hok.needsInput hst
+      obtain ⟨b1, _, p', hR', _, _, _, hout, hj, _⟩ := hok.needsInput hst
       obtain ⟨c0, hc0⟩ := (hj F).count
-      refine ⟨c0, p', _, _, hR', by rw [b1]; exact hp, by rw [b1]; exact Nat.le_refl _, hc0, by show 1 ≤ _; omega,
+      refine ⟨c0, p', _, _, hR', hout, stepCmd_pendLe H k a stop hs st pos, by rw [b1]; exact hp, by rw [b1]; exact Nat.le_refl _,
+        hc0, by show 1 ≤ _; omega,
         fun _ => ⟨rfl, rfl⟩, (fun h => absurd (hst.symm.trans h) (by decide)), (fun h => absurd (hst.symm.trans h) (by decide))⟩
     case needsOutput =>
-      obtain ⟨p', hR', b1, b2, _, _, _, _, hj⟩ := hok.needsOutput hst
+      obtain ⟨p', hR', b1, b2, _, _, _, hout, hj⟩ := hok.needsOutput hst
       obtain ⟨c0, hc0⟩ := (hj F).count
-      exact ⟨c0, p', _, _, hR', b1, b2, hc0, by show 1 ≤ _; omega, fun _ => ⟨rfl, rfl⟩,
+      exact ⟨c0, p', _, _, hR', hout, stepCmd_pendLe H k a stop hs st pos, b1, b2, hc0, by show 1 ≤ _; omega, fun _ => ⟨rfl, rfl⟩,
         (fun h => absurd (hst.symm.trans h) (by decide)), (fun h => absurd (hst.symm.trans h) (by decide))⟩
     case done =>
-      obtain ⟨s, hR', b1, b2, _, h0, _, hj⟩ := hok.done hst
+      obtain ⟨s, hR', b1, b2, _, h0, hout, hj⟩ := hok.done hst
       obtain ⟨c0, hc0⟩ := (hj F).count
-      exact ⟨c0, .command s, _, _, hR', b1, b2, hc0, by show 1 ≤ _; omega, fun _ => ⟨rfl, rfl⟩, fun _ => ⟨s, rfl, h0⟩,
+      exact ⟨c0, .command s, _, _, hR', hout, stepCmd_pendLe H k a stop hs st pos, b1, b2, hc0, by show 1 ≤ _; omega,
+        fun _ => ⟨rfl, rfl⟩, fun _ => ⟨s, rfl, h0⟩,
         (fun h => absurd (hst.symm.trans h) (by decide))⟩
     case bad =>
-      exact ⟨0, p, st, pos, hrel, Nat.le_refl _, hp, .refl _ _, Nat.le_refl _, fun e => absurd hst e,
+      exact ⟨0, p, st, pos, hrel, ⟨[], rfl, rfl⟩, PendLe.rfl' _, Nat.le_refl _, hp, .refl _ _, Nat.le_refl _, fun e => absurd hst e,
         (fun h => absurd (hst.symm.trans h) (by decide)), (fun h => absurd (hst.symm.trans h) (by decide))⟩
 
 /-- A stream step outside the commands that goes on moves to another place. -/
@@ -223,7 +231,7 @@ theorem sdown_ne {p p' : SPhase} (h : SDown p p') (hc : ∀ w l m q, p ≠ .cmds
 /-- The facts a stream step's count gives: an end state and place, the steps of the reading in order up to them, and what
 the end state is when the step goes on or pauses. -/
 def DCount (a : ByteArray) (stop : USize) (p : SPhase) (D : Dec) (t : List UInt8) (steps : Nat) (r : Dec) : Prop :=
-  ∃ c q D', DRel D' q ∧ D.pos.toNat ≤ D'.pos.toNat ∧ D'.pos.toNat ≤ stop.toNat ∧
+  ∃ c q D', DRel D' q ∧ OutD p q D D' ∧ PendLeD D D' ∧ D.pos.toNat ≤ D'.pos.toNat ∧ D'.pos.toNat ≤ stop.toNat ∧
     ReachN sStep c p (D.bits a D.pos stop (bits t)) q (D'.bits a D'.pos stop (bits t)) ∧ steps ≤ c + 1 ∧
     (r.status = .next → D' = r ∧ 1 ≤ c) ∧ (r.status = .needsInput → D' = r) ∧ (r.status = .needsOutput → D' = r)
 
@@ -235,26 +243,28 @@ theorem stepD_count_other {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.
   have hen : ∀ st, p ≠ .ended st := hrel.tag_ne he
   cases hst : (stepD a stop hs D).status with
   | next =>
-    obtain ⟨p', hR, h1, h2, _, hsd, _, hj⟩ := hok.next hst
+    obtain ⟨p', hR, h1, h2, _, hsd, hout, hj⟩ := hok.next hst
     obtain ⟨n, hn1, hr⟩ := (hj t).count_pos fun ⟨e1, _⟩ => sdown_ne hsd hc hen e1
-    exact ⟨n, p', _, hR, h1, h2, hr, by omega, fun _ => ⟨rfl, hn1⟩, (fun h => absurd (hst.symm.trans h) (by decide)),
-      (fun h => absurd (hst.symm.trans h) (by decide))⟩
+    exact ⟨n, p', _, hR, hout, stepD_pendLe a stop hs D, h1, h2, hr, by omega, fun _ => ⟨rfl, hn1⟩,
+      (fun h => absurd (hst.symm.trans h) (by decide)), (fun h => absurd (hst.symm.trans h) (by decide))⟩
   | needsInput =>
-    obtain ⟨b1, b2, p', hR, _, _, _, _, _, hj, _⟩ := hok.needsInput hst
+    obtain ⟨b1, b2, p', hR, _, _, _, _, hout, hj, _⟩ := hok.needsInput hst
     obtain ⟨n, hr⟩ := (hj t).count
-    exact ⟨n, p', _, hR, by rw [b1]; exact b2, by rw [b1]; exact Nat.le_refl _, hr, by omega,
+    exact ⟨n, p', _, hR, hout, stepD_pendLe a stop hs D, by rw [b1]; exact b2, by rw [b1]; exact Nat.le_refl _, hr, by omega,
       (fun h => absurd (hst.symm.trans h) (by decide)), (fun _ => rfl), (fun h => absurd (hst.symm.trans h) (by decide))⟩
   | needsOutput =>
-    obtain ⟨p', hR, h1, h2, _, _, _, _, _, hj⟩ := hok.needsOutput hst
+    obtain ⟨p', hR, h1, h2, _, _, _, _, hout, hj⟩ := hok.needsOutput hst
     obtain ⟨n, hr⟩ := (hj t).count
-    exact ⟨n, p', _, hR, h1, h2, hr, by omega, (fun h => absurd (hst.symm.trans h) (by decide)),
+    exact ⟨n, p', _, hR, hout, stepD_pendLe a stop hs D, h1, h2, hr, by omega, (fun h => absurd (hst.symm.trans h) (by decide)),
       (fun h => absurd (hst.symm.trans h) (by decide)), (fun _ => rfl)⟩
   | bad =>
-    exact ⟨0, p, D, hrel, Nat.le_refl _, hp, .refl _ _, Nat.le_refl _, (fun h => absurd (hst.symm.trans h) (by decide)),
-      (fun h => absurd (hst.symm.trans h) (by decide)), (fun h => absurd (hst.symm.trans h) (by decide))⟩
+    exact ⟨0, p, D, hrel, ⟨[], rfl, rfl⟩, PendLe.rfl' _, Nat.le_refl _, hp, .refl _ _, Nat.le_refl _,
+      (fun h => absurd (hst.symm.trans h) (by decide)), (fun h => absurd (hst.symm.trans h) (by decide)),
+      (fun h => absurd (hst.symm.trans h) (by decide))⟩
   | memory =>
-    exact ⟨0, p, D, hrel, Nat.le_refl _, hp, .refl _ _, Nat.le_refl _, (fun h => absurd (hst.symm.trans h) (by decide)),
-      (fun h => absurd (hst.symm.trans h) (by decide)), (fun h => absurd (hst.symm.trans h) (by decide))⟩
+    exact ⟨0, p, D, hrel, ⟨[], rfl, rfl⟩, PendLe.rfl' _, Nat.le_refl _, hp, .refl _ _, Nat.le_refl _,
+      (fun h => absurd (hst.symm.trans h) (by decide)), (fun h => absurd (hst.symm.trans h) (by decide)),
+      (fun h => absurd (hst.symm.trans h) (by decide))⟩
 
 private theorem cmdBudget_ne' : cmdBudget ≠ 0 := by
   intro e
@@ -272,7 +282,7 @@ theorem stepDCmds_count {w : Nat} {last : Bool} {m : MetaBlockHeader} {q0 : Phas
   subst ht'
   have hl0 : last' = last := hl
   subst hl0
-  obtain ⟨c, q, st', pos'', hq, g1, g2, hr, g3, g4, g5, g6⟩ :=
+  obtain ⟨c, q, st', pos'', hq, o1, l1, g1, g2, hr, g3, g4, g5, g6⟩ :=
     runCmd_count (w := w) (hs := hs) hH _ cmdBudget cmd q0 pos' rfl hR hp (bits t)
   have hr' := ReachN.cmds (last := last') hr
   dsimp only at g3 hr' ⊢
@@ -286,7 +296,7 @@ theorem stepDCmds_count {w : Nat} {last : Bool} {m : MetaBlockHeader} {q0 : Phas
     subst e2
     exact ⟨c, .cmds w last' m q,
       { clearCmd ⟨.cmds, cmd, hd, H, k, last', left, limit, pos', status⟩ with cmd := st', pos := st'.pos, status := .next },
-      ⟨rfl, rfl, hlim, hH, hq⟩, g1, g2, hr', g3, fun _ => ⟨rfl, g6 hst cmdBudget_ne'⟩,
+      ⟨rfl, rfl, hlim, hH, hq⟩, o1, l1, g1, g2, hr', g3, fun _ => ⟨rfl, g6 hst cmdBudget_ne'⟩,
       (fun h => DStatus.noConfusion h), (fun h => DStatus.noConfusion h)⟩
   | needsInput =>
     obtain ⟨e1, e2⟩ := g4 (by rw [hst]; decide)
@@ -294,18 +304,18 @@ theorem stepDCmds_count {w : Nat} {last : Bool} {m : MetaBlockHeader} {q0 : Phas
     subst e2
     exact ⟨c, .cmds w last' m q,
       { clearCmd ⟨.cmds, cmd, hd, H, k, last', left, limit, pos', status⟩ with cmd := st', pos := st'.pos, status := .needsInput },
-      ⟨rfl, rfl, hlim, hH, hq⟩, g1, g2, hr', g3, (fun h => DStatus.noConfusion h), (fun _ => rfl), (fun h => DStatus.noConfusion h)⟩
+      ⟨rfl, rfl, hlim, hH, hq⟩, o1, l1, g1, g2, hr', g3, (fun h => DStatus.noConfusion h), (fun _ => rfl), (fun h => DStatus.noConfusion h)⟩
   | needsOutput =>
     obtain ⟨e1, e2⟩ := g4 (by rw [hst]; decide)
     subst e1
     subst e2
     exact ⟨c, .cmds w last' m q,
       { clearCmd ⟨.cmds, cmd, hd, H, k, last', left, limit, pos', status⟩ with cmd := st', pos := st'.pos, status := .needsOutput },
-      ⟨rfl, rfl, hlim, hH, hq⟩, g1, g2, hr', g3, (fun h => DStatus.noConfusion h), (fun h => DStatus.noConfusion h), (fun _ => rfl)⟩
+      ⟨rfl, rfl, hlim, hH, hq⟩, o1, l1, g1, g2, hr', g3, (fun h => DStatus.noConfusion h), (fun h => DStatus.noConfusion h), (fun _ => rfl)⟩
   | bad =>
     exact ⟨c, .cmds w last' m q,
       { clearCmd ⟨.cmds, cmd, hd, H, k, last', left, limit, pos', status⟩ with cmd := st', pos := pos'', status := .bad },
-      ⟨rfl, rfl, hlim, hH, hq⟩, g1, g2, hr', g3, (fun h => DStatus.noConfusion h), (fun h => DStatus.noConfusion h),
+      ⟨rfl, rfl, hlim, hH, hq⟩, o1, l1, g1, g2, hr', g3, (fun h => DStatus.noConfusion h), (fun h => DStatus.noConfusion h),
       (fun h => DStatus.noConfusion h)⟩
   | done =>
     obtain ⟨e1, e2⟩ := g4 (by rw [hst]; decide)
@@ -327,19 +337,19 @@ theorem stepDCmds_count {w : Nat} {last : Bool} {m : MetaBlockHeader} {q0 : Phas
         exact ⟨c + 1, .ended ⟨s.output, s.produced, s.distances⟩,
           { clearCmd ⟨.cmds, cmd, hd, H, k, true, left, limit, pos', status⟩ with
             cmd := st', pos := st'.pos, status := .next, tag := if true then .ended else .mblock, H := Hdr.none },
-          ⟨rfl, hC.wf, w, ⟨hwin, hprod, hlim⟩⟩, g1, g2, hr2, by omega,
+          ⟨rfl, hC.wf, w, ⟨hwin, hprod, hlim⟩⟩, o1, l1, g1, g2, hr2, by omega,
           fun _ => ⟨rfl, by omega⟩, (fun h => DStatus.noConfusion h), (fun h => DStatus.noConfusion h)⟩
       | false =>
         exact ⟨c + 1, .mblock w ⟨s.output, s.produced, s.distances⟩,
           { clearCmd ⟨.cmds, cmd, hd, H, k, false, left, limit, pos', status⟩ with
             cmd := st', pos := st'.pos, status := .next, tag := if false then .ended else .mblock, H := Hdr.none },
-          ⟨rfl, hC.wf, ⟨hwin, hprod, hlim⟩⟩, g1, g2, hr2, by omega,
+          ⟨rfl, hC.wf, ⟨hwin, hprod, hlim⟩⟩, o1, l1, g1, g2, hr2, by omega,
           fun _ => ⟨rfl, by omega⟩, (fun h => DStatus.noConfusion h), (fun h => DStatus.noConfusion h)⟩
     · show DCount a stop _ _ t _ (if seenOk st'.seen H.nL H.nI H.nD then _ else _)
       rw [ite_eq_right hsee]
       exact ⟨c, .cmds w last' m (.command s),
         { clearCmd ⟨.cmds, cmd, hd, H, k, last', left, limit, pos', status⟩ with cmd := st', pos := st'.pos, status := .bad },
-        ⟨rfl, rfl, hlim, hH, hq⟩, g1, g2, hr', g3,
+        ⟨rfl, rfl, hlim, hH, hq⟩, o1, l1, g1, g2, hr', g3,
         (fun h => DStatus.noConfusion h), (fun h => DStatus.noConfusion h), (fun h => DStatus.noConfusion h)⟩
 
 /-- A stream step's steps, against the reading in order. -/
@@ -375,7 +385,7 @@ theorem stepD_count {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} 
 
 /-- The decoder's loop's steps are at most twice the steps of the reading in order it takes, plus two. -/
 theorem runD_count {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} (t : List UInt8) : ∀ (x : RunArg a stop hs) (p : SPhase),
-    DRel x.D p → ∃ c q D', DRel D' q ∧ x.D.pos.toNat ≤ D'.pos.toNat ∧ D'.pos.toNat ≤ stop.toNat ∧
+    DRel x.D p → ∃ c q D', DRel D' q ∧ OutD p q x.D D' ∧ PendLeD x.D D' ∧ x.D.pos.toNat ≤ D'.pos.toNat ∧ D'.pos.toNat ≤ stop.toNat ∧
       ReachN sStep c p (x.D.bits a x.D.pos stop (bits t)) q (D'.bits a D'.pos stop (bits t)) ∧
       runDSteps a stop hs x.D x.inv ≤ 2 * c + 2 ∧
       ((runD a stop hs x.D x.inv).status = .next → D' = runD a stop hs x.D x.inv) ∧
@@ -390,20 +400,20 @@ theorem runD_count {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} (
     rw [runDSteps, runD]
     by_cases he : D.tag = .ended
     · rw [dite_eq_left he, dite_eq_left he]
-      exact ⟨0, p, { D with status := .next }, hrel.congr rfl rfl rfl rfl rfl rfl rfl rfl, Nat.le_refl _, hinv.2, .refl _ _,
-        by omega, fun _ => rfl, fun h => DStatus.noConfusion h, fun h => DStatus.noConfusion h⟩
+      exact ⟨0, p, { D with status := .next }, hrel.congr rfl rfl rfl rfl rfl rfl rfl rfl, ⟨[], rfl, rfl⟩, PendLe.keep rfl rfl,
+        Nat.le_refl _, hinv.2, .refl _ _, by omega, fun _ => rfl, fun h => DStatus.noConfusion h, fun h => DStatus.noConfusion h⟩
     · rw [dite_eq_right he, dite_eq_right he]
       dsimp only
-      obtain ⟨c1, q1, D1, hR1, p1, p2, hr1, hs1, hnext, hin, hout⟩ := stepD_count (hs := hs) hrel he hinv.2 t
+      obtain ⟨c1, q1, D1, hR1, o1, l1, p1, p2, hr1, hs1, hnext, hin, hout⟩ := stepD_count (hs := hs) hrel he hinv.2 t
       by_cases hn : (stepD a stop hs D).status = .next
       · rw [dite_eq_left hn, dite_eq_left hn]
         obtain ⟨e1, hc1⟩ := hnext hn
         subst e1
-        obtain ⟨c2, q, D', hR, g1, g2, hr2, g3, g4, g5, g6⟩ := ih ⟨_, hinv.step he hn⟩ ⟨he, hn, rfl⟩ q1 hR1
+        obtain ⟨c2, q, D', hR, o2, l2, g1, g2, hr2, g3, g4, g5, g6⟩ := ih ⟨_, hinv.step he hn⟩ ⟨he, hn, rfl⟩ q1 hR1
         have g3' : runDSteps a stop hs (stepD a stop hs D) (hinv.step he hn) ≤ 2 * c2 + 2 := g3
-        exact ⟨c1 + c2, q, D', hR, Nat.le_trans p1 g1, g2, hr1.trans hr2, by omega, g4, g5, g6⟩
+        exact ⟨c1 + c2, q, D', hR, o1.trans o2, l1.trans l2, Nat.le_trans p1 g1, g2, hr1.trans hr2, by omega, g4, g5, g6⟩
       · rw [dite_eq_right hn, dite_eq_right hn]
-        exact ⟨c1, q1, D1, hR1, p1, p2, hr1, by omega, fun h => absurd h hn, hin, hout⟩
+        exact ⟨c1, q1, D1, hR1, o1, l1, p1, p2, hr1, by omega, fun h => absurd h hn, hin, hout⟩
 
 theorem buf_size_of {b b' : ByteArray} {n : List Nat} (h : b'.data.toList.map UInt8.toNat = b.data.toList.map UInt8.toNat ++ n) :
     b'.size = b.size + n.length := by
@@ -450,6 +460,68 @@ theorem afterRun_facts {r : Dec} {q : SPhase} (hR : r.status = .next ∨ r.statu
       · exact ⟨(by show buf.size ≤ (flushD r buf space).buf.size; omega),fun h => Bool.noConfusion h, fun h => Status.noConfusion h⟩
     · exact ⟨(by show buf.size ≤ (flushD r buf space).buf.size; omega),fun _ => a8, fun h => Status.noConfusion h⟩
 
+/-- Handing bytes out adds to the buffer all the bytes waiting, or as many as the space takes. -/
+theorem flush_len {D : Dec} {p : SPhase} (h : DRel D p) (buf : ByteArray) (space : Nat) :
+    ∃ len, (flushD D buf space).buf.size = buf.size + len ∧ (len = D.cmd.pend.toNat ∨ len = space) ∧ len ≤ D.cmd.pend.toNat ∧
+      len ≤ space ∧ (flushD D buf space).space = space - len ∧ (flushD D buf space).D.cmd.pend.toNat = D.cmd.pend.toNat - len := by
+  obtain ⟨len, a1, a2, a3, _, a5, a6, a7, _⟩ := flushD_spec h buf space
+  have hb := buf_size_of a7
+  have hpo := h.pendOut
+  have hl : (((p.out.take D.cmd.pend.toNat).reverse).take len).length = len := by
+    simp only [List.length_take, List.length_reverse]
+    omega
+  rw [hl] at hb
+  exact ⟨len, hb, by omega, a1, a2, a3, a5⟩
+
+/-- What a call's end hands out: nothing when the loop rejected or ran out of memory, and otherwise what handing the bytes
+out adds. -/
+theorem afterRun_len {r : Dec} {q : SPhase} (hR : r.status = .next ∨ r.status = .needsInput → DRel r q) (stop : USize)
+    (final : Bool) (pos0 : USize) (buf : ByteArray) (space : Nat) :
+    ((r.status = .bad ∨ r.status = .memory) → (afterRun r stop final pos0 buf space).buf = buf ∧
+        ((afterRun r stop final pos0 buf space).status = .rejected ∨ (afterRun r stop final pos0 buf space).status = .memoryLimit)) ∧
+      ((r.status = .next ∨ r.status = .needsInput) → ∃ len, (afterRun r stop final pos0 buf space).buf.size = buf.size + len ∧
+        (len = r.cmd.pend.toNat ∨ len = space)) := by
+  have hf : (r.status = .next ∨ r.status = .needsInput) → (afterRun r stop final pos0 buf space).buf = (flushD r buf space).buf := by
+    intro e
+    unfold afterRun
+    rcases e with e | e
+    · rw [e]
+      dsimp only
+      split
+      · unfold endCheck
+        dsimp only
+        repeat' (first | split_all | rfl)
+      · rfl
+    · rw [e]
+      dsimp only
+      repeat' (first | split_all | rfl)
+  refine ⟨fun e => ?_, fun e => ?_⟩
+  · unfold afterRun
+    rcases e with e | e
+    · rw [e]
+      exact ⟨rfl, Or.inl rfl⟩
+    · rw [e]
+      exact ⟨rfl, Or.inr rfl⟩
+  · obtain ⟨len, b1, b2, _⟩ := flush_len (hR e) buf space
+    exact ⟨len, by rw [hf e, b1], b2⟩
+
+/-- One round's bytes: the reading in order adds what the loop left waiting beyond what waited, and the loop leaves no more
+waiting than waited or than one more than the space. -/
+theorem round_out {p q : SPhase} {D D1 : Dec} {space : Nat} (ho : OutD p q (withCap D space) D1)
+    (hl : PendLeD (withCap D space) D1) :
+    q.out.length + D.cmd.pend.toNat = p.out.length + D1.cmd.pend.toNat ∧ D1.cmd.pend.toNat ≤ max D.cmd.pend.toNat (space + 1) := by
+  obtain ⟨l, h1, h2⟩ := ho
+  obtain ⟨_, h3⟩ := hl
+  have hc : capE (withCap D space).cmd.cap ≤ space + 1 := by
+    show max (capFor space).toNat 1 ≤ space + 1
+    unfold capFor
+    rw [usize_ofNat' (by omega)]
+    omega
+  have h2' : D1.cmd.pend.toNat = D.cmd.pend.toNat + l.length := h2
+  have h3' : D1.cmd.pend.toNat ≤ max D.cmd.pend.toNat (capE (withCap D space).cmd.cap) := h3
+  have hq : q.out.length = l.length + p.out.length := by rw [h1, List.length_append]
+  refine ⟨by omega, by omega⟩
+
 /-- A call's steps are at most twice the steps of the reading in order it takes, plus two for each round of handing bytes out
 and two more. -/
 theorem callD_count {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {final : Bool} (t : List UInt8) :
@@ -458,15 +530,20 @@ theorem callD_count {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} 
       ReachN sStep c p (D.bits a D.pos stop (bits t)) q (D'.bits a D'.pos stop (bits t)) ∧
       callDSteps a stop hs final D h buf space + 2 * buf.size ≤ 2 * c + 2 + 2 * (callD a stop hs final D h buf space).buf.size ∧
       (((callD a stop hs final D h buf space).status.stopped = false ∨ (callD a stop hs final D h buf space).status = .done) →
-        D'.pos.toNat ≤ (callD a stop hs final D h buf space).pos.toNat) := by
+        D'.pos.toNat ≤ (callD a stop hs final D h buf space).pos.toNat) ∧
+      ((callD a stop hs final D h buf space).status ≠ .rejected → (callD a stop hs final D h buf space).status ≠ .memoryLimit →
+        q.out.length + buf.size ≤ p.out.length + (callD a stop hs final D h buf space).buf.size + 1) ∧
+      q.out.length + buf.size ≤ p.out.length + (callD a stop hs final D h buf space).buf.size + space + 1 := by
   intro space
   induction space using Nat.strongRecOn with
   | _ space ih =>
     intro D h p buf hrel
     rw [callDSteps, callD]
     dsimp only
-    obtain ⟨c1, q1, D1, hR1, p1, p2, hr1, g1, g2, g3, g4⟩ := runD_count (hs := hs) t ⟨withCap D space, h.withCap space⟩ p (hrel.withCap _)
-    dsimp only at p1 g1 g2 g3 g4
+    obtain ⟨c1, q1, D1, hR1, o1, l1, p1, p2, hr1, g1, g2, g3, g4⟩ :=
+      runD_count (hs := hs) t ⟨withCap D space, h.withCap space⟩ p (hrel.withCap _)
+    dsimp only at p1 g1 g2 g3 g4 o1 l1
+    obtain ⟨r1, r2⟩ := round_out o1 l1
     have hcp : (withCap D space).pos = D.pos := rfl
     rw [hcp] at p1
     by_cases hO : (runD a stop hs (withCap D space) (h.withCap space)).status = .needsOutput
@@ -480,33 +557,72 @@ theorem callD_count {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} 
         simp only [List.length_take, List.length_reverse]
         omega
       rw [hl] at hb
+      obtain ⟨len', b1, b2, b3, b4, b5, b6⟩ := flush_len hR1 buf space
       by_cases hz : (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D.cmd.pend = 0
       · rw [ite_eq_left hz, ite_eq_left hz]
+        have hz0 : (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D.cmd.pend.toNat = 0 := by
+          rw [hz]; rfl
         by_cases hlt : (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).space < space
         · rw [dite_eq_left hlt, dite_eq_left hlt]
-          obtain ⟨c2, q, D', hR, f1, f2, hr2, f3, f4⟩ := ih _ hlt _ (flushD_inv (runD_full hO) buf space) q1 _ a4
+          obtain ⟨c2, q, D', hR, f1, f2, hr2, f3, f4, f5, f6⟩ := ih _ hlt _ (flushD_inv (runD_full hO) buf space) q1 _ a4
           rw [a8] at f1
           have hr2' : ReachN sStep c2 q1 ((runD a stop hs (withCap D space) (h.withCap space)).bits a (runD a stop hs (withCap D space) (h.withCap space)).pos stop (bits t)) q
               (D'.bits a D'.pos stop (bits t)) := by
             rw [← a9, ← a8]
             exact hr2
-          refine ⟨c1 + c2, q, D', hR, by omega, f2, hr1.trans hr2', by omega, f4⟩
+          refine ⟨c1 + c2, q, D', hR, by omega, f2, hr1.trans hr2', by omega, f4, fun e1 e2 => ?_, ?_⟩
+          · have := f5 e1 e2
+            omega
+          · have := f6
+            omega
         · rw [dite_eq_right hlt, dite_eq_right hlt]
-          refine ⟨c1, q1, _, hR1, p1, p2, hr1, ?_, fun h => ?_⟩
+          refine ⟨c1, q1, _, hR1, p1, p2, hr1, ?_, fun h => ?_, fun e => absurd rfl e, ?_⟩
           · dsimp only
             omega
           · rcases h with h | h <;> cases h
+          · dsimp only
+            omega
       · rw [ite_eq_right hz, ite_eq_right hz]
-        refine ⟨c1, q1, _, hR1, p1, p2, hr1, ?_, fun _ => ?_⟩
+        have hnz : (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D.cmd.pend.toNat ≠ 0 :=
+          fun e => hz (USize.toNat_inj.mp (by rw [e]; rfl))
+        refine ⟨c1, q1, _, hR1, p1, p2, hr1, ?_, fun _ => ?_, fun _ _ => ?_, ?_⟩
         · dsimp only
           omega
         · show _ ≤ (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D.pos.toNat
           rw [a8]
           exact Nat.le_refl _
+        · dsimp only
+          omega
+        · dsimp only
+          omega
     · rw [dite_eq_right hO, dite_eq_right hO]
       obtain ⟨f1, f2, f3⟩ := afterRun_facts (r := runD a stop hs (withCap D space) (h.withCap space))
         (fun e => e.elim (fun e => g2 e ▸ hR1) (fun e => g3 e ▸ hR1)) stop final D.pos buf space
-      refine ⟨c1, q1, D1, hR1, p1, p2, hr1, by omega, fun hs' => ?_⟩
+      obtain ⟨k1, k2⟩ := afterRun_len (r := runD a stop hs (withCap D space) (h.withCap space))
+        (fun e => e.elim (fun e => g2 e ▸ hR1) (fun e => g3 e ▸ hR1)) stop final D.pos buf space
+      have hdec : ((runD a stop hs (withCap D space) (h.withCap space)).status = .next ∨
+          (runD a stop hs (withCap D space) (h.withCap space)).status = .needsInput) →
+          q1.out.length + buf.size ≤ p.out.length + (afterRun (runD a stop hs (withCap D space) (h.withCap space)) stop final
+            D.pos buf space).buf.size + 1 := by
+        intro e
+        have eD : D1 = runD a stop hs (withCap D space) (h.withCap space) := e.elim g2 g3
+        obtain ⟨len, m1, m2⟩ := k2 e
+        rw [eD] at r1 r2
+        omega
+      refine ⟨c1, q1, D1, hR1, p1, p2, hr1, by omega, fun hs' => ?_, fun e1 e2 => ?_, ?_⟩
+      rotate_left
+      · cases hrs : (runD a stop hs (withCap D space) (h.withCap space)).status with
+        | next => exact hdec (Or.inl hrs)
+        | needsInput => exact hdec (Or.inr hrs)
+        | needsOutput => exact absurd hrs hO
+        | bad => exact absurd ((k1 (Or.inl hrs)).2) (by rcases · with e | e <;> contradiction)
+        | memory => exact absurd ((k1 (Or.inr hrs)).2) (by rcases · with e | e <;> contradiction)
+      · cases hrs : (runD a stop hs (withCap D space) (h.withCap space)).status with
+        | next => have := hdec (Or.inl hrs); omega
+        | needsInput => have := hdec (Or.inr hrs); omega
+        | needsOutput => exact absurd hrs hO
+        | bad => rw [(k1 (Or.inl hrs)).1]; omega
+        | memory => rw [(k1 (Or.inr hrs)).1]; omega
       have hr : (afterRun (runD a stop hs (withCap D space) (h.withCap space)) stop final D.pos buf space).pos = (runD a stop hs (withCap D space) (h.withCap space)).pos := by
         rcases hs' with hs' | hs'
         · exact f2 hs'
