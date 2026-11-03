@@ -340,4 +340,67 @@ theorem stepDCmds_count {w : Nat} {last : Bool} {m : MetaBlockHeader} {q0 : Phas
         ⟨rfl, rfl, hlim, hH, hq⟩, g1, g2, hr', g3,
         (fun h => DStatus.noConfusion h), (fun h => DStatus.noConfusion h), (fun h => DStatus.noConfusion h)⟩
 
+/-- A stream step's steps, against the reading in order. -/
+theorem stepD_count {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {p : SPhase} (hrel : DRel D p)
+    (he : D.tag ≠ .ended) (hp : D.pos.toNat ≤ stop.toNat) (t : List UInt8) :
+    DCount a stop p D t (stepDSteps a stop hs D) (stepD a stop hs D) := by
+  by_cases hc : ∃ w l m q, p = .cmds w l m q
+  · obtain ⟨w, l, m, q, rfl⟩ := hc
+    have ht : D.tag = .cmds := hrel.1
+    have e1 : stepD a stop hs D = stepDCmds a stop hs D D.pos := by unfold stepD; rw [ht]
+    have e2 : stepDSteps a stop hs D = runCmdSteps D.H D.k a stop hs cmdBudget D.cmd D.pos := by unfold stepDSteps; rw [ht]
+    rw [e1, e2]
+    exact stepDCmds_count hrel hp t
+  · have hc' : ∀ w l m q, p ≠ .cmds w l m q := fun w l m q e => hc ⟨w, l, m, q, e⟩
+    have ht : D.tag ≠ .cmds := by
+      intro e
+      cases p with
+      | cmds w l m q => exact hc ⟨w, l, m, q, rfl⟩
+      | wbits => exact absurd (hrel.1.symm.trans e) (by decide)
+      | mblock => exact absurd (hrel.1.symm.trans e) (by decide)
+      | skip => exact absurd (hrel.1.symm.trans e) (by decide)
+      | raw => exact absurd (hrel.1.symm.trans e) (by decide)
+      | hdr => exact absurd (hrel.1.symm.trans e) (by decide)
+      | ended => exact absurd (hrel.1.symm.trans e) (by decide)
+    have e : stepDSteps a stop hs D = 1 := by
+      unfold stepDSteps
+      split
+      · rename_i h
+        exact absurd h ht
+      · rfl
+    rw [e]
+    exact stepD_count_other hrel he hp hc' t
+
+/-- The decoder's loop's steps are at most twice the steps of the reading in order it takes, plus two. -/
+theorem runD_count {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} (t : List UInt8) : ∀ (x : RunArg a stop hs) (p : SPhase),
+    DRel x.D p → ∃ c q D', DRel D' q ∧ x.D.pos.toNat ≤ D'.pos.toNat ∧ D'.pos.toNat ≤ stop.toNat ∧
+      ReachN sStep c p (x.D.bits a x.D.pos stop (bits t)) q (D'.bits a D'.pos stop (bits t)) ∧
+      runDSteps a stop hs x.D x.inv ≤ 2 * c + 2 ∧
+      ((runD a stop hs x.D x.inv).status = .next → D' = runD a stop hs x.D x.inv) ∧
+      ((runD a stop hs x.D x.inv).status = .needsInput → D' = runD a stop hs x.D x.inv) ∧
+      ((runD a stop hs x.D x.inv).status = .needsOutput → D' = runD a stop hs x.D x.inv) := by
+  intro x
+  induction x using (runRel_wf a stop hs).induction with
+  | _ x ih =>
+    intro p hrel
+    obtain ⟨D, hinv⟩ := x
+    dsimp only at hrel ⊢
+    rw [runDSteps, runD]
+    by_cases he : D.tag = .ended
+    · rw [dite_eq_left he, dite_eq_left he]
+      exact ⟨0, p, { D with status := .next }, hrel.congr rfl rfl rfl rfl rfl rfl rfl rfl, Nat.le_refl _, hinv.2, .refl _ _,
+        by omega, fun _ => rfl, fun h => DStatus.noConfusion h, fun h => DStatus.noConfusion h⟩
+    · rw [dite_eq_right he, dite_eq_right he]
+      dsimp only
+      obtain ⟨c1, q1, D1, hR1, p1, p2, hr1, hs1, hnext, hin, hout⟩ := stepD_count (hs := hs) hrel he hinv.2 t
+      by_cases hn : (stepD a stop hs D).status = .next
+      · rw [dite_eq_left hn, dite_eq_left hn]
+        obtain ⟨e1, hc1⟩ := hnext hn
+        subst e1
+        obtain ⟨c2, q, D', hR, g1, g2, hr2, g3, g4, g5, g6⟩ := ih ⟨_, hinv.step he hn⟩ ⟨he, hn, rfl⟩ q1 hR1
+        have g3' : runDSteps a stop hs (stepD a stop hs D) (hinv.step he hn) ≤ 2 * c2 + 2 := g3
+        exact ⟨c1 + c2, q, D', hR, Nat.le_trans p1 g1, g2, hr1.trans hr2, by omega, g4, g5, g6⟩
+      · rw [dite_eq_right hn, dite_eq_right hn]
+        exact ⟨c1, q1, D1, hR1, p1, p2, hr1, by omega, fun h => absurd h hn, hin, hout⟩
+
 end Brotli.Decoder
