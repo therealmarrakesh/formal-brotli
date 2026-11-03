@@ -1,4 +1,5 @@
 import Brotli.Decoder.StreamMem
+import Brotli.Decoder.StreamLimit
 
 /-!
 # The decoder
@@ -698,6 +699,79 @@ theorem decoder_streams : Streams decoder (fun s => s.val.holds) demand where
 /-- What the state holds stays within the window the stream declares plus a constant: the fixed cost, the ring's 16 bytes
 beyond the window, and 774 tables of at most 132096 bytes. -/
 theorem decoder_ceiling : DemandCeiling demand (fixedCost + 16 + headerTablesMax * tableMax) := demand_ceiling
+
+/-! ### The limit changes nothing but whether the decoder stops -/
+
+/-- A call from two states that differ only in their limit and table room: one of them reports the limit, or the two reply
+alike. -/
+private theorem decStep_lim {s1 s2 : DState} {l a : UInt64} (hs : s1.val = decSet s2.val l a) (ar : ByteArray) (start stop : Nat)
+    (buf : ByteArray) (space : Nat) (final : Bool) :
+    (decStep s1 ar start stop buf space final).status = .memoryLimit ∨ (decStep s2 ar start stop buf space final).status = .memoryLimit ∨
+      ((decStep s1 ar start stop buf space final).status = (decStep s2 ar start stop buf space final).status ∧
+        (decStep s1 ar start stop buf space final).used = (decStep s2 ar start stop buf space final).used ∧
+        (decStep s1 ar start stop buf space final).output = (decStep s2 ar start stop buf space final).output ∧
+        ∃ l a, (decStep s1 ar start stop buf space final).state.val = decSet (decStep s2 ar start stop buf space final).state.val l a) := by
+  unfold decStep
+  split
+  · rename_i h
+    have := callD_lim ar (USize.ofNat stop) (by rw [usize_of h.2.2]; exact h.1) final space (atPos s2.val start)
+      (atPos_inv s2 h.2.1 h.2.2) (atPos s1.val start) (atPos_inv s1 h.2.1 h.2.2) buf ⟨l, a, by rw [hs]; rfl⟩
+    rcases this with h1 | h1 | ⟨e1, e2, e3, l', a', e4⟩
+    · exact Or.inl h1
+    · exact Or.inr (Or.inl h1)
+    · exact Or.inr (Or.inr ⟨e1, by dsimp only; rw [e3], e2, l', a', e4⟩)
+  · exact Or.inr (Or.inr ⟨rfl, rfl, rfl, 0, 0, rfl⟩)
+
+/-- What two runs with the same calls hold, from two limits. -/
+private theorem twin_inv {l1 l2 : Nat} {x : List UInt8} {R1 R2 : Run DState} (h : Twin decoder l1 l2 x R1 R2) :
+    R1.status = .memoryLimit ∨ R2.status = .memoryLimit ∨
+      (R1.status = R2.status ∧ R1.read = R2.read ∧ R1.emitted = R2.emitted ∧ ∃ l a, R1.state.val = decSet R2.state.val l a) := by
+  induction h with
+  | start =>
+    show (decStart l1).2 = .memoryLimit ∨ (decStart l2).2 = .memoryLimit ∨
+      ((decStart l1).2 = (decStart l2).2 ∧ 0 = 0 ∧ ([] : List UInt8) = [] ∧ ∃ l a, (decStart l1).1.val = decSet (decStart l2).1.val l a)
+    unfold decStart
+    by_cases h1 : l1 < fixedCost
+    · exact Or.inl (by rw [ite_eq_left h1])
+    · by_cases h2 : l2 < fixedCost
+      · exact Or.inr (Or.inl (by rw [ite_eq_left h2]))
+      · rw [ite_eq_right h1, ite_eq_right h2]
+        exact Or.inr (Or.inr ⟨rfl, rfl, rfl, UInt64.ofNat (min (l1 - fixedCost) 4294835199), 0, rfl⟩)
+  | @call R1 R2 c _ ha1 ha2 ih =>
+    rcases ih with h | h | ⟨e1, e2, e3, l, a, e4⟩
+    · have := ha1.running
+      rw [h] at this
+      cases this
+    · have := ha2.running
+      rw [h] at this
+      cases this
+    · have hin : R1.input x c = R2.input x c := by simp only [Run.input, e2]
+      have hr := decStep_lim e4 (R2.input x c) c.pre.length (c.pre.length + c.size) c.buf.toByteArray c.space c.final
+      have hrep1 : R1.reply decoder x c = decStep R1.state (R2.input x c) c.pre.length (c.pre.length + c.size) c.buf.toByteArray c.space c.final := by
+        rw [← hin]; rfl
+      have hrep2 : R2.reply decoder x c = decStep R2.state (R2.input x c) c.pre.length (c.pre.length + c.size) c.buf.toByteArray c.space c.final := rfl
+      rcases hr with h | h | ⟨f1, f2, f3, l', a', f4⟩
+      · exact Or.inl (by show (R1.reply decoder x c).status = _; rw [hrep1]; exact h)
+      · exact Or.inr (Or.inl (by show (R2.reply decoder x c).status = _; rw [hrep2]; exact h))
+      · refine Or.inr (Or.inr ⟨?_, ?_, ?_, l', a', ?_⟩)
+        · show (R1.reply decoder x c).status = (R2.reply decoder x c).status
+          rw [hrep1, hrep2, f1]
+        · show R1.read + (R1.reply decoder x c).used = R2.read + (R2.reply decoder x c).used
+          rw [hrep1, hrep2, f2, e2]
+        · show R1.emitted ++ (R1.reply decoder x c).output.data.toList.drop c.buf.length =
+            R2.emitted ++ (R2.reply decoder x c).output.data.toList.drop c.buf.length
+          rw [hrep1, hrep2, f3, e3]
+        · show (R1.reply decoder x c).state.val = decSet (R2.reply decoder x c).state.val l' a'
+          rw [hrep1, hrep2]
+          exact f4
+
+/-- Memory usage correctness, its limit part: the limit changes nothing but whether the decoder stops. -/
+theorem decoder_limitBlind : LimitBlind decoder := by
+  intro l1 l2 x R1 R2 h hn1 hn2
+  rcases twin_inv h with h1 | h2 | ⟨e1, e2, e3, _⟩
+  · exact absurd h1 hn1
+  · exact absurd h2 hn2
+  · exact ⟨e1, e2, e3⟩
 
 /-- With a limit that covers the stream's demand, every caller that answers the signals gets exactly `decode`'s output. -/
 theorem decoder_succeeds {limit : Nat} {x y : List UInt8} (hv : decode x = some y) (hl : demand x ≤ limit)

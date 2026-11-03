@@ -131,6 +131,18 @@ def declaredWindow (y : List UInt8) : Nat :=
 /-- A demand that never exceeds the declared window by more than the constant `C`, whatever the stream. -/
 def DemandCeiling (demand : List UInt8 → Nat) (C : Nat) : Prop := ∀ y, demand y ≤ declaredWindow y + C
 
+/-- Two runs on the same stream, started with two limits, that have had the same calls. -/
+inductive Twin (D : Machine σ) (l1 l2 : Nat) (x : List UInt8) : Run σ → Run σ → Prop
+  | start : Twin D l1 l2 x (Run.initial D l1) (Run.initial D l2)
+  | call {R1 R2 : Run σ} {c : Call} : Twin D l1 l2 x R1 R2 → R1.Allowed x c → R2.Allowed x c →
+      Twin D l1 l2 x (R1.after D x c) (R2.after D x c)
+
+/-- The limit changes nothing but whether the decoder stops: two runs with the same calls agree on everything a caller sees
+until one of them reports the limit. -/
+def LimitBlind (D : Machine σ) : Prop :=
+  ∀ {l1 l2 x} {R1 R2 : Run σ}, Twin D l1 l2 x R1 R2 → R1.status ≠ .memoryLimit → R2.status ≠ .memoryLimit →
+    R1.status = R2.status ∧ R1.read = R2.read ∧ R1.emitted = R2.emitted
+
 /-- Goal 4, its truthful part. A call uses at most its chunk, keeps what the buffer held, and fills at most its
 space. "Needs input" means the chunk was all used and the end hasn't been signalled, and "needs output" means the
 space is full. -/
