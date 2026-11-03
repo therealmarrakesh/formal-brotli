@@ -120,6 +120,16 @@ structure Streams (D : Machine σ) (size : σ → Nat) (demand : List UInt8 → 
   within_limit : ∀ {limit x} {R : Run σ}, Reaches D limit x R → R.status ≠ .memoryLimit → size R.state ≤ limit
   honest_limit : ∀ {limit x} {R : Run σ}, Reaches D limit x R → R.status = .memoryLimit →
     limit < demand (x.take R.offered)
+  honest_stream : ∀ {limit x} {R : Run σ}, Reaches D limit x R → R.status = .memoryLimit → limit < demand x
+
+/-- The window a stream declares: the window size its WBITS gives, or none before WBITS is read. -/
+def declaredWindow (y : List UInt8) : Nat :=
+  match readWBITS (bits y) with
+  | some p => windowSize p.1
+  | none => 0
+
+/-- A demand that never exceeds the declared window by more than the constant `C`, whatever the stream. -/
+def DemandCeiling (demand : List UInt8 → Nat) (C : Nat) : Prop := ∀ y, demand y ≤ declaredWindow y + C
 
 /-- Goal 4, its truthful part. A call uses at most its chunk, keeps what the buffer held, and fills at most its
 space. "Needs input" means the chunk was all used and the end hasn't been signalled, and "needs output" means the
@@ -150,6 +160,12 @@ def Terminates (D : Machine σ) : Prop :=
   ∀ {limit x} {R : Run σ}, Reaches D limit x R → Acc (Follows D limit x) R
 
 /-! ### What follows from them -/
+
+/-- With a ceiling on the demand, what a state holds stays within the declared window plus that constant. -/
+theorem Streams.within_window {D : Machine σ} {size : σ → Nat} {demand : List UInt8 → Nat} {C : Nat}
+    (hs : Streams D size demand) (hc : DemandCeiling demand C) {limit : Nat} {x : List UInt8} {R : Run σ}
+    (h : Reaches D limit x R) : size R.state ≤ declaredWindow (x.take R.offered) + C :=
+  Nat.le_trans (hs.within_demand h) (hc _)
 
 private theorem chunk_continuation {x t : List UInt8} {o r k : Nat} (h1 : r + k ≤ o) (h2 : r + k ≤ x.length) :
     ((x.take o ++ t).drop r).take k = (x.drop r).take k := by
@@ -310,5 +326,97 @@ theorem decode_invalid {D : Machine σ} (hc : Correct D) (ht : Truthful D) (hd :
   | done =>
     have := (hc.done hR' hst).2.2
     simp [hv] at this
+
+/-! ### Every caller that answers the signals -/
+
+/-- A caller: from each run, the call it makes next. -/
+def Caller (σ : Type) := Run σ → Call
+
+/-- A caller that, until the decoder stops, always makes a call it may make, answering the last status. -/
+def Caller.Answering (D : Machine σ) (limit : Nat) (x : List UInt8) (k : Caller σ) : Prop :=
+  ∀ R, Reaches D limit x R → R.status.stopped = false → R.Allowed x (k R) ∧ R.Answers (k R)
+
+/-- The run after a caller's next `n` calls, which stops calling once the decoder stops. -/
+def Run.follow (D : Machine σ) (x : List UInt8) (k : Caller σ) : Nat → Run σ → Run σ
+  | 0, R => R
+  | n + 1, R => if R.status.stopped then R else Run.follow D x k n (R.after D x (k R))
+
+/-- A caller that answers the signals keeps the run reachable. -/
+theorem Run.follow_reaches {D : Machine σ} {limit : Nat} {x : List UInt8} {k : Caller σ} (hk : k.Answering D limit x) :
+    ∀ (n : Nat) {R : Run σ}, Reaches D limit x R → Reaches D limit x (Run.follow D x k n R)
+  | 0, _, hR => hR
+  | n + 1, R, hR => by
+    unfold Run.follow
+    split
+    · exact hR
+    · rename_i hs
+      exact Run.follow_reaches hk n (.call hR (hk R hR (by simpa using hs)).1)
+
+/-- Every caller that answers the signals stops the decoder, after finitely many calls. -/
+theorem caller_stops {D : Machine σ} (hd : Terminates D) {limit : Nat} {x : List UInt8} {k : Caller σ}
+    (hk : k.Answering D limit x) {R : Run σ} (hR : Reaches D limit x R) :
+    ∃ n, (Run.follow D x k n R).status.stopped = true := by
+  induction hd hR with
+  | intro R _ ih =>
+    cases hs : R.status.stopped with
+    | true => exact ⟨0, hs⟩
+    | false =>
+      obtain ⟨ha, hans⟩ := hk R hR hs
+      obtain ⟨n, hn⟩ := ih _ ⟨hR, k R, ha, hans, rfl⟩ (.call hR ha)
+      refine ⟨n + 1, ?_⟩
+      unfold Run.follow
+      rw [hs]
+      exact hn
+
+/-- A stopped run's verdict: on a valid stream, exactly `decode`'s output or a reported memory limit; on an invalid one, a
+rejection or a reported memory limit. -/
+theorem stopped_verdict {D : Machine σ} (hc : Correct D) {limit : Nat} {x : List UInt8} {R : Run σ}
+    (hR : Reaches D limit x R) (hn : R.status.stopped = true) :
+    (∀ y, decode x = some y → R.status = .memoryLimit ∨ (R.status = .done ∧ R.emitted = y)) ∧
+      (decode x = none → R.status = .memoryLimit ∨ R.status = .rejected) := by
+  refine ⟨fun y hy => ?_, fun hy => ?_⟩
+  · cases hst : R.status with
+    | needsInput => simp [hst, Status.stopped] at hn
+    | needsOutput => simp [hst, Status.stopped] at hn
+    | memoryLimit => exact Or.inl rfl
+    | rejected =>
+      have := hc.rejected hR hst
+      simp [hy] at this
+    | done =>
+      have := (hc.done hR hst).2.2
+      rw [hy] at this
+      exact Or.inr ⟨rfl, by simpa using this.symm⟩
+  · cases hst : R.status with
+    | needsInput => simp [hst, Status.stopped] at hn
+    | needsOutput => simp [hst, Status.stopped] at hn
+    | memoryLimit => exact Or.inl rfl
+    | rejected => exact Or.inr rfl
+    | done =>
+      have := (hc.done hR hst).2.2
+      simp [hy] at this
+
+/-- Soundness and completeness for every caller that answers the signals: it stops the decoder, and the stopped run's
+verdict is `decode`'s. -/
+theorem caller_verdict {D : Machine σ} (hc : Correct D) (hd : Terminates D) {limit : Nat} {x : List UInt8} {k : Caller σ}
+    (hk : k.Answering D limit x) :
+    ∃ n, (Run.follow D x k n (Run.initial D limit)).status.stopped = true ∧
+      (∀ y, decode x = some y → (Run.follow D x k n (Run.initial D limit)).status = .memoryLimit ∨
+        ((Run.follow D x k n (Run.initial D limit)).status = .done ∧ (Run.follow D x k n (Run.initial D limit)).emitted = y)) ∧
+      (decode x = none → (Run.follow D x k n (Run.initial D limit)).status = .memoryLimit ∨
+        (Run.follow D x k n (Run.initial D limit)).status = .rejected) := by
+  obtain ⟨n, hn⟩ := caller_stops hd hk .start
+  exact ⟨n, hn, stopped_verdict hc (Run.follow_reaches hk n .start) hn⟩
+
+/-- With a limit that covers the stream's demand, every caller that answers the signals gets exactly `decode`'s output. -/
+theorem caller_succeeds {D : Machine σ} {size : σ → Nat} {demand : List UInt8 → Nat} (hc : Correct D) (hd : Terminates D)
+    (hs : Streams D size demand) {limit : Nat} {x y : List UInt8} (hv : decode x = some y) (hl : demand x ≤ limit)
+    {k : Caller σ} (hk : k.Answering D limit x) :
+    ∃ n, (Run.follow D x k n (Run.initial D limit)).status = .done ∧ (Run.follow D x k n (Run.initial D limit)).emitted = y := by
+  obtain ⟨n, _, hval, _⟩ := caller_verdict hc hd hk (limit := limit)
+  refine ⟨n, ?_⟩
+  rcases hval y hv with h | h
+  · have := hs.honest_stream (Run.follow_reaches hk n .start) h
+    omega
+  · exact h
 
 end Brotli.Decoder

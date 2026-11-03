@@ -103,6 +103,179 @@ theorem wr_tableK (oc : Option PrefixCode) (x : Option Nat) : (Wr tableK oc x).g
     omega
   | some c => rfl
 
+/-! ### A ceiling on the demand -/
+
+/-- The most bytes one table takes. -/
+def tableMax : Nat := 132096
+
+/-- The most tables a header's prefix codes need: three block type codes, three block count codes, and at most 256 codes
+in each of the three groups. -/
+def headerTablesMax : Nat := 774
+
+/-- A code a stream gives has a table of at most `tableMax` bytes. -/
+theorem tableBytes_le {c : PrefixCode} (h : c.Fits) : tableBytes c ≤ tableMax := by
+  cases c with
+  | single _ => show 1024 ≤ 132096; omega
+  | canonical l =>
+    have hb := offSum_bound (depths_spec h.1).2.1 256
+    show 4 * (256 + offSum (depths l) 256) ≤ 132096
+    omega
+
+private theorem bind_getD_le {α : Type} {o : Option α} {f : α → Option Nat} {M : Nat} (h : ∀ a, o = some a → (f a).getD 0 ≤ M) :
+    (o >>= f).getD 0 ≤ M := by
+  cases ho : o with
+  | none => exact Nat.zero_le _
+  | some a => exact h a ho
+
+private theorem w_getD (c : PrefixCode) (x : Option Nat) : (tableK.w c x).getD 0 = tableBytes c + x.getD 0 := rfl
+
+private theorem read_w_le {size : Nat} {bs : List Bool} {f : PrefixCode × List Bool → Option Nat} {M : Nat}
+    (h : ∀ q, (f q).getD 0 ≤ M) :
+    (readPrefixCode size bs >>= fun q => tableK.w q.1 (f q)).getD 0 ≤ tableMax + M := by
+  refine bind_getD_le fun q hq => ?_
+  rw [w_getD]
+  have := tableBytes_le (readPrefixCode_fits hq)
+  have := h q
+  omega
+
+private theorem hCodesR_le {size M : Nat} {G : List PrefixCode → List Bool → Option Nat} (hG : ∀ cs b, (G cs b).getD 0 ≤ M) :
+    ∀ (n : Nat) (done : List PrefixCode) (bs : List Bool), (hCodesR tableK size G done n bs).getD 0 ≤ n * tableMax + M
+  | 0, done, bs => by
+    show (G done bs).getD 0 ≤ _
+    have := hG done bs
+    omega
+  | n + 1, done, bs => by
+    show (readPrefixCode size bs >>= fun p => tableK.w p.1 (hCodesR tableK size G (done ++ [p.1]) n p.2)).getD 0 ≤ _
+    have := read_w_le (size := size) (bs := bs) (f := fun q => hCodesR tableK size G (done ++ [q.1]) n q.2)
+      (fun q => hCodesR_le (size := size) hG n (done ++ [q.1]) q.2)
+    rw [Nat.succ_mul]
+    omega
+
+private theorem hCodesD_le (g : Gh) (done : List PrefixCode) (left : Nat) (bs : List Bool) :
+    (hCodesD tableK g done left bs).getD 0 ≤ left * tableMax := by
+  unfold hCodesD
+  refine Nat.le_trans (hCodesR_le (M := 0) ?_ left done bs) (by omega)
+  intro _ _
+  exact Nat.le_refl 0
+
+private theorem hCodesI_le (g : Gh) (done : List PrefixCode) (left : Nat) (bs : List Bool) :
+    (hCodesI tableK g done left bs).getD 0 ≤ left * tableMax + g.treesD * tableMax :=
+  hCodesR_le (size := insertCopyAlphabetSize) (fun _ b => hCodesD_le _ [] g.treesD b) left done bs
+
+private theorem hCodesL_le (g : Gh) (done : List PrefixCode) (left : Nat) (bs : List Bool) :
+    (hCodesL tableK g done left bs).getD 0 ≤ left * tableMax + (g.m.insertCopy.n * tableMax + g.treesD * tableMax) :=
+  hCodesR_le (size := literalAlphabetSize) (fun _ b => hCodesI_le _ [] g.m.insertCopy.n b) left done bs
+
+/-- A context map's number of trees is at most 256. -/
+private theorem readTreesAndMap_trees {size : Nat} {bs r : List Bool} {p : Nat × List Nat} (h : readTreesAndMap size bs = some (p, r)) :
+    p.1 ≤ 256 := by
+  unfold readTreesAndMap at h
+  cases h1 : readVarLen bs with
+  | none => rw [h1] at h; cases h
+  | some q =>
+    obtain ⟨n, b1⟩ := q
+    rw [h1] at h
+    have hn := (readVarLen_range h1).2
+    dsimp only [bind, Option.bind] at h
+    split at h
+    · cases h
+      exact hn
+    · cases h2 : readContextMap size n b1 with
+      | none => rw [h2] at h; cases h
+      | some u =>
+        rw [h2] at h
+        cases h
+        exact hn
+
+private theorem hMap_le (g : Gh) (bs : List Bool) :
+    (hMap tableK g true bs).getD 0 ≤ 512 * tableMax + g.m.insertCopy.n * tableMax := by
+  refine bind_getD_le fun p hp => ?_
+  have h1 := readTreesAndMap_trees hp
+  show (readTreesAndMap (distanceContextMapSize g.m.distance.n) p.2 >>= fun q => hCodesL tableK _ [] p.1.1 q.2).getD 0 ≤ _
+  refine bind_getD_le fun q hq => ?_
+  have h2 := readTreesAndMap_trees hq
+  refine Nat.le_trans (hCodesL_le _ [] p.1.1 q.2) ?_
+  have e1 : p.1.1 * tableMax ≤ 256 * tableMax := Nat.mul_le_mul_right _ h1
+  have e2 : q.1.1 * tableMax ≤ 256 * tableMax := Nat.mul_le_mul_right _ h2
+  dsimp only
+  omega
+
+private theorem hModes_le (g : Gh) (done : List Nat) (left : Nat) (bs : List Bool) :
+    (hModes tableK g done left bs).getD 0 ≤ 512 * tableMax + g.m.insertCopy.n * tableMax :=
+  bind_getD_le fun p _ => hMap_le _ p.2
+
+private theorem hNp_le (g : Gh) (bs : List Bool) :
+    (hNp tableK g bs).getD 0 ≤ 512 * tableMax + g.m.insertCopy.n * tableMax :=
+  bind_getD_le fun _ _ => bind_getD_le fun nd _ => hModes_le _ [] g.m.literal.n nd.2
+
+private theorem hCatR_le {N : BlockCategory → List Bool → Option Nat} {M : Nat} (hN : ∀ c b, c.n ≤ 256 → (N c b).getD 0 ≤ M)
+    (bs : List Bool) : (hCatR tableK N bs).getD 0 ≤ 2 * tableMax + M := by
+  refine bind_getD_le fun p hp => ?_
+  have hn := (readVarLen_range hp).2
+  split
+  · have := hN ⟨p.1, .single 0, .single 0, 16777216⟩ p.2 hn
+    omega
+  · have := read_w_le (size := blockTypeAlphabetSize p.1) (bs := p.2)
+      (f := fun q => readPrefixCode blockCountAlphabetSize q.2 >>= fun u => tableK.w u.1 (readBlockCount u.1 u.2 >>= fun v => N ⟨p.1, q.1, u.1, v.1⟩ v.2))
+      (M := tableMax + M) (fun q => read_w_le fun u => bind_getD_le fun v _ => hN ⟨p.1, q.1, u.1, v.1⟩ v.2 hn)
+    omega
+
+private theorem hCatD_le (g : Gh) (bs : List Bool) :
+    (hCatD tableK g bs).getD 0 ≤ 2 * tableMax + (512 * tableMax + g.m.insertCopy.n * tableMax) := by
+  unfold hCatD
+  exact hCatR_le (fun c b _ => hNp_le { g with m := { g.m with distance := c } } b) bs
+
+private theorem hCatI_le (g : Gh) (bs : List Bool) : (hCatI tableK g bs).getD 0 ≤ 2 * tableMax + (2 * tableMax + 768 * tableMax) := by
+  unfold hCatI
+  refine hCatR_le (fun c b hc => ?_) bs
+  have h1 := hCatD_le { g with m := { g.m with insertCopy := c } } b
+  dsimp only at h1
+  have e : c.n * tableMax ≤ 256 * tableMax := Nat.mul_le_mul_right _ hc
+  have e2 : 768 * tableMax = 512 * tableMax + 256 * tableMax := by omega
+  exact Nat.le_trans h1 (by omega)
+
+private theorem hCatL_le (g : Gh) (bs : List Bool) : (hCatL tableK g bs).getD 0 ≤ headerTablesMax * tableMax := by
+  unfold hCatL
+  refine Nat.le_trans (hCatR_le (fun c b _ => hCatI_le { g with m := { g.m with literal := c } } b) bs) ?_
+  unfold headerTablesMax
+  omega
+
+/-- A header's tables take at most `headerTablesMax` tables' worth of bytes, whatever its bits. -/
+theorem headerTables_le_max (bs : List Bool) : headerTables bs ≤ headerTablesMax * tableMax := by
+  unfold headerTables
+  split
+  · exact hCatL_le _ _
+  · exact Nat.zero_le _
+
+theorem blocksT_le_max : ∀ (n w : Nat) (st : StreamState) (bs : List Bool), bs.length = n → blocksT w st bs ≤ headerTablesMax * tableMax := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | _ n ih =>
+    intro w st bs hn
+    rw [blocksT_eq]
+    refine Nat.max_le.mpr ⟨headerTables_le_max bs, ?_⟩
+    cases h : readMetaBlock w st bs with
+    | none => exact Nat.zero_le _
+    | some p =>
+      show (if p.1.2 then 0 else blocksT w p.1.1 p.2) ≤ _
+      split
+      · exact Nat.zero_le _
+      · exact ih _ (by rw [← hn]; exact readMetaBlock_lt h) w p.1.1 p.2 rfl
+
+/-- The demand never exceeds the declared window by more than a constant: the fixed cost, the ring's 16 bytes beyond the
+window, and the most a header's tables can take. -/
+theorem demand_ceiling : DemandCeiling demand (fixedCost + 16 + headerTablesMax * tableMax) := by
+  intro y
+  unfold demand declaredWindow windowBytes
+  have ht : (demandSem.first (bits y)).getD 0 ≤ headerTablesMax * tableMax :=
+    bind_getD_le fun p _ => blocksT_le_max _ _ _ _ rfl
+  cases h : readWBITS (bits y) with
+  | none => simp only; omega
+  | some p =>
+    simp only
+    have := (windowSize_range (readWBITS_range h).1 (readWBITS_range h).2).1
+    omega
+
 /-! ### The measure -/
 
 /-- The bytes a settled record holds. -/

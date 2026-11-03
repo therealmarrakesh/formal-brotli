@@ -693,5 +693,17 @@ theorem decoder_streams : Streams decoder (fun s => s.val.holds) demand where
       unfold roomOf at this
       omega
   honest_limit h hs := (mem_offered h).why hs
+  honest_stream h hs := (mem_top h).why hs
+
+/-- What the state holds stays within the window the stream declares plus a constant: the fixed cost, the ring's 16 bytes
+beyond the window, and 774 tables of at most 132096 bytes. -/
+theorem decoder_ceiling : DemandCeiling demand (fixedCost + 16 + headerTablesMax * tableMax) := demand_ceiling
+
+/-- With a limit that covers the stream's demand, every caller that answers the signals gets exactly `decode`'s output. -/
+theorem decoder_succeeds {limit : Nat} {x y : List UInt8} (hv : decode x = some y) (hl : demand x ≤ limit)
+    {k : Caller DState} (hk : k.Answering decoder limit x) :
+    ∃ n, (Run.follow decoder x k n (Run.initial decoder limit)).status = .done ∧
+      (Run.follow decoder x k n (Run.initial decoder limit)).emitted = y :=
+  caller_succeeds decoder_correct decoder_terminates decoder_streams hv hl hk
 
 end Brotli.Decoder
