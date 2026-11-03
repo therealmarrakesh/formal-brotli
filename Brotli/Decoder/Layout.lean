@@ -698,4 +698,293 @@ theorem runD_same : ∀ (x : RunArg a1 e1 hs1) (t : Dec) (ht : DInv e2 t), x.D.e
 
 end
 
+/-! ### Handing bytes out -/
+
+/-- A run of bytes goes after what the buffer held, whatever it held. -/
+theorem emitRun_app (ring buf : ByteArray) (s n : Nat) :
+    (emitRun ring buf s n).data.toList = buf.data.toList ++ (ring.data.extract s (s + n)).toList := by
+  show (buf.data.extract 0 buf.size ++ ring.data.extract s (s + n) ++
+    buf.data.extract (buf.size + min n (ring.data.size - s)) buf.data.size).toList = _
+  have hb : buf.size = buf.data.size := rfl
+  have hA : buf.data.extract 0 buf.data.size = buf.data := by simp
+  have hC : buf.data.extract (buf.data.size + min n (ring.data.size - s)) buf.data.size = #[] :=
+    Array.extract_eq_empty_of_le (by omega)
+  rw [hb, hA, hC, Array.append_empty, Array.toList_append]
+
+theorem flushCmd_same (k : USize) (st : Cmd) (q : USize) (b1 b2 : ByteArray) (sp : USize) :
+    { (flushCmd k st b1 sp).st with pos := 0 } = { (flushCmd k { st with pos := q } b2 sp).st with pos := 0 } ∧
+      (flushCmd k st b1 sp).st.pos = st.pos ∧ (flushCmd k { st with pos := q } b2 sp).st.pos = q ∧
+      ∃ L, (flushCmd k st b1 sp).buf.data.toList = b1.data.toList ++ L ∧
+        (flushCmd k { st with pos := q } b2 sp).buf.data.toList = b2.data.toList ++ L := by
+  unfold flushCmd
+  dsimp only
+  by_cases hc : st.pend = 0 ∨ sp = 0
+  · rw [ite_eq_left hc, ite_eq_left hc]
+    exact ⟨rfl, rfl, rfl, [], by simp, by simp⟩
+  · rw [ite_eq_right hc, ite_eq_right hc]
+    exact ⟨rfl, rfl, rfl, _, emitRun_app _ _ _ _, emitRun_app _ _ _ _⟩
+
+theorem flushAll_same (k : USize) : ∀ (N : Nat) (st : Cmd) (q : USize) (b1 b2 : ByteArray) (sp : Nat), st.pend.toNat = N →
+    { (flushAll k st b1 sp).st with pos := 0 } = { (flushAll k { st with pos := q } b2 sp).st with pos := 0 } ∧
+      (flushAll k st b1 sp).st.pos = st.pos ∧ (flushAll k { st with pos := q } b2 sp).st.pos = q ∧
+      (flushAll k st b1 sp).space = (flushAll k { st with pos := q } b2 sp).space ∧
+      ∃ L, (flushAll k st b1 sp).buf.data.toList = b1.data.toList ++ L ∧
+        (flushAll k { st with pos := q } b2 sp).buf.data.toList = b2.data.toList ++ L := by
+  intro N
+  induction N using Nat.strongRecOn with
+  | ind N ih =>
+    intro st q b1 b2 sp hN
+    rw [flushAll, flushAll]
+    dsimp only
+    by_cases hc : st.pend = 0 ∨ sp = 0
+    · rw [ite_eq_left hc, ite_eq_left hc]
+      exact ⟨rfl, rfl, rfl, rfl, [], by simp, by simp⟩
+    · rw [ite_eq_right hc, ite_eq_right hc]
+      obtain ⟨f1, f2, f3, L, f4, f5⟩ := flushCmd_same k st q b1 b2 (USize.ofNat (min sp 16777216))
+      have e2 := cmd_er f1
+      rw [f3] at e2
+      rw [e2]
+      generalize flushCmd k st b1 (USize.ofNat (min sp 16777216)) = r1 at f2 f4 ⊢
+      generalize (flushCmd k { st with pos := q } b2 (USize.ofNat (min sp 16777216))).buf = c2 at f5 ⊢
+      by_cases hl : r1.st.pend < st.pend
+      · rw [dite_eq_left hl, dite_eq_left hl]
+        obtain ⟨g1, g2, g3, g4, L', g5, g6⟩ := ih _ (by rw [← hN]; exact USize.lt_iff_toNat_lt.mp hl) r1.st q r1.buf c2
+          (sp - (st.pend - r1.st.pend).toNat) rfl
+        refine ⟨g1, g2.trans f2, g3, g4, L ++ L', ?_, ?_⟩
+        · rw [g5, f4, List.append_assoc]
+        · rw [g6, f5, List.append_assoc]
+      · rw [dite_eq_right hl, dite_eq_right hl]
+        exact ⟨rfl, f2, rfl, rfl, L, f4, f5⟩
+
+/-- Handing a stream state's bytes out depends neither on its positions nor on what the buffer held. -/
+theorem flushD_same {D1 D2 : Dec} (he : D1.er = D2.er) (b1 b2 : ByteArray) (sp : Nat) :
+    (flushD D1 b1 sp).D.er = (flushD D2 b2 sp).D.er ∧ (flushD D1 b1 sp).D.pos = D1.pos ∧ (flushD D2 b2 sp).D.pos = D2.pos ∧
+      (flushD D1 b1 sp).space = (flushD D2 b2 sp).space ∧
+      ∃ L, (flushD D1 b1 sp).buf.data.toList = b1.data.toList ++ L ∧ (flushD D2 b2 sp).buf.data.toList = b2.data.toList ++ L := by
+  rw [dec_er he]
+  obtain ⟨f1, f2, f3, f4, L, f5, f6⟩ := flushAll_same D1.k _ D1.cmd D2.cmd.pos b1 b2 sp rfl
+  unfold flushD
+  dsimp only at f1 f2 f3 f4 f5 f6 ⊢
+  refine ⟨?_, rfl, rfl, f4, L, f5, f6⟩
+  have e2 := cmd_er f1
+  rw [f3] at e2
+  rw [e2]
+  rfl
+
+/-! ### A call -/
+
+/-- Two calls' results the same but for their positions, which have the same unread bytes, with the same bytes added to
+what each buffer held. -/
+def OutSame (a1 : ByteArray) (e1 : USize) (a2 : ByteArray) (e2 : USize) (b1 b2 : ByteArray) (o1 o2 : Out) : Prop :=
+  o1.D.er = o2.D.er ∧ Same a1 e1 a2 e2 o1.pos o2.pos ∧ o1.status = o2.status ∧
+    ∃ L, o1.buf.data.toList = b1.data.toList ++ L ∧ o2.buf.data.toList = b2.data.toList ++ L
+
+/-- Being at the stop, for positions with the same unread bytes. -/
+theorem Same.eq_stop {a1 a2 : ByteArray} {e1 e2 p1 p2 : USize} (h : Same a1 e1 a2 e2 p1 p2) : p1 = e1 ↔ p2 = e2 := by
+  obtain ⟨_, _, h3, h4, h5, _⟩ := h
+  constructor
+  · intro e
+    subst e
+    exact USize.toNat_inj.mp (by omega)
+  · intro e
+    subst e
+    exact USize.toNat_inj.mp (by omega)
+
+theorem endCheck_same {a1 a2 : ByteArray} {e1 e2 : USize} {D1 D2 : Dec} (he : D1.er = D2.er)
+    (h : Same a1 e1 a2 e2 D1.pos D2.pos) (final : Bool) (c1 c2 : ByteArray) :
+    (endCheck D1 e1 final c1).D.er = (endCheck D2 e2 final c2).D.er ∧
+      Same a1 e1 a2 e2 (endCheck D1 e1 final c1).pos (endCheck D2 e2 final c2).pos ∧
+      (endCheck D1 e1 final c1).status = (endCheck D2 e2 final c2).status ∧
+      (endCheck D1 e1 final c1).buf = c1 ∧ (endCheck D2 e2 final c2).buf = c2 := by
+  have hst := h.eq_stop
+  rw [dec_er he] at hst ⊢
+  generalize D2.pos = q0 at h hst ⊢
+  generalize D2.cmd.pos = q1
+  generalize D2.hd.pos = q2
+  unfold endCheck
+  dsimp only at hst ⊢
+  by_cases hp : (BitBuffer.mk D1.cmd.word D1.cmd.count).peek (D1.cmd.count &&& 7) = 0
+  · rw [ite_eq_left hp, ite_eq_left hp]
+    by_cases hc : ((BitBuffer.mk D1.cmd.word D1.cmd.count).drop (D1.cmd.count &&& 7)).count = 0 ∧ D1.pos = e1
+    · rw [ite_eq_left hc, ite_eq_left (show ((BitBuffer.mk D1.cmd.word D1.cmd.count).drop (D1.cmd.count &&& 7)).count = 0 ∧
+        q0 = e2 from ⟨hc.1, hst.mp hc.2⟩)]
+      cases final
+      · exact ⟨rfl, h, rfl, rfl, rfl⟩
+      · exact ⟨rfl, h, rfl, rfl, rfl⟩
+    · rw [ite_eq_right hc, ite_eq_right (show ¬ (((BitBuffer.mk D1.cmd.word D1.cmd.count).drop (D1.cmd.count &&& 7)).count = 0 ∧
+        q0 = e2) from fun e => hc ⟨e.1, hst.mpr e.2⟩)]
+      exact ⟨rfl, h, rfl, rfl, rfl⟩
+  · rw [ite_eq_right hp, ite_eq_right hp]
+    exact ⟨rfl, h, rfl, rfl, rfl⟩
+
+theorem afterRun_same {a1 a2 : ByteArray} {e1 e2 : USize} {r1 r2 : Dec} (he : r1.er = r2.er)
+    (h : Same a1 e1 a2 e2 r1.pos r2.pos) (final : Bool) {q1 q2 : USize} (hq : Same a1 e1 a2 e2 q1 q2) (b1 b2 : ByteArray)
+    (space : Nat) :
+    OutSame a1 e1 a2 e2 b1 b2 (afterRun r1 e1 final q1 b1 space) (afterRun r2 e2 final q2 b2 space) := by
+  have hstat : r2.status = r1.status := by rw [dec_er he]
+  obtain ⟨f1, f2, f3, f4, L, f5, f6⟩ := flushD_same he b1 b2 space
+  have hf : Same a1 e1 a2 e2 (flushD r1 b1 space).D.pos (flushD r2 b2 space).D.pos := by rw [f2, f3]; exact h
+  have hpend : (flushD r2 b2 space).D.cmd.pend = (flushD r1 b1 space).D.cmd.pend := by rw [dec_er f1]
+  unfold afterRun
+  rw [hstat]
+  cases r1.status
+  · dsimp only
+    by_cases hz : (flushD r1 b1 space).D.cmd.pend = 0
+    · rw [ite_eq_left hz, ite_eq_left (hpend.trans hz)]
+      obtain ⟨g1, g2, g3, g4, g5⟩ := endCheck_same f1 hf final (flushD r1 b1 space).buf (flushD r2 b2 space).buf
+      exact ⟨g1, g2, g3, L, by rw [g4, f5], by rw [g5, f6]⟩
+    · rw [ite_eq_right hz, ite_eq_right (fun e => hz (hpend.symm.trans e))]
+      exact ⟨f1, hf, rfl, L, f5, f6⟩
+  · dsimp only
+    by_cases hz : (flushD r1 b1 space).D.cmd.pend = 0
+    · rw [ite_eq_left hz, ite_eq_left (hpend.trans hz)]
+      cases final
+      · exact ⟨f1, hf, rfl, L, f5, f6⟩
+      · exact ⟨rfl, hf, rfl, L, f5, f6⟩
+    · rw [ite_eq_right hz, ite_eq_right (fun e => hz (hpend.symm.trans e))]
+      exact ⟨f1, hf, rfl, L, f5, f6⟩
+  · exact ⟨he, h, rfl, [], by simp, by simp⟩
+  · exact ⟨rfl, hq, rfl, [], by simp, by simp⟩
+  · exact ⟨rfl, hq, rfl, [], by simp, by simp⟩
+
+theorem callD_same {a1 a2 : ByteArray} {e1 e2 : USize} (hs1 : e1.toNat ≤ a1.size) (hs2 : e2.toNat ≤ a2.size) (final : Bool) :
+    ∀ (space : Nat) (D1 : Dec) (h1 : DInv e1 D1) (D2 : Dec) (h2 : DInv e2 D2) (b1 b2 : ByteArray), D1.er = D2.er →
+    Same a1 e1 a2 e2 D1.pos D2.pos →
+    OutSame a1 e1 a2 e2 b1 b2 (callD a1 e1 hs1 final D1 h1 b1 space) (callD a2 e2 hs2 final D2 h2 b2 space) := by
+  intro space
+  induction space using Nat.strongRecOn with
+  | ind space ih =>
+    intro D1 h1 D2 h2 b1 b2 he h
+    rw [callD, callD]
+    dsimp only
+    obtain ⟨e, hS⟩ := runD_same hs1 hs2 ⟨D1, h1⟩ D2 h2 he h
+    dsimp only at e hS
+    have hstat : (runD a2 e2 hs2 D2 h2).status = (runD a1 e1 hs1 D1 h1).status := by rw [dec_er e]
+    by_cases hO : (runD a1 e1 hs1 D1 h1).status = .needsOutput
+    · rw [dite_eq_left hO, dite_eq_left (hstat.trans hO)]
+      obtain ⟨f1, f2, f3, f4, L, f5, f6⟩ := flushD_same e b1 b2 space
+      have hf : Same a1 e1 a2 e2 (flushD (runD a1 e1 hs1 D1 h1) b1 space).D.pos (flushD (runD a2 e2 hs2 D2 h2) b2 space).D.pos := by
+        rw [f2, f3]
+        exact hS
+      have hpend : (flushD (runD a2 e2 hs2 D2 h2) b2 space).D.cmd.pend = (flushD (runD a1 e1 hs1 D1 h1) b1 space).D.cmd.pend := by
+        rw [dec_er f1]
+      by_cases hz : (flushD (runD a1 e1 hs1 D1 h1) b1 space).D.cmd.pend = 0
+      · rw [ite_eq_left hz, ite_eq_left (hpend.trans hz)]
+        by_cases hlt : (flushD (runD a1 e1 hs1 D1 h1) b1 space).space < space
+        · rw [dite_eq_left hlt, dite_eq_left (show (flushD (runD a2 e2 hs2 D2 h2) b2 space).space < space by rw [← f4]; exact hlt)]
+          rw [← f4]
+          obtain ⟨g1, g2, g3, L', g4, g5⟩ := ih _ hlt _ (flushD_inv (runD_full hO) b1 space) _
+            (flushD_inv (runD_full (hstat.trans hO)) b2 space) (flushD (runD a1 e1 hs1 D1 h1) b1 space).buf
+            (flushD (runD a2 e2 hs2 D2 h2) b2 space).buf f1 hf
+          exact ⟨g1, g2, g3, L ++ L', by rw [g4, f5, List.append_assoc], by rw [g5, f6, List.append_assoc]⟩
+        · rw [dite_eq_right hlt, dite_eq_right (show ¬ (flushD (runD a2 e2 hs2 D2 h2) b2 space).space < space by rw [← f4]; exact hlt)]
+          exact ⟨rfl, h, rfl, L, f5, f6⟩
+      · rw [ite_eq_right hz, ite_eq_right (fun e => hz (hpend.symm.trans e))]
+        exact ⟨f1, hf, rfl, L, f5, f6⟩
+    · rw [dite_eq_right hO, dite_eq_right (fun e => hO (hstat.symm.trans e))]
+      exact afterRun_same e hS final h b1 b2 space
+
+/-! ### What the caller sees -/
+
+theorem atPos_er (D : Dec) (p : Nat) : (atPos D p).er = D.er := rfl
+
+/-- Two calls that give the same chunk start with the same unread bytes. -/
+theorem input_same {x : List UInt8} {R1 R2 : Run DState} {c1 c2 : Call} (hr : R1.read = R2.read) (hsz : c1.size = c2.size)
+    (h1 : R1.Allowed x c1) (h2 : R2.Allowed x c2) :
+    Same (R1.input x c1) (USize.ofNat (c1.pre.length + c1.size)) (R2.input x c2) (USize.ofNat (c2.pre.length + c2.size))
+      (USize.ofNat c1.pre.length) (USize.ofNat c2.pre.length) := by
+  have hin1 := h1.inside
+  have hin2 := h2.inside
+  have hf1 := h1.fits
+  have hf2 := h2.fits
+  have u1 : (USize.ofNat (c1.pre.length + c1.size)).toNat = c1.pre.length + c1.size := usize_of (by omega)
+  have u2 : (USize.ofNat (c2.pre.length + c2.size)).toNat = c2.pre.length + c2.size := usize_of (by omega)
+  have v1 : (USize.ofNat c1.pre.length).toNat = c1.pre.length := usize_of (by omega)
+  have v2 : (USize.ofNat c2.pre.length).toNat = c2.pre.length := usize_of (by omega)
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
+  · rw [u1, input_size hin1]
+    omega
+  · rw [u2, input_size hin2]
+    omega
+  · rw [v1, u1]
+    omega
+  · rw [v2, u2]
+    omega
+  · rw [v1, u1, v2, u2]
+    omega
+  · rw [v1, u1, v2, u2]
+    have k1 := chunk_input (R := R1) (c := c1) hin1 (Nat.zero_le _)
+    have k2 := chunk_input (R := R2) (c := c2) hin2 (Nat.zero_le _)
+    rw [Nat.add_zero] at k1 k2
+    rw [k1, k2, hr, hsz]
+
+theorem decStep_eq (s : DState) (a : ByteArray) (start stop : Nat) (buf : ByteArray) (space : Nat) (final : Bool)
+    (h : stop ≤ a.size ∧ start ≤ stop ∧ stop < USize.size) :
+    decStep s a start stop buf space final =
+      { state := ⟨(callD a (USize.ofNat stop) (by rw [usize_of h.2.2]; exact h.1) final (atPos s.val start)
+            (atPos_inv s h.2.1 h.2.2) buf space).D, callD_rel _ _ _⟩
+        used := (callD a (USize.ofNat stop) (by rw [usize_of h.2.2]; exact h.1) final (atPos s.val start)
+            (atPos_inv s h.2.1 h.2.2) buf space).pos.toNat - start
+        output := (callD a (USize.ofNat stop) (by rw [usize_of h.2.2]; exact h.1) final (atPos s.val start)
+            (atPos_inv s h.2.1 h.2.2) buf space).buf
+        status := (callD a (USize.ofNat stop) (by rw [usize_of h.2.2]; exact h.1) final (atPos s.val start)
+            (atPos_inv s h.2.1 h.2.2) buf space).status } := by
+  unfold decStep
+  rw [dite_eq_left h]
+
+/-- Two calls from states the same but for their positions, giving the same chunk, space and end flag, reply the same. -/
+theorem reply_same {x : List UInt8} {R1 R2 : Run DState} {c1 c2 : Call} (he : R1.state.val.er = R2.state.val.er)
+    (hr : R1.read = R2.read) (h1 : R1.Allowed x c1) (h2 : R2.Allowed x c2) (hsz : c1.size = c2.size)
+    (hsp : c1.space = c2.space) (hf : c1.final = c2.final) :
+    (R1.reply decoder x c1).state.val.er = (R2.reply decoder x c2).state.val.er ∧
+      (R1.reply decoder x c1).used = (R2.reply decoder x c2).used ∧
+      (R1.reply decoder x c1).status = (R2.reply decoder x c2).status ∧
+      (R1.reply decoder x c1).output.data.toList.drop c1.buf.length =
+        (R2.reply decoder x c2).output.data.toList.drop c2.buf.length := by
+  have hin1 := h1.inside
+  have hin2 := h2.inside
+  have hf1 := h1.fits
+  have hf2 := h2.fits
+  have hg1 : c1.pre.length + c1.size ≤ (R1.input x c1).size ∧ c1.pre.length ≤ c1.pre.length + c1.size ∧
+      c1.pre.length + c1.size < USize.size := ⟨by rw [input_size hin1]; omega, by omega, by omega⟩
+  have hg2 : c2.pre.length + c2.size ≤ (R2.input x c2).size ∧ c2.pre.length ≤ c2.pre.length + c2.size ∧
+      c2.pre.length + c2.size < USize.size := ⟨by rw [input_size hin2]; omega, by omega, by omega⟩
+  have hs1 : (USize.ofNat (c1.pre.length + c1.size)).toNat ≤ (R1.input x c1).size := by rw [usize_of hg1.2.2]; exact hg1.1
+  have hs2 : (USize.ofNat (c2.pre.length + c2.size)).toNat ≤ (R2.input x c2).size := by rw [usize_of hg2.2.2]; exact hg2.1
+  obtain ⟨o1, o2, o3, L, o4, o5⟩ := callD_same hs1 hs2 c1.final c1.space (atPos R1.state.val c1.pre.length)
+    (atPos_inv R1.state hg1.2.1 hg1.2.2) (atPos R2.state.val c2.pre.length) (atPos_inv R2.state hg2.2.1 hg2.2.2)
+    c1.buf.toByteArray c2.buf.toByteArray he (input_same hr hsz h1 h2)
+  rw [show R1.reply decoder x c1 = decStep R1.state (R1.input x c1) c1.pre.length (c1.pre.length + c1.size)
+      c1.buf.toByteArray c1.space c1.final from rfl, decStep_eq _ _ _ _ _ _ _ hg1,
+    show R2.reply decoder x c2 = decStep R2.state (R2.input x c2) c2.pre.length (c2.pre.length + c2.size)
+      c2.buf.toByteArray c2.space c2.final from rfl, decStep_eq _ _ _ _ _ _ _ hg2, ← hsp, ← hf]
+  dsimp only
+  have u1 : (USize.ofNat (c1.pre.length + c1.size)).toNat = c1.pre.length + c1.size := usize_of (by omega)
+  have u2 : (USize.ofNat (c2.pre.length + c2.size)).toNat = c2.pre.length + c2.size := usize_of (by omega)
+  obtain ⟨_, _, q3, q4, q5, _⟩ := o2
+  rw [u1] at q3 q5
+  rw [u2] at q4 q5
+  have l1 : c1.buf.toByteArray.data.toList = c1.buf := by simp [List.data_toByteArray]
+  have l2 : c2.buf.toByteArray.data.toList = c2.buf := by simp [List.data_toByteArray]
+  rw [l1] at o4
+  rw [l2] at o5
+  refine ⟨o1, by omega, o3, ?_⟩
+  rw [o4, o5, List.drop_left, List.drop_left]
+
+/-- The decoder's replies depend only on the chunks, space and end flags it is given. -/
+theorem decoder_layoutBlind : LayoutBlind decoder := by
+  intro limit x R1 R2 h
+  have key : R1.state.val.er = R2.state.val.er ∧ R1.status = R2.status ∧ R1.read = R2.read ∧ R1.emitted = R2.emitted := by
+    induction h with
+    | start => exact ⟨rfl, rfl, rfl, rfl⟩
+    | call _ a1 a2 hsz hsp hf ih =>
+      obtain ⟨i1, _, i3, i4⟩ := ih
+      obtain ⟨r1, r2, r3, r4⟩ := reply_same i1 i3 a1 a2 hsz hsp hf
+      refine ⟨r1, r3, ?_, ?_⟩
+      · show _ + _ = _ + _
+        rw [i3, r2]
+      · show _ ++ _ = _ ++ _
+        rw [i4, r4]
+  exact key.2
+
 end Brotli.Decoder

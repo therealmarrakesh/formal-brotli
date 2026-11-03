@@ -174,17 +174,21 @@ private theorem bits_at {x : List UInt8} {R : Run DState} {c : Call} (h : R.read
 private theorem buf_list (l : List UInt8) : l.toByteArray.data.toList = l := by
   simp [List.data_toByteArray]
 
+/-- What's left of a call's chunk from a place in it. -/
+theorem chunk_input {x : List UInt8} {R : Run DState} {c : Call} (h : R.read + c.size ≤ x.length) {q : Nat} (hqs : q ≤ c.size) :
+    chunk (R.input x c) (c.pre.length + q) (c.pre.length + c.size) = ((x.drop R.read).take c.size).drop q := by
+  have hT := take_length (R := R) (c := c) h
+  unfold chunk
+  rw [input_list, List.drop_append, List.drop_eq_nil_of_le (by omega), List.nil_append,
+    show c.pre.length + q - c.pre.length = q by omega, List.drop_append_of_le_length (by omega),
+    show c.pre.length + c.size - (c.pre.length + q) = c.size - q by omega]
+  exact List.take_left' (by rw [List.length_drop, hT])
+
 /-- A state's bits at a place in a call's chunk, with any bytes after the chunk. -/
 theorem bits_at' {x : List UInt8} {R : Run DState} {c : Call} (h : R.read + c.size ≤ x.length) (D' : Dec) {pos stop : USize} {q : Nat}
     (hq : pos.toNat = c.pre.length + q) (hqs : q ≤ c.size) (hstop : stop.toNat = c.pre.length + c.size) (t : List UInt8) :
     D'.bits (R.input x c) pos stop (bits t) = D'.held ++ bits (((x.drop R.read).take c.size).drop q ++ t) := by
-  have hT := take_length (R := R) (c := c) h
-  have e1 : chunk (R.input x c) (c.pre.length + q) (c.pre.length + c.size) = ((x.drop R.read).take c.size).drop q := by
-    unfold chunk
-    rw [input_list, List.drop_append, List.drop_eq_nil_of_le (by omega), List.nil_append,
-      show c.pre.length + q - c.pre.length = q by omega, List.drop_append_of_le_length (by omega),
-      show c.pre.length + c.size - (c.pre.length + q) = c.size - q by omega]
-    exact List.take_left' (by rw [List.length_drop, hT])
+  have e1 := chunk_input (R := R) (c := c) h hqs
   show D'.held ++ (chunkBits (R.input x c) pos.toNat stop.toNat ++ _) = _
   rw [hq, hstop]
   unfold chunkBits

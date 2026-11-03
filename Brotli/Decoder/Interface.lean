@@ -143,6 +143,19 @@ def LimitBlind (D : Machine σ) : Prop :=
   ∀ {l1 l2 x} {R1 R2 : Run σ}, Twin D l1 l2 x R1 R2 → R1.status ≠ .memoryLimit → R2.status ≠ .memoryLimit →
     R1.status = R2.status ∧ R1.read = R2.read ∧ R1.emitted = R2.emitted
 
+/-- Two runs on the same stream and limit whose calls gave the same chunks, space and end flags, each chunk anywhere in
+its array, with any bytes around it, and with any bytes in the output buffer. -/
+inductive Relaid (D : Machine σ) (limit : Nat) (x : List UInt8) : Run σ → Run σ → Prop
+  | start : Relaid D limit x (Run.initial D limit) (Run.initial D limit)
+  | call {R1 R2 : Run σ} {c1 c2 : Call} : Relaid D limit x R1 R2 → R1.Allowed x c1 → R2.Allowed x c2 →
+      c1.size = c2.size → c1.space = c2.space → c1.final = c2.final → Relaid D limit x (R1.after D x c1) (R2.after D x c2)
+
+/-- What the caller sees depends only on the bytes and space given: two runs whose calls gave the same chunks, space and
+end flags report the same statuses, use the same bytes and hand out the same bytes, wherever each chunk sat in its array,
+whatever lay around it, and whatever the output buffer held. -/
+def LayoutBlind (D : Machine σ) : Prop :=
+  ∀ {limit x} {R1 R2 : Run σ}, Relaid D limit x R1 R2 → R1.status = R2.status ∧ R1.read = R2.read ∧ R1.emitted = R2.emitted
+
 /-- Goal 4, its truthful part. A call uses at most its chunk, keeps what the buffer held, and fills at most its
 space. "Needs input" means the chunk was all used and the end hasn't been signalled, and "needs output" means the
 space is full. -/

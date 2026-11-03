@@ -55,6 +55,7 @@ import Brotli.Decoder.OrderSpec
 import Brotli.Decoder.Progress
 import Brotli.Decoder.Work
 import Brotli.Decoder.WorkTop
+import Brotli.Decoder.Layout
 
 /-!
 # Decoder
