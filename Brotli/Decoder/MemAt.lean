@@ -640,7 +640,7 @@ private theorem limit_hdr {limit lim K A R H B F kv : Nat} (hlim : fixedCost ≤
 
 /-- Memory usage correctness, for the input used: when the decoder reports the limit, the bytes it reports as used already
 demand more than the limit, and the spec's reading in order of some of those bytes got through all but at most 64 bits of
-them, so that the bytes used run at most 64 bits past where the limit was found to bind. -/
+them. -/
 theorem decoder_limitAt {limit : Nat} {x : List UInt8} {R : Run DState} (h : Reaches decoder limit x R) (hs : R.status = .memoryLimit) :
     limit < demand (x.take R.read) ∧
       ∃ (n : Nat) (q : SPhase) (cb : List Bool), n ≤ R.read ∧ Reach sStep .wbits (bits (x.take n)) q cb ∧
