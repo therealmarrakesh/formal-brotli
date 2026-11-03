@@ -25,7 +25,7 @@ def Complete : PrefixCode → Prop
 /-! ### Decoding with a complete code -/
 
 /-- The sum of `2 ^ (15 - k)` over the codes of lengths `1, …, l`. -/
-private def sumUpTo (lens : List Nat) : Nat → Nat
+def sumUpTo (lens : List Nat) : Nat → Nat
   | 0 => 0
   | l + 1 => sumUpTo lens l + blCount lens (l + 1) * 2 ^ (15 - (l + 1))
 
@@ -58,7 +58,7 @@ private theorem sumUpTo_nil : ∀ m, sumUpTo [] m = 0
   | 0 => rfl
   | m + 1 => by simp [sumUpTo, sumUpTo_nil m, blCount]
 
-private theorem sumUpTo_eq : ∀ lens : List Nat, (∀ l ∈ lens, l ≤ 15) →
+theorem sumUpTo_eq : ∀ lens : List Nat, (∀ l ∈ lens, l ≤ 15) →
     sumUpTo lens 15 = lengthSum lens
   | [], _ => by simp [sumUpTo_nil, lengthSum]
   | x :: xs, h => by
@@ -74,7 +74,7 @@ private theorem sumUpTo_eq : ∀ lens : List Nat, (∀ l ∈ lens, l ≤ 15) →
       rw [ite_eq_left (show 1 ≤ x ∧ x ≤ 15 by omega), ite_eq_right h0, hshift]
       omega
 
-private theorem nextCode_sum (lens : List Nat) : ∀ l, 1 ≤ l → l ≤ 15 →
+theorem nextCode_sum (lens : List Nat) : ∀ l, 1 ≤ l → l ≤ 15 →
     (nextCode lens l + blCount lens l) * 2 ^ (15 - l) = sumUpTo lens l
   | 0, h, _ => by omega
   | 1, _, _ => by simp [nextCode, sumUpTo, blCount]
