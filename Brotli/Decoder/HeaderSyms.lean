@@ -10,7 +10,7 @@ namespace Brotli.Decoder
 
 open Brotli.Spec Brotli.Properties
 
-/-- Writes `n` code lengths from `i`. -/
+/-- Writes `v` into `n` bytes from `i`: code lengths, or a context map's values. -/
 def fillLens (t : ByteArray) (i n : UInt64) (v : UInt8) : ByteArray :=
   if _hn : n = 0 then t else fillLens (setU t i.toUSize v) (i + 1) (n - 1) v
 termination_by n.toNat

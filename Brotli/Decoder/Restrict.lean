@@ -578,7 +578,10 @@ theorem kfaith_hStep (g : Gh) : ∀ p, KFaith (hStep g p)
   | .modes _ (_ + 1) => kfaith_readIn (faith_readInt 2) fun _ => kfaith_next _
   | .trees _ => kfaith_readIn faith_readVarLen fun _ => kfaith_ite (kfaith_next _) (kfaith_next _)
   | .rlemax _ _ => kfaith_readIn faith_readRLEMAX fun _ => kfaith_next _
-  | .vals _ _ _ _ _ _ => kfaith_ite (kfaith_next _) (kfaith_readIn (faith_mapSym _ _) fun _ => kfaith_ite kfaith_bad (kfaith_next _))
+  | .vals _ _ rlemax code _ _ => kfaith_ite (kfaith_next _) (by
+      cases runOf rlemax code with
+      | some _ => exact kfaith_next _
+      | none => exact kfaith_readIn (faith_mapSym _ _) fun _ => kfaith_ite kfaith_bad (kfaith_next _))
   | .imtf _ _ _ => kfaith_readIn (faith_readInt 1) fun _ => kfaith_ite (kfaith_next _) kfaith_bad
   | .codes _ _ (_ + 1) => kfaith_next _
   | .codes .L _ 0 => kfaith_next _

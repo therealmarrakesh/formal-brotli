@@ -39,6 +39,12 @@ theorem agrees_congr {k : List Bool → ORes P E} {f g : List Bool → Option α
   rw [e bs]
   exact h bs
 
+theorem agrees_kcongr {k k' : List Bool → ORes P E} {f : List Bool → Option α} (e : ∀ bs, k' bs = k bs) (h : Agrees M X k f) :
+    Agrees M X k' f := by
+  intro bs
+  rw [e bs]
+  exact h bs
+
 theorem agrees_ite {c : Prop} [Decidable c] {k1 k2 : List Bool → ORes P E} {f1 f2 : List Bool → Option α}
     (h1 : Agrees M X k1 f1) (h2 : Agrees M X k2 f2) :
     Agrees M X (fun bs => if c then k1 bs else k2 bs) (fun bs => if c then f1 bs else f2 bs) := by
@@ -370,7 +376,10 @@ theorem ufaith_hStep (g : Gh) : ∀ p, UFaith (hStepP (g, p))
   | .modes _ (_ + 1) => ufaith_readIn (faith_readInt 2) fun _ => ufaith_next _
   | .trees _ => ufaith_readIn faith_readVarLen fun _ => ufaith_ite (ufaith_next _) (ufaith_next _)
   | .rlemax _ _ => ufaith_readIn faith_readRLEMAX fun _ => ufaith_next _
-  | .vals _ _ _ _ _ _ => ufaith_ite (ufaith_next _) (ufaith_readIn (faith_mapSym _ _) fun _ => ufaith_ite ufaith_bad (ufaith_next _))
+  | .vals _ _ rlemax code _ _ => ufaith_ite (ufaith_next _) (by
+      cases runOf rlemax code with
+      | some _ => exact ufaith_next _
+      | none => exact ufaith_readIn (faith_mapSym _ _) fun _ => ufaith_ite ufaith_bad (ufaith_next _))
   | .imtf _ _ _ => ufaith_readIn (faith_readInt 1) fun _ => ufaith_ite (ufaith_next _) ufaith_bad
   | .codes _ _ (_ + 1) => ufaith_next _
   | .codes .L _ 0 => ufaith_next _
@@ -552,12 +561,28 @@ theorem hAgreeW (g : Gh) : ∀ p, AgreesW K (hStepP (g, p)) (hrest K g p)
       funext p
       rw [afterMap_eq] <;> rfl)
   | .rlemax _ _ => agreesW_ofH g (agrees_congr (agrees_readIn fun _ => agrees_next _) fun _ => rfl)
-  | .vals isL ntrees rlemax code done left =>
-    agreesW_ofH g (agrees_congr (agrees_ite (agrees_next _) (agrees_readIn fun _ => agrees_ite agrees_bad (agrees_next _))) fun bs => by
-      by_cases h0 : left = 0
-      · subst h0
-        rw [ite_eq_left rfl, hrest_vals_zero]
-      · rw [ite_eq_right h0, hrest_vals_step K g isL ntrees rlemax code done left bs h0])
+  | .vals isL ntrees rlemax code done left => by
+    cases hr : runOf rlemax code with
+    | some v =>
+      exact agreesW_ofH g (agrees_kcongr (k := fun bs => if left = 0 then ORes.next (g, HPhase.imtf isL ntrees done) bs
+          else ORes.next (g, HPhase.vals isL ntrees rlemax code (done ++ List.replicate left v) 0) bs)
+        (fun bs => by simp only [hStepP, hStep, hr])
+        (agrees_congr (agrees_ite (agrees_next _) (agrees_next _)) fun bs => by
+          by_cases h0 : left = 0
+          · subst h0
+            rw [ite_eq_left rfl, hrest_vals_zero]
+          · rw [ite_eq_right h0, hrest_vals_run K g isL ntrees rlemax code done left hr]))
+    | none =>
+      exact agreesW_ofH g (agrees_kcongr (k := fun bs => if left = 0 then ORes.next (g, HPhase.imtf isL ntrees done) bs
+          else readIn 31 (mapSym rlemax code) bs fun v b =>
+            if left < v.2 then .bad else .next (g, .vals isL ntrees rlemax code (done ++ List.replicate v.2 v.1) (left - v.2)) b)
+        (fun bs => by simp only [hStepP, hStep, hr])
+        (agrees_congr (agrees_ite (agrees_next _) (agrees_readIn fun _ => agrees_ite agrees_bad (agrees_next _)))
+          fun bs => by
+            by_cases h0 : left = 0
+            · subst h0
+              rw [ite_eq_left rfl, hrest_vals_zero]
+            · rw [ite_eq_right h0, hrest_vals_step K g isL ntrees rlemax code done left bs h0]))
   | .imtf isL ntrees vals => agreesW_ofH g (agrees_congr (agrees_readIn fun _ => agrees_ite (agrees_next _) agrees_bad) fun bs => by
       show afterVals K g isL ntrees vals bs = _
       unfold afterVals
@@ -1040,7 +1065,10 @@ theorem kshort_hStep (g : Gh) : ∀ p, KShort 54 (hStepP (g, p))
   | .modes _ (_ + 1) => kshort_readIn (by omega) fun _ => noShort_next _
   | .trees _ => kshort_readIn (by omega) fun _ => noShort_ite (noShort_next _) (noShort_next _)
   | .rlemax _ _ => kshort_readIn (by omega) fun _ => noShort_next _
-  | .vals _ _ _ _ _ _ => kshort_ite (kshort_of (noShort_next _)) (kshort_readIn (by omega) fun _ => noShort_ite noShort_bad (noShort_next _))
+  | .vals _ _ rlemax code _ _ => kshort_ite (kshort_of (noShort_next _)) (by
+      cases runOf rlemax code with
+      | some _ => exact kshort_of (noShort_next _)
+      | none => exact kshort_readIn (by omega) fun _ => noShort_ite noShort_bad (noShort_next _))
   | .imtf _ _ _ => kshort_readIn (by omega) fun _ => noShort_ite (noShort_next _) noShort_bad
   | .codes _ _ (_ + 1) => kshort_of (noShort_next _)
   | .codes .L _ 0 => kshort_of (noShort_next _)

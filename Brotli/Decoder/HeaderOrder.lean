@@ -61,8 +61,10 @@ def hStep (g : Gh) : HPhase → List Bool → ORes (Gh × HPhase) MetaBlockHeade
   | .rlemax isL ntrees, bs => readIn 5 readRLEMAX bs fun v b => .next (g, .code (.map isL ntrees v) (contextMapAlphabetSize ntrees v)) b
   | .vals isL ntrees rlemax code done left, bs =>
     if left = 0 then .next (g, .imtf isL ntrees done) bs
-    else readIn 31 (mapSym rlemax code) bs fun v b =>
-      if left < v.2 then .bad else .next (g, .vals isL ntrees rlemax code (done ++ List.replicate v.2 v.1) (left - v.2)) b
+    else match runOf rlemax code with
+      | some v => .next (g, .vals isL ntrees rlemax code (done ++ List.replicate left v) 0) bs
+      | none => readIn 31 (mapSym rlemax code) bs fun v b =>
+        if left < v.2 then .bad else .next (g, .vals isL ntrees rlemax code (done ++ List.replicate v.2 v.1) (left - v.2)) b
   | .imtf isL ntrees vals, bs => readIn 1 (readInt 1) bs fun im b =>
     if (List.range ntrees).all (if im = 0 then vals else inverseMoveToFront vals).contains then
       .next (g.setMap isL ntrees (if im = 0 then vals else inverseMoveToFront vals),
@@ -105,10 +107,78 @@ theorem hStep_vals_zero {g : Gh} {isL : Bool} {ntrees rlemax : Nat} {code : Pref
 
 /-- A context map's values, when more are left. -/
 theorem hStep_vals_step {g : Gh} {isL : Bool} {ntrees rlemax : Nat} {code : PrefixCode} {done : List Nat} {left : Nat} (bs : List Bool)
-    (h0 : left ≠ 0) :
+    (h0 : left ≠ 0) (hr : runOf rlemax code = none) :
     hStepP (g, .vals isL ntrees rlemax code done left) bs = readIn 31 (mapSym rlemax code) bs fun v b =>
       if left < v.2 then .bad else .next (g, .vals isL ntrees rlemax code (done ++ List.replicate v.2 v.1) (left - v.2)) b := by
   show (if left = 0 then _ else _) = _
   rw [ite_eq_right h0]
+  simp only [hr]
+
+/-- Where a context map's values go on to. -/
+theorem hStep_vals_next {g : Gh} {isL : Bool} {ntrees rlemax : Nat} {code : PrefixCode} {done : List Nat} {left : Nat}
+    {bs c : List Bool} {q : Gh × HPhase} (h : hStepP (g, .vals isL ntrees rlemax code done left) bs = .next q c) :
+    (left = 0 ∧ q = (g, .imtf isL ntrees done) ∧ c = bs) ∨
+    (left ≠ 0 ∧ ∃ v, runOf rlemax code = some v ∧ q = (g, .vals isL ntrees rlemax code (done ++ List.replicate left v) 0) ∧ c = bs) ∨
+    (left ≠ 0 ∧ runOf rlemax code = none ∧ (readIn 31 (mapSym rlemax code) bs (fun v b =>
+      if left < v.2 then .bad else .next (g, .vals isL ntrees rlemax code (done ++ List.replicate v.2 v.1) (left - v.2)) b) :
+        ORes (Gh × HPhase) MetaBlockHeader) = .next q c) := by
+  have h' : (if left = 0 then ORes.next (g, HPhase.imtf isL ntrees done) bs
+      else match runOf rlemax code with
+        | some v => ORes.next (g, HPhase.vals isL ntrees rlemax code (done ++ List.replicate left v) 0) bs
+        | none => readIn 31 (mapSym rlemax code) bs fun v b =>
+          if left < v.2 then .bad else .next (g, .vals isL ntrees rlemax code (done ++ List.replicate v.2 v.1) (left - v.2)) b) =
+      .next q c := h
+  by_cases h0 : left = 0
+  · rw [ite_eq_left h0] at h'
+    cases h'
+    exact Or.inl ⟨h0, rfl, rfl⟩
+  · rw [ite_eq_right h0] at h'
+    cases hr : runOf rlemax code with
+    | some v =>
+      rw [hr] at h'
+      cases h'
+      exact Or.inr (Or.inl ⟨h0, v, rfl, rfl, rfl⟩)
+    | none =>
+      rw [hr] at h'
+      exact Or.inr (Or.inr ⟨h0, rfl, h'⟩)
+
+/-- A context map's values never end the header. -/
+theorem hStep_vals_ne_exit {g : Gh} {isL : Bool} {ntrees rlemax : Nat} {code : PrefixCode} {done : List Nat} {left : Nat}
+    {bs c : List Bool} {m : MetaBlockHeader} : hStepP (g, .vals isL ntrees rlemax code done left) bs ≠ .exit m c := by
+  intro h
+  have h' : (if left = 0 then ORes.next (g, HPhase.imtf isL ntrees done) bs
+      else match runOf rlemax code with
+        | some v => ORes.next (g, HPhase.vals isL ntrees rlemax code (done ++ List.replicate left v) 0) bs
+        | none => readIn 31 (mapSym rlemax code) bs fun v b =>
+          if left < v.2 then .bad else .next (g, .vals isL ntrees rlemax code (done ++ List.replicate v.2 v.1) (left - v.2)) b) =
+      .exit m c := h
+  by_cases h0 : left = 0
+  · rw [ite_eq_left h0] at h'
+    cases h'
+  · rw [ite_eq_right h0] at h'
+    cases hr : runOf rlemax code with
+    | some v => simp only [hr] at h'; cases h'
+    | none =>
+      simp only [hr] at h'
+      cases e : mapSym rlemax code bs with
+      | none =>
+        simp only [readIn, e] at h'
+        by_cases hl : bs.length < 31
+        · rw [ite_eq_left hl] at h'; cases h'
+        · rw [ite_eq_right hl] at h'; cases h'
+      | some p =>
+        obtain ⟨v, b⟩ := p
+        simp only [readIn, e] at h'
+        by_cases hl : left < v.2
+        · rw [ite_eq_left hl] at h'; cases h'
+        · rw [ite_eq_right hl] at h'; cases h'
+
+/-- A context map's values, when the code gives every one without reading. -/
+theorem hStep_vals_run {g : Gh} {isL : Bool} {ntrees rlemax : Nat} {code : PrefixCode} {done : List Nat} {left v : Nat} (bs : List Bool)
+    (h0 : left ≠ 0) (hr : runOf rlemax code = some v) :
+    hStepP (g, .vals isL ntrees rlemax code done left) bs = .next (g, .vals isL ntrees rlemax code (done ++ List.replicate left v) 0) bs := by
+  show (if left = 0 then _ else _) = _
+  rw [ite_eq_right h0]
+  simp only [hr]
 
 end Brotli.Decoder

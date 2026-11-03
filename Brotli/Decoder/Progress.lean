@@ -695,17 +695,14 @@ theorem hStep_moves (g : Gh) : ∀ (p : HPhase) (bs : List Bool) (q : Gh × HPha
     cases e2
     exact Or.inl (takes_one faith_readRLEMAX rfl e1)
   | .vals isL ntrees rlemax code done left, bs, q, c, h => by
-    have h' : (if left = 0 then ORes.next (g, HPhase.imtf isL ntrees done) bs
-        else readIn 31 (mapSym rlemax code) bs fun v b =>
-          if left < v.2 then .bad else .next (g, .vals isL ntrees rlemax code (done ++ List.replicate v.2 v.1) (left - v.2)) b) =
-        .next q c := h
-    split at h'
-    · cases h'
-      right
+    rcases hStep_vals_next h with ⟨h0, rfl, rfl⟩ | ⟨h0, v, _, rfl, rfl⟩ | ⟨_, _, h'⟩
+    · right
       simp only [hstage]
       omega
-    · rename_i h0
-      obtain ⟨v, b, e1, e2⟩ := readIn_next' h'
+    · right
+      simp only [hstage]
+      omega
+    · obtain ⟨v, b, e1, e2⟩ := readIn_next' h'
       split at e2
       · cases e2
       · cases e2
@@ -811,8 +808,7 @@ theorem hStep_exit {g : Gh} : ∀ {p : HPhase} {bs : List Bool} {m : MetaBlockHe
   | .modes _ (_ + 1), bs, _, _, h => absurd h (noExit_readIn (fun _ => noExit_next _) bs _ _)
   | .trees _, bs, _, _, h => absurd h (noExit_readIn (fun _ => noExit_ite (noExit_next _) (noExit_next _)) bs _ _)
   | .rlemax _ _, bs, _, _, h => absurd h (noExit_readIn (fun _ => noExit_next _) bs _ _)
-  | .vals _ _ _ _ _ _, bs, _, _, h =>
-    absurd h (noExit_ite (noExit_next _) (noExit_readIn fun _ => noExit_ite noExit_bad (noExit_next _)) bs _ _)
+  | .vals _ _ _ _ _ _, _, _, _, h => absurd h hStep_vals_ne_exit
   | .imtf _ _ _, bs, _, _, h => absurd h (noExit_readIn (fun _ => noExit_ite (noExit_next _) noExit_bad) bs _ _)
   | .codes _ _ (_ + 1), bs, _, _, h => absurd h (noExit_next _ bs _ _)
   | .codes .L _ 0, bs, _, _, h => absurd h (noExit_next _ bs _ _)
@@ -963,12 +959,9 @@ theorem hStep_ndirect {g : Gh} (hn : g.m.ndirect ≤ 120) : ∀ {p : HPhase} {bs
     cases e2
     exact hn
   | .vals isL ntrees rlemax code done left, bs, q, c, h => by
-    have h' : (if left = 0 then ORes.next (g, HPhase.imtf isL ntrees done) bs
-        else readIn 31 (mapSym rlemax code) bs fun v b =>
-          if left < v.2 then .bad else .next (g, .vals isL ntrees rlemax code (done ++ List.replicate v.2 v.1) (left - v.2)) b) =
-        .next q c := h
-    split at h'
-    · cases h'; exact hn
+    rcases hStep_vals_next h with ⟨_, rfl, rfl⟩ | ⟨_, v, _, rfl, rfl⟩ | ⟨_, _, h'⟩
+    · exact hn
+    · exact hn
     · obtain ⟨v, b, _, e2⟩ := readIn_next' h'
       split at e2
       · cases e2
@@ -1184,12 +1177,9 @@ theorem hStep_ok {g : Gh} (hg : GOk g) : ∀ {p : HPhase} {bs : List Bool} {q : 
     have hn : ntrees ≤ 256 := hp
     exact ⟨hg, (show ntrees + v ≤ 1024 by omega), trivial⟩
   | .vals isL ntrees rlemax code done left, bs, q, c, hp, h => by
-    have h' : (if left = 0 then ORes.next (g, HPhase.imtf isL ntrees done) bs
-        else readIn 31 (mapSym rlemax code) bs fun v b =>
-          if left < v.2 then .bad else .next (g, .vals isL ntrees rlemax code (done ++ List.replicate v.2 v.1) (left - v.2)) b) =
-        .next q c := h
-    split at h'
-    · cases h'; exact ⟨hg, trivial⟩
+    rcases hStep_vals_next h with ⟨_, rfl, rfl⟩ | ⟨_, v, _, rfl, rfl⟩ | ⟨_, _, h'⟩
+    · exact ⟨hg, trivial⟩
+    · exact ⟨hg, by show 0 ≤ 16384; omega⟩
     · obtain ⟨v, b, _, e2⟩ := readIn_next' h'
       split at e2
       · cases e2

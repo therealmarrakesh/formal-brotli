@@ -500,6 +500,90 @@ theorem valsFrom_step {rlemax : Nat} {code : PrefixCode} {left : Nat} (bs : List
           rw [this]
           rfl
 
+/-- The value a context map's code gives without reading a bit, if it gives one: a single symbol that stands for a value. -/
+def runOf (rlemax : Nat) : PrefixCode → Option Nat
+  | .single sym => contextMapValue rlemax sym
+  | .canonical _ => none
+
+/-- Such a code gives its value with a run of 1, reading nothing. -/
+theorem mapSym_of_run {rlemax : Nat} {code : PrefixCode} {v : Nat} (h : runOf rlemax code = some v) (bs : List Bool) :
+    mapSym rlemax code bs = some ((v, 1), bs) := by
+  cases code with
+  | single sym =>
+    have h' : contextMapValue rlemax sym = some v := h
+    simp only [mapSym, decodeSymbol, bind, Option.bind, h']
+  | canonical => exact absurd h (by simp [runOf])
+
+/-- With such a code, every value left is that one. -/
+theorem valsFrom_run {rlemax : Nat} {code : PrefixCode} {v : Nat} (h : runOf rlemax code = some v) :
+    ∀ left bs, valsFrom rlemax code left bs = some (List.replicate left v, bs) := by
+  intro left
+  induction left with
+  | zero => intro bs; rfl
+  | succ left ih =>
+    intro bs
+    rw [valsFrom_step bs (Nat.succ_ne_zero _), mapSym_of_run h]
+    show (if left + 1 < 1 then none else valsFrom rlemax code (left + 1 - 1) bs >>= _) = _
+    rw [ite_eq_right (by omega), Nat.add_sub_cancel, ih]
+    rfl
+
+/-- A canonical code reads at least one bit. -/
+theorem decodeLengths_reads (lens : List Nat) (bs : List Bool) : ∀ (k len : Nat), 1 ≤ len → ∀ s r,
+    decodeLengths lens bs len k = some (s, r) → r.length < bs.length
+  | 0, _, _, _, _, h => by simp [decodeLengths] at h
+  | k + 1, len, hl, s, r, h => by
+    simp only [decodeLengths] at h
+    cases e : readCode len bs with
+    | none => rw [e] at h; cases h
+    | some p =>
+      obtain ⟨c, rest⟩ := p
+      rw [e] at h
+      have hlen := readCode_length len bs c rest e
+      dsimp only at h
+      split at h
+      · split at h
+        · cases h
+          omega
+        · exact decodeLengths_reads lens bs k (len + 1) (by omega) s r h
+      · exact decodeLengths_reads lens bs k (len + 1) (by omega) s r h
+
+/-- A value read without a bit comes from a code that gives it without reading. -/
+theorem mapSym_noRead {rlemax : Nat} {code : PrefixCode} {bs r : List Bool} {v n : Nat}
+    (h : mapSym rlemax code bs = some ((v, n), r)) (hl : r.length = bs.length) : runOf rlemax code = some v ∧ n = 1 := by
+  unfold mapSym at h
+  cases hd : decodeSymbol code bs with
+  | none => rw [hd] at h; cases h
+  | some p =>
+    obtain ⟨sym, bs1⟩ := p
+    rw [hd] at h
+    dsimp only [bind, Option.bind] at h
+    have hb1 : bs1.length ≤ bs.length := by
+      cases code with
+      | single => simp only [decodeSymbol, Option.some.injEq, Prod.mk.injEq] at hd; rw [← hd.2]; exact Nat.le_refl _
+      | canonical lens => exact Nat.le_of_lt (decodeLengths_reads lens bs 15 1 (Nat.le_refl _) sym bs1 hd)
+    cases hv : contextMapValue rlemax sym with
+    | some w =>
+      rw [hv] at h
+      simp only [Option.some.injEq, Prod.mk.injEq] at h
+      obtain ⟨⟨rfl, rfl⟩, rfl⟩ := h
+      cases code with
+      | single sym' =>
+        simp only [decodeSymbol, Option.some.injEq, Prod.mk.injEq] at hd
+        obtain ⟨rfl, -⟩ := hd
+        exact ⟨hv, rfl⟩
+      | canonical lens => exact absurd hl (Nat.ne_of_lt (decodeLengths_reads lens bs 15 1 (Nat.le_refl _) sym _ hd))
+    | none =>
+      rw [hv] at h
+      cases hx : readInt sym bs1 with
+      | none => rw [hx] at h; cases h
+      | some q =>
+        rw [hx] at h
+        simp only [Option.some.injEq, Prod.mk.injEq] at h
+        obtain ⟨-, rfl⟩ := h
+        have := readInt_length sym bs1 q.1 q.2 hx
+        have hs : sym ≠ 0 := fun e => by simp [contextMapValue, e] at hv
+        omega
+
 /-! ### Who a prefix code is for -/
 
 /-- Who a prefix code is for. -/

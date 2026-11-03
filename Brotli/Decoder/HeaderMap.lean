@@ -23,6 +23,15 @@ theorem hrest_vals_zero (g : Gh) (isL : Bool) (ntrees rlemax : Nat) (code : Pref
   rw [List.append_nil]
   rfl
 
+/-- With a code that gives a value without reading, every value left is that one. -/
+theorem hrest_vals_run (g : Gh) (isL : Bool) (ntrees rlemax : Nat) (code : PrefixCode) (done : List Nat) (left : Nat) {v : Nat}
+    (hr : runOf rlemax code = some v) (bs : List Bool) :
+    hrest K g (.vals isL ntrees rlemax code done left) bs = hrest K g (.vals isL ntrees rlemax code (done ++ List.replicate left v) 0) bs := by
+  show (valsFrom rlemax code left bs >>= _) = (valsFrom rlemax code 0 bs >>= _)
+  rw [valsFrom_run hr, valsFrom_zero]
+  show afterVals K g isL ntrees (done ++ List.replicate left v) bs = afterVals K g isL ntrees ((done ++ List.replicate left v) ++ []) bs
+  rw [List.append_nil]
+
 /-- One more symbol of the values. -/
 theorem hrest_vals_step (g : Gh) (isL : Bool) (ntrees rlemax : Nat) (code : PrefixCode) (done : List Nat) (left : Nat) (bs : List Bool)
     (h0 : left ≠ 0) : hrest K g (.vals isL ntrees rlemax code done left) bs = mapSym rlemax code bs >>= fun p =>
@@ -113,6 +122,13 @@ def stepHVals (st : Hd) (pos : USize) : Hd :=
       let run := r.b
       let idx := st.idx
       if left < run then markH st pos .bad
+      else if r.count = st.count then
+        -- A code that gives a value without reading gives it for every value left.
+        if v = 0 then { st with pos := pos, status := .next, idx := idx + left, left := 0 }
+        else
+          let fill := st.fill
+          let st0 := clearFill st
+          { st0 with pos := pos, status := .next, idx := idx + left, left := 0, fill := fillLens fill idx left v.toUInt8 }
       else if v = 0 then { st with word := r.word, count := r.count, pos := pos, status := .next, idx := idx + run, left := left - run }
       else
         let fill := st.fill
@@ -151,13 +167,45 @@ theorem stepHVals_ok {isL : Bool} {ntrees rlemax : Nat} {code : PrefixCode} {don
     (fun bs => hrest_vals_step K g isL ntrees rlemax code done left bs hl0)
   have hval := R.ok
   have hsh0 := R.short
-  generalize mapSymFast st.mapT.t (USize.ofNat 0) st.mapT.fits st.mapT.h32 st.rlemax ⟨st.word, st.count⟩ = r at Rok Rshort Rbad hval hsh0
+  have hnb : (mapSymFast st.mapT.t (USize.ofNat 0) st.mapT.fits st.mapT.h32 st.rlemax ⟨st.word, st.count⟩).status ≠ .bad := by
+    unfold mapSymFast
+    dsimp only
+    split
+    · split
+      · exact fun e => ReadStatus.noConfusion e
+      · split
+        · split <;> exact fun e => ReadStatus.noConfusion e
+        · exact fun e => ReadStatus.noConfusion e
+    · exact fun e => ReadStatus.noConfusion e
+  generalize mapSymFast st.mapT.t (USize.ofNat 0) st.mapT.fits st.mapT.h32 st.rlemax ⟨st.word, st.count⟩ = r at Rok Rshort Rbad hval hsh0 hnb
+  -- A code that gives a value without reading is the case where the read takes no bits.
+  have hnone : ∀ v, runOf rlemax code = some v → r.status = .ok ∧ r.count = st.count ∧ r.a.toNat = v ∧ r.b.toNat = 1 := by
+    intro v hv
+    have hm := mapSym_of_run hv
+    cases hsr : r.status with
+    | short =>
+      obtain ⟨_, _, _, h5⟩ := hsh0 hsr
+      rw [hm] at h5
+      cases h5
+    | bad => exact absurd hsr hnb
+    | ok =>
+      have e := (hval hsr).2 []
+      rw [List.append_nil, List.append_nil, hm] at e
+      simp only [Option.some.injEq, Prod.mk.injEq] at e
+      obtain ⟨⟨e1, e2⟩, e3⟩ := e
+      have hl := congrArg List.length e3
+      rw [held_len, held_len] at hl
+      exact ⟨rfl, UInt64.toNat_inj.mp hl.symm, e1.symm, e2.symm⟩
   cases hsr : r.status with
   | short =>
     obtain ⟨_, _, h3, h4⟩ := Rshort hsr
     obtain ⟨_, _, _, h5⟩ := hsh0 hsr
+    have hno : runOf rlemax code = none := by
+      cases e : runOf rlemax code with
+      | none => rfl
+      | some v => exact absurd ((hnone v e).1.symm.trans hsr) (by decide)
     exact HStepOk.ofShortRead (X := 31) hrel hfull (by omega) h3 h4
-      (by rw [hStep_vals_step _ hl0]; exact readIn_short h5 (by rw [held_len]; exact h3))
+      (by rw [hStep_vals_step _ hl0 hno]; exact readIn_short h5 (by rw [held_len]; exact h3))
   | bad => exact HStepOk.ofBad rfl (fun F => Rbad hsr _)
   | ok =>
     dsimp only
@@ -175,6 +223,92 @@ theorem stepHVals_ok {isL : Bool} {ntrees rlemax : Nat} {code : PrefixCode} {don
     have hbig' : ¬ left < r.b.toNat := by
       rw [← hleft]
       exact fun e => hbig (UInt64.lt_iff_toNat_lt.mpr e)
+    by_cases hc : r.count = st.count
+    · rw [ite_eq_left hc]
+      -- The read took no bits: the code gives its value for every value left.
+      have hro : runOf rlemax code = some r.a.toNat := by
+        have e := (hval hsr).2 []
+        rw [List.append_nil, List.append_nil] at e
+        refine (mapSym_noRead e ?_).1
+        show r.buf.held.length = _
+        rw [held_len, held_len]
+        exact congrArg UInt64.toNat hc
+      have hidx3 : (st.idx + st.left).toNat = done.length + left := by
+        rw [UInt64.toNat_add, hidx, hleft]
+        exact Nat.mod_eq_of_lt (by omega)
+      have hlen3 : (done ++ List.replicate left r.a.toNat).length = done.length + left := by simp
+      have hz0 : (0 : UInt64).toNat = 0 := rfl
+      by_cases hz : r.a = 0
+      · rw [ite_eq_left hz]
+        have hz' : r.a.toNat = 0 := by rw [hz]; rfl
+        refine HStepOk.ofNext (g' := g) (p' := .vals isL ntrees rlemax code (done ++ List.replicate left r.a.toNat) 0)
+          (hd := Or.inl (Or.inr ⟨rfl, show 0 < left by omega⟩)) rfl
+          ⟨hw, hu, ht, hi, hn, hr, h2, h256, h16, hok, hC, hsy, ?_, hz0, ?_, hsz, ?_, ?_, ?_⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
+        · show (st.idx + st.left).toNat = _
+          rw [hidx3, hlen3]
+        · rw [hlen3]
+          omega
+        · intro x hx
+          rcases List.mem_append.mp hx with h | h
+          · exact hlt x h
+          · rw [(List.mem_replicate.mp h).2]
+            exact hv
+        · intro i hi'
+          rw [hlen3] at hi'
+          by_cases hA : i < done.length
+          · rw [List.getElem?_append_left hA, hat i hA]
+          · rw [List.getElem?_append_right (by omega), List.getElem?_replicate, ite_eq_left (by omega), hzero i (by omega), hz']
+            rfl
+        · intro i hi'
+          rw [hlen3] at hi'
+          exact hzero i (by omega)
+        · rw [hrest_vals_run K g isL ntrees rlemax code done left hro]
+        · rw [hStep_vals_run _ hl0 hro]
+      · rw [ite_eq_right hz]
+        have hz' : r.a.toNat ≠ 0 := fun e => hz (UInt64.toNat_inj.mp e)
+        have hbyte : r.a.toUInt8.toNat = r.a.toNat := by
+          rw [UInt64.toNat_toUInt8]
+          omega
+        obtain ⟨hfs, hfg⟩ := fillLens_spec r.a.toUInt8 left st.fill st.idx st.left hleft (by rw [hidx]; omega) (by rw [hidx, hsz]; omega)
+        refine HStepOk.ofNext (g' := g) (p' := .vals isL ntrees rlemax code (done ++ List.replicate left r.a.toNat) 0)
+          (hd := Or.inl (Or.inr ⟨rfl, show 0 < left by omega⟩))
+          (hm := ⟨rfl, rfl, fun h => ⟨by show (fillLens st.fill st.idx st.left r.a.toUInt8).size ≤ _; rw [hfs]; exact h.fill,
+            h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩,
+            by simp only [capH, Option.isSome, Bool.false_eq_true, ↓reduceIte]; omega, Nat.zero_le _⟩) rfl
+          ⟨hw, hu, ht, hi, hn, hr, h2, h256, h16, hok, hC, hsy, ?_, hz0, ?_, ?_, ?_, ?_, ?_⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
+        · show (st.idx + st.left).toNat = _
+          rw [hidx3, hlen3]
+        · rw [hlen3]
+          omega
+        · show (fillLens st.fill st.idx st.left r.a.toUInt8).size = _
+          rw [hfs]
+          exact hsz
+        · intro x hx
+          rcases List.mem_append.mp hx with h | h
+          · exact hlt x h
+          · rw [(List.mem_replicate.mp h).2]
+            exact hv
+        · intro i hi'
+          rw [hlen3] at hi'
+          show _ = some ((fillLens st.fill st.idx st.left r.a.toUInt8).data[i]?.getD 0).toNat
+          rw [hfg i, hidx]
+          by_cases hA : i < done.length
+          · rw [ite_eq_right (by omega), List.getElem?_append_left hA, hat i hA]
+          · rw [ite_eq_left (by omega), hbyte, List.getElem?_append_right (by omega), List.getElem?_replicate, ite_eq_left (by omega)]
+        · intro i hi'
+          rw [hlen3] at hi'
+          show (fillLens st.fill st.idx st.left r.a.toUInt8).data[i]?.getD 0 = 0
+          rw [hfg i, hidx, ite_eq_right (by omega)]
+          exact hzero i (by omega)
+        · rw [hrest_vals_run K g isL ntrees rlemax code done left hro]
+          rfl
+        · rw [hStep_vals_run _ hl0 hro]
+          rfl
+    rw [ite_eq_right hc]
+    have hno : runOf rlemax code = none := by
+      cases e : runOf rlemax code with
+      | none => rfl
+      | some v => exact absurd (hnone v e).2.1 hc
     have hidx2 : (st.idx + r.b).toNat = done.length + r.b.toNat := by
       rw [UInt64.toNat_add, hidx]
       exact Nat.mod_eq_of_lt (by omega)
@@ -208,7 +342,7 @@ theorem stepHVals_ok {isL : Bool} {ntrees rlemax : Nat} {code : PrefixCode} {don
       · rw [avail_mk, hN]
         simp only [hbig', ↓reduceIte]
         rfl
-      · rw [avail_mk, hStep_vals_step _ hl0, readIn_some ((hval hsr).2 _)]
+      · rw [avail_mk, hStep_vals_step _ hl0 hno, readIn_some ((hval hsr).2 _)]
         simp only [hbig', ↓reduceIte]
         rfl
     · rw [ite_eq_right hz]
@@ -254,7 +388,7 @@ theorem stepHVals_ok {isL : Bool} {ntrees rlemax : Nat} {code : PrefixCode} {don
       · rw [avail_mk, hN]
         simp only [hbig', ↓reduceIte]
         rfl
-      · rw [avail_mk, hStep_vals_step _ hl0, readIn_some ((hval hsr).2 _)]
+      · rw [avail_mk, hStep_vals_step _ hl0 hno, readIn_some ((hval hsr).2 _)]
         simp only [hbig', ↓reduceIte]
         rfl
 
