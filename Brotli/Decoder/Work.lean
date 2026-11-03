@@ -198,4 +198,146 @@ theorem runCmd_count {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a : 
       exact ⟨0, p, st, pos, hrel, Nat.le_refl _, hp, .refl _ _, Nat.le_refl _, fun e => absurd hst e,
         (fun h => absurd (hst.symm.trans h) (by decide)), (fun h => absurd (hst.symm.trans h) (by decide))⟩
 
+/-- A stream step outside the commands that goes on moves to another place. -/
+theorem sdown_ne {p p' : SPhase} (h : SDown p p') (hc : ∀ w l m q, p ≠ .cmds w l m q) (he : ∀ st, p ≠ .ended st) : p' ≠ p := by
+  intro e
+  rw [e] at h
+  cases p with
+  | hdr w st l ml g q =>
+    have h' : HDown q q := h
+    unfold HDown LexLt at h'
+    omega
+  | skip w st l n =>
+    simp only [SDown] at h
+    omega
+  | raw w st l n =>
+    simp only [SDown] at h
+    omega
+  | wbits => exact h
+  | mblock => exact h
+  | cmds w l m q => exact absurd rfl (hc w l m q)
+  | ended st => exact absurd rfl (he st)
+
+/-- The facts a stream step's count gives: an end state and place, the steps of the reading in order up to them, and what
+the end state is when the step goes on or pauses. -/
+def DCount (a : ByteArray) (stop : USize) (p : SPhase) (D : Dec) (t : List UInt8) (steps : Nat) (r : Dec) : Prop :=
+  ∃ c q D', DRel D' q ∧ D.pos.toNat ≤ D'.pos.toNat ∧ D'.pos.toNat ≤ stop.toNat ∧
+    ReachN sStep c p (D.bits a D.pos stop (bits t)) q (D'.bits a D'.pos stop (bits t)) ∧ steps ≤ c + 1 ∧
+    (r.status = .next → D' = r ∧ 1 ≤ c) ∧ (r.status = .needsInput → D' = r) ∧ (r.status = .needsOutput → D' = r)
+
+/-- A stream step outside the commands is one step, and takes at least one of the reading in order if it goes on. -/
+theorem stepD_count_other {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {p : SPhase} (hrel : DRel D p)
+    (he : D.tag ≠ .ended) (hp : D.pos.toNat ≤ stop.toNat) (hc : ∀ w l m q, p ≠ .cmds w l m q) (t : List UInt8) :
+    DCount a stop p D t 1 (stepD a stop hs D) := by
+  have hok := stepD_ok specSem (a := a) (hs := hs) hrel he hp
+  have hen : ∀ st, p ≠ .ended st := hrel.tag_ne he
+  cases hst : (stepD a stop hs D).status with
+  | next =>
+    obtain ⟨p', hR, h1, h2, _, hsd, _, hj⟩ := hok.next hst
+    obtain ⟨n, hn1, hr⟩ := (hj t).count_pos fun ⟨e1, _⟩ => sdown_ne hsd hc hen e1
+    exact ⟨n, p', _, hR, h1, h2, hr, by omega, fun _ => ⟨rfl, hn1⟩, (fun h => absurd (hst.symm.trans h) (by decide)),
+      (fun h => absurd (hst.symm.trans h) (by decide))⟩
+  | needsInput =>
+    obtain ⟨b1, b2, p', hR, _, _, _, _, _, hj, _⟩ := hok.needsInput hst
+    obtain ⟨n, hr⟩ := (hj t).count
+    exact ⟨n, p', _, hR, by rw [b1]; exact b2, by rw [b1]; exact Nat.le_refl _, hr, by omega,
+      (fun h => absurd (hst.symm.trans h) (by decide)), (fun _ => rfl), (fun h => absurd (hst.symm.trans h) (by decide))⟩
+  | needsOutput =>
+    obtain ⟨p', hR, h1, h2, _, _, _, _, _, hj⟩ := hok.needsOutput hst
+    obtain ⟨n, hr⟩ := (hj t).count
+    exact ⟨n, p', _, hR, h1, h2, hr, by omega, (fun h => absurd (hst.symm.trans h) (by decide)),
+      (fun h => absurd (hst.symm.trans h) (by decide)), (fun _ => rfl)⟩
+  | bad =>
+    exact ⟨0, p, D, hrel, Nat.le_refl _, hp, .refl _ _, Nat.le_refl _, (fun h => absurd (hst.symm.trans h) (by decide)),
+      (fun h => absurd (hst.symm.trans h) (by decide)), (fun h => absurd (hst.symm.trans h) (by decide))⟩
+  | memory =>
+    exact ⟨0, p, D, hrel, Nat.le_refl _, hp, .refl _ _, Nat.le_refl _, (fun h => absurd (hst.symm.trans h) (by decide)),
+      (fun h => absurd (hst.symm.trans h) (by decide)), (fun h => absurd (hst.symm.trans h) (by decide))⟩
+
+private theorem cmdBudget_ne' : cmdBudget ≠ 0 := by
+  intro e
+  have h : cmdBudget.toNat = 65536 := usize_ofNat' (by decide)
+  rw [e] at h
+  cases h
+
+/-- A meta-block's commands as a stream step: the command loop's steps, against the reading in order. -/
+theorem stepDCmds_count {w : Nat} {last : Bool} {m : MetaBlockHeader} {q0 : Phase} {a : ByteArray} {stop : USize}
+    {hs : stop.toNat ≤ a.size} {D : Dec} (hrel : DRel D (.cmds w last m q0)) (hp : D.pos.toNat ≤ stop.toNat) (t : List UInt8) :
+    DCount a stop (.cmds w last m q0) D t (runCmdSteps D.H D.k a stop hs cmdBudget D.cmd D.pos) (stepDCmds a stop hs D D.pos) := by
+  obtain ⟨tag, cmd, hd, H, k, last', left, limit, pos', status⟩ := D
+  obtain ⟨ht, hl, hlim, hH, hR⟩ := hrel
+  have ht' : tag = .cmds := ht
+  subst ht'
+  have hl0 : last' = last := hl
+  subst hl0
+  obtain ⟨c, q, st', pos'', hq, g1, g2, hr, g3, g4, g5, g6⟩ :=
+    runCmd_count (w := w) (hs := hs) hH _ cmdBudget cmd q0 pos' rfl hR hp (bits t)
+  have hr' := ReachN.cmds (last := last') hr
+  dsimp only at g3 hr' ⊢
+  unfold stepDCmds
+  dsimp only
+  generalize runCmd H k a stop hs cmdBudget cmd pos' = rc at g4 g5 g6
+  cases hst : rc.status with
+  | next =>
+    obtain ⟨e1, e2⟩ := g4 (by rw [hst]; decide)
+    subst e1
+    subst e2
+    exact ⟨c, .cmds w last' m q,
+      { clearCmd ⟨.cmds, cmd, hd, H, k, last', left, limit, pos', status⟩ with cmd := st', pos := st'.pos, status := .next },
+      ⟨rfl, rfl, hlim, hH, hq⟩, g1, g2, hr', g3, fun _ => ⟨rfl, g6 hst cmdBudget_ne'⟩,
+      (fun h => DStatus.noConfusion h), (fun h => DStatus.noConfusion h)⟩
+  | needsInput =>
+    obtain ⟨e1, e2⟩ := g4 (by rw [hst]; decide)
+    subst e1
+    subst e2
+    exact ⟨c, .cmds w last' m q,
+      { clearCmd ⟨.cmds, cmd, hd, H, k, last', left, limit, pos', status⟩ with cmd := st', pos := st'.pos, status := .needsInput },
+      ⟨rfl, rfl, hlim, hH, hq⟩, g1, g2, hr', g3, (fun h => DStatus.noConfusion h), (fun _ => rfl), (fun h => DStatus.noConfusion h)⟩
+  | needsOutput =>
+    obtain ⟨e1, e2⟩ := g4 (by rw [hst]; decide)
+    subst e1
+    subst e2
+    exact ⟨c, .cmds w last' m q,
+      { clearCmd ⟨.cmds, cmd, hd, H, k, last', left, limit, pos', status⟩ with cmd := st', pos := st'.pos, status := .needsOutput },
+      ⟨rfl, rfl, hlim, hH, hq⟩, g1, g2, hr', g3, (fun h => DStatus.noConfusion h), (fun h => DStatus.noConfusion h), (fun _ => rfl)⟩
+  | bad =>
+    exact ⟨c, .cmds w last' m q,
+      { clearCmd ⟨.cmds, cmd, hd, H, k, last', left, limit, pos', status⟩ with cmd := st', pos := pos'', status := .bad },
+      ⟨rfl, rfl, hlim, hH, hq⟩, g1, g2, hr', g3, (fun h => DStatus.noConfusion h), (fun h => DStatus.noConfusion h),
+      (fun h => DStatus.noConfusion h)⟩
+  | done =>
+    obtain ⟨e1, e2⟩ := g4 (by rw [hst]; decide)
+    subst e1
+    subst e2
+    obtain ⟨s, rfl, h0⟩ := g5 hst
+    have hcheck := seenOk_iff hH hq
+    have hq' := hq
+    obtain ⟨hC, htg, hprod⟩ := hq'
+    have hwin := hC.toWin
+    by_cases hsee : seenOk st'.seen H.nL H.nI H.nD = true
+    · show DCount a stop _ _ t _ (if seenOk st'.seen H.nL H.nI H.nD then _ else _)
+      rw [ite_eq_left hsee]
+      rw [hcheck] at hsee
+      have hstep := sStep_cmds_end (w := w) (last := last') (m := m) (stateBits st' a st'.pos stop (bits t)) h0 hsee
+      have hr2 : ReachN sStep (c + 1) _ _ _ _ := hr'.trans (.next hstep (.refl _ _))
+      cases last' with
+      | true =>
+        exact ⟨c + 1, .ended ⟨s.output, s.produced, s.distances⟩,
+          { clearCmd ⟨.cmds, cmd, hd, H, k, true, left, limit, pos', status⟩ with
+            cmd := st', pos := st'.pos, status := .next, tag := if true then .ended else .mblock, H := Hdr.none },
+          ⟨rfl, hC.wf, w, ⟨hwin, hprod, hlim⟩⟩, g1, g2, hr2, by omega,
+          fun _ => ⟨rfl, by omega⟩, (fun h => DStatus.noConfusion h), (fun h => DStatus.noConfusion h)⟩
+      | false =>
+        exact ⟨c + 1, .mblock w ⟨s.output, s.produced, s.distances⟩,
+          { clearCmd ⟨.cmds, cmd, hd, H, k, false, left, limit, pos', status⟩ with
+            cmd := st', pos := st'.pos, status := .next, tag := if false then .ended else .mblock, H := Hdr.none },
+          ⟨rfl, hC.wf, ⟨hwin, hprod, hlim⟩⟩, g1, g2, hr2, by omega,
+          fun _ => ⟨rfl, by omega⟩, (fun h => DStatus.noConfusion h), (fun h => DStatus.noConfusion h)⟩
+    · show DCount a stop _ _ t _ (if seenOk st'.seen H.nL H.nI H.nD then _ else _)
+      rw [ite_eq_right hsee]
+      exact ⟨c, .cmds w last' m (.command s),
+        { clearCmd ⟨.cmds, cmd, hd, H, k, last', left, limit, pos', status⟩ with cmd := st', pos := st'.pos, status := .bad },
+        ⟨rfl, rfl, hlim, hH, hq⟩, g1, g2, hr', g3,
+        (fun h => DStatus.noConfusion h), (fun h => DStatus.noConfusion h), (fun h => DStatus.noConfusion h)⟩
+
 end Brotli.Decoder
