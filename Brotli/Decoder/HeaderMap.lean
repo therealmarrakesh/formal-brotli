@@ -591,34 +591,152 @@ theorem runCount_spec (out : ByteArray) (i : UInt64) (s : UInt8) : ∀ (K : Nat)
     · rw [ite_eq_right he]
       exact ⟨Nat.le_refl _, by omega, fun _ j h1 h2 => absurd h2 (by omega)⟩
 
-/-- The same index `k` times, with no values. -/
-def mtfSteps (m : ByteArray) (s k : UInt64) : ByteArray :=
-  if _hk : k = 0 then m else mtfSteps (setU (shiftUp m s) (USize.ofNat 0) (getU m s.toUSize)) s (k - 1)
-termination_by k.toNat
+/-- The value at the turning point of a list whose first `s + 1` places are turned round `k` places. -/
+theorem rot_getD (P C : List Nat) {s k : Nat} (hP : P.length = s + 1) (hk : k ≤ s) :
+    (P.drop (s + 1 - k) ++ P.take (s + 1 - k) ++ C).getD s 0 = P.getD (s - k) 0 := by
+  have hA : (P.drop (s + 1 - k)).length = k := by rw [List.length_drop]; omega
+  have hB : (P.take (s + 1 - k)).length = s + 1 - k := by rw [List.length_take]; omega
+  rw [List.getD_eq_getElem?_getD, List.append_assoc, List.getElem?_append_right (by rw [hA]; omega), hA,
+    List.getElem?_append_left (by rw [hB]; omega), List.getElem?_take, ite_eq_left (show s - k < s + 1 - k by omega),
+    ← List.getD_eq_getElem?_getD]
+
+/-- A round of the same index gives the list's first places backwards. -/
+theorem imtf_rot_get (L : List Nat) (s : Nat) (hs : s < L.length) {t : Nat} (ht : t ≤ s) :
+    (inverseMoveToFrontFrom L (List.replicate (s + 1) s))[t]? = some (L.getD (s - t) 0) := by
+  have e : List.replicate (s + 1) s = List.replicate t s ++ (s :: List.replicate (s - t) s) := by
+    rw [← List.replicate_succ, List.replicate_append_replicate]
+    congr 1
+    omega
+  rw [e, imtf_append, List.getElem?_append_right (by rw [inverseMoveToFrontFrom_length, List.length_replicate]; exact Nat.le_refl _),
+    inverseMoveToFrontFrom_length, List.length_replicate, Nat.sub_self]
+  rw [show inverseMoveToFrontFrom (mtfAfter L (List.replicate t s)) (s :: List.replicate (s - t) s) =
+    (mtfAfter L (List.replicate t s)).getD s 0 :: inverseMoveToFrontFrom ((mtfAfter L (List.replicate t s)).getD s 0 ::
+      (mtfAfter L (List.replicate t s)).eraseIdx s) (List.replicate (s - t) s) from rfl]
+  rw [List.getElem?_cons_zero, mtfAfter_rot L s hs t (by omega), rot_getD _ _ (by rw [List.length_take]; omega) ht,
+    List.getD_eq_getElem?_getD, List.getElem?_take, ite_eq_left (show s - t < s + 1 by omega), ← List.getD_eq_getElem?_getD]
+
+/-- A run's first round of values: the `n` outputs from `j`, each the list's value `j` places before `s`. -/
+def revOut (m out : ByteArray) (i s j n : UInt64) : ByteArray :=
+  if _hn : n = 0 then out else revOut m (setU out (i + j).toUSize (getU m (s - j).toUSize)) i s (j + 1) (n - 1)
+termination_by n.toNat
 decreasing_by
-  have hne : k.toNat ≠ 0 := fun e => _hk (UInt64.toNat_inj.mp (by rw [e]; rfl))
-  have h1 : (k - 1).toNat = k.toNat - 1 := UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by
+  have hne : n.toNat ≠ 0 := fun e => _hn (UInt64.toNat_inj.mp (by rw [e]; rfl))
+  have h1 : (n - 1).toNat = n.toNat - 1 := UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by
     rw [show (1 : UInt64).toNat = 1 from rfl]
     omega))
   omega
 
-theorem mtfSteps_spec (s : UInt64) (hs : s.toNat < 256) : ∀ (K : Nat) (k : UInt64) (m : ByteArray) (L : List Nat), k.toNat = K → MtfIs m L →
-    MtfIs (mtfSteps m s k) (mtfAfter L (List.replicate K s.toNat)) := by
-  intro K
-  induction K with
+theorem revOut_spec (m : ByteArray) (i s : UInt64) : ∀ (N : Nat) (j n : UInt64) (out : ByteArray), n.toNat = N →
+    j.toNat + N ≤ s.toNat + 1 → s.toNat < 256 → i.toNat + j.toNat + N < 2 ^ 32 → i.toNat + j.toNat + N ≤ out.size →
+    (revOut m out i s j n).size = out.size ∧ (∀ q, q < i.toNat + j.toNat → (revOut m out i s j n).data[q]? = out.data[q]?) ∧
+    (∀ q, i.toNat + j.toNat + N ≤ q → (revOut m out i s j n).data[q]? = out.data[q]?) ∧
+    (∀ t, j.toNat ≤ t → t < j.toNat + N → (revOut m out i s j n).data[i.toNat + t]?.getD 0 = m.data[s.toNat - t]?.getD 0) := by
+  intro N
+  induction N with
   | zero =>
-    intro k m L hk hm
-    have hz : k = 0 := UInt64.toNat_inj.mp (by rw [hk]; rfl)
-    rw [mtfSteps, dite_eq_left hz]
-    exact hm
-  | succ K ih =>
-    intro k m L hk hm
-    have hz : k ≠ 0 := fun e => by rw [e] at hk; exact Nat.succ_ne_zero _ hk.symm
-    have hk1 : (k - 1).toNat = K := by
-      rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by rw [show (1 : UInt64).toNat = 1 from rfl]; omega)), hk]
+    intro j n out hn _ _ _ _
+    have hz : n = 0 := UInt64.toNat_inj.mp (by rw [hn]; rfl)
+    rw [revOut, dite_eq_left hz]
+    exact ⟨rfl, fun _ _ => rfl, fun _ _ => rfl, fun t h1 h2 => absurd h2 (by omega)⟩
+  | succ N ih =>
+    intro j n out hn hjs hs h32 hsz
+    have hz : n ≠ 0 := fun e => by rw [e] at hn; exact Nat.succ_ne_zero _ hn.symm
+    have hn1 : (n - 1).toNat = N := by
+      rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by rw [show (1 : UInt64).toNat = 1 from rfl]; omega)), hn]
       rfl
-    rw [mtfSteps, dite_eq_right hz]
-    exact ih (k - 1) _ _ hk1 (mtf_step hm hs).1
+    have hj1 : (j + 1).toNat = j.toNat + 1 := by
+      rw [UInt64.toNat_add, show (1 : UInt64).toNat = 1 from rfl]
+      exact Nat.mod_eq_of_lt (by omega)
+    have hij : (i + j).toNat = i.toNat + j.toNat := by
+      rw [UInt64.toNat_add]
+      exact Nat.mod_eq_of_lt (by omega)
+    have hus : (i + j).toUSize.toNat = i.toNat + j.toNat := by rw [word_toUSize (by omega), hij]
+    have hsj : (s - j).toUSize.toNat = s.toNat - j.toNat := by
+      rw [word_toUSize (by rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by omega))]; omega),
+        UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by omega))]
+    rw [revOut, dite_eq_right hz]
+    generalize hv : getU m (s - j).toUSize = v
+    have hvb : v = m.data[s.toNat - j.toNat]?.getD 0 := by
+      apply UInt8.toNat_inj.mp
+      rw [← hv, getU_toNat, hsj]
+    obtain ⟨b1, b2, b3, b4⟩ := ih (j + 1) (n - 1) (setU out (i + j).toUSize v) hn1 (by omega) hs (by omega)
+      (by rw [size_setU]; omega)
+    rw [hj1] at b2 b3 b4
+    refine ⟨by rw [b1, size_setU], fun q hq => ?_, fun q hq => ?_, fun t h1 h2 => ?_⟩
+    · rw [b2 q (by omega), setU_get_ne (by rw [hus]; omega)]
+    · rw [b3 q (by omega), setU_get_ne (by rw [hus]; omega)]
+    · by_cases ht : t = j.toNat
+      · subst ht
+        rw [b2 _ (by omega)]
+        have := setU_get_same (t := out) (i := (i + j).toUSize) (v := v) (by rw [hus]; omega)
+        rw [hus] at this
+        rw [this, hvb]
+      · exact b4 t (by omega) (by omega)
+
+/-- Rewrites `n` places of the list from `x`, each from the outputs, going back from `a`. -/
+def rotFrom (out m : ByteArray) (i x a n : UInt64) : ByteArray :=
+  if _hn : n = 0 then m else rotFrom out (setU m x.toUSize (getU out (i + a).toUSize)) i (x + 1) (a - 1) (n - 1)
+termination_by n.toNat
+decreasing_by
+  have hne : n.toNat ≠ 0 := fun e => _hn (UInt64.toNat_inj.mp (by rw [e]; rfl))
+  have h1 : (n - 1).toNat = n.toNat - 1 := UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by
+    rw [show (1 : UInt64).toNat = 1 from rfl]
+    omega))
+  omega
+
+theorem rotFrom_spec (out : ByteArray) (i : UInt64) : ∀ (N : Nat) (x a n : UInt64) (m : ByteArray), n.toNat = N →
+    (0 < N → N ≤ a.toNat + 1 ∧ i.toNat + a.toNat < 2 ^ 32) → x.toNat + N ≤ 256 → m.size = 256 →
+    (rotFrom out m i x a n).size = 256 ∧ (∀ y, y < x.toNat ∨ x.toNat + N ≤ y → (rotFrom out m i x a n).data[y]? = m.data[y]?) ∧
+    (∀ t, t < N → (rotFrom out m i x a n).data[x.toNat + t]?.getD 0 = out.data[i.toNat + a.toNat - t]?.getD 0) := by
+  intro N
+  induction N with
+  | zero =>
+    intro x a n m hn _ _ hs
+    have hz : n = 0 := UInt64.toNat_inj.mp (by rw [hn]; rfl)
+    rw [rotFrom, dite_eq_left hz]
+    exact ⟨hs, fun _ _ => rfl, fun t h => absurd h (by omega)⟩
+  | succ N ih =>
+    intro x a n m hn ha hx hs
+    obtain ⟨ha1, ha2⟩ := ha (by omega)
+    have hz : n ≠ 0 := fun e => by rw [e] at hn; exact Nat.succ_ne_zero _ hn.symm
+    have hn1 : (n - 1).toNat = N := by
+      rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by rw [show (1 : UInt64).toNat = 1 from rfl]; omega)), hn]
+      rfl
+    have hx1 : (x + 1).toNat = x.toNat + 1 := by
+      rw [UInt64.toNat_add, show (1 : UInt64).toNat = 1 from rfl]
+      exact Nat.mod_eq_of_lt (by omega)
+    have hia : (i + a).toNat = i.toNat + a.toNat := by
+      rw [UInt64.toNat_add]
+      exact Nat.mod_eq_of_lt (by omega)
+    have hus : x.toUSize.toNat = x.toNat := word_toUSize (by omega)
+    have husa : (i + a).toUSize.toNat = i.toNat + a.toNat := by rw [word_toUSize (by omega), hia]
+    rw [rotFrom, dite_eq_right hz]
+    generalize hv : getU out (i + a).toUSize = v
+    have hvb : v = out.data[i.toNat + a.toNat]?.getD 0 := by
+      apply UInt8.toNat_inj.mp
+      rw [← hv, getU_toNat, husa]
+    obtain ⟨b1, b2, b3⟩ := ih (x + 1) (a - 1) (n - 1) (setU m x.toUSize v) hn1
+      (fun h => by
+        have ha1' : (a - 1).toNat = a.toNat - 1 :=
+          UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by rw [show (1 : UInt64).toNat = 1 from rfl]; omega))
+        rw [ha1']
+        omega)
+      (by rw [hx1]; omega) (by rw [size_setU]; exact hs)
+    rw [hx1] at b2 b3
+    refine ⟨b1, fun y hy => ?_, fun t ht => ?_⟩
+    · rw [b2 y (by omega), setU_get_ne (by rw [hus]; omega)]
+    · by_cases ht0 : t = 0
+      · subst ht0
+        rw [Nat.add_zero, b2 _ (by omega)]
+        have := setU_get_same (t := m) (i := x.toUSize) (v := v) (by rw [hus, hs]; omega)
+        rw [hus] at this
+        rw [this, hvb, Nat.sub_zero]
+      · have ha1' : (a - 1).toNat = a.toNat - 1 :=
+          UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by rw [show (1 : UInt64).toNat = 1 from rfl]; omega))
+        have := b3 (t - 1) (by omega)
+        rw [ha1', show x.toNat + 1 + (t - 1) = x.toNat + t by omega, show i.toNat + (a.toNat - 1) - (t - 1) = i.toNat + a.toNat - t by omega]
+          at this
+        exact this
 
 /-- Copies `k` bytes from `p` places back, one at a time, so that from `j` on the bytes repeat with period `p`. -/
 def copyPeriod (out : ByteArray) (j k p : UInt64) : ByteArray :=
@@ -674,7 +792,8 @@ theorem copyPeriod_spec (p : UInt64) (hp : 1 ≤ p.toNat) : ∀ (K : Nat) (j k :
       · exact b4 q (by omega) (by omega)
 
 /-- The transform's loop: each index's value moves to the front. A run of the same index longer than the places it turns
-round takes one round of them, and the rest of its values repeat that round's. -/
+round gives that round's values, the list's first places backwards, and the rest of its values repeat them; the list is
+then those places turned round as far as the run's length goes past whole rounds, rewritten from the values. -/
 def imtfGo (m out : ByteArray) (i n : UInt64) : ByteArray × ByteArray :=
   if _hn : n = 0 then (m, out)
   else
@@ -684,10 +803,10 @@ def imtfGo (m out : ByteArray) (i n : UInt64) : ByteArray × ByteArray :=
       match imtfPlain m out i 1 with
       | (m1, out1) => imtfGo m1 out1 (i + 1) (n - 1)
     else
-      match imtfPlain m out i (index + 1) with
-      | (m1, out1) =>
-        imtfGo (mtfSteps m1 index ((r - (index + 1)) % (index + 1))) (copyPeriod out1 (i + (index + 1)) (r - (index + 1)) (index + 1))
-          (i + r) (n - r)
+      let p := index + 1
+      let out2 := copyPeriod (revOut m out i index 0 p) (i + p) (r - p) p
+      let k := (r - p) % p
+      imtfGo (rotFrom out2 (rotFrom out2 m i 0 (k - 1) k) i k index (p - k)) out2 (i + r) (n - r)
 termination_by n.toNat
 decreasing_by
   · have hne : n.toNat ≠ 0 := fun e => _hn (UInt64.toNat_inj.mp (by rw [e]; rfl))
@@ -794,16 +913,12 @@ theorem imtfGo_spec : ∀ (N : Nat) (i n : UInt64) (m out : ByteArray) (L vs pre
       rw [UInt64.toNat_add, hb64, show (1 : UInt64).toNat = 1 from rfl]
       exact Nat.mod_eq_of_lt (by omega)
     have hrp : byte.toNat + 1 < r.toNat := Nat.lt_of_not_le fun e => hle (UInt64.le_iff_toNat_le.mpr (by rw [hp1]; exact e))
-    obtain ⟨p1, p2, p3, p4⟩ := imtfPlain_spec (byte.toNat + 1) i (byte.toUInt64 + 1) m out L (vs.take (byte.toNat + 1)) pre
-      (by rw [List.length_take]; omega) hp1 hi (by omega) (by omega) hm hp
-      (fun j hj => by
-        rw [List.getElem?_take, ite_eq_left hj]
-        exact hq j (by omega))
-    rw [htk _ (by omega)] at p2 p4
-    rw [mtfAfter_period L _ hsL] at p4
-    generalize imtfPlain m out i (byte.toUInt64 + 1) = pl at p1 p2 p3 p4 ⊢
-    obtain ⟨m1, out1⟩ := pl
-    dsimp only at p1 p2 p3 p4 ⊢
+    have hz0 : (0 : UInt64).toNat = 0 := rfl
+    obtain ⟨o1, o2, o3, o4⟩ := revOut_spec m i byte.toUInt64 (byte.toNat + 1) 0 (byte.toUInt64 + 1) out hp1
+      (by rw [hz0, hb64]; omega) (by rw [hb64]; exact hsb) (by rw [hz0, hi]; omega) (by rw [hz0, hi]; omega)
+    rw [hz0, Nat.add_zero, hi] at o2 o3
+    rw [hz0, hb64, hi] at o4
+    generalize revOut m out i byte.toUInt64 0 (byte.toUInt64 + 1) = out1 at o1 o2 o3 o4 ⊢
     have hip : (i + (byte.toUInt64 + 1)).toNat = pre.length + (byte.toNat + 1) := by
       rw [UInt64.toNat_add, hi, hp1]
       exact Nat.mod_eq_of_lt (by omega)
@@ -811,13 +926,68 @@ theorem imtfGo_spec : ∀ (N : Nat) (i n : UInt64) (m out : ByteArray) (L vs pre
       rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by rw [hp1]; omega)), hp1]
     obtain ⟨q1, q2, q3, q4⟩ := copyPeriod_spec (byte.toUInt64 + 1) (by rw [hp1]; omega) (r.toNat - (byte.toNat + 1))
       (i + (byte.toUInt64 + 1)) (r - (byte.toUInt64 + 1)) out1 hrs (by rw [hip, hp1]; omega) (by rw [hip]; omega)
-      (by rw [hip, p1]; omega)
+      (by rw [hip, o1]; omega)
     rw [hip] at q2 q3 q4
     rw [hp1] at q4
-    have hms := mtfSteps_spec byte.toUInt64 (by rw [hb64]; exact hsb) ((r.toNat - (byte.toNat + 1)) % (byte.toNat + 1))
-      ((r - (byte.toUInt64 + 1)) % (byte.toUInt64 + 1)) m1 L (by rw [UInt64.toNat_mod, hrs, hp1]) p4
-    rw [hb64, ← Nat.mod_eq_sub_mod (by omega), ← mtfAfter_mod L _ hsL, ← htk _ (Nat.le_refl _)] at hms
     generalize copyPeriod out1 (i + (byte.toUInt64 + 1)) (r - (byte.toUInt64 + 1)) (byte.toUInt64 + 1) = out2 at q1 q2 q3 q4 ⊢
+    -- The round's values, in the outputs, are the list's first places backwards.
+    have hfirst : ∀ t, t ≤ byte.toNat → (out2.data[pre.length + t]?.getD 0).toNat = L.getD (byte.toNat - t) 0 := by
+      intro t ht
+      rw [q2 _ (by omega), o4 t (Nat.zero_le _) (by omega), hm.at_ _ (by omega)]
+    -- The list after the run: its first places turned round as far as the run goes past whole rounds.
+    have hK : (r.toNat - (byte.toNat + 1)) % (byte.toNat + 1) < byte.toNat + 1 := Nat.mod_lt _ (by omega)
+    generalize hKd : (r.toNat - (byte.toNat + 1)) % (byte.toNat + 1) = K at hK
+    have hk : ((r - (byte.toUInt64 + 1)) % (byte.toUInt64 + 1)).toNat = K := by rw [UInt64.toNat_mod, hrs, hp1, hKd]
+    generalize (r - (byte.toUInt64 + 1)) % (byte.toUInt64 + 1) = k at hk ⊢
+    have hir32 : i.toNat + byte.toNat < 2 ^ 32 := by rw [hi]; omega
+    obtain ⟨a1, a2, a3⟩ := rotFrom_spec out2 i K 0 (k - 1) k m hk
+      (fun h => by
+        rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by rw [hk, show (1 : UInt64).toNat = 1 from rfl]; omega)), hk,
+          show (1 : UInt64).toNat = 1 from rfl]
+        omega)
+      (by rw [hz0]; omega) hm.sz
+    have hpk : (byte.toUInt64 + 1 - k).toNat = byte.toNat + 1 - K := by
+      rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by rw [hk, hp1]; omega)), hk, hp1]
+    obtain ⟨c1, c2, c3⟩ := rotFrom_spec out2 i (byte.toNat + 1 - K) k byte.toUInt64 (byte.toUInt64 + 1 - k)
+      (rotFrom out2 m i 0 (k - 1) k) hpk (fun _ => by rw [hb64]; omega) (by rw [hk]; omega) a1
+    rw [hz0] at a2 a3
+    rw [hk] at c2 c3
+    rw [hb64] at c3
+    have hms : MtfIs (rotFrom out2 (rotFrom out2 m i 0 (k - 1) k) i k byte.toUInt64 (byte.toUInt64 + 1 - k))
+        (mtfAfter L (List.replicate r.toNat byte.toNat)) := by
+      rw [mtfAfter_mod L _ hsL, Nat.mod_eq_sub_mod (by omega), hKd, mtfAfter_rot L _ hsL K (by omega)]
+      have hP : (L.take (byte.toNat + 1)).length = byte.toNat + 1 := by rw [List.length_take]; omega
+      have hA : ((L.take (byte.toNat + 1)).drop (byte.toNat + 1 - K)).length = K := by rw [List.length_drop]; omega
+      have hB : ((L.take (byte.toNat + 1)).take (byte.toNat + 1 - K)).length = byte.toNat + 1 - K := by
+        rw [List.length_take]; omega
+      have hL := hm.length
+      refine ⟨c1, by simp only [List.length_append, hA, hB, List.length_drop]; omega, fun x hx => ?_⟩
+      rw [List.getD_eq_getElem?_getD, List.append_assoc]
+      by_cases h1 : x < K
+      · rw [List.getElem?_append_left (by rw [hA]; exact h1), List.getElem?_drop, List.getElem?_take,
+          ite_eq_left (show byte.toNat + 1 - K + x < byte.toNat + 1 by omega), ← List.getD_eq_getElem?_getD,
+          c2 x (Or.inl h1)]
+        have := a3 x h1
+        have hk1 : (k - 1).toNat = K - 1 := by
+          rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by rw [hk, show (1 : UInt64).toNat = 1 from rfl]; omega)), hk]
+          rfl
+        rw [show 0 + x = x by omega, hk1] at this
+        rw [this, show i.toNat + (K - 1) - x = pre.length + (K - 1 - x) by rw [hi]; omega, hfirst _ (by omega)]
+        congr 1
+        omega
+      · rw [List.getElem?_append_right (by rw [hA]; omega), hA]
+        by_cases h2 : x ≤ byte.toNat
+        · rw [List.getElem?_append_left (by rw [hB]; omega), List.getElem?_take, ite_eq_left (show x - K < byte.toNat + 1 - K by omega),
+            List.getElem?_take, ite_eq_left (show x - K < byte.toNat + 1 by omega), ← List.getD_eq_getElem?_getD]
+          have := c3 (x - K) (by omega)
+          rw [show K + (x - K) = x by omega] at this
+          rw [this, show i.toNat + byte.toNat - (x - K) = pre.length + (byte.toNat - (x - K)) by rw [hi]; omega,
+            hfirst _ (by omega)]
+          congr 1
+          omega
+        · rw [List.getElem?_append_right (by rw [hB]; omega), hB, List.getElem?_drop,
+            show byte.toNat + 1 + (x - K - (byte.toNat + 1 - K)) = x by omega, ← List.getD_eq_getElem?_getD,
+            c2 x (Or.inr (by omega)), a2 x (Or.inr (by omega)), hm.at_ x hx]
     have hsplit : List.replicate r.toNat byte.toNat =
         List.replicate (byte.toNat + 1) byte.toNat ++ List.replicate (r.toNat - (byte.toNat + 1)) byte.toNat := by
       rw [List.replicate_append_replicate]
@@ -837,7 +1007,13 @@ theorem imtfGo_spec : ∀ (N : Nat) (i n : UInt64) (m out : ByteArray) (L vs pre
       | _ j ihj =>
         intro hj
         by_cases hlo : j < pre.length + (byte.toNat + 1)
-        · rw [hpre j hlo, p2 j hlo, q2 j hlo]
+        · rw [hpre j hlo]
+          by_cases hlp : j < pre.length
+          · rw [List.getElem?_append_left hlp, hp j hlp, q2 j hlo, o2 j hlp]
+          · rw [List.getElem?_append_right (by omega), imtf_rot_get L _ hsL (by omega),
+              show j = pre.length + (j - pre.length) by omega, hfirst _ (by omega)]
+            congr 3
+            omega
         · rw [q4 j (by omega) (by omega), ← ihj (j - (byte.toNat + 1)) (by omega) (by omega),
             List.getElem?_append_right (by omega), List.getElem?_append_right (by omega),
             show j - pre.length = j - (byte.toNat + 1) - pre.length + (byte.toNat + 1) by omega,
@@ -847,8 +1023,8 @@ theorem imtfGo_spec : ∀ (N : Nat) (i n : UInt64) (m out : ByteArray) (L vs pre
       exact Nat.mod_eq_of_lt (by omega)
     have hnr : (n - r).toNat = N - r.toNat := by
       rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by omega)), hn]
-    exact cont r.toNat _ out2 (by omega) (by omega) (q1.trans p1) (by rw [htk _ (Nat.le_refl _)]; exact hout)
-      (fun q hq' => by rw [q3 q (by omega), p3 q (by omega)]) hms (i + r) (n - r) hir hnr
+    exact cont r.toNat _ out2 (by omega) (by omega) (q1.trans o1) (by rw [htk _ (Nat.le_refl _)]; exact hout)
+      (fun q hq' => by rw [q3 q (by omega), o3 q (by omega)]) (by rw [htk _ (Nat.le_refl _)]; exact hms) (i + r) (n - r) hir hnr
 
 /-- Marks the values of `n` bytes from `i`. -/
 def markAll (map flags : ByteArray) (i n : UInt64) : ByteArray :=
