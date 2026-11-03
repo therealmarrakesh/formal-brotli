@@ -224,15 +224,17 @@ def metaGo (D : Dec) (c : Cmd) (r : Rd) (pos : USize) : Dec :=
 
 /-- The place at a meta-block's start. -/
 def stepDMeta (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize) : Dec :=
-  if hp : pos ≤ stop then
-    let rf := refill D.cmd.word D.cmd.count a pos stop hs (USize.le_iff_toNat_le.mp hp)
-    let rp := rf.pos
-    let r := metaStartFast ⟨rf.word, rf.count⟩
-    match r.status with
-    | .short => { D with cmd := { D.cmd with word := rf.word, count := rf.count }, pos := rp, status := .needsInput }
-    | .bad => { D with pos := pos, status := .bad }
-    | .ok => metaGo D D.cmd r rp
-  else { D with pos := pos, status := .bad }
+  if D.cmd.pend = 0 then
+    if hp : pos ≤ stop then
+      let rf := refill D.cmd.word D.cmd.count a pos stop hs (USize.le_iff_toNat_le.mp hp)
+      let rp := rf.pos
+      let r := metaStartFast ⟨rf.word, rf.count⟩
+      match r.status with
+      | .short => { D with cmd := { D.cmd with word := rf.word, count := rf.count }, pos := rp, status := .needsInput }
+      | .bad => { D with pos := pos, status := .bad }
+      | .ok => metaGo D D.cmd r rp
+    else { D with pos := pos, status := .bad }
+  else { D with pos := pos, status := .needsOutput }
 
 theorem hdStart_rel {word count limit : UInt64} (hw : (BitBuffer.mk word count).Wf) (hl : limit.toNat + 132096 < 2 ^ 32) :
     HRel (hdStart word count limit) Gh.start (.cat .L) := by
@@ -255,6 +257,14 @@ theorem stepDMeta_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {a : 
     intro word count hd1 tag1 last1 left1 p1 s1
     exact ⟨{ hwin with }, hprod, hlim⟩
   unfold stepDMeta
+  by_cases hz0 : cmd.pend = 0
+  rotate_left
+  · rw [ite_eq_right hz0]
+    exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e,
+      fun _ => ⟨.mblock w st, ⟨rfl, hw, ⟨hwin, hprod, hlim⟩⟩, Nat.le_refl _, hpos, (fun _ => rfl), (fun e => hz0 (USize.toNat_inj.mp e)), rfl,
+        (fun _ _ _ _ => rfl), ⟨[], rfl, rfl⟩, fun _ => .refl _ _⟩,
+      fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
+  rw [ite_eq_left hz0]
   rw [dite_eq_left (USize.le_iff_toNat_le.mpr hpos)]
   dsimp only
   obtain ⟨r1, r2, r3, r4, r5⟩ := refill_spec (word := cmd.word) (count := cmd.count) hs hpos hw
@@ -963,8 +973,9 @@ theorem stepDRaw_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {last 
   · rw [ite_eq_left hf]
     refine ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun _ => ⟨.raw w st last' n, ⟨rfl, hw, ⟨hwin, hprod, hlim⟩, rfl, hleft, hn32⟩, Nat.le_refl _, hpos, (fun t => rfl), ?_, Or.inr ⟨rfl, rfl⟩, (fun _ _ e => SPhase.noConfusion e), ⟨[], rfl, rfl⟩,
       fun t => Reach.refl _ _⟩, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
-    show cmd.pend.toNat = 2 ^ k.toNat
+    show cmd.pend.toNat ≠ 0
     rw [hf, ringSize_toNat hk24]
+    exact Nat.pos_iff_ne_zero.mp (Nat.two_pow_pos _)
   · rw [ite_eq_right hf]
     have hpn : cmd.pend.toNat ≠ 2 ^ k.toNat := fun e => hf (USize.toNat_inj.mp (by rw [ringSize_toNat hk24]; exact e))
     have hple := hwin'.pendLe

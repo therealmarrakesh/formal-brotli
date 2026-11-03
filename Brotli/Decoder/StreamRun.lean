@@ -474,7 +474,7 @@ structure DDown (a : ByteArray) (stop : USize) (p : SPhase) (D : Dec) (pos : USi
   next : r.status = .next → ∃ p', DRel r p' ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
     ∀ t : List UInt8, MLt (mOf p' (r.bits a r.pos stop (bits t))) (mOf p (D.bits a pos stop (bits t)))
   needsInput : r.status = .needsInput → r.pos = stop ∧ ∃ p', DRel r p' ∧ MPause a stop p p' D pos r
-  needsOutput : r.status = .needsOutput → ∃ p', DRel r p' ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧ r.cmd.pend.toNat = 2 ^ r.k.toNat ∧ MPause a stop p p' D pos r
+  needsOutput : r.status = .needsOutput → ∃ p', DRel r p' ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧ r.cmd.pend.toNat ≠ 0 ∧ MPause a stop p p' D pos r
 
 /-- Turns the commands' order into the measure's. -/
 private theorem mlt_of_lex {w : Nat} {l : Bool} {m : MetaBlockHeader} {p p' : Phase} {bs bs' : List Bool}
@@ -618,7 +618,7 @@ theorem stepD_down {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {
     · obtain ⟨r1, _, p', r2, r3, _, r4, r5, _⟩ := h.needsInput e
       exact ⟨r1, p', r2, down_pause hc' hn r4 r3 r5⟩
     · obtain ⟨p', r1, r2, r3, r4, r5, r6, r7, _⟩ := h.needsOutput e
-      exact ⟨p', r1, r2, r3, r5, down_pause hc' hn r6 r4 (fun w st ep => absurd ep (r7 w st))⟩
+      exact ⟨p', r1, r2, r3, r5, down_pause hc' hn r6 r4 r7⟩
 
 /-! ### The order is well founded -/
 

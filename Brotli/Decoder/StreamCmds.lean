@@ -199,7 +199,8 @@ theorem stepDCmds_ok {α : Type} {S : Sem α} {w : Nat} {last : Bool} {m : MetaB
   | needsOutput =>
     dsimp only
     obtain ⟨p', hR', h1, h2, h3, h4, h5, h6⟩ := hstep.needsOutput hst
-    exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun _ => ⟨.cmds w last' m p', ⟨ht, hl, hlim, hH, hR'⟩, h1, h2, (fun t => h3 _), h4,
+    exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun _ => ⟨.cmds w last' m p', ⟨ht, hl, hlim, hH, hR'⟩, h1, h2, (fun t => h3 _),
+      (by show r.pend.toNat ≠ 0; rw [h4]; exact Nat.pos_iff_ne_zero.mp (Nat.two_pow_pos _)),
       trivial, (fun _ _ e => SPhase.noConfusion e), h5, fun t => reach_cmds (h6 _)⟩, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
   | bad =>
     dsimp only

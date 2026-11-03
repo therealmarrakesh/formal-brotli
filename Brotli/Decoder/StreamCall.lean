@@ -23,7 +23,7 @@ structure RunD (a : ByteArray) (stop : USize) (p : SPhase) (D r : Dec) : Prop wh
     (∀ t : List UInt8, srest specSem p (D.bits a D.pos stop (bits t)) = srest specSem p' (r.bits a r.pos stop (bits t))) ∧ srest specSem p' r.held = none ∧
     (∀ t : List UInt8, Reach sStep p (D.bits a D.pos stop (bits t)) p' (r.bits a r.pos stop (bits t))) ∧ SShort p' r.held
   needsOutput : r.status = .needsOutput → ∃ p', DRel r p' ∧ D.pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧ OutD p p' D r ∧
-    (∀ t : List UInt8, srest specSem p (D.bits a D.pos stop (bits t)) = srest specSem p' (r.bits a r.pos stop (bits t))) ∧ r.cmd.pend.toNat = 2 ^ r.k.toNat ∧
+    (∀ t : List UInt8, srest specSem p (D.bits a D.pos stop (bits t)) = srest specSem p' (r.bits a r.pos stop (bits t))) ∧ r.cmd.pend.toNat ≠ 0 ∧
     ∀ t : List UInt8, Reach sStep p (D.bits a D.pos stop (bits t)) p' (r.bits a r.pos stop (bits t))
   bad : r.status = .bad → ∀ t : List UInt8, srest specSem p (D.bits a D.pos stop (bits t)) = none
 
@@ -818,7 +818,7 @@ theorem MLt.trans {a b c : Meas} (h1 : MLt a b) (h2 : MLt b c) : MLt a c := by
 structure RunM (a : ByteArray) (stop : USize) (p : SPhase) (D r : Dec) : Prop where
   next : r.status = .next → ∃ st, DRel r (.ended st) ∧ r.pos.toNat ≤ stop.toNat ∧ MPause a stop p (.ended st) D D.pos r
   needsInput : r.status = .needsInput → ∃ p', DRel r p' ∧ MPause a stop p p' D D.pos r
-  needsOutput : r.status = .needsOutput → ∃ p', DRel r p' ∧ r.cmd.pend.toNat = 2 ^ r.k.toNat ∧ MPause a stop p p' D D.pos r
+  needsOutput : r.status = .needsOutput → ∃ p', DRel r p' ∧ r.cmd.pend.toNat ≠ 0 ∧ MPause a stop p p' D D.pos r
 
 /-- A step that moved on, then a pause, lowers the measure. -/
 private theorem MPause.after {a : ByteArray} {stop : USize} {p p1 p' : SPhase} {D r1 r : Dec}

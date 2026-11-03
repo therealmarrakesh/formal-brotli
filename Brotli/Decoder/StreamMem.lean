@@ -448,7 +448,9 @@ theorem placed {X : Nat} {a : ByteArray} {stop : USize} {p : SPhase} {D r : Dec}
     refine ⟨⟨p', hR, hw⟩, fun e => ?_⟩
     have ht : D.tag = .mblock := by rw [← hpaused (by rw [hs]; decide)]; exact e
     cases p with
-    | mblock w st => exact absurd rfl (hb w st)
+    | mblock w st =>
+      rw [hb w st rfl t]
+      exact hblock ht
     | wbits => exact absurd (hrel.1.symm.trans ht) (by decide)
     | skip => exact absurd (hrel.1.symm.trans ht) (by decide)
     | raw => exact absurd (hrel.1.symm.trans ht) (by decide)
@@ -747,6 +749,11 @@ theorem stepDMeta_facts {w : Nat} {st : StreamState} {a : ByteArray} {stop : USi
   have hdec : (DTag.mblock ≠ DTag.wbits) ∧ (DTag.mblock ≠ DTag.cmds) := by decide
   have hnh : DTag.mblock ≠ DTag.hdr := by decide
   unfold stepDMeta
+  by_cases hz0 : cmd.pend = 0
+  rotate_left
+  · rw [ite_eq_right hz0]
+    exact ⟨rfl, rfl, rfl, (fun e => DStatus.noConfusion e), fun _ => rfl, fun _ => rfl, hdec, fun e => absurd e hnh⟩
+  rw [ite_eq_left hz0]
   rw [dite_eq_left (USize.le_iff_toNat_le.mpr hpos)]
   dsimp only
   obtain ⟨r1, r2, r3, r4, r5⟩ := refill_spec (word := cmd.word) (count := cmd.count) hs hpos hw
