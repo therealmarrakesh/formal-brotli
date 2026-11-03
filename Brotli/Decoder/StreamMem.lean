@@ -463,6 +463,12 @@ structure StepM (Ws : Option Nat) (X L : Nat) (a : ByteArray) (stop : USize) (t 
   go : r.status ≠ .memory → r.status ≠ .bad → MemD Ws X L r (r.bits a r.pos stop (bits t))
   why : r.status = .memory → MemWhy Ws X L
 
+/-- The cap on waiting bytes doesn't matter to what a state holds. -/
+theorem MemD.withCap {Ws : Option Nat} {X L : Nat} {D : Dec} {B : List Bool} (M : MemD Ws X L D B) (x : USize) :
+    MemD Ws X L { D with cmd := { D.cmd with cap := x } } B := by
+  obtain ⟨p, h1, h2⟩ := M.place
+  exact ⟨⟨p, h1.withCap x, h2⟩, M.block, M.hdr, M.cmds, M.hdOut, M.HOut, M.hd, M.H, M.win⟩
+
 /-- A state past WBITS and outside a header, moved to another such state. -/
 theorem MemD.keep {Ws : Option Nat} {X L : Nat} {D r : Dec} {B B' : List Bool} (M : MemD Ws X L D B) (hne : D.tag ≠ .wbits) (hnh : D.tag ≠ .hdr)
     (ek : r.k = D.k) (el : r.limit = D.limit) (ed : r.hd = D.hd) (hr : r.tag ≠ .wbits) (hrh : r.tag ≠ .hdr) (hH : HSmall r.H)
@@ -1196,17 +1202,17 @@ theorem callD_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {
     intro D h buf M
     rw [callD]
     dsimp only
-    have hr := runD_mem (hs := hs) (t := t) ⟨D, h⟩ M
+    have hr := runD_mem (hs := hs) (t := t) ⟨withCap D space, h.withCap space⟩ (M.withCap _)
     dsimp only at hr
-    by_cases hO : (runD a stop hs D h).status = .needsOutput
+    by_cases hO : (runD a stop hs (withCap D space) (h.withCap space)).status = .needsOutput
     · rw [dite_eq_left hO]
       have hM := (hr.go (by rw [hO]; decide) (by rw [hO]; decide)).flushed buf space
       obtain ⟨p, hrel⟩ := h.1
-      obtain ⟨p', hR, _, _, _, _, hfull⟩ := (runD_ok (hs := hs) ⟨D, h⟩ p hrel).needsOutput hO
+      obtain ⟨p', hR, _, _, _, _, hfull⟩ := (runD_ok (hs := hs) ⟨withCap D space, h.withCap space⟩ p (hrel.withCap _)).needsOutput hO
       obtain ⟨len, a1, _, a3, _, a5, _, _, _, _, _, _⟩ := flushD_spec hR buf space
-      by_cases hz : (flushD (runD a stop hs D h) buf space).D.cmd.pend = 0
+      by_cases hz : (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D.cmd.pend = 0
       · rw [ite_eq_left hz]
-        by_cases hlt : (flushD (runD a stop hs D h) buf space).space < space
+        by_cases hlt : (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).space < space
         · rw [dite_eq_left hlt]
           exact ih _ hlt _ _ _ hM
         · rw [dite_eq_right hlt]
@@ -1216,7 +1222,7 @@ theorem callD_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {
     · rw [dite_eq_right hO]
       obtain ⟨p, hrel⟩ := h.1
       refine afterRun_mem hr (fun e => ?_) _ _ _
-      obtain ⟨st, b1, _⟩ := (runD_ok (hs := hs) ⟨D, h⟩ p hrel).next e
+      obtain ⟨st, b1, _⟩ := (runD_ok (hs := hs) ⟨withCap D space, h.withCap space⟩ p (hrel.withCap _)).next e
       exact ⟨st, b1⟩
 
 end Brotli.Decoder

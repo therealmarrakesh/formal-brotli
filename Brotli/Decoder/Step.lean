@@ -41,8 +41,7 @@ def OutStep (p p' : Phase) (st r : Cmd) : Prop := ∃ l, p'.out = l ++ p.out ∧
 @[simp] theorem BitBuffer.held_length (b : BitBuffer) : b.held.length = b.count.toNat := lowBits_length _ _
 
 /-- What a step must do. Moving on keeps the state tied to `rest`, whatever bits follow. Needing input means the chunk
-is used up, and the spec rejects if no more bits come. Needing output means the window is full of bytes not yet handed
-over. Finishing means MLEN is reached at the start of a command. Rejecting means the spec rejects, whatever bits follow.
+is used up, and the spec rejects if no more bits come. Needing output means bytes not yet handed over wait. Finishing means MLEN is reached at the start of a command. Rejecting means the spec rejects, whatever bits follow.
 Whatever the step does short of rejecting, the place it ends at is where the spec's reading in order takes the place it
 started at, whatever bits follow, and needing input means the reading in order has too few bits there. -/
 structure StepOk {α : Type} (w k : Nat) (m : MetaBlockHeader) (K : CommandState → List Bool → Option α) (a : ByteArray)
@@ -57,7 +56,7 @@ structure StepOk {α : Type} (w k : Nat) (m : MetaBlockHeader) (K : CommandState
     CShort w m p' (BitBuffer.mk r.word r.count).held
   needsOutput : r.status = .needsOutput → ∃ p', Rel w k m r p' ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
     (∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K p' (stateBits r a r.pos stop F)) ∧
-    r.pend.toNat = 2 ^ k ∧ DownEq p p' st r ∧ OutStep p p' st r ∧
+    r.pend.toNat ≠ 0 ∧ DownEq p p' st r ∧ OutStep p p' st r ∧
     ∀ F, Reach (cStep w m) p (stateBits st a pos stop F) p' (stateBits r a r.pos stop F)
   done : r.status = .done → ∃ s, Rel w k m r (.command s) ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
     (∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K (.command s) (stateBits r a r.pos stop F)) ∧
@@ -120,8 +119,8 @@ theorem StepOk.ofShort (hrel : Rel w k m st p) (hstop : pos = stop)
   StepOk.ofInput rfl hstop (by rw [hstop]; exact Nat.le_refl _) (hrel.mark _ _) (fun _ => rfl) hn (Or.inr ⟨rfl, rfl⟩) ⟨[], rfl, rfl⟩
     (fun _ => Reach.refl _ _) (CShort.here hsh)
 
-/-- A step that found the window full, and changed nothing. -/
-theorem StepOk.ofFull (hrel : Rel w k m st p) (hp : pos.toNat ≤ stop.toNat) (hfull : st.pend.toNat = 2 ^ k) :
+/-- A step that found no room for more bytes to wait, and changed nothing. -/
+theorem StepOk.ofFull (hrel : Rel w k m st p) (hp : pos.toNat ≤ stop.toNat) (hfull : st.pend.toNat ≠ 0) :
     StepOk w k m K a stop p st pos (markStep st pos .needsOutput) :=
   ⟨fun e => StepStatus.noConfusion e, fun e => StepStatus.noConfusion e,
     fun _ => ⟨p, hrel.mark _ _, Nat.le_refl _, hp, (fun _ => rfl), hfull, Or.inr ⟨rfl, rfl⟩, ⟨[], rfl, rfl⟩, fun _ => Reach.refl _ _⟩,
@@ -194,23 +193,25 @@ theorem u64_zero {x : UInt64} (h : x = 0) : x.toNat = 0 := by
 
 theorem u64_ne {x : UInt64} (h : ¬ x = 0) : x.toNat ≠ 0 := fun e => h (UInt64.toNat_inj.mp (by rw [e]; rfl))
 
-/-- The room left in the window. -/
-theorem room_toNat {k pend : USize} (hk : k.toNat ≤ 24) (hle : pend.toNat ≤ 2 ^ k.toNat) :
-    (ringSize k - pend).toUInt64.toNat = 2 ^ k.toNat - pend.toNat := by
-  rw [USize.toNat_toUInt64, USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr (by rw [ringSize_toNat hk]; exact hle)),
-    ringSize_toNat hk]
+/-- The room left for bytes to wait. -/
+theorem room_sub {k cap pend : USize} (hle : pend.toNat ≤ (room k cap).toNat) :
+    (room k cap - pend).toUInt64.toNat = (room k cap).toNat - pend.toNat := by
+  rw [USize.toNat_toUInt64, USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr hle)]
 
-/-- A window that is full, in fixed-width terms. -/
-theorem full_iff {k pend : USize} (hk : k.toNat ≤ 24) (hle : pend.toNat ≤ 2 ^ k.toNat) (h : ringSize k ≤ pend) :
-    pend.toNat = 2 ^ k.toNat := by
+/-- The room left for bytes to wait, as a position. -/
+theorem room_sub' {k cap pend : USize} (hle : pend.toNat ≤ (room k cap).toNat) :
+    (room k cap - pend).toNat = (room k cap).toNat - pend.toNat :=
+  USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr hle)
+
+/-- No room left: some bytes wait. -/
+theorem full_ne {k cap pend : USize} (hk : k.toNat ≤ 24) (h : room k cap ≤ pend) : pend.toNat ≠ 0 := by
   have := USize.le_iff_toNat_le.mp h
-  rw [ringSize_toNat hk] at this
+  have := room_one (cap := cap) hk
   omega
 
-/-- A window that isn't full. -/
-theorem room_pos {k pend : USize} (hk : k.toNat ≤ 24) (h : ¬ ringSize k ≤ pend) : pend.toNat < 2 ^ k.toNat := by
-  have : ¬ (ringSize k).toNat ≤ pend.toNat := fun e => h (USize.le_iff_toNat_le.mpr e)
-  rw [ringSize_toNat hk] at this
+/-- Room left. -/
+theorem room_lt {k cap pend : USize} (h : ¬ room k cap ≤ pend) : pend.toNat < (room k cap).toNat := by
+  have : ¬ (room k cap).toNat ≤ pend.toNat := fun e => h (USize.le_iff_toNat_le.mpr e)
   omega
 
 /-! ### A backward copy -/
@@ -228,9 +229,9 @@ reused here. -/
 /-- Copies as much as the window has room for. -/
 def stepCopy (k : USize) (st : Cmd) (pos : USize) : Cmd :=
   if st.left = 0 then { st with tag := .command, pos := pos, status := .next }
-  else if ringSize k ≤ st.pend then markStep st pos .needsOutput
+  else if room k st.cap ≤ st.pend then markStep st pos .needsOutput
   else
-    let run := (umin st.left (ringSize k - st.pend).toUInt64).toUSize
+    let run := (umin st.left (room k st.cap - st.pend).toUInt64).toUSize
     let d := st.dist.toUSize
     if h : winCheck k st.wpos st.ring = true ∧ USize.ofNat 1 ≤ d ∧ d ≤ ringSize k then
       let ring := st.ring
@@ -330,9 +331,10 @@ theorem stepCopy_ok {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeader} {K :
     have hnzN := u64_ne hnz
     split
     · rename_i hfull
-      exact StepOk.ofFull hrel0 hp (full_iff hk hple hfull)
+      exact StepOk.ofFull hrel0 hp (full_ne hk hfull)
     · rename_i hroom
-      have hplt := room_pos hk hroom
+      have hplt := room_lt hroom
+      have hRl := room_le (cap := st.cap) hk
       have hguard : winCheck k st.wpos st.ring = true ∧ USize.ofNat 1 ≤ st.dist.toUSize ∧ st.dist.toUSize ≤ ringSize k := by
         refine ⟨winCheck_of hk hC.ring.size hC.ring.pos_lt, USize.le_iff_toNat_le.mpr ?_, USize.le_iff_toNat_le.mpr ?_⟩
         · rw [usize_ofNat' (by decide), hdU]
@@ -341,10 +343,10 @@ theorem stepCopy_ok {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeader} {K :
           omega
       rw [dite_eq_left hguard]
       dsimp only [clearRing]
-      have hrunU : (umin st.left (ringSize k - st.pend).toUInt64).toUSize.toNat =
-          min st.left.toNat (2 ^ k.toNat - st.pend.toNat) := by
-        rw [word_toUSize (by rw [umin_toNat, room_toNat hk hple]; omega), umin_toNat, room_toNat hk hple]
-      generalize (umin st.left (ringSize k - st.pend).toUInt64).toUSize = run at hrunU ⊢
+      have hrunU : (umin st.left (room k st.cap - st.pend).toUInt64).toUSize.toNat =
+          min st.left.toNat ((room k st.cap).toNat - st.pend.toNat) := by
+        rw [word_toUSize (by rw [umin_toNat, room_sub (by omega)]; omega), umin_toNat, room_sub (by omega)]
+      generalize (umin st.left (room k st.cap - st.pend).toUInt64).toUSize = run at hrunU ⊢
       have hspec := copyRun_spec (d := st.dist.toUSize) (mask := ringMask k) (size := ringSize k) hk (ringMask_toNat hk)
         (ringSize_toNat hk) (by omega) (by omega) run.toNat run st.ring st.wpos st.p1 st.p2 hC.ring.size hC.ring.pos_lt
         s.output rfl (by omega) hC.ring hC.ctx hC.bytes
@@ -369,9 +371,9 @@ theorem stepCopy_ok {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeader} {K :
 def stepWord (k : USize) (st : Cmd) (pos : USize) : Cmd :=
   let n := st.wordBuf.usize - st.wordPos
   if n = 0 then { st with tag := .command, pos := pos, status := .next }
-  else if ringSize k ≤ st.pend then markStep st pos .needsOutput
+  else if room k st.cap ≤ st.pend then markStep st pos .needsOutput
   else
-    let run := usmin n (ringSize k - st.pend)
+    let run := usmin n (room k st.cap - st.pend)
     if h : winCheck k st.wpos st.ring = true ∧ st.wordPos.toNat + run.toNat ≤ st.wordBuf.size ∧
         st.wordPos.toNat + run.toNat ≤ 2 ^ 32 - 1 then
       let ring := st.ring
@@ -479,28 +481,29 @@ theorem stepWord_ok {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeader} {K :
     have hnzN := usize_ne hnz
     split
     · rename_i hfull
-      exact StepOk.ofFull hrel0 hp (full_iff hk hple hfull)
+      exact StepOk.ofFull hrel0 hp (full_ne hk hfull)
     · rename_i hroom
-      have hplt := room_pos hk hroom
-      have hroomU : (ringSize k - st.pend).toNat = 2 ^ k.toNat - st.pend.toNat := room_toNat hk hple
-      have hrunU : (usmin (st.wordBuf.usize - st.wordPos) (ringSize k - st.pend)).toNat =
-          min (st.wordBuf.size - st.wordPos.toNat) (2 ^ k.toNat - st.pend.toNat) := by
+      have hplt := room_lt hroom
+      have hRl := room_le (cap := st.cap) hk
+      have hroomU : (room k st.cap - st.pend).toNat = (room k st.cap).toNat - st.pend.toNat := room_sub' (by omega)
+      have hrunU : (usmin (st.wordBuf.usize - st.wordPos) (room k st.cap - st.pend)).toNat =
+          min (st.wordBuf.size - st.wordPos.toNat) ((room k st.cap).toNat - st.pend.toNat) := by
         rw [usmin_toNat, hnU, hroomU]
       have hguard : winCheck k st.wpos st.ring = true ∧
-          st.wordPos.toNat + (usmin (st.wordBuf.usize - st.wordPos) (ringSize k - st.pend)).toNat ≤ st.wordBuf.size ∧
-          st.wordPos.toNat + (usmin (st.wordBuf.usize - st.wordPos) (ringSize k - st.pend)).toNat ≤ 2 ^ 32 - 1 :=
+          st.wordPos.toNat + (usmin (st.wordBuf.usize - st.wordPos) (room k st.cap - st.pend)).toNat ≤ st.wordBuf.size ∧
+          st.wordPos.toNat + (usmin (st.wordBuf.usize - st.wordPos) (room k st.cap - st.pend)).toNat ≤ 2 ^ 32 - 1 :=
         ⟨winCheck_of hk hC.ring.size hC.ring.pos_lt, by omega, by omega⟩
       rw [dite_eq_left hguard]
       dsimp only [clearRing]
       have hspec := wordRun_spec (buf := st.wordBuf) (mask := ringMask k) hk (ringMask_toNat hk) _
-        (usmin (st.wordBuf.usize - st.wordPos) (ringSize k - st.pend)) st.wordPos
+        (usmin (st.wordBuf.usize - st.wordPos) (room k st.cap - st.pend)) st.wordPos
         st.ring st.wpos st.p1 st.p2 hguard.2.1 hguard.2.2 hC.ring.size hC.ring.pos_lt s.output rfl hC.ring hC.ctx hC.bytes
       dsimp only at hspec
       generalize wordRun _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ = r at hspec ⊢
       obtain ⟨h1, h2, h3⟩ := hspec
       have hmoved : ((st.wordBuf.data.toList.drop st.wordPos.toNat).take
-          (usmin (st.wordBuf.usize - st.wordPos) (ringSize k - st.pend)).toNat).map UInt8.toNat =
-          pending.take (usmin (st.wordBuf.usize - st.wordPos) (ringSize k - st.pend)).toNat := by
+          (usmin (st.wordBuf.usize - st.wordPos) (room k st.cap - st.pend)).toNat).map UInt8.toNat =
+          pending.take (usmin (st.wordBuf.usize - st.wordPos) (room k st.cap - st.pend)).toNat := by
         rw [← hpend, List.map_take]
       rw [hmoved] at h1 h2 h3
       exact word_after hC htag hprod hpend hsmall hwp hp hguard.2.1 (by omega) (by omega) hplen h1 h2 h3

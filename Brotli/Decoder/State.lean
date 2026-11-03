@@ -50,6 +50,9 @@ structure Cmd where
   wpos : USize
   /-- Output bytes not yet handed over. -/
   pend : USize
+  /-- How many bytes may wait before the loop stops for output space: one more than the call's space left, so that a call
+  decodes little more than it can hand out. -/
+  cap : USize
   /-- The smaller of the window and the bytes produced. -/
   written : USize
   p1 : UInt8

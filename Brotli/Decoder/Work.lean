@@ -54,12 +54,13 @@ decreasing_by exact ⟨he, hn, rfl⟩
 /-- The steps of a call. -/
 def callDSteps (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (final : Bool) (D : Dec) (h : DInv stop D) (buf : ByteArray)
     (space : Nat) : Nat :=
-  runDSteps a stop hs D h +
-    if hO : (runD a stop hs D h).status = .needsOutput then
-      if (flushD (runD a stop hs D h) buf space).D.cmd.pend = 0 then
-        if _hlt : (flushD (runD a stop hs D h) buf space).space < space then
-          callDSteps a stop hs final (flushD (runD a stop hs D h) buf space).D (flushD_inv (runD_full hO) buf space)
-            (flushD (runD a stop hs D h) buf space).buf (flushD (runD a stop hs D h) buf space).space
+  runDSteps a stop hs (withCap D space) (h.withCap space) +
+    if hO : (runD a stop hs (withCap D space) (h.withCap space)).status = .needsOutput then
+      if (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D.cmd.pend = 0 then
+        if _hlt : (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).space < space then
+          callDSteps a stop hs final (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D
+            (flushD_inv (runD_full hO) buf space) (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).buf
+            (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).space
         else 0
       else 0
     else 0
@@ -464,26 +465,28 @@ theorem callD_count {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} 
     intro D h p buf hrel
     rw [callDSteps, callD]
     dsimp only
-    obtain ⟨c1, q1, D1, hR1, p1, p2, hr1, g1, g2, g3, g4⟩ := runD_count (hs := hs) t ⟨D, h⟩ p hrel
+    obtain ⟨c1, q1, D1, hR1, p1, p2, hr1, g1, g2, g3, g4⟩ := runD_count (hs := hs) t ⟨withCap D space, h.withCap space⟩ p (hrel.withCap _)
     dsimp only at p1 g1 g2 g3 g4
-    by_cases hO : (runD a stop hs D h).status = .needsOutput
+    have hcp : (withCap D space).pos = D.pos := rfl
+    rw [hcp] at p1
+    by_cases hO : (runD a stop hs (withCap D space) (h.withCap space)).status = .needsOutput
     · rw [dite_eq_left hO, dite_eq_left hO]
       have e1 := g4 hO
       subst e1
       obtain ⟨len, _, _, a3, a4, _, _, a7, a8, _, a9, _⟩ := flushD_spec hR1 buf space
       have hb := buf_size_of a7
       have hpo := hR1.pendOut
-      have hl : (((q1.out.take (runD a stop hs D h).cmd.pend.toNat).reverse).take len).length = len := by
+      have hl : (((q1.out.take (runD a stop hs (withCap D space) (h.withCap space)).cmd.pend.toNat).reverse).take len).length = len := by
         simp only [List.length_take, List.length_reverse]
         omega
       rw [hl] at hb
-      by_cases hz : (flushD (runD a stop hs D h) buf space).D.cmd.pend = 0
+      by_cases hz : (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D.cmd.pend = 0
       · rw [ite_eq_left hz, ite_eq_left hz]
-        by_cases hlt : (flushD (runD a stop hs D h) buf space).space < space
+        by_cases hlt : (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).space < space
         · rw [dite_eq_left hlt, dite_eq_left hlt]
           obtain ⟨c2, q, D', hR, f1, f2, hr2, f3, f4⟩ := ih _ hlt _ (flushD_inv (runD_full hO) buf space) q1 _ a4
           rw [a8] at f1
-          have hr2' : ReachN sStep c2 q1 ((runD a stop hs D h).bits a (runD a stop hs D h).pos stop (bits t)) q
+          have hr2' : ReachN sStep c2 q1 ((runD a stop hs (withCap D space) (h.withCap space)).bits a (runD a stop hs (withCap D space) (h.withCap space)).pos stop (bits t)) q
               (D'.bits a D'.pos stop (bits t)) := by
             rw [← a9, ← a8]
             exact hr2
@@ -497,19 +500,19 @@ theorem callD_count {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} 
         refine ⟨c1, q1, _, hR1, p1, p2, hr1, ?_, fun _ => ?_⟩
         · dsimp only
           omega
-        · show _ ≤ (flushD (runD a stop hs D h) buf space).D.pos.toNat
+        · show _ ≤ (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D.pos.toNat
           rw [a8]
           exact Nat.le_refl _
     · rw [dite_eq_right hO, dite_eq_right hO]
-      obtain ⟨f1, f2, f3⟩ := afterRun_facts (r := runD a stop hs D h)
+      obtain ⟨f1, f2, f3⟩ := afterRun_facts (r := runD a stop hs (withCap D space) (h.withCap space))
         (fun e => e.elim (fun e => g2 e ▸ hR1) (fun e => g3 e ▸ hR1)) stop final D.pos buf space
       refine ⟨c1, q1, D1, hR1, p1, p2, hr1, by omega, fun hs' => ?_⟩
-      have hr : (afterRun (runD a stop hs D h) stop final D.pos buf space).pos = (runD a stop hs D h).pos := by
+      have hr : (afterRun (runD a stop hs (withCap D space) (h.withCap space)) stop final D.pos buf space).pos = (runD a stop hs (withCap D space) (h.withCap space)).pos := by
         rcases hs' with hs' | hs'
         · exact f2 hs'
         · exact f3 hs'
       rw [hr]
-      cases hrs : (runD a stop hs D h).status with
+      cases hrs : (runD a stop hs (withCap D space) (h.withCap space)).status with
       | next => exact Nat.le_of_eq (congrArg (fun D => D.pos.toNat) (g2 hrs))
       | needsInput => exact Nat.le_of_eq (congrArg (fun D => D.pos.toNat) (g3 hrs))
       | needsOutput => exact absurd hrs hO

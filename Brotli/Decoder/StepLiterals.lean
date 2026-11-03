@@ -90,7 +90,7 @@ def literalsRun (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.
       exact ht'
     have hmLt := H.modesLt _ hm
     if h : winCheck k st.wpos st.ring = true ∧ pos ≤ stop ∧ wfCheck st.word st.count = true then
-      let run := (umin st.left (umin st.lCount (ringSize k - st.pend).toUInt64)).toUSize
+      let run := (umin st.left (umin st.lCount (room k st.cap - st.pend).toUInt64)).toUSize
       let ring := st.ring
       let st0 := clearRing st
       let r := literalRun H.lit a stop hs (st.lCur <<< 6).toUSize ((H.modes.uget st.lCur.toUSize hm).toUInt64 <<< 9).toUSize
@@ -128,7 +128,7 @@ def stepLiterals (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop
       | .short => markStep st pos .needsInput
       | .bad => markStep st pos .bad
     else markStep st pos .bad
-  else if ringSize k ≤ st.pend then markStep st pos .needsOutput
+  else if room k st.cap ≤ st.pend then markStep st pos .needsOutput
   else literalsRun H k a stop hs st pos
 
 /-- What follows the literal loop, whatever it returned. -/
@@ -227,10 +227,11 @@ theorem literalsRun_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBloc
     {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {s : CommandState} {ic : BlockState} {c ilen clen n : Nat}
     {lit : BlockState} {out : List Nat} {st : Cmd} {pos : USize} (hH : HdrRel H m)
     (hrel : Rel w k.toNat m st (.literals s ic c ilen clen n lit out)) (hp : pos.toNat ≤ stop.toNat)
-    (hl0 : st.left.toNat ≠ 0) (hc0 : st.lCount.toNat ≠ 0) (hroom : st.pend.toNat < 2 ^ k.toNat) :
+    (hl0 : st.left.toNat ≠ 0) (hc0 : st.lCount.toNat ≠ 0) (hroom : st.pend.toNat < (room k st.cap).toNat) :
     StepOk w k.toNat m K a stop (.literals s ic c ilen clen n lit out) st pos (literalsRun H k a stop hs st pos) := by
   obtain ⟨hC, htag, hprod, hcode, hilen, hclen, hleft, hnle, hirem, hlen⟩ := hrel
   have hk := hC.k24
+  have hRl := room_le (cap := st.cap) hk
   have hRmax : 2 ^ k.toNat ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
   have h24 : (2 : Nat) ^ 24 = 16777216 := by decide
   have hple := hC.pendLe
@@ -257,9 +258,9 @@ theorem literalsRun_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBloc
     rw [hmodeO, hmodeSpec]
     congr 1
     omega
-  have hrunU : (umin st.left (umin st.lCount (ringSize k - st.pend).toUInt64)).toUSize.toNat =
-      min st.left.toNat (min st.lCount.toNat (2 ^ k.toNat - st.pend.toNat)) := by
-    rw [word_toUSize (by rw [umin_toNat, umin_toNat, room_toNat hk hple]; omega), umin_toNat, umin_toNat, room_toNat hk hple]
+  have hrunU : (umin st.left (umin st.lCount (room k st.cap - st.pend).toUInt64)).toUSize.toNat =
+      min st.left.toNat (min st.lCount.toNat ((room k st.cap).toNat - st.pend.toNat)) := by
+    rw [word_toUSize (by rw [umin_toNat, umin_toNat, room_sub (by omega)]; omega), umin_toNat, umin_toNat, room_sub (by omega)]
   have hlcount : lit.count = st.lCount.toNat := hC.lRel.count
   have hspec := literalRun_spec H.lit hs (mapBase := (st.lCur <<< 6).toUSize)
     (modeOff := ((H.modes.uget st.lCur.toUSize hm).toUInt64 <<< 9).toUSize) (mask := ringMask k) (k := k.toNat)
@@ -268,7 +269,7 @@ theorem literalsRun_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBloc
       omega)
     (by rw [hmodeO]; omega) (by rw [hmodeO]; omega) (ringMask_toNat hk) hk hH.lit
     (w := w) (K := K) (t := st.lCur.toNat) hmapB hmodeNat s ic c ilen clen _
-    (umin st.left (umin st.lCount (ringSize k - st.pend).toUInt64)).toUSize st.word st.count pos st.wpos st.ring st.p1 st.p2
+    (umin st.left (umin st.lCount (room k st.cap - st.pend).toUInt64)).toUSize st.word st.count pos st.wpos st.ring st.p1 st.p2
     hp hC.wf hC.ring.size hC.ring.pos_lt n lit out rfl (by omega) (by omega)
     hC.lRel.cur hC.ctx hC.ring hC.bytes
   dsimp only at hspec
@@ -375,8 +376,8 @@ theorem stepLiterals_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlo
     · rename_i hcnt
       split
       · rename_i hroom
-        exact StepOk.ofFull hrel0 hp (full_iff hC.k24 hC.pendLe hroom)
+        exact StepOk.ofFull hrel0 hp (full_ne hC.k24 hroom)
       · rename_i hroom
-        exact literalsRun_ok hH hrel0 hp hnzN (u64_ne hcnt) (room_pos hC.k24 hroom)
+        exact literalsRun_ok hH hrel0 hp hnzN (u64_ne hcnt) (room_lt hroom)
 
 end Brotli.Decoder

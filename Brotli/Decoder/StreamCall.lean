@@ -30,6 +30,11 @@ structure RunD (a : ByteArray) (stop : USize) (p : SPhase) (D r : Dec) : Prop wh
     (∀ t : List UInt8, Reach sStep p (D.bits a D.pos stop (bits t)) p' (D'.bits a D'.pos stop (bits t))) ∧ D'.cmd.pend = 0 ∧
     (p' = .wbits ∨ ∃ w st last mlen g q, p' = .hdr w st last mlen g q)
 
+/-- The cap on waiting bytes changes nothing the loop's contract says of where it started. -/
+theorem RunD.uncap {a : ByteArray} {stop : USize} {p : SPhase} {D r : Dec} {x : USize}
+    (h : RunD a stop p { D with cmd := { D.cmd with cap := x } } r) : RunD a stop p D r :=
+  ⟨h.1, h.2, h.3, h.4, h.5⟩
+
 /-- Two moves' bytes together. -/
 theorem OutD.trans {p p1 p2 : SPhase} {D r1 r : Dec} (h1 : OutD p p1 D r1) (h2 : OutD p1 p2 r1 r) : OutD p p2 D r := by
   obtain ⟨l1, a1, b1⟩ := h1
@@ -264,6 +269,33 @@ theorem DRel.withPend {D : Dec} {p : SPhase} (h : DRel D p) {x : USize} (hx : x.
     obtain ⟨a1, a2, w, a3⟩ := h
     exact ⟨a1, a2, w, hwin a3⟩
 
+/-- The cap on waiting bytes keeps a state's place. -/
+theorem DRel.withCap {D : Dec} {p : SPhase} (h : DRel D p) (x : USize) : DRel { D with cmd := { D.cmd with cap := x } } p := by
+  have hwin : ∀ {w st}, WinAll D w st → WinAll { D with cmd := { D.cmd with cap := x } } w st :=
+    fun a => ⟨{ a.win with }, a.produced, a.limit⟩
+  cases p with
+  | wbits =>
+    obtain ⟨a1, a2, a3, a4⟩ := h
+    exact ⟨a1, a2, a3, a4⟩
+  | mblock =>
+    obtain ⟨a1, a2, a3⟩ := h
+    exact ⟨a1, a2, hwin a3⟩
+  | skip =>
+    obtain ⟨a1, a2, a3, a4, a5, a6, a7⟩ := h
+    exact ⟨a1, a2, hwin a3, a4, a5, a6, a7⟩
+  | raw =>
+    obtain ⟨a1, a2, a3, a4, a5, a6⟩ := h
+    exact ⟨a1, a2, hwin a3, a4, a5, a6⟩
+  | hdr =>
+    obtain ⟨a1, a2, a3, a4, a5, a6, a7, a8⟩ := h
+    exact ⟨a1, hwin a2, a3, a4, a5, a6, a7, a8⟩
+  | cmds =>
+    obtain ⟨a1, a2, a3, a4, a5⟩ := h
+    exact ⟨a1, a2, a3, a4, a5.withCap x⟩
+  | ended =>
+    obtain ⟨a1, a2, w, a3⟩ := h
+    exact ⟨a1, a2, w, hwin a3⟩
+
 /-- What handing bytes out needs of a state. -/
 theorem DRel.window {D : Dec} {p : SPhase} (h : DRel D p) :
     D.cmd.pend = 0 ∨ (RingOk D.cmd.ring D.k.toNat D.cmd.wpos.toNat p.out ∧ D.cmd.pend.toNat ≤ 2 ^ D.k.toNat ∧ D.cmd.pend.toNat ≤ p.out.length ∧ D.k.toNat ≤ 24) := by
@@ -390,10 +422,21 @@ theorem runD_full {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
   obtain ⟨p', a1, _, a2, _⟩ := (runD_ok (hs := hs) ⟨D, h⟩ p hrel).needsOutput hn
   exact ⟨⟨p', a1⟩, a2⟩
 
+/-- The cap on waiting bytes for a round with `space` bytes of room: one more than the room, so that a round decodes no more
+than it can hand out and one byte, and stops for output space only with a byte waiting. -/
+def capFor (space : Nat) : USize := USize.ofNat (min space 16777216 + 1)
+
+/-- A state with the cap for a round. -/
+@[inline] def withCap (D : Dec) (space : Nat) : Dec := { D with cmd := { D.cmd with cap := capFor space } }
+
+theorem DInv.withCap {stop : USize} {D : Dec} (h : DInv stop D) (space : Nat) : DInv stop (withCap D space) := by
+  obtain ⟨⟨p, hrel⟩, hp⟩ := h
+  exact ⟨⟨p, hrel.withCap _⟩, hp⟩
+
 /-- Runs the loop, handing out what it leaves, until the input or the room runs out or the stream stops. -/
 def callD (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (final : Bool) (D : Dec) (h : DInv stop D) (buf : ByteArray) (space : Nat) : Out :=
   let pos0 := D.pos
-  let r := runD a stop hs D h
+  let r := runD a stop hs (withCap D space) (h.withCap space)
   if hO : r.status = .needsOutput then
     let f := flushD r buf space
     if f.D.cmd.pend = 0 then
@@ -759,37 +802,37 @@ theorem callD_ok {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {fi
     intro D h p E buf hrel hE
     rw [callD]
     dsimp only
-    have hr := runD_ok (hs := hs) ⟨D, h⟩ p hrel
+    have hr := (runD_ok (hs := hs) ⟨withCap D space, h.withCap space⟩ p (hrel.withCap _)).uncap
     dsimp only at hr
-    by_cases hO : (runD a stop hs D h).status = .needsOutput
+    by_cases hO : (runD a stop hs (withCap D space) (h.withCap space)).status = .needsOutput
     · rw [dite_eq_left hO]
       obtain ⟨p', hR, b1, b2, ho, heq, hfull, hj⟩ := hr.needsOutput hO
       have hE' := hE.move ho
       obtain ⟨len, a1, a2, a3, a4, a5, _, a7, a8, _, a9, _⟩ := flushD_spec hR buf space
-      by_cases hz : (flushD (runD a stop hs D h) buf space).D.cmd.pend = 0
+      by_cases hz : (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D.cmd.pend = 0
       · rw [ite_eq_left hz]
-        have hz0 : (flushD (runD a stop hs D h) buf space).D.cmd.pend.toNat = 0 := by rw [hz]; rfl
-        have hpos : 1 ≤ 2 ^ (runD a stop hs D h).k.toNat := Nat.two_pow_pos _
-        have hlt : (flushD (runD a stop hs D h) buf space).space < space := by
+        have hz0 : (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D.cmd.pend.toNat = 0 := by rw [hz]; rfl
+        have hpos : 1 ≤ 2 ^ (runD a stop hs (withCap D space) (h.withCap space)).k.toNat := Nat.two_pow_pos _
+        have hlt : (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).space < space := by
           rw [a3]
           omega
         rw [dite_eq_left hlt]
-        have hin := ih _ hlt (flushD (runD a stop hs D h) buf space).D (flushD_inv (runD_full hO) buf space) p' _ (flushD (runD a stop hs D h) buf space).buf a4 (hE'.flush hR a1 a5)
-        generalize callD a stop hs final (flushD (runD a stop hs D h) buf space).D (flushD_inv (runD_full hO) buf space)
-          (flushD (runD a stop hs D h) buf space).buf (flushD (runD a stop hs D h) buf space).space = o at hin ⊢
+        have hin := ih _ hlt (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D (flushD_inv (runD_full hO) buf space) p' _ (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).buf a4 (hE'.flush hR a1 a5)
+        generalize callD a stop hs final (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D (flushD_inv (runD_full hO) buf space)
+          (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).buf (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).space = o at hin ⊢
         obtain ⟨c1, c2, c3, n, c4, c5, c6, c7, c8, c9, c10⟩ := hin
         have hchain : ∀ t : List UInt8, srest specSem p (D.bits a D.pos stop (bits t)) =
-            srest specSem p' ((flushD (runD a stop hs D h) buf space).D.bits a (flushD (runD a stop hs D h) buf space).D.pos stop (bits t)) := by
+            srest specSem p' ((flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D.bits a (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D.pos stop (bits t)) := by
           intro t
           rw [heq, a8, a9]
         have hjoin : ∀ t : List UInt8, Reach sStep p (D.bits a D.pos stop (bits t)) p'
-            ((flushD (runD a stop hs D h) buf space).D.bits a (flushD (runD a stop hs D h) buf space).D.pos stop (bits t)) := by
+            ((flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D.bits a (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D.pos stop (bits t)) := by
           intro t
           rw [a8, a9]
           exact hj t
         rw [a7] at c4
         have hl1 := flush_length (p := p') hR a1
-        refine ⟨Nat.le_trans (by rw [a8]; exact b1) c1, c2, c3, ((p'.out.take (runD a stop hs D h).cmd.pend.toNat).reverse).take len ++ n,
+        refine ⟨Nat.le_trans (by rw [a8]; exact b1) c1, c2, c3, ((p'.out.take (runD a stop hs (withCap D space) (h.withCap space)).cmd.pend.toNat).reverse).take len ++ n,
           by rw [c4, List.append_assoc], ?_, fun e => ?_, fun e => ?_, fun e => ?_, (fun e t ht => ?_), fun e => ⟨fun t y hy => ?_, ?_⟩⟩
         · rw [List.length_append, hl1]
           rw [a3] at c5
@@ -841,6 +884,11 @@ structure RunM (a : ByteArray) (stop : USize) (p : SPhase) (D r : Dec) : Prop wh
   next : r.status = .next → ∃ st, DRel r (.ended st) ∧ r.pos.toNat ≤ stop.toNat ∧ MPause a stop p (.ended st) D D.pos r
   needsInput : r.status = .needsInput → ∃ p', DRel r p' ∧ MPause a stop p p' D D.pos r
   needsOutput : r.status = .needsOutput → ∃ p', DRel r p' ∧ r.cmd.pend.toNat ≠ 0 ∧ MPause a stop p p' D D.pos r
+
+/-- The cap on waiting bytes changes nothing the loop's measure says of where it started. -/
+theorem RunM.uncap {a : ByteArray} {stop : USize} {p : SPhase} {D r : Dec} {x : USize}
+    (h : RunM a stop p { D with cmd := { D.cmd with cap := x } } r) : RunM a stop p D r :=
+  ⟨h.1, h.2, h.3⟩
 
 /-- A step that moved on, then a pause, lowers the measure. -/
 private theorem MPause.after {a : ByteArray} {stop : USize} {p p1 p' : SPhase} {D r1 r : Dec}
@@ -997,28 +1045,28 @@ theorem callD_down {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {
     intro D h p buf hrel
     rw [callD]
     dsimp only
-    have hr := runD_down (hs := hs) ⟨D, h⟩ p hrel
+    have hr := (runD_down (hs := hs) ⟨withCap D space, h.withCap space⟩ p (hrel.withCap _)).uncap
     dsimp only at hr
-    by_cases hO : (runD a stop hs D h).status = .needsOutput
+    by_cases hO : (runD a stop hs (withCap D space) (h.withCap space)).status = .needsOutput
     · rw [dite_eq_left hO]
       obtain ⟨p', hR, hfull, hm⟩ := hr.needsOutput hO
       obtain ⟨len, a1, a2, a3, a4, a5, _, _, a8, _, a9, _⟩ := flushD_spec hR buf space
-      by_cases hz : (flushD (runD a stop hs D h) buf space).D.cmd.pend = 0
+      by_cases hz : (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D.cmd.pend = 0
       · rw [ite_eq_left hz]
-        have hz0 : (flushD (runD a stop hs D h) buf space).D.cmd.pend.toNat = 0 := by rw [hz]; rfl
-        have hpos : 1 ≤ 2 ^ (runD a stop hs D h).k.toNat := Nat.two_pow_pos _
-        have hlt : (flushD (runD a stop hs D h) buf space).space < space := by
+        have hz0 : (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D.cmd.pend.toNat = 0 := by rw [hz]; rfl
+        have hpos : 1 ≤ 2 ^ (runD a stop hs (withCap D space) (h.withCap space)).k.toNat := Nat.two_pow_pos _
+        have hlt : (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).space < space := by
           rw [a3]
           omega
         rw [dite_eq_left hlt]
-        have hin := ih _ hlt (flushD (runD a stop hs D h) buf space).D (flushD_inv (runD_full hO) buf space) p' (flushD (runD a stop hs D h) buf space).buf a4
-        generalize callD a stop hs final (flushD (runD a stop hs D h) buf space).D (flushD_inv (runD_full hO) buf space)
-          (flushD (runD a stop hs D h) buf space).buf (flushD (runD a stop hs D h) buf space).space = o at hin ⊢
-        have hf : ∀ t : List UInt8, (flushD (runD a stop hs D h) buf space).D.bits a (flushD (runD a stop hs D h) buf space).D.pos stop (bits t) =
-            (runD a stop hs D h).bits a (runD a stop hs D h).pos stop (bits t) := by
+        have hin := ih _ hlt (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D (flushD_inv (runD_full hO) buf space) p' (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).buf a4
+        generalize callD a stop hs final (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D (flushD_inv (runD_full hO) buf space)
+          (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).buf (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).space = o at hin ⊢
+        have hf : ∀ t : List UInt8, (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D.bits a (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D.pos stop (bits t) =
+            (runD a stop hs (withCap D space) (h.withCap space)).bits a (runD a stop hs (withCap D space) (h.withCap space)).pos stop (bits t) := by
           intro t
           rw [a8, a9]
-        have hjoin : ∀ {p2 : SPhase}, MCall a stop p' p2 (flushD (runD a stop hs D h) buf space).D (flushD (runD a stop hs D h) buf space).space o → MCall a stop p p2 D space o := by
+        have hjoin : ∀ {p2 : SPhase}, MCall a stop p' p2 (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).space o → MCall a stop p p2 D space o := by
           intro p2 hc
           rcases hc with hc | ⟨hc1, hc2, _⟩
           · refine Or.inl fun t => ?_
@@ -1028,7 +1076,7 @@ theorem callD_down {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {
             · exact hc'.trans (h1 t)
             · rw [← h1 t]
               exact hc'
-          · have hc1' : ∀ t : List UInt8, mOf p2 (o.D.bits a o.pos stop (bits t)) = mOf p' ((runD a stop hs D h).bits a (runD a stop hs D h).pos stop (bits t)) := by
+          · have hc1' : ∀ t : List UInt8, mOf p2 (o.D.bits a o.pos stop (bits t)) = mOf p' ((runD a stop hs (withCap D space) (h.withCap space)).bits a (runD a stop hs (withCap D space) (h.withCap space)).pos stop (bits t)) := by
               intro t
               rw [hc1, hf]
             rcases hm with h1 | ⟨_, h1⟩

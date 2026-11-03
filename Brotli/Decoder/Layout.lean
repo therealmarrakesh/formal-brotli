@@ -605,7 +605,7 @@ theorem stepDRaw_same {s t : Dec} (he : s.er = t.er) {p1 p2 : USize} (h : Same a
     by_cases hw : winCheck s.k s.cmd.wpos s.cmd.ring = true
     · rw [dite_eq_left (show winCheck s.k s.cmd.wpos s.cmd.ring = true ∧ p1 ≤ e1 from ⟨hw, hq1⟩),
         dite_eq_left (show winCheck s.k s.cmd.wpos s.cmd.ring = true ∧ p2 ≤ e2 from ⟨hw, hq2⟩)]
-      by_cases hp : s.cmd.pend = ringSize s.k
+      by_cases hp : room s.k s.cmd.cap ≤ s.cmd.pend
       · rw [ite_eq_left hp, ite_eq_left hp]
         exact ⟨rfl, h⟩
       · rw [ite_eq_right hp, ite_eq_right hp]
@@ -847,6 +847,9 @@ theorem afterRun_same {a1 a2 : ByteArray} {e1 e2 : USize} {r1 r2 : Dec} (he : r1
   · exact ⟨rfl, hq, rfl, [], by simp, by simp⟩
   · exact ⟨rfl, hq, rfl, [], by simp, by simp⟩
 
+theorem withCap_er (D : Dec) (space : Nat) :
+    (withCap D space).er = { D.er with cmd := { D.er.cmd with cap := capFor space } } := rfl
+
 theorem callD_same {a1 a2 : ByteArray} {e1 e2 : USize} (hs1 : e1.toNat ≤ a1.size) (hs2 : e2.toNat ≤ a2.size) (final : Bool) :
     ∀ (space : Nat) (D1 : Dec) (h1 : DInv e1 D1) (D2 : Dec) (h2 : DInv e2 D2) (b1 b2 : ByteArray), D1.er = D2.er →
     Same a1 e1 a2 e2 D1.pos D2.pos →
@@ -857,27 +860,29 @@ theorem callD_same {a1 a2 : ByteArray} {e1 e2 : USize} (hs1 : e1.toNat ≤ a1.si
     intro D1 h1 D2 h2 b1 b2 he h
     rw [callD, callD]
     dsimp only
-    obtain ⟨e, hS⟩ := runD_same hs1 hs2 ⟨D1, h1⟩ D2 h2 he h
+    have he' : (withCap D1 space).er = (withCap D2 space).er := by
+      rw [withCap_er, withCap_er, he]
+    obtain ⟨e, hS⟩ := runD_same hs1 hs2 ⟨withCap D1 space, h1.withCap space⟩ (withCap D2 space) (h2.withCap space) he' h
     dsimp only at e hS
-    have hstat : (runD a2 e2 hs2 D2 h2).status = (runD a1 e1 hs1 D1 h1).status := by rw [dec_er e]
-    by_cases hO : (runD a1 e1 hs1 D1 h1).status = .needsOutput
+    have hstat : (runD a2 e2 hs2 (withCap D2 space) (h2.withCap space)).status = (runD a1 e1 hs1 (withCap D1 space) (h1.withCap space)).status := by rw [dec_er e]
+    by_cases hO : (runD a1 e1 hs1 (withCap D1 space) (h1.withCap space)).status = .needsOutput
     · rw [dite_eq_left hO, dite_eq_left (hstat.trans hO)]
       obtain ⟨f1, f2, f3, f4, L, f5, f6⟩ := flushD_same e b1 b2 space
-      have hf : Same a1 e1 a2 e2 (flushD (runD a1 e1 hs1 D1 h1) b1 space).D.pos (flushD (runD a2 e2 hs2 D2 h2) b2 space).D.pos := by
+      have hf : Same a1 e1 a2 e2 (flushD (runD a1 e1 hs1 (withCap D1 space) (h1.withCap space)) b1 space).D.pos (flushD (runD a2 e2 hs2 (withCap D2 space) (h2.withCap space)) b2 space).D.pos := by
         rw [f2, f3]
         exact hS
-      have hpend : (flushD (runD a2 e2 hs2 D2 h2) b2 space).D.cmd.pend = (flushD (runD a1 e1 hs1 D1 h1) b1 space).D.cmd.pend := by
+      have hpend : (flushD (runD a2 e2 hs2 (withCap D2 space) (h2.withCap space)) b2 space).D.cmd.pend = (flushD (runD a1 e1 hs1 (withCap D1 space) (h1.withCap space)) b1 space).D.cmd.pend := by
         rw [dec_er f1]
-      by_cases hz : (flushD (runD a1 e1 hs1 D1 h1) b1 space).D.cmd.pend = 0
+      by_cases hz : (flushD (runD a1 e1 hs1 (withCap D1 space) (h1.withCap space)) b1 space).D.cmd.pend = 0
       · rw [ite_eq_left hz, ite_eq_left (hpend.trans hz)]
-        by_cases hlt : (flushD (runD a1 e1 hs1 D1 h1) b1 space).space < space
-        · rw [dite_eq_left hlt, dite_eq_left (show (flushD (runD a2 e2 hs2 D2 h2) b2 space).space < space by rw [← f4]; exact hlt)]
+        by_cases hlt : (flushD (runD a1 e1 hs1 (withCap D1 space) (h1.withCap space)) b1 space).space < space
+        · rw [dite_eq_left hlt, dite_eq_left (show (flushD (runD a2 e2 hs2 (withCap D2 space) (h2.withCap space)) b2 space).space < space by rw [← f4]; exact hlt)]
           rw [← f4]
           obtain ⟨g1, g2, g3, L', g4, g5⟩ := ih _ hlt _ (flushD_inv (runD_full hO) b1 space) _
-            (flushD_inv (runD_full (hstat.trans hO)) b2 space) (flushD (runD a1 e1 hs1 D1 h1) b1 space).buf
-            (flushD (runD a2 e2 hs2 D2 h2) b2 space).buf f1 hf
+            (flushD_inv (runD_full (hstat.trans hO)) b2 space) (flushD (runD a1 e1 hs1 (withCap D1 space) (h1.withCap space)) b1 space).buf
+            (flushD (runD a2 e2 hs2 (withCap D2 space) (h2.withCap space)) b2 space).buf f1 hf
           exact ⟨g1, g2, g3, L ++ L', by rw [g4, f5, List.append_assoc], by rw [g5, f6, List.append_assoc]⟩
-        · rw [dite_eq_right hlt, dite_eq_right (show ¬ (flushD (runD a2 e2 hs2 D2 h2) b2 space).space < space by rw [← f4]; exact hlt)]
+        · rw [dite_eq_right hlt, dite_eq_right (show ¬ (flushD (runD a2 e2 hs2 (withCap D2 space) (h2.withCap space)) b2 space).space < space by rw [← f4]; exact hlt)]
           exact ⟨rfl, h, rfl, L, f5, f6⟩
       · rw [ite_eq_right hz, ite_eq_right (fun e => hz (hpend.symm.trans e))]
         exact ⟨f1, hf, rfl, L, f5, f6⟩

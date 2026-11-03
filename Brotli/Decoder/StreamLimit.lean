@@ -419,32 +419,34 @@ theorem callD_lim (ar : ByteArray) (stop : USize) (hs : stop.toNat ≤ ar.size) 
     intro D h2 D1 h1 buf ⟨l, a, hD⟩
     subst hD
     rw [callD, callD]
-    have hr := runD_lim ar stop hs ⟨D, h2⟩ l a h1
+    have hr : DLim (runD ar stop hs (withCap (decSet D l a) space) (h1.withCap space))
+        (runD ar stop hs (withCap D space) (h2.withCap space)) :=
+      runD_lim ar stop hs ⟨withCap D space, h2.withCap space⟩ l a (h1.withCap space)
     rcases hr with h | h | ⟨l', a', e⟩
-    · rw [dite_eq_right (show ¬ (runD ar stop hs (decSet D l a) h1).status = .needsOutput by rw [h]; exact fun e => DStatus.noConfusion e)]
+    · rw [dite_eq_right (show ¬ (runD ar stop hs (withCap (decSet D l a) space) (h1.withCap space)).status = .needsOutput by rw [h]; exact fun e => DStatus.noConfusion e)]
       exact Or.inl (by simp only [afterRun, h])
-    · rw [dite_eq_right (show ¬ (runD ar stop hs D h2).status = .needsOutput by rw [h]; exact fun e => DStatus.noConfusion e)]
+    · rw [dite_eq_right (show ¬ (runD ar stop hs (withCap D space) (h2.withCap space)).status = .needsOutput by rw [h]; exact fun e => DStatus.noConfusion e)]
       refine Or.inr (Or.inl ?_)
       simp only [afterRun, h]
-    · by_cases hn : (runD ar stop hs D h2).status = .needsOutput
-      · have hn1 : (runD ar stop hs (decSet D l a) h1).status = .needsOutput := by rw [e]; exact hn
+    · by_cases hn : (runD ar stop hs (withCap D space) (h2.withCap space)).status = .needsOutput
+      · have hn1 : (runD ar stop hs (withCap (decSet D l a) space) (h1.withCap space)).status = .needsOutput := by rw [e]; exact hn
         rw [dite_eq_left hn1, dite_eq_left hn]
         dsimp only
-        have hf : flushD (runD ar stop hs (decSet D l a) h1) buf space =
-            ⟨decSet (flushD (runD ar stop hs D h2) buf space).D l' a', (flushD (runD ar stop hs D h2) buf space).buf,
-              (flushD (runD ar stop hs D h2) buf space).space⟩ := by
+        have hf : flushD (runD ar stop hs (withCap (decSet D l a) space) (h1.withCap space)) buf space =
+            ⟨decSet (flushD (runD ar stop hs (withCap D space) (h2.withCap space)) buf space).D l' a', (flushD (runD ar stop hs (withCap D space) (h2.withCap space)) buf space).buf,
+              (flushD (runD ar stop hs (withCap D space) (h2.withCap space)) buf space).space⟩ := by
           rw [e, flushD_lim]
-        have hp : (flushD (runD ar stop hs (decSet D l a) h1) buf space).D.cmd.pend = (flushD (runD ar stop hs D h2) buf space).D.cmd.pend := by
+        have hp : (flushD (runD ar stop hs (withCap (decSet D l a) space) (h1.withCap space)) buf space).D.cmd.pend = (flushD (runD ar stop hs (withCap D space) (h2.withCap space)) buf space).D.cmd.pend := by
           rw [hf]; rfl
-        have hsp : (flushD (runD ar stop hs (decSet D l a) h1) buf space).space = (flushD (runD ar stop hs D h2) buf space).space := by
+        have hsp : (flushD (runD ar stop hs (withCap (decSet D l a) space) (h1.withCap space)) buf space).space = (flushD (runD ar stop hs (withCap D space) (h2.withCap space)) buf space).space := by
           rw [hf]
-        have hb : (flushD (runD ar stop hs (decSet D l a) h1) buf space).buf = (flushD (runD ar stop hs D h2) buf space).buf := by
+        have hb : (flushD (runD ar stop hs (withCap (decSet D l a) space) (h1.withCap space)) buf space).buf = (flushD (runD ar stop hs (withCap D space) (h2.withCap space)) buf space).buf := by
           rw [hf]
-        have hDD : (flushD (runD ar stop hs (decSet D l a) h1) buf space).D = decSet (flushD (runD ar stop hs D h2) buf space).D l' a' := by
+        have hDD : (flushD (runD ar stop hs (withCap (decSet D l a) space) (h1.withCap space)) buf space).D = decSet (flushD (runD ar stop hs (withCap D space) (h2.withCap space)) buf space).D l' a' := by
           rw [hf]
-        by_cases hq : (flushD (runD ar stop hs D h2) buf space).D.cmd.pend = 0
+        by_cases hq : (flushD (runD ar stop hs (withCap D space) (h2.withCap space)) buf space).D.cmd.pend = 0
         · rw [ite_eq_left hq, ite_eq_left (hp.trans hq)]
-          by_cases hl : (flushD (runD ar stop hs D h2) buf space).space < space
+          by_cases hl : (flushD (runD ar stop hs (withCap D space) (h2.withCap space)) buf space).space < space
           · rw [dite_eq_left hl, dite_eq_left (hsp ▸ hl)]
             rw [hb, hsp]
             exact ih _ hl _ _ _ _ _ ⟨l', a', hDD⟩
@@ -452,7 +454,7 @@ theorem callD_lim (ar : ByteArray) (stop : USize) (hs : stop.toNat ≤ ar.size) 
             exact OLim.same (l := 0) (a := 0) rfl hb rfl rfl
         · rw [ite_eq_right hq, ite_eq_right (show ¬ _ from hp ▸ hq)]
           exact OLim.same (l := l') (a := a') rfl hb (by rw [hDD]; rfl) hDD
-      · have hn1 : ¬ (runD ar stop hs (decSet D l a) h1).status = .needsOutput := by rw [e]; exact hn
+      · have hn1 : ¬ (runD ar stop hs (withCap (decSet D l a) space) (h1.withCap space)).status = .needsOutput := by rw [e]; exact hn
         rw [dite_eq_right hn1, dite_eq_right hn]
         rw [show (decSet D l a).pos = D.pos from rfl]
         exact afterRun_lim (DLim.same e) stop final D.pos buf space

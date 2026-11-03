@@ -117,6 +117,26 @@ theorem usmin_toNat (a b : USize) : (usmin a b).toNat = min a.toNat b.toNat := b
     rw [ite_eq_right h]
     omega
 
+/-- How many bytes may wait in a window before a step stops for output space: the cap, at least one, and at most the
+window. -/
+@[inline] def room (k cap : USize) : USize := usmin (if cap = 0 then USize.ofNat 1 else cap) (ringSize k)
+
+theorem room_le {k cap : USize} (hk : k.toNat ≤ 24) : (room k cap).toNat ≤ 2 ^ k.toNat := by
+  unfold room
+  rw [usmin_toNat, ringSize_toNat hk]
+  omega
+
+theorem room_one {k cap : USize} (hk : k.toNat ≤ 24) : 1 ≤ (room k cap).toNat := by
+  unfold room
+  rw [usmin_toNat, ringSize_toNat hk]
+  have : 1 ≤ 2 ^ k.toNat := Nat.one_le_two_pow
+  split
+  · rw [usize_ofNat (by decide)]
+    omega
+  · rename_i hc
+    have : cap.toNat ≠ 0 := fun e => hc (USize.toNat_inj.mp (by rw [e]; rfl))
+    omega
+
 /-- The bytes waiting to go out, after more were written. -/
 theorem pend_after {pend run : USize} {k : Nat} (hk : k ≤ 24) (h : pend.toNat + run.toNat ≤ 2 ^ k) :
     (pend + run).toNat = pend.toNat + run.toNat := by

@@ -800,9 +800,9 @@ def stepDRaw (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : De
     let k := D.k
     let c := D.cmd
     if h : winCheck k c.wpos c.ring = true ∧ pos ≤ stop then
-      if c.pend = ringSize k then { D with pos := pos, status := .needsOutput }
+      if room k c.cap ≤ c.pend then { D with pos := pos, status := .needsOutput }
       else
-        let n := usmin left.toUSize (ringSize k - c.pend)
+        let n := usmin left.toUSize (room k c.cap - c.pend)
         let word := c.word
         let count := c.count
         let wpos := c.wpos
@@ -971,25 +971,23 @@ theorem stepDRaw_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {last 
   have hck : winCheck k cmd.wpos cmd.ring = true := winCheck_of hk24 hring.size hring.pos_lt
   have hle : pos ≤ stop := USize.le_iff_toNat_le.mpr hpos
   rw [dite_eq_left (⟨hck, hle⟩ : winCheck k cmd.wpos cmd.ring = true ∧ pos ≤ stop)]
-  by_cases hf : cmd.pend = ringSize k
+  by_cases hf : room k cmd.cap ≤ cmd.pend
   · rw [ite_eq_left hf]
     refine ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun _ => ⟨.raw w st last' n, ⟨rfl, hw, ⟨hwin, hprod, hlim⟩, rfl, hleft, hn32⟩, Nat.le_refl _, hpos, (fun t => rfl), ?_, Or.inr ⟨rfl, rfl⟩, (fun _ _ e => SPhase.noConfusion e), ⟨[], rfl, rfl⟩,
       fun t => Reach.refl _ _⟩, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
-    show cmd.pend.toNat ≠ 0
-    rw [hf, ringSize_toNat hk24]
-    exact Nat.pos_iff_ne_zero.mp (Nat.two_pow_pos _)
+    exact full_ne hk24 hf
   · rw [ite_eq_right hf]
-    have hpn : cmd.pend.toNat ≠ 2 ^ k.toNat := fun e => hf (USize.toNat_inj.mp (by rw [ringSize_toNat hk24]; exact e))
+    have hpn := room_lt hf
+    have hRl := room_le (cap := cmd.cap) hk24
     have hple := hwin'.pendLe
     have hp24 : 2 ^ k.toNat ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk24
     have h224 : (2 : Nat) ^ 24 = 16777216 := rfl
-    have hroom : (ringSize k - cmd.pend).toNat = 2 ^ k.toNat - cmd.pend.toNat := by
-      rw [USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr (by rw [ringSize_toNat hk24]; omega)), ringSize_toNat hk24]
+    have hroom : (room k cmd.cap - cmd.pend).toNat = (room k cmd.cap).toNat - cmd.pend.toNat := room_sub' (by omega)
     have hu : left.toUSize.toNat = n := by
       rw [word_toUSize (by omega), hleft']
-    have hnv : (usmin left.toUSize (ringSize k - cmd.pend)).toNat = min n (2 ^ k.toNat - cmd.pend.toNat) := by
+    have hnv : (usmin left.toUSize (room k cmd.cap - cmd.pend)).toNat = min n ((room k cmd.cap).toNat - cmd.pend.toNat) := by
       rw [usmin_toNat, hu, hroom]
-    obtain ⟨moved, hm⟩ := rawRun_spec (a := a) (stop := stop) (hs := hs) (winCheck_k hck) (ringMask_toNat (winCheck_k hck)) _ (usmin left.toUSize (ringSize k - cmd.pend))
+    obtain ⟨moved, hm⟩ := rawRun_spec (a := a) (stop := stop) (hs := hs) (winCheck_k hck) (ringMask_toNat (winCheck_k hck)) _ (usmin left.toUSize (room k cmd.cap - cmd.pend))
       cmd.word cmd.count pos cmd.ring cmd.wpos cmd.p1 cmd.p2 (USize.le_iff_toNat_le.mp hle) (winCheck_size hck) (winCheck_pos hck) st.output rfl hw hring hwin'.ctx
     exact rawFinish_ok hwin' hprod hlim hleft' hn32 (by omega) (by omega) (by omega) hm
 

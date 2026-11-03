@@ -238,7 +238,7 @@ structure RunOk {α : Type} (w k : Nat) (m : MetaBlockHeader) (K : CommandState 
     (∀ F, Reach (cStep w m) p (stateBits st a pos stop F) p' (stateBits r a r.pos stop F)) ∧ CShort w m p' (BitBuffer.mk r.word r.count).held
   needsOutput : r.status = .needsOutput → ∃ p', Rel w k m r p' ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
     (∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K p' (stateBits r a r.pos stop F)) ∧
-    r.pend.toNat = 2 ^ k ∧ OutStep p p' st r ∧ ∀ F, Reach (cStep w m) p (stateBits st a pos stop F) p' (stateBits r a r.pos stop F)
+    r.pend.toNat ≠ 0 ∧ OutStep p p' st r ∧ ∀ F, Reach (cStep w m) p (stateBits st a pos stop F) p' (stateBits r a r.pos stop F)
   done : r.status = .done → ∃ s, Rel w k m r (.command s) ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
     (∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K (.command s) (stateBits r a r.pos stop F)) ∧
     s.remaining = 0 ∧ OutStep p (.command s) st r ∧ ∀ F, Reach (cStep w m) p (stateBits st a pos stop F) (.command s) (stateBits r a r.pos stop F)
@@ -353,6 +353,38 @@ theorem Rel.withPend {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {p : Phase} (h
     have h1 := hC.pendLe
     have h2 := hC.pendOut
     exact { hC with pendLe := Nat.le_trans hx h1, pendOut := Nat.le_trans hx h2 }
+  cases p with
+  | literalSymbol => exact h.elim
+  | command =>
+    obtain ⟨hC, hr⟩ := h
+    exact ⟨up hC, hr⟩
+  | insertCopy =>
+    obtain ⟨hC, hr⟩ := h
+    exact ⟨up hC, hr⟩
+  | copyLength =>
+    obtain ⟨hC, hr⟩ := h
+    exact ⟨up hC, hr⟩
+  | literals =>
+    obtain ⟨hC, hr⟩ := h
+    exact ⟨up hC, hr⟩
+  | distance =>
+    obtain ⟨hC, hr⟩ := h
+    exact ⟨up hC, hr⟩
+  | distanceSymbol =>
+    obtain ⟨hC, hr⟩ := h
+    exact ⟨up hC, hr⟩
+  | copy =>
+    obtain ⟨hC, hr⟩ := h
+    exact ⟨up hC, hr⟩
+  | word =>
+    obtain ⟨hC, hr⟩ := h
+    exact ⟨up hC, hr⟩
+
+/-- The cap on waiting bytes doesn't matter to `Rel`. -/
+theorem Rel.withCap {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {p : Phase} (h : Rel w k m st p) (x : USize) :
+    Rel w k m { st with cap := x } p := by
+  have up : ∀ {out rem ds ic lit dist}, Core w k m st out rem ds ic lit dist →
+      Core w k m { st with cap := x } out rem ds ic lit dist := fun hC => { hC with }
   cases p with
   | literalSymbol => exact h.elim
   | command =>
