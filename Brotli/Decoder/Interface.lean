@@ -3,7 +3,7 @@ import Brotli.Spec.Stream
 /-!
 # The decoder's interface and goals
 
-What a streaming decoder looks like to its caller, and the four correctness goals, stated over any machine with
+What a streaming decoder looks like to its caller, and the correctness goals, stated over any machine with
 that interface. There is no decoder here.
 -/
 
@@ -101,19 +101,19 @@ inductive Reaches (D : Machine σ) (limit : Nat) (x : List UInt8) : Run σ → P
 
 /-! ### The goals -/
 
-/-- Goal 1. A success gives exactly what `decode` gives, after the end signal and with the whole stream used,
+/-- Soundness and completeness. A success gives exactly what `decode` gives, after the end signal and with the whole stream used,
 and a rejection means `decode` rejects. `decode_valid` and `decode_invalid` give the other direction. -/
 structure Correct (D : Machine σ) : Prop where
   done : ∀ {limit x} {R : Run σ}, Reaches D limit x R → R.status = .done →
     R.ended = true ∧ R.read = x.length ∧ decode x = some R.emitted
   rejected : ∀ {limit x} {R : Run σ}, Reaches D limit x R → R.status = .rejected → decode x = none
 
-/-- Goal 2. What's been handed out is always a prefix of the output of a valid stream. `prefix_of_completion`
+/-- Prefix soundness. What's been handed out is always a prefix of the output of a valid stream. `prefix_of_completion`
 and `rejected_final` state it for every continuation of the input so far. -/
 def NoWrongBytes (D : Machine σ) : Prop :=
   ∀ {limit x} {R : Run σ} {y}, Reaches D limit x R → decode x = some y → R.emitted <+: y
 
-/-- Goal 3, for a size measure on the state and a demand on the input so far. The size stays within the demand,
+/-- Memory usage correctness, for a size measure on the state and a demand on the input so far. The size stays within the demand,
 and within the limit unless the limit was reported, which happens only when the demand exceeds it. -/
 structure Streams (D : Machine σ) (size : σ → Nat) (demand : List UInt8 → Nat) : Prop where
   within_demand : ∀ {limit x} {R : Run σ}, Reaches D limit x R → size R.state ≤ demand (x.take R.offered)
@@ -156,7 +156,7 @@ whatever lay around it, and whatever the output buffer held. -/
 def LayoutBlind (D : Machine σ) : Prop :=
   ∀ {limit x} {R1 R2 : Run σ}, Relaid D limit x R1 R2 → R1.status = R2.status ∧ R1.read = R2.read ∧ R1.emitted = R2.emitted
 
-/-- Goal 4, its truthful part. A call uses at most its chunk, keeps what the buffer held, and fills at most its
+/-- Totality and progress, its truthful part. A call uses at most its chunk, keeps what the buffer held, and fills at most its
 space. "Needs input" means the chunk was all used and the end hasn't been signalled, and "needs output" means the
 space is full. -/
 structure Truthful (D : Machine σ) : Prop where
@@ -179,7 +179,7 @@ def Run.Answers (R : Run σ) (c : Call) : Prop :=
 def Follows (D : Machine σ) (limit : Nat) (x : List UInt8) (R' R : Run σ) : Prop :=
   Reaches D limit x R ∧ ∃ c, R.Allowed x c ∧ R.Answers c ∧ R' = R.after D x c
 
-/-- Goal 4, its terminating part. No caller answering the signals can keep a machine running forever. Every call
+/-- Totality and progress, its terminating part. No caller answering the signals can keep a machine running forever. Every call
 returning is the type of `Machine.step`, whose definitions are total. -/
 def Terminates (D : Machine σ) : Prop :=
   ∀ {limit x} {R : Run σ}, Reaches D limit x R → Acc (Follows D limit x) R
@@ -246,13 +246,13 @@ theorem Reaches.continuation {D : Machine σ} {limit : Nat} {x : List UInt8} {R 
     · simp [he.2]
     · simp [he.1]
 
-/-- Goal 2 for every valid continuation of the input so far. -/
+/-- Prefix soundness for every valid continuation of the input so far. -/
 theorem prefix_of_completion {D : Machine σ} (h : NoWrongBytes D) {limit : Nat} {x : List UInt8} {R : Run σ}
     (hR : Reaches D limit x R) (he : R.ended = false) (t : List UInt8) {y : List UInt8}
     (hd : decode (x.take R.offered ++ t) = some y) : R.emitted <+: y :=
   h (hR.continuation he (Nat.le_refl _) t) hd
 
-/-- An early rejection is final: no continuation of the input so far is valid. It follows from goal 1. -/
+/-- An early rejection is final: no continuation of the input so far is valid. It follows from soundness. -/
 theorem rejected_final {D : Machine σ} (h : Correct D) {limit : Nat} {x : List UInt8} {R : Run σ}
     (hR : Reaches D limit x R) (he : R.ended = false) (hs : R.status = .rejected) (t : List UInt8) :
     decode (x.take R.offered ++ t) = none :=
@@ -317,7 +317,7 @@ theorem reaches_stop {D : Machine σ} (ht : Truthful D) (hd : Terminates D) {lim
     {R : Run σ} (hR : Reaches D limit x R) : ∃ R', Reaches D limit x R' ∧ R'.status.stopped = true :=
   reaches_stop_of_acc ht (hd hR) hR
 
-/-- The other direction of goal 1 for a valid stream: from anywhere in a run, the decoder can reach success with
+/-- Completeness for a valid stream: from anywhere in a run, the decoder can reach success with
 exactly `decode`'s output, or a reported memory limit. -/
 theorem decode_valid {D : Machine σ} (hc : Correct D) (ht : Truthful D) (hd : Terminates D) {limit : Nat}
     {x y : List UInt8} (hv : decode x = some y) {R : Run σ} (hR : Reaches D limit x R) :
@@ -336,7 +336,7 @@ theorem decode_valid {D : Machine σ} (hc : Correct D) (ht : Truthful D) (hd : T
     rw [hv] at this
     exact Or.inr ⟨rfl, by simpa using this.symm⟩
 
-/-- The other direction of goal 1 for an invalid stream: from anywhere in a run, the decoder can reach a rejection
+/-- Completeness for an invalid stream: from anywhere in a run, the decoder can reach a rejection
 or a reported memory limit. -/
 theorem decode_invalid {D : Machine σ} (hc : Correct D) (ht : Truthful D) (hd : Terminates D) {limit : Nat}
     {x : List UInt8} (hv : decode x = none) {R : Run σ} (hR : Reaches D limit x R) :

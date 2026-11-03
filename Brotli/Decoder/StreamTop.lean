@@ -6,7 +6,7 @@ import Brotli.Decoder.Restrict
 # The decoder
 
 The streaming decoder as a `Machine`, and the invariants over every run that tie it to `decode` and to what the stream demands.
-The four goals follow from them.
+The correctness goals follow from them.
 -/
 
 namespace Brotli.Decoder
@@ -594,15 +594,15 @@ private theorem size_data (b : ByteArray) : b.size = b.data.toList.length := by
 
 /-! ### Goals 1 and 4 -/
 
-/-- Goal 1: a success gives exactly what `decode` gives, and a rejection means `decode` rejects. -/
+/-- Soundness and completeness: a success gives exactly what `decode` gives, and a rejection means `decode` rejects. -/
 theorem decoder_correct : Correct decoder where
   done h hs := (top_inv h).done hs
   rejected h hs := (top_inv h).rejected hs
 
-/-- Goal 2: what's been handed out is always the start of a valid stream's output. -/
+/-- Prefix soundness: what's been handed out is always the start of a valid stream's output. -/
 theorem decoder_noWrongBytes : NoWrongBytes decoder := fun h hd => (top_inv h).starts _ hd
 
-/-- Goal 4, its truthful part. -/
+/-- Totality and progress, its truthful part. -/
 theorem decoder_truthful : Truthful decoder where
   used_le hR ha := by
     obtain ⟨_, _, _, h, _⟩ := reply_list hR ha
@@ -621,7 +621,7 @@ theorem decoder_truthful : Truthful decoder where
     obtain ⟨L2, h, _, _, _, h2⟩ := reply_list hR ha
     rw [size_data, h, List.length_append, h2 hs]
 
-/-! ### Goal 4, its terminating part -/
+/-! ### Totality and progress, the terminating part -/
 
 /-- The reply to a call the caller may make, in the measure's terms. -/
 private theorem reply_down {x : List UInt8} {R : Run DState} {c : Call} {p : SPhase} (ha : R.Allowed x c) (hrel : DRel R.state.val p) :
@@ -667,7 +667,7 @@ private def RunLt (a b : Meas × (Nat × Nat)) : Prop := MLt a.1 b.1 ∨ (a.1 = 
 
 private theorem runLt_wf : WellFounded RunLt := plex_wf mlt_wf lexLt_wf
 
-/-- Goal 4, its terminating part: no caller answering the signals can keep the decoder running forever. -/
+/-- Totality and progress, its terminating part: no caller answering the signals can keep the decoder running forever. -/
 theorem decoder_terminates : Terminates decoder := by
   intro limit x R hR
   have key : ∀ (m : Meas × (Nat × Nat)) (R : Run DState) (p : SPhase), Reaches decoder limit x R → DRel R.state.val p →
@@ -800,7 +800,7 @@ theorem decoder_terminates : Terminates decoder := by
     obtain ⟨p, hrel, _⟩ := (top_inv hR).running hs
     exact key _ R p hR hrel (hpend hR).1 (hpend hR).2 rfl
 
-/-! ### Goal 3 -/
+/-! ### Memory usage correctness -/
 
 /-- What the limit leaves for the window and the tables. -/
 def roomOf (limit : Nat) : Nat := min (limit - fixedCost) 4294835199
@@ -939,7 +939,7 @@ private theorem mem_offered {limit : Nat} {x : List UInt8} {R : Run DState} (h :
     rw [h.offered_ended he, List.take_length]
     exact mem_top h
 
-/-- Goal 3: what the state holds stays within what the stream so far demands, and within the limit unless the limit was reported, which happens only
+/-- Memory usage correctness: what the state holds stays within what the stream so far demands, and within the limit unless the limit was reported, which happens only
 when the demand exceeds it. -/
 theorem decoder_streams : Streams decoder (fun s => s.val.holds) demand where
   within_demand {limit x R} h := by

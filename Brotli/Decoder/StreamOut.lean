@@ -3,7 +3,7 @@ import Brotli.Decoder.StreamRun
 /-!
 # A place's output is the start of the stream's
 
-If the spec gets to an output from a place, that output starts with what the place has produced so far. Goal 2 rests on this,
+If the spec gets to an output from a place, that output starts with what the place has produced so far. Prefix soundness rests on this,
 since a run that hits the memory limit never reaches an output of its own.
 -/
 

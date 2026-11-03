@@ -3,7 +3,7 @@ import Brotli.Decoder.StreamCall
 /-!
 # What a state holds
 
-Goal 3's measure and demand, and what each step does to what the state holds. The demand counts the window the stream
+Memory usage correctness's measure and demand, and what each step does to what the state holds. The demand counts the window the stream
 declares, the bytes of the tables its headers' prefix codes need, one meta-block at a time, and a fixed cost for the rest.
 -/
 

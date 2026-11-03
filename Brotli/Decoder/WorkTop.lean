@@ -5,7 +5,9 @@ import Brotli.Decoder.Work
 # The decoder's work, call by call
 
 A call's steps, in the work model, are at most a constant times the bits of its chunk that the spec's reading in order
-takes and the bytes that reading produces from them, plus two for each byte it hands out, plus a constant.
+takes and the bytes that reading produces from them, plus two for each byte it hands out, plus a constant. The bytes that
+reading produces are at most the bytes the call hands out and one more, since a call stops decoding once one more byte
+waits than its space has room for; a call that rejects or reports the memory limit may also have decoded up to its space.
 -/
 
 namespace Brotli.Decoder
