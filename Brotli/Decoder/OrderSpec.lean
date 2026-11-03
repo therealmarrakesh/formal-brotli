@@ -242,6 +242,74 @@ end
 /-! ### A header -/
 
 section
+variable {α : Type} (K : HK α)
+
+/-- A step of a header read in order that says what `f` says, up to the table the step completes. -/
+def AgreesW (k : List Bool → ORes (Gh × HPhase) MetaBlockHeader) (f : List Bool → Option α) : Prop :=
+  ∀ bs, (∀ q c, k bs = .next q c → ∃ oc, f bs = Wr K oc (hrest K q.1 q.2 c)) ∧ (∀ e c, k bs = .exit e c → f bs = K.k e c) ∧
+    (k bs = .bad → f bs = none) ∧ (k bs = .short → f bs = none)
+
+variable {K}
+
+theorem agreesW_of {k : List Bool → ORes (Gh × HPhase) MetaBlockHeader} {f : List Bool → Option α}
+    (h : Agrees (fun q bs => hrest K q.1 q.2 bs) K.k k f) : AgreesW K k f := fun bs =>
+  ⟨fun q c e => ⟨none, (h bs).1 q c e⟩, (h bs).2.1, (h bs).2.2.1, (h bs).2.2.2⟩
+
+theorem agreesW_congr {k : List Bool → ORes (Gh × HPhase) MetaBlockHeader} {f g : List Bool → Option α} (h : AgreesW K k f)
+    (e : ∀ bs, g bs = f bs) : AgreesW K k g := by
+  intro bs
+  rw [e bs]
+  exact h bs
+
+theorem agreesW_next (q : Gh × HPhase) (oc : Option PrefixCode) :
+    AgreesW K (fun bs => .next q bs) (fun bs => Wr K oc (hrest K q.1 q.2 bs)) := fun _ =>
+  ⟨(fun _ _ h => by cases h; exact ⟨oc, rfl⟩), (fun _ _ h => by cases h), (fun h => by cases h), (fun h => by cases h)⟩
+
+theorem agreesW_next0 (q : Gh × HPhase) : AgreesW K (fun bs => .next q bs) (hrest K q.1 q.2) :=
+  agreesW_of (agrees_next q)
+
+theorem agreesW_bad : AgreesW K (fun _ => .bad) (fun _ => none) := agreesW_of agrees_bad
+
+theorem agreesW_ite {c : Prop} [Decidable c] {k1 k2 : List Bool → ORes (Gh × HPhase) MetaBlockHeader} {f1 f2 : List Bool → Option α}
+    (h1 : AgreesW K k1 f1) (h2 : AgreesW K k2 f2) :
+    AgreesW K (fun bs => if c then k1 bs else k2 bs) (fun bs => if c then f1 bs else f2 bs) := by
+  by_cases h : c
+  · simpa only [h, ↓reduceIte] using h1
+  · simpa only [h, ↓reduceIte] using h2
+
+theorem agreesW_readIn {A : Type} {room : Nat} {rd : List Bool → Option (A × List Bool)}
+    {k : A → List Bool → ORes (Gh × HPhase) MetaBlockHeader} {f : A → List Bool → Option α} (h : ∀ a, AgreesW K (k a) (f a)) :
+    AgreesW K (fun bs => readIn room rd bs k) (fun bs => rd bs >>= fun p => f p.1 p.2) := by
+  intro bs
+  dsimp only
+  have hk0 : readIn room rd bs k = match rd bs with | some (v, b) => k v b | none => if bs.length < room then .short else .bad := rfl
+  rw [hk0]
+  cases rd bs with
+  | none =>
+    by_cases hl : bs.length < room
+    · rw [ite_eq_left hl]
+      exact ⟨(fun _ _ h => by cases h), (fun _ _ h => by cases h), (fun h => by cases h), (fun _ => rfl)⟩
+    · rw [ite_eq_right hl]
+      exact ⟨(fun _ _ h => by cases h), (fun _ _ h => by cases h), (fun _ => rfl), (fun h => by cases h)⟩
+  | some p =>
+    obtain ⟨a, b⟩ := p
+    exact h a b
+
+/-- The table a prefix code's owner keeps: none for a context map's code, whose table is built apart. -/
+def ownerCredit : Owner → PrefixCode → Option PrefixCode
+  | .map .., _ => none
+  | _, c => some c
+
+variable (K)
+
+/-- What follows a prefix code is the place its owner goes on to, with the code's table. -/
+theorem ownerK_wr (g : Gh) (o : Owner) (c : PrefixCode) (bs : List Bool) :
+    ownerK K g o c bs = Wr K (ownerCredit o c) (hrest K g (ownerPlace g o c) bs) := by
+  cases o <;> rfl
+
+end
+
+section
 variable {α : Type} (K : HK α) (hw : ∀ c x, K.w c x = x)
 include hw
 
@@ -270,42 +338,44 @@ private theorem hrest_syms_over (g : Gh) (o : Owner) (size : Nat) (clc : PrefixC
   rw [show size + 1 - st.lens.length = 0 by omega]
   rfl
 
-/-- Each step of a header read in order says what the spec says. -/
-theorem hAgree (g : Gh) : ∀ p, Agrees (fun q bs => hrest K q.1 q.2 bs) K.k (hStepP (g, p)) (hrest K g p)
-  | .cat i => agrees_congr (agrees_readIn fun _ => agrees_ite (agrees_next _) (agrees_next _)) fun bs => by
+omit hw in
+/-- Each step of a header read in order says what the spec says, with the table it completes. -/
+theorem hAgreeW (g : Gh) : ∀ p, AgreesW K (hStepP (g, p)) (hrest K g p)
+  | .cat i => agreesW_of (agrees_congr (agrees_readIn fun _ => agrees_ite (agrees_next _) (agrees_next _)) fun bs => by
       rw [hrest_cat]
       congr 1
       funext p
-      rw [afterCat_eq] <;> rfl
-  | .code o size => agrees_congr (agrees_readIn fun _ => agrees_ite (agrees_readIn fun _ => agrees_next _) (agrees_next _)) fun bs => by
+      rw [afterCat_eq] <;> rfl)
+  | .code o size => agreesW_congr (agreesW_readIn fun _ => agreesW_ite (agreesW_readIn fun c => agreesW_next _ (ownerCredit o c))
+      (agreesW_next0 _)) fun bs => by
       rw [hrest_code]
       congr 1
       funext h
-      simp only [ownerK_place K hw]
-  | .clens o size [] acc sum => agrees_congr (agrees_ite (agrees_next _) agrees_bad) fun bs => hrest_clens_nil K g o size acc sum bs
+      simp only [ownerK_wr K]
+  | .clens o size [] acc sum => agreesW_of (agrees_congr (agrees_ite (agrees_next _) agrees_bad) fun bs => hrest_clens_nil K g o size acc sum bs)
   | .clens o size (x :: rest) acc sum =>
-    agrees_congr (agrees_readIn fun _ => agrees_ite (agrees_next _) (agrees_ite (agrees_next _) (agrees_ite agrees_bad (agrees_next _))))
-      fun bs => hrest_clens_cons K g o size x rest acc sum bs
+    agreesW_of (agrees_congr (agrees_readIn fun _ => agrees_ite (agrees_next _) (agrees_ite (agrees_next _) (agrees_ite agrees_bad (agrees_next _))))
+      fun bs => hrest_clens_cons K g o size x rest acc sum bs)
   | .syms o size clc st =>
-    agrees_congr (agrees_ite agrees_bad (agrees_ite (agrees_next _) (agrees_ite agrees_bad
-      (agrees_readIn fun _ => agrees_ite agrees_bad (agrees_ite agrees_bad (agrees_next _)))))) fun bs => by
+    agreesW_congr (agreesW_ite agreesW_bad (agreesW_ite (agreesW_next _ (ownerCredit o (.canonical (st.lens ++ List.replicate (size - st.lens.length) 0))))
+      (agreesW_ite agreesW_bad (agreesW_readIn fun _ => agreesW_ite agreesW_bad (agreesW_ite agreesW_bad (agreesW_next0 _)))))) fun bs => by
       by_cases h1 : size < st.lens.length
       · rw [ite_eq_left h1]
         exact hrest_syms_over K g o size clc st bs h1
       · rw [ite_eq_right h1]
         by_cases h2 : lengthSum st.lens = 32768
-        · rw [ite_eq_left h2, hrest_syms_done K g o size clc st bs (by omega) h2, ownerK_place K hw]
+        · rw [ite_eq_left h2, hrest_syms_done K g o size clc st bs (by omega) h2, ownerK_wr K]
         · rw [ite_eq_right h2]
           by_cases h3 : st.lens.length = size
           · rw [ite_eq_left h3, hrest_syms_full K g o size clc st bs h3 h2]
           · rw [ite_eq_right h3, hrest_syms_step K g o size clc st bs (by omega) h2]
-  | .first i n tc cc => agrees_congr (agrees_readIn fun _ => agrees_next _) fun bs => by
+  | .first i n tc cc => agreesW_of (agrees_congr (agrees_readIn fun _ => agrees_next _) fun bs => by
       show oCount K g i n tc cc bs = _
       unfold oCount
       congr 1
       funext q
-      rw [afterCat_eq] <;> rfl
-  | .np => agrees_congr (agrees_readIn fun _ => agrees_next _) fun bs => by
+      rw [afterCat_eq] <;> rfl)
+  | .np => agreesW_of (agrees_congr (agrees_readIn fun _ => agrees_next _) fun bs => by
       rw [hrest_np]
       unfold readNp
       cases readInt 2 bs with
@@ -314,31 +384,38 @@ theorem hAgree (g : Gh) : ∀ p, Agrees (fun q bs => hrest K q.1 q.2 bs) K.k (hS
         show (readInt 4 p.2 >>= _) = (readInt 4 p.2 >>= _) >>= _
         cases readInt 4 p.2 with
         | none => rfl
-        | some q => rfl
-  | .modes done 0 => agrees_congr (agrees_next _) fun bs => hrest_modes_zero K g done bs
-  | .modes done (n + 1) => agrees_congr (agrees_readIn fun _ => agrees_next _) fun bs => hrest_modes_succ K g done n bs
-  | .trees isL => agrees_congr (agrees_readIn fun _ => agrees_ite (agrees_next _) (agrees_next _)) fun bs => by
+        | some q => rfl)
+  | .modes done 0 => agreesW_of (agrees_congr (agrees_next _) fun bs => hrest_modes_zero K g done bs)
+  | .modes done (n + 1) => agreesW_of (agrees_congr (agrees_readIn fun _ => agrees_next _) fun bs => hrest_modes_succ K g done n bs)
+  | .trees isL => agreesW_of (agrees_congr (agrees_readIn fun _ => agrees_ite (agrees_next _) (agrees_next _)) fun bs => by
       rw [hrest_trees]
       congr 1
       funext p
-      rw [afterMap_eq] <;> rfl
-  | .rlemax _ _ => agrees_congr (agrees_readIn fun _ => agrees_next _) fun _ => rfl
+      rw [afterMap_eq] <;> rfl)
+  | .rlemax _ _ => agreesW_of (agrees_congr (agrees_readIn fun _ => agrees_next _) fun _ => rfl)
   | .vals isL ntrees rlemax code done left =>
-    agrees_congr (agrees_ite (agrees_next _) (agrees_readIn fun _ => agrees_ite agrees_bad (agrees_next _))) fun bs => by
+    agreesW_of (agrees_congr (agrees_ite (agrees_next _) (agrees_readIn fun _ => agrees_ite agrees_bad (agrees_next _))) fun bs => by
       by_cases h0 : left = 0
       · subst h0
         rw [ite_eq_left rfl, hrest_vals_zero]
-      · rw [ite_eq_right h0, hrest_vals_step K g isL ntrees rlemax code done left bs h0]
-  | .imtf isL ntrees vals => agrees_congr (agrees_readIn fun _ => agrees_ite (agrees_next _) agrees_bad) fun bs => by
+      · rw [ite_eq_right h0, hrest_vals_step K g isL ntrees rlemax code done left bs h0])
+  | .imtf isL ntrees vals => agreesW_of (agrees_congr (agrees_readIn fun _ => agrees_ite (agrees_next _) agrees_bad) fun bs => by
       show afterVals K g isL ntrees vals bs = _
       unfold afterVals
       congr 1
       funext im
-      rw [afterMap_eq] <;> rfl
-  | .codes k done (n + 1) => agrees_congr (agrees_next _) fun bs => hrest_codes_succ K k g done n bs
-  | .codes .L done 0 => agrees_congr (agrees_next _) fun bs => hrest_codes_L K g done bs
-  | .codes .I done 0 => agrees_congr (agrees_next _) fun bs => hrest_codes_I K g done bs
-  | .codes .D done 0 => agrees_congr (agrees_exit _) fun bs => hrest_codes_D K g done bs
+      rw [afterMap_eq] <;> rfl)
+  | .codes k done (n + 1) => agreesW_of (agrees_congr (agrees_next _) fun bs => hrest_codes_succ K k g done n bs)
+  | .codes .L done 0 => agreesW_of (agrees_congr (agrees_next _) fun bs => hrest_codes_L K g done bs)
+  | .codes .I done 0 => agreesW_of (agrees_congr (agrees_next _) fun bs => hrest_codes_I K g done bs)
+  | .codes .D done 0 => agreesW_of (agrees_congr (agrees_exit _) fun bs => hrest_codes_D K g done bs)
+
+/-- Each step of a header read in order says what the spec says. -/
+theorem hAgree (g : Gh) (p : HPhase) : Agrees (fun q bs => hrest K q.1 q.2 bs) K.k (hStepP (g, p)) (hrest K g p) := fun bs => by
+  obtain ⟨h1, h2, h3, h4⟩ := hAgreeW K g p bs
+  refine ⟨fun q c e => ?_, h2, h3, h4⟩
+  obtain ⟨oc, h⟩ := h1 q c e
+  rw [h, Wr_id hw]
 
 end
 
