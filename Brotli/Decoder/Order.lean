@@ -122,7 +122,8 @@ def nextIn {P E : Type} (c : BlockCategory) (st : BlockState) (bs : List Bool) (
   if st.count = 0 ∧ c.n < 2 then .bad else readIn 54 (nextElement c st) bs k
 
 /-- A step of a meta-block's commands read in order, from each place `rest` names, with `w` the window size and `m`
-the meta-block's header. A command's start at MLEN ends the commands. A literal's block switch is a step of its own,
+the meta-block's header. A command's start at MLEN ends the commands. An insert length past MLEN is a rejection
+before the copy extra bits, which can't change it. A literal's block switch is a step of its own,
 which leaves the new block's count with its first literal still to come. A block switch is at most 54 bits, a symbol 15,
 and a symbol with its extra bits 39. -/
 def cStep (w : Nat) (m : MetaBlockHeader) : Phase → List Bool → ORes Phase CommandState
@@ -133,8 +134,8 @@ def cStep (w : Nat) (m : MetaBlockHeader) : Phase → List Bool → ORes Phase C
     lookIn m.insertCopyCodes[ic.types.cur]? fun code =>
     readIn 39 (readInsertHalf code) bs fun v b => .next (.copyLength s ic v.1 v.2.1 v.2.2.1 v.2.2.2) b
   | .copyLength s ic c ilen copyBits copyBase, bs =>
-    readIn 24 (readInt copyBits) bs fun e b =>
-      if s.remaining < ilen then .bad else .next (.literals s ic c ilen (copyBase + e) ilen s.literal s.output) b
+    if s.remaining < ilen then .bad
+    else readIn 24 (readInt copyBits) bs fun e b => .next (.literals s ic c ilen (copyBase + e) ilen s.literal s.output) b
   | .literals s ic c ilen clen 0 lit out, bs => .next (.distance (withLiterals s ic lit out ilen) c clen) bs
   | .literals s ic c ilen clen (n + 1) lit out, bs =>
     if lit.count = 0 then

@@ -535,17 +535,21 @@ theorem stepInsertCopy_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader
 
 /-! ### The copy length -/
 
-/-- The copy extra bits, which begin the literals. -/
+/-- The copy extra bits, which begin the literals. An insert length past MLEN is rejected before them. -/
 def stepCopyLength (st : Cmd) (pos : USize) : Cmd :=
-  if st.copyBits ≤ st.count then
-    if st.remaining < st.ilen then markStep st pos .bad
-    else
-      let b := (BitBuffer.mk st.word st.count)
-      let b1 := b.drop st.copyBits
-      { st with
-        word := b1.word, count := b1.count, clen := st.copyBase + b.peek st.copyBits, left := st.ilen
-        tag := .literals, pos := pos, status := .next }
+  if st.remaining < st.ilen then markStep st pos .bad
+  else if st.copyBits ≤ st.count then
+    let b := (BitBuffer.mk st.word st.count)
+    let b1 := b.drop st.copyBits
+    { st with
+      word := b1.word, count := b1.count, clen := st.copyBase + b.peek st.copyBits, left := st.ilen
+      tag := .literals, pos := pos, status := .next }
   else markStep st pos .needsInput
+
+private theorem bind_none_of {β γ : Type} (o : Option β) (f : β → Option γ) (h : ∀ b, f b = none) : (o >>= f) = none := by
+  cases o with
+  | none => rfl
+  | some b => exact h b
 
 /-- The copy length's step does its job. -/
 theorem stepCopyLength_ok {α : Type} {w k : Nat} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
@@ -559,19 +563,18 @@ theorem stepCopyLength_ok {α : Type} {w k : Nat} {m : MetaBlockHeader} {K : Com
   unfold stepCopyLength
   have hk64 : st.copyBits.toNat < 64 := by omega
   split
-  · rename_i hle
-    have hle' := UInt64.le_iff_toNat_le.mp hle
-    have hint := fun f : List Bool => read_int (b := BitBuffer.mk st.word st.count) (k := st.copyBits) f hk64 hle
-    rw [show st.copyBits.toNat = copyBits from hbits] at hint
+  · rename_i hlt
+    have hlt' := UInt64.lt_iff_toNat_lt.mp hlt
+    refine StepOk.ofBad rfl fun F => ?_
+    rw [stateBits_eq, rest_copyLength]
+    exact bind_none_of _ _ fun ⟨_, _⟩ => ite_eq_left (by omega)
+  · rename_i hlt
+    have hlt' : ¬ st.remaining.toNat < st.ilen.toNat := fun e => hlt (UInt64.lt_iff_toNat_lt.mpr e)
     split
-    · rename_i hlt
-      have hlt' := UInt64.lt_iff_toNat_lt.mp hlt
-      refine StepOk.ofBad rfl fun F => ?_
-      rw [stateBits_eq, rest_copyLength, hint]
-      show (if s.remaining < ilen then none else _) = none
-      rw [ite_eq_left (by omega)]
-    · rename_i hlt
-      have hlt' : ¬ st.remaining.toNat < st.ilen.toNat := fun e => hlt (UInt64.lt_iff_toNat_lt.mpr e)
+    · rename_i hle
+      have hle' := UInt64.le_iff_toNat_le.mp hle
+      have hint := fun f : List Bool => read_int (b := BitBuffer.mk st.word st.count) (k := st.copyBits) f hk64 hle
+      rw [show st.copyBits.toNat = copyBits from hbits] at hint
       have hpeek : ((BitBuffer.mk st.word st.count).peek st.copyBits).toNat < 2 ^ copyBits := by
         rw [BitBuffer.peek_toNat _ hk64, show st.copyBits.toNat = copyBits from hbits]
         exact Nat.mod_lt _ (Nat.two_pow_pos _)
@@ -590,19 +593,21 @@ theorem stepCopyLength_ok {α : Type} {w k : Nat} {m : MetaBlockHeader} {K : Com
         rfl
       · refine Reach.one ?_
         rw [stateBits_eq]
-        show readIn 24 (readInt copyBits) _ _ = _
-        rw [readIn_some (hint _)]
         show (if s.remaining < ilen then _ else _) = _
         rw [ite_eq_right (by omega)]
+        show readIn 24 (readInt copyBits) _ _ = _
+        rw [readIn_some (hint _)]
         rfl
-  · rename_i hle
-    have hnot : st.count.toNat < copyBits := by
-      rw [← hbits]
-      exact Nat.lt_of_not_le fun h => hle (UInt64.le_iff_toNat_le.mpr h)
-    refine StepOk.ofShort hrel0 (hfull.resolve_left (by omega)) ?_ ?_
-    · rw [rest_copyLength, readInt_short (b := BitBuffer.mk st.word st.count) hnot]
-      rfl
-    · show readIn 24 (readInt copyBits) _ _ = _
-      exact readIn_short (readInt_short hnot) (by simp only [BitBuffer.held_length]; omega)
+    · rename_i hle
+      have hnot : st.count.toNat < copyBits := by
+        rw [← hbits]
+        exact Nat.lt_of_not_le fun h => hle (UInt64.le_iff_toNat_le.mpr h)
+      refine StepOk.ofShort hrel0 (hfull.resolve_left (by omega)) ?_ ?_
+      · rw [rest_copyLength, readInt_short (b := BitBuffer.mk st.word st.count) hnot]
+        rfl
+      · show (if s.remaining < ilen then _ else _) = _
+        rw [ite_eq_right (by omega)]
+        show readIn 24 (readInt copyBits) _ _ = _
+        exact readIn_short (readInt_short hnot) (by simp only [BitBuffer.held_length]; omega)
 
 end Brotli.Decoder

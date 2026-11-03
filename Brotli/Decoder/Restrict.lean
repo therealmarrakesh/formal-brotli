@@ -545,7 +545,7 @@ end
 theorem kfaith_cStep (w : Nat) (m : MetaBlockHeader) : ∀ p, KFaith (cStep w m p)
   | .command s => kfaith_ite (kfaith_exit s) (kfaith_nextIn fun _ => kfaith_next _)
   | .insertCopy _ _ => kfaith_lookIn fun _ => kfaith_readIn (faith_readInsertHalf _) fun _ => kfaith_next _
-  | .copyLength _ _ _ _ _ _ => kfaith_readIn (faith_readInt _) fun _ => kfaith_ite kfaith_bad (kfaith_next _)
+  | .copyLength _ _ _ _ _ _ => kfaith_ite kfaith_bad (kfaith_readIn (faith_readInt _) fun _ => kfaith_next _)
   | .literals _ _ _ _ _ 0 _ _ => kfaith_next _
   | .literals _ _ _ _ _ (_ + 1) _ _ => kfaith_ite (kfaith_nextIn fun _ => kfaith_next _) (kfaith_next _)
   | .literalSymbol _ _ _ _ _ _ _ _ =>
