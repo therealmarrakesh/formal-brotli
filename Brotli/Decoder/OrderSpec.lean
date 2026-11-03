@@ -736,4 +736,105 @@ theorem decoder_pausesInOrder {limit : Nat} {x : List UInt8} {R : Run DState} (h
     · exact Or.inl ⟨h4, kshort_sStep q c h4⟩
     · exact Or.inr ⟨y, h4, decode_of_exit (h1.trans h2) h4⟩
 
+/-! ### The decoder, rejecting -/
+
+/-- The bytes between two places in a call's chunk. -/
+theorem chunk_between {x : List UInt8} {R : Run DState} {c : Call} (h : R.read + c.size ≤ x.length) {i j : Nat} (hij : i ≤ j)
+    (hj : j ≤ c.size) :
+    chunk (R.input x c) (c.pre.length + i) (c.pre.length + j) = ((x.drop R.read).take j).drop i := by
+  have e1 := chunk_input (R := R) (c := c) h (show i ≤ c.size by omega)
+  have e2 : chunk (R.input x c) (c.pre.length + i) (c.pre.length + j) =
+      (chunk (R.input x c) (c.pre.length + i) (c.pre.length + c.size)).take (j - i) := by
+    unfold chunk
+    rw [List.take_take]
+    congr 1
+    omega
+  rw [e2, e1]
+  simp only [List.drop_take, List.take_take]
+  congr 1
+  omega
+
+/-- A stream's first bytes, cut at a place within a run of bytes taken from a place further back. -/
+private theorem take_cut (x : List UInt8) (r : Nat) {k s : Nat} (hk : k ≤ s) :
+    x.take (r + s) = x.take (r + k) ++ ((x.drop r).take s).drop k := by
+  rw [List.take_add, List.take_add, List.append_assoc]
+  congr 1
+  conv => lhs; rw [← List.take_append_drop k ((x.drop r).take s)]
+  rw [List.take_take, Nat.min_eq_left hk]
+
+/-- A rejection tells the truth about the input it used. Either the end was signalled with the whole stream used, or every
+continuation of the bytes used is invalid and the spec's reading in order of some of those bytes got through all but at
+most 64 bits of them without rejecting, so that the bytes used run at most 64 bits past where the reading in order is. -/
+theorem decoder_rejectsAt {limit : Nat} {x : List UInt8} {R : Run DState} (h : Reaches decoder limit x R) (hs : R.status = .rejected) :
+    (R.ended = true ∧ R.read = x.length) ∨
+    ((∀ t : List UInt8, decode (x.take R.read ++ t) = none) ∧
+      ∃ (n : Nat) (q : SPhase) (cb : List Bool), n ≤ R.read ∧ Reach sStep .wbits (bits (x.take n)) q cb ∧
+        8 * R.read + cb.length ≤ 8 * n + 64) := by
+  cases h with
+  | start =>
+    exfalso
+    change (decStart limit).2 = .rejected at hs
+    unfold decStart at hs
+    split at hs <;> simp at hs
+  | @call R0 c hR ha =>
+    have hin := ha.inside
+    have hfit := ha.fits
+    obtain ⟨p, hrel, hE, hro, hreach, _⟩ := (order_inv hR).running ha.running
+    obtain ⟨o, _, e2, _, e4, hok⟩ := reply_ok ha hrel hE
+    have hdec := hok.decided
+    have hst : o.status = .rejected := by rw [← e4]; exact hs
+    have hstop : (USize.ofNat (c.pre.length + c.size)).toNat = c.pre.length + c.size := usize_of (by omega)
+    have hpos0 : (atPos R0.state.val c.pre.length).pos.toNat = c.pre.length := usize_of (by omega)
+    have hread : (R0.after decoder x c).read = R0.read + (o.pos.toNat - c.pre.length) := by
+      show R0.read + (R0.reply decoder x c).used = _
+      rw [e2]
+    rcases hdec hst with ⟨hf, hq⟩ | ⟨p1, h1, pos1, d1, d2, d3, d4, d5, d6⟩
+    · left
+      refine ⟨by simp [Run.after, hf], ?_⟩
+      rw [hread, hq, hstop]
+      have := ha.whole hf
+      omega
+    · right
+      rw [hpos0] at d1
+      rw [hstop] at d3
+      generalize hk1 : pos1.toNat - c.pre.length = k1
+      generalize hkq : o.pos.toNat - c.pre.length = kq at hread
+      have hp1 : pos1.toNat = c.pre.length + k1 := by omega
+      have hpq : o.pos.toNat = c.pre.length + kq := by omega
+      have hk1q : k1 ≤ kq := by omega
+      have hkqs : kq ≤ c.size := by omega
+      rw [hread]
+      -- The reading in order up to where the call starts, then any bytes.
+      have hstart : ∀ v : List UInt8, Reach sStep .wbits (bits (x.take R0.read ++ v)) p (R0.state.val.held ++ bits v) := by
+        intro v
+        rw [bits_append]
+        exact reach_extend nfaith_sStep (reach_used hro hreach) (by rw [bits_length]; omega)
+      -- Then through the call's chunk to where the rejecting step began.
+      have hglob : ∀ t : List UInt8, Reach sStep .wbits (bits (x.take (R0.read + c.size) ++ t)) p1
+          (h1 ++ bits (((x.drop R0.read).take c.size).drop k1 ++ t)) := by
+        intro t
+        have hj := d5 t
+        dsimp only at hj
+        rw [bits_at' hin (atPos R0.state.val c.pre.length) (hpos0.trans (Nat.add_zero _).symm) (Nat.zero_le _) hstop t] at hj
+        unfold chunkBits at hj
+        rw [hp1, hstop, chunk_input hin (show k1 ≤ c.size by omega), ← bits_append, List.drop_zero] at hj
+        have e0 : (atPos R0.state.val c.pre.length).held = R0.state.val.held := rfl
+        rw [e0] at hj
+        rw [List.take_add, List.append_assoc]
+        exact (hstart _).trans hj
+      have htight : Reach sStep .wbits (bits (x.take (R0.read + k1))) p1 h1 := by
+        have g := hglob []
+        simp only [List.append_nil] at g
+        rw [take_cut x R0.read (show k1 ≤ c.size by omega), bits_append] at g
+        exact reach_restrict nfaith_sStep g _ _ _ rfl rfl (by rw [bits_length]; omega)
+      refine ⟨fun t => ?_, R0.read + k1, p1, h1, by omega, htight, by omega⟩
+      have g := reach_extend nfaith_sStep htight (F := bits (((x.drop R0.read).take kq).drop k1 ++ t)) (by rw [bits_length]; omega)
+      rw [← bits_append, ← List.append_assoc, ← take_cut x R0.read hk1q] at g
+      rw [decode_reach g]
+      have hl := d6 t
+      dsimp only at hl
+      unfold chunkBits at hl
+      rw [hp1, hpq, chunk_between hin hk1q hkqs, ← bits_append] at hl
+      exact hl
+
 end Brotli.Decoder

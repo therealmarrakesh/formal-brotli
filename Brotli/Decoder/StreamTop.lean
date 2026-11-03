@@ -511,7 +511,7 @@ theorem decoder_limitHandsOut {limit : Nat} {x : List UInt8} {R : Run DState} (h
     rw [d4, hemit, ← hLn, ← List.map_append, map_roundtrip]
 
 /-- The reading in order of the bytes offered, cut back to the bytes used. -/
-private theorem reach_used {x : List UInt8} {R : Run DState} {p : SPhase} (hro : R.read ≤ R.offered)
+theorem reach_used {x : List UInt8} {R : Run DState} {p : SPhase} (hro : R.read ≤ R.offered)
     (hreach : ∀ u : List UInt8, Reach sStep .wbits (bits (x.take R.offered ++ u)) p (R.state.val.held ++ bits ((x.take R.offered).drop R.read ++ u))) :
     Reach sStep .wbits (bits (x.take R.read)) p R.state.val.held := by
   have h1 := hreach []
