@@ -426,10 +426,10 @@ theorem buf_size_of {b b' : ByteArray} {n : List Nat} (h : b'.data.toList.map UI
 /-- What a call's end does with the loop's result: it keeps the buffer's bytes, and when it doesn't stop the call, it
 leaves the loop's position. -/
 theorem afterRun_facts {r : Dec} {q : SPhase} (hR : r.status = .next ∨ r.status = .needsInput → DRel r q) (stop : USize)
-    (final : Bool) (pos0 : USize) (buf : ByteArray) (space : Nat) :
-    buf.size ≤ (afterRun r stop final pos0 buf space).buf.size ∧
-      ((afterRun r stop final pos0 buf space).status.stopped = false → (afterRun r stop final pos0 buf space).pos = r.pos) ∧
-      ((afterRun r stop final pos0 buf space).status = .done → (afterRun r stop final pos0 buf space).pos = r.pos) := by
+    (final : Bool) (buf : ByteArray) (space : Nat) :
+    buf.size ≤ (afterRun r stop final buf space).buf.size ∧
+      ((afterRun r stop final buf space).status.stopped = false → (afterRun r stop final buf space).pos = r.pos) ∧
+      ((afterRun r stop final buf space).status = .done → (afterRun r stop final buf space).pos = r.pos) := by
   unfold afterRun
   cases hst : r.status with
   | bad => exact ⟨Nat.le_refl _, fun h => Bool.noConfusion h, fun h => Status.noConfusion h⟩
@@ -476,12 +476,12 @@ theorem flush_len {D : Dec} {p : SPhase} (h : DRel D p) (buf : ByteArray) (space
 /-- What a call's end hands out: nothing when the loop rejected or ran out of memory, and otherwise what handing the bytes
 out adds. -/
 theorem afterRun_len {r : Dec} {q : SPhase} (hR : r.status = .next ∨ r.status = .needsInput → DRel r q) (stop : USize)
-    (final : Bool) (pos0 : USize) (buf : ByteArray) (space : Nat) :
-    ((r.status = .bad ∨ r.status = .memory) → (afterRun r stop final pos0 buf space).buf = buf ∧
-        ((afterRun r stop final pos0 buf space).status = .rejected ∨ (afterRun r stop final pos0 buf space).status = .memoryLimit)) ∧
-      ((r.status = .next ∨ r.status = .needsInput) → ∃ len, (afterRun r stop final pos0 buf space).buf.size = buf.size + len ∧
+    (final : Bool) (buf : ByteArray) (space : Nat) :
+    ((r.status = .bad ∨ r.status = .memory) → (afterRun r stop final buf space).buf = buf ∧
+        ((afterRun r stop final buf space).status = .rejected ∨ (afterRun r stop final buf space).status = .memoryLimit)) ∧
+      ((r.status = .next ∨ r.status = .needsInput) → ∃ len, (afterRun r stop final buf space).buf.size = buf.size + len ∧
         (len = r.cmd.pend.toNat ∨ len = space)) := by
-  have hf : (r.status = .next ∨ r.status = .needsInput) → (afterRun r stop final pos0 buf space).buf = (flushD r buf space).buf := by
+  have hf : (r.status = .next ∨ r.status = .needsInput) → (afterRun r stop final buf space).buf = (flushD r buf space).buf := by
     intro e
     unfold afterRun
     rcases e with e | e
@@ -597,13 +597,13 @@ theorem callD_count {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} 
           omega
     · rw [dite_eq_right hO, dite_eq_right hO]
       obtain ⟨f1, f2, f3⟩ := afterRun_facts (r := runD a stop hs (withCap D space) (h.withCap space))
-        (fun e => e.elim (fun e => g2 e ▸ hR1) (fun e => g3 e ▸ hR1)) stop final D.pos buf space
+        (fun e => e.elim (fun e => g2 e ▸ hR1) (fun e => g3 e ▸ hR1)) stop final buf space
       obtain ⟨k1, k2⟩ := afterRun_len (r := runD a stop hs (withCap D space) (h.withCap space))
-        (fun e => e.elim (fun e => g2 e ▸ hR1) (fun e => g3 e ▸ hR1)) stop final D.pos buf space
+        (fun e => e.elim (fun e => g2 e ▸ hR1) (fun e => g3 e ▸ hR1)) stop final buf space
       have hdec : ((runD a stop hs (withCap D space) (h.withCap space)).status = .next ∨
           (runD a stop hs (withCap D space) (h.withCap space)).status = .needsInput) →
           q1.out.length + buf.size ≤ p.out.length + (afterRun (runD a stop hs (withCap D space) (h.withCap space)) stop final
-            D.pos buf space).buf.size + 1 := by
+            buf space).buf.size + 1 := by
         intro e
         have eD : D1 = runD a stop hs (withCap D space) (h.withCap space) := e.elim g2 g3
         obtain ⟨len, m1, m2⟩ := k2 e
@@ -623,7 +623,7 @@ theorem callD_count {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} 
         | needsOutput => exact absurd hrs hO
         | bad => rw [(k1 (Or.inl hrs)).1]; omega
         | memory => rw [(k1 (Or.inr hrs)).1]; omega
-      have hr : (afterRun (runD a stop hs (withCap D space) (h.withCap space)) stop final D.pos buf space).pos = (runD a stop hs (withCap D space) (h.withCap space)).pos := by
+      have hr : (afterRun (runD a stop hs (withCap D space) (h.withCap space)) stop final buf space).pos = (runD a stop hs (withCap D space) (h.withCap space)).pos := by
         rcases hs' with hs' | hs'
         · exact f2 hs'
         · exact f3 hs'

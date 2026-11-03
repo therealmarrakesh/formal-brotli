@@ -1,0 +1,443 @@
+import Brotli.Decoder.Loop
+import Brotli.Decoder.HeaderDone
+
+/-!
+# Steps that only record the position
+
+A step that reads no input only records the position it is given: its result is the same, but for that position, whatever
+position it is given and whatever position its state held. Only the steps that refill, and the loops that read bytes, move
+the position.
+-/
+
+namespace Brotli.Decoder
+
+open Brotli.Spec
+
+/-- Splits the first branch in the goal, and takes the same branch wherever its condition recurs. -/
+macro "split_all" : tactic => `(tactic| split <;> (try (rename_i hc; first
+  | simp only [dite_eq_left hc, ite_eq_left hc] | simp only [dite_eq_right hc, ite_eq_right hc] | simp only [hc])))
+
+theorem stepCommand_pos (H : Hdr) (st : Cmd) (p : USize) :
+    stepCommand H st p = { stepCommand H { st with pos := 0 } 0 with pos := p } := by
+  unfold stepCommand markStep clearSeen
+  try dsimp only
+  repeat' (first | split_all | rfl)
+
+theorem stepInsertCopy_pos (H : Hdr) (st : Cmd) (p : USize) :
+    stepInsertCopy H st p = { stepInsertCopy H { st with pos := 0 } 0 with pos := p } := by
+  unfold stepInsertCopy insertStep markStep
+  try dsimp only
+  repeat' (first | split_all | rfl)
+
+theorem stepCopyLength_pos (st : Cmd) (p : USize) :
+    stepCopyLength st p = { stepCopyLength { st with pos := 0 } 0 with pos := p } := by
+  unfold stepCopyLength markStep
+  try dsimp only
+  repeat' (first | split_all | rfl)
+
+theorem applyBuilt_pos (st : Cmd) (p : USize) (word : ByteArray) :
+    applyBuilt st p word = { applyBuilt { st with pos := 0 } 0 word with pos := p } := by
+  unfold applyBuilt markStep
+  try dsimp only
+  repeat' (first | split_all | rfl)
+
+theorem applyWord_pos (st : Cmd) (p : USize) (wordId : UInt64) :
+    applyWord st p wordId = { applyWord { st with pos := 0 } 0 wordId with pos := p } := by
+  unfold applyWord markStep
+  simp only [applyBuilt_pos _ p]
+  try dsimp only
+  repeat' (first | split_all | rfl)
+
+theorem applyDistance_pos (st : Cmd) (p : USize) (dcode d : UInt64) :
+    applyDistance st p dcode d = { applyDistance { st with pos := 0 } 0 dcode d with pos := p } := by
+  unfold applyDistance markStep
+  simp only [applyWord_pos _ p]
+  try dsimp only
+  repeat' (first | split_all | rfl)
+
+theorem distanceStep_pos (H : Hdr) (st : Cmd) (p : USize) (v : UInt64) :
+    distanceStep H st p v = { distanceStep H { st with pos := 0 } 0 v with pos := p } := by
+  unfold distanceStep markStep
+  simp only [applyDistance_pos _ p]
+  try dsimp only
+  repeat' (first | split_all | rfl)
+
+theorem distanceThrough_pos (H : Hdr) (st : Cmd) (p : USize) (tree : UInt8) (htree : tree.toNat < H.treesD.toNat) :
+    distanceThrough H st p tree htree = { distanceThrough H { st with pos := 0 } 0 tree htree with pos := p } := by
+  unfold distanceThrough
+  simp only [distanceStep_pos _ _ p]
+
+theorem stepDistance_pos (H : Hdr) (st : Cmd) (p : USize) :
+    stepDistance H st p = { stepDistance H { st with pos := 0 } 0 with pos := p } := by
+  unfold stepDistance markStep clearSeen
+  simp only [applyDistance_pos _ p]
+  try dsimp only
+  repeat' (first | split_all | rfl)
+
+theorem stepDistanceSymbol_pos (H : Hdr) (st : Cmd) (p : USize) :
+    stepDistanceSymbol H st p = { stepDistanceSymbol H { st with pos := 0 } 0 with pos := p } := by
+  unfold stepDistanceSymbol markStep
+  simp only [distanceThrough_pos _ _ p]
+  try dsimp only
+  repeat' (first | split_all | rfl)
+
+theorem stepCopy_pos (k : USize) (st : Cmd) (p : USize) :
+    stepCopy k st p = { stepCopy k { st with pos := 0 } 0 with pos := p } := by
+  unfold stepCopy finishCopy markStep
+  try dsimp only
+  repeat' (first | split_all | rfl)
+
+theorem stepWord_pos (k : USize) (st : Cmd) (p : USize) :
+    stepWord k st p = { stepWord k { st with pos := 0 } 0 with pos := p } := by
+  unfold stepWord finishWord markStep
+  try dsimp only
+  repeat' (first | split_all | rfl)
+
+/-! A helper on the header's state keeps the position its state holds. -/
+
+theorem clTable_pos (st : Hd) (q : USize) : clTable { st with pos := q } = clTable st := rfl
+
+theorem mapSizeFast_pos (st : Hd) (q : USize) : mapSizeFast { st with pos := q } = mapSizeFast st := rfl
+
+theorem installTable_nf (st : Hd) (base : UInt64) :
+    installTable st base = { installTable { st with pos := 0 } base with pos := st.pos } := by
+  unfold installTable clearFill
+  cases st
+  try dsimp only
+  repeat' (first | split_all | rfl)
+
+theorem growPlanned_nf (st : Hd) (lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) (pl : Plan) :
+    growPlanned st lens n hn pl = { growPlanned { st with pos := 0 } lens n hn pl with pos := st.pos } := rfl
+
+theorem growSingle_nf (st : Hd) (sym : UInt64) :
+    growSingle st sym = { growSingle { st with pos := 0 } sym with pos := st.pos } := rfl
+
+theorem mapTableDone_nf (st : Hd) (t : ByteArray) :
+    mapTableDone st t = { mapTableDone { st with pos := 0 } t with pos := st.pos } := by
+  unfold mapTableDone
+  try dsimp only
+  repeat' (first | split_all | rfl)
+
+set_option maxRecDepth 8192 in
+theorem tableDone_nf (st : Hd) (single : Bool) (sym : UInt64) :
+    tableDone st single sym = { tableDone { st with pos := 0 } single sym with pos := st.pos } := by
+  unfold tableDone
+  cases st
+  try dsimp only
+  repeat' (first | split_all | exact (installTable_nf _ _).trans rfl | exact (mapTableDone_nf _ _).trans rfl | rfl)
+
+theorem catMoveOn_nf (st : Hd) : catMoveOn st = { catMoveOn { st with pos := 0 } with pos := st.pos } := by
+  unfold catMoveOn
+  cases st
+  try dsimp only
+  repeat' (first | split_all | rfl)
+
+theorem clFinish_nf (st : Hd) : clFinish st = { clFinish { st with pos := 0 } with pos := st.pos } := by
+  unfold clFinish
+  dsimp only
+  by_cases hc : fitsFast (clTable st) 0 = true
+  · have hc' : fitsFast (clTable { st with pos := 0 }) 0 = true := hc
+    rw [dite_eq_left hc, dite_eq_left hc']
+    rfl
+  · have hc' : ¬ fitsFast (clTable { st with pos := 0 }) 0 = true := hc
+    rw [dite_eq_right hc, dite_eq_right hc']
+
+theorem mapFinish_nf (st : Hd) (n : UInt64) (map : ByteArray) :
+    mapFinish st n map = { mapFinish { st with pos := 0 } n map with pos := st.pos } := by
+  unfold mapFinish
+  cases st
+  try dsimp only
+  repeat' (first | split_all | rfl)
+
+theorem ckFinish_nf (st : Hd) : ckFinish st = { ckFinish { st with pos := 0 } with pos := st.pos } := by
+  unfold ckFinish
+  cases st
+  try dsimp only
+  repeat' (first | split_all | rfl)
+
+/-- Closes the goals the steps on the header's state leave. -/
+macro "hd_nf" : tactic => `(tactic| ((try unfold markH) <;> (try dsimp only) <;> (try simp only [clTable_pos, mapSizeFast_pos]) <;>
+  repeat' (first
+    | split_all
+    | exact (installTable_nf _ _).trans rfl
+    | exact (mapTableDone_nf _ _).trans rfl
+    | exact (tableDone_nf _ _ _).trans rfl
+    | exact (catMoveOn_nf _).trans rfl
+    | exact (clFinish_nf _).trans rfl
+    | exact (mapFinish_nf _ _ _).trans rfl
+    | exact (ckFinish_nf _).trans rfl
+    | rfl)))
+
+theorem stepHCat_pos (st : Hd) (p : USize) : stepHCat st p = { stepHCat { st with pos := 0 } 0 with pos := p } := by
+  unfold stepHCat
+  cases st
+  hd_nf
+
+theorem stepHCode_pos (st : Hd) (p : USize) : stepHCode st p = { stepHCode { st with pos := 0 } 0 with pos := p } := by
+  unfold stepHCode
+  cases st
+  hd_nf
+
+theorem stepHClens_pos (st : Hd) (p : USize) : stepHClens st p = { stepHClens { st with pos := 0 } 0 with pos := p } := by
+  unfold stepHClens
+  cases st
+  hd_nf
+
+set_option maxHeartbeats 2000000 in
+theorem stepHSyms_pos (st : Hd) (p : USize) : stepHSyms st p = { stepHSyms { st with pos := 0 } 0 with pos := p } := by
+  unfold stepHSyms
+  cases st
+  hd_nf
+
+theorem stepHFirst_pos (st : Hd) (p : USize) : stepHFirst st p = { stepHFirst { st with pos := 0 } 0 with pos := p } := by
+  unfold stepHFirst
+  cases st
+  hd_nf
+
+theorem stepHNp_pos (st : Hd) (p : USize) : stepHNp st p = { stepHNp { st with pos := 0 } 0 with pos := p } := by
+  unfold stepHNp
+  cases st
+  hd_nf
+
+theorem stepHModes_pos (st : Hd) (p : USize) : stepHModes st p = { stepHModes { st with pos := 0 } 0 with pos := p } := by
+  unfold stepHModes
+  cases st
+  hd_nf
+
+theorem stepHTrees_pos (st : Hd) (p : USize) : stepHTrees st p = { stepHTrees { st with pos := 0 } 0 with pos := p } := by
+  unfold stepHTrees
+  cases st
+  hd_nf
+
+theorem stepHRlemax_pos (st : Hd) (p : USize) : stepHRlemax st p = { stepHRlemax { st with pos := 0 } 0 with pos := p } := by
+  unfold stepHRlemax
+  cases st
+  hd_nf
+
+theorem stepHVals_pos (st : Hd) (p : USize) : stepHVals st p = { stepHVals { st with pos := 0 } 0 with pos := p } := by
+  unfold stepHVals
+  cases st
+  hd_nf
+
+theorem stepHImtf_pos (st : Hd) (p : USize) : stepHImtf st p = { stepHImtf { st with pos := 0 } 0 with pos := p } := by
+  unfold stepHImtf
+  cases st
+  hd_nf
+
+theorem stepHCodes_pos (st : Hd) (p : USize) : stepHCodes st p = { stepHCodes { st with pos := 0 } 0 with pos := p } := by
+  unfold stepHCodes
+  cases st
+  hd_nf
+
+theorem stepAtH_pos (st : Hd) (p : USize) : stepAtH st p = { stepAtH { st with pos := 0 } 0 with pos := p } := by
+  unfold stepAtH
+  cases st
+  dsimp only
+  split
+  · exact (stepHCat_pos _ _).trans rfl
+  · exact (stepHCode_pos _ _).trans rfl
+  · exact (stepHClens_pos _ _).trans rfl
+  · exact (stepHSyms_pos _ _).trans rfl
+  · exact (stepHFirst_pos _ _).trans rfl
+  · exact (stepHNp_pos _ _).trans rfl
+  · exact (stepHModes_pos _ _).trans rfl
+  · exact (stepHTrees_pos _ _).trans rfl
+  · exact (stepHRlemax_pos _ _).trans rfl
+  · exact (stepHVals_pos _ _).trans rfl
+  · exact (stepHImtf_pos _ _).trans rfl
+  · exact (stepHCodes_pos _ _).trans rfl
+  · rfl
+
+/-! ### Where a command step that rejects decides
+
+A step rejects on the bits it holds once its refill is done: the step after the refill reads no further, so the rejection
+stands whatever follows the bytes the refill took. -/
+
+/-- A literal step that rejects does so before its loop reads anything, so where the chunk stops doesn't matter to it. -/
+theorem stepLiterals_bad {H : Hdr} {k : USize} {a : ByteArray} {stop stop' : USize} {hs : stop.toNat ≤ a.size}
+    (hs' : stop'.toNat ≤ a.size) {st : Cmd} {pos : USize} (hp : pos ≤ stop)
+    (hb : (stepLiterals H k a stop hs st pos).status = .bad) :
+    stepLiterals H k a stop hs st pos = stepLiterals H k a stop' hs' st pos ∧ (stepLiterals H k a stop hs st pos).pos = pos := by
+  have hfin : ∀ (st0 : Cmd) (r : LitRun) (run size : USize), (finishLiterals st0 r run size).status ≠ .bad := by
+    intro st0 r run size
+    unfold finishLiterals
+    dsimp only
+    split <;> exact fun e => StepStatus.noConfusion e
+  unfold stepLiterals at hb ⊢
+  by_cases h0 : st.left = 0
+  · simp only [h0, ↓reduceIte] at hb
+    exact absurd hb (fun e => StepStatus.noConfusion e)
+  simp only [h0, ↓reduceIte] at hb ⊢
+  by_cases h1 : st.lCount = 0
+  · simp only [h1, ↓reduceIte] at hb ⊢
+    refine ⟨by first | rfl | trivial, ?_⟩
+    repeat' split
+    all_goals rfl
+  simp only [h1, ↓reduceIte] at hb ⊢
+  by_cases h2 : room k st.cap ≤ st.pend
+  · simp only [h2, ↓reduceIte] at hb
+    exact absurd hb (fun e => StepStatus.noConfusion e)
+  simp only [h2, ↓reduceIte] at hb ⊢
+  unfold literalsRun at hb ⊢
+  by_cases ht : st.lCur < H.nL
+  · rw [dite_eq_left ht] at hb ⊢
+    rw [dite_eq_left ht]
+    by_cases hw : winCheck k st.wpos st.ring = true ∧ wfCheck st.word st.count = true
+    · rw [dite_eq_left ⟨hw.1, hp, hw.2⟩] at hb
+      exact absurd hb (hfin _ _ _ _)
+    · have n1 : ¬ (winCheck k st.wpos st.ring = true ∧ pos ≤ stop ∧ wfCheck st.word st.count = true) :=
+        fun e => hw ⟨e.1, e.2.2⟩
+      have n2 : ¬ (winCheck k st.wpos st.ring = true ∧ pos ≤ stop' ∧ wfCheck st.word st.count = true) :=
+        fun e => hw ⟨e.1, e.2.2⟩
+      rw [dite_eq_right n1, dite_eq_right n2]
+      exact ⟨rfl, rfl⟩
+  · rw [dite_eq_right ht, dite_eq_right ht]
+    exact ⟨rfl, rfl⟩
+
+/-- A step of the command loop's places that rejects stands where it was put, and does the same wherever the chunk stops. -/
+theorem stepAt_bad {H : Hdr} {k : USize} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {st : Cmd} {pos : USize}
+    (hp : pos ≤ stop) (hb : (stepAt H k a stop hs st pos).status = .bad) :
+    stepAt H k a stop hs st pos = stepAt H k a pos (Nat.le_trans (USize.le_iff_toNat_le.mp hp) hs) st pos ∧
+      (stepAt H k a stop hs st pos).pos = pos := by
+  unfold stepAt at hb ⊢
+  cases ht : st.tag with
+  | command => simp only [ht] at hb ⊢; exact ⟨trivial, (congrArg Cmd.pos (stepCommand_pos H st pos)).trans rfl⟩
+  | insertCopy => simp only [ht] at hb ⊢; exact ⟨trivial, (congrArg Cmd.pos (stepInsertCopy_pos H st pos)).trans rfl⟩
+  | copyLength => simp only [ht] at hb ⊢; exact ⟨trivial, (congrArg Cmd.pos (stepCopyLength_pos st pos)).trans rfl⟩
+  | literals =>
+    simp only [ht] at hb ⊢
+    exact stepLiterals_bad _ hp hb
+  | distance => simp only [ht] at hb ⊢; exact ⟨trivial, (congrArg Cmd.pos (stepDistance_pos H st pos)).trans rfl⟩
+  | distanceSymbol => simp only [ht] at hb ⊢; exact ⟨trivial, (congrArg Cmd.pos (stepDistanceSymbol_pos H st pos)).trans rfl⟩
+  | copy => simp only [ht] at hb ⊢; exact ⟨trivial, (congrArg Cmd.pos (stepCopy_pos k st pos)).trans rfl⟩
+  | word => simp only [ht] at hb ⊢; exact ⟨trivial, (congrArg Cmd.pos (stepWord_pos k st pos)).trans rfl⟩
+
+section
+variable {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
+  {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size}
+
+/-- A command step that rejects decides on the bits it held and the bytes its refill took, whatever follows them: at most
+64 bits from the first bit it held. -/
+theorem stepCmd_bad (hK : ∀ s bs, s.remaining ≠ 0 → K s bs = readCommand w m s bs >>= fun (s1, b) => K s1 b) (hH : HdrRel H m)
+    {p : Phase} {st : Cmd} {pos : USize} (hrel : Rel w k.toNat m st p) (hp : pos.toNat ≤ stop.toNat)
+    (hb : (stepCmd H k a stop hs st pos).status = .bad) :
+    pos.toNat ≤ (stepCmd H k a stop hs st pos).pos.toNat ∧ (stepCmd H k a stop hs st pos).pos.toNat ≤ stop.toNat ∧
+      8 * (stepCmd H k a stop hs st pos).pos.toNat + st.count.toNat ≤ 8 * pos.toNat + 64 ∧
+      ∀ F, rest w m K p (stateBits st a pos (stepCmd H k a stop hs st pos).pos F) = none := by
+  have hp' : pos ≤ stop := USize.le_iff_toNat_le.mpr hp
+  unfold stepCmd at hb ⊢
+  rw [dite_eq_left hp'] at hb ⊢
+  obtain ⟨h1, h2, h3, _, h5⟩ := refill_spec hs hp hrel.wf
+  obtain ⟨l1, l2⟩ := refill_local hs hp hrel.wf
+  dsimp only at hb ⊢
+  generalize hR : refill st.word st.count a pos stop hs hp = R at h1 h2 h3 h5 l1 l2 hb ⊢
+  have hrp : R.pos ≤ stop := USize.le_iff_toNat_le.mpr h3
+  obtain ⟨e1, e2⟩ := stepAt_bad hrp hb
+  rw [e2]
+  refine ⟨h2, h3, l2, fun F => ?_⟩
+  have hok := stepAt_ok (hs := Nat.le_trans h3 hs) (H := H) (k := k) hK hH (hrel.withBits h1) (Nat.le_refl _) (Or.inr rfl)
+  have hbad := hok.bad (by rw [← e1]; exact hb) F
+  rw [stateBits_eq, chunkBits_self, List.nil_append] at hbad
+  rw [stateBits_eq, ← List.append_assoc, ← l1]
+  exact hbad
+
+/-- A run of the command loop that rejects decides at the last of its steps: from a place the reading in order reaches,
+on the bits that step held and the bytes its refill took, whatever follows them. -/
+theorem runCmd_bad (hK : ∀ s bs, s.remaining ≠ 0 → K s bs = readCommand w m s bs >>= fun (s1, b) => K s1 b) (hH : HdrRel H m) :
+    ∀ (N : Nat) (n : USize) (p : Phase) (st : Cmd) (pos : USize), n.toNat = N → Rel w k.toNat m st p → pos.toNat ≤ stop.toNat →
+      (runCmd H k a stop hs n st pos).status = .bad →
+      ∃ (p1 : Phase) (st1 : Cmd) (pos1 : USize), pos.toNat ≤ pos1.toNat ∧ pos1.toNat ≤ (runCmd H k a stop hs n st pos).pos.toNat ∧
+        (runCmd H k a stop hs n st pos).pos.toNat ≤ stop.toNat ∧
+        8 * (runCmd H k a stop hs n st pos).pos.toNat + st1.count.toNat ≤ 8 * pos1.toNat + 64 ∧
+        (∀ F, Reach (cStep w m) p (stateBits st a pos stop F) p1 (stateBits st1 a pos1 stop F)) ∧
+        ∀ F, rest w m K p1 (stateBits st1 a pos1 (runCmd H k a stop hs n st pos).pos F) = none := by
+  intro N
+  induction N with
+  | zero =>
+    intro n p st pos hN _ _ hb
+    rw [runCmd, dite_eq_left (usize_zero hN)] at hb
+    exact absurd hb (fun e => StepStatus.noConfusion e)
+  | succ N ih =>
+    intro n p st pos hN hrel hp hb
+    have hn : n ≠ 0 := fun e => by rw [e] at hN; exact Nat.succ_ne_zero _ hN.symm
+    have hpred := usize_pred hn
+    have hstep := stepCmd_ok (hs := hs) (K := K) (a := a) hK hH hrel hp
+    have hbad := stepCmd_bad (hs := hs) (K := K) hK hH hrel hp
+    rw [runCmd, dite_eq_right hn] at hb ⊢
+    dsimp only at hb ⊢
+    generalize stepCmd H k a stop hs st pos = r at hstep hbad hb ⊢
+    cases hst : r.status with
+    | next =>
+      rw [hst] at hb
+      dsimp only at hb ⊢
+      obtain ⟨p', hR, h1, h2, _, _, _, h5⟩ := hstep.next hst
+      obtain ⟨p1, st1, pos1, g1, g2, g3, g4, g5, g6⟩ := ih _ p' r r.pos (by omega) hR h2 hb
+      exact ⟨p1, st1, pos1, Nat.le_trans h1 g1, g2, g3, g4, fun F => (h5 F).trans (g5 F), g6⟩
+    | bad =>
+      dsimp only
+      obtain ⟨g1, g2, g3, g4⟩ := hbad hst
+      exact ⟨p, st, pos, Nat.le_refl _, g1, g2, g3, fun _ => .refl _ _, g4⟩
+    | needsInput => rw [hst] at hb; exact absurd (hst.symm.trans hb) (fun e => StepStatus.noConfusion e)
+    | needsOutput => rw [hst] at hb; exact absurd (hst.symm.trans hb) (fun e => StepStatus.noConfusion e)
+    | done => rw [hst] at hb; exact absurd (hst.symm.trans hb) (fun e => StepStatus.noConfusion e)
+
+end
+
+/-! ### Where a header step that stops decides -/
+
+section
+variable {α : Type} {K : HK α} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size}
+
+/-- A header step that rejects decides on the bits it held and the bytes its refill took, whatever follows them: at most
+64 bits from the first bit it held. -/
+theorem stepH_bad {g : Gh} {p : HPhase} {st : Hd} {pos : USize} (hrel : HRel st g p) (hp : pos.toNat ≤ stop.toNat)
+    (hb : (stepH a stop hs st pos).status = .bad) :
+    pos.toNat ≤ (stepH a stop hs st pos).pos.toNat ∧ (stepH a stop hs st pos).pos.toNat ≤ stop.toNat ∧
+      8 * (stepH a stop hs st pos).pos.toNat + st.count.toNat ≤ 8 * pos.toNat + 64 ∧
+      ∀ F, hrest K g p (availBits st.word st.count a pos (stepH a stop hs st pos).pos F) = none := by
+  unfold stepH at hb ⊢
+  rw [dite_eq_left (USize.le_iff_toNat_le.mpr hp)] at hb ⊢
+  obtain ⟨h1, h2, h3, _, _⟩ := refill_spec hs hp hrel.wf
+  obtain ⟨l1, l2⟩ := refill_local hs hp hrel.wf
+  dsimp only at hb ⊢
+  generalize refill st.word st.count a pos stop hs hp = R at h1 h2 h3 l1 l2 hb ⊢
+  have e2 : (stepAtH { st with word := R.word, count := R.count } R.pos).pos = R.pos :=
+    (congrArg Hd.pos (stepAtH_pos _ R.pos)).trans rfl
+  rw [e2]
+  refine ⟨h2, h3, l2, fun F => ?_⟩
+  have hok := stepAtH_ok (K := K) (a := a) (stop := R.pos) (hrel.withBits h1) (Nat.le_refl _) (Or.inr rfl)
+  have hbad := hok.bad hb F
+  rw [avail_mk, chunkBits_self, List.nil_append] at hbad
+  rw [avail_mk, ← List.append_assoc, ← l1]
+  exact hbad
+
+/-- A header step that reports the limit decides on the bits it held and the bytes its refill took, whatever follows them:
+at most 64 bits from the first bit it held. -/
+theorem stepH_memory {g : Gh} {p : HPhase} {st : Hd} {pos : USize} (hrel : HRel st g p) (hp : pos.toNat ≤ stop.toNat)
+    (hm : (stepH a stop hs st pos).status = .memory) :
+    pos.toNat ≤ (stepH a stop hs st pos).pos.toNat ∧ (stepH a stop hs st pos).pos.toNat ≤ stop.toNat ∧
+      8 * (stepH a stop hs st pos).pos.toNat + st.count.toNat ≤ 8 * pos.toNat + 64 ∧
+      ∃ c, st.d.arenaMax.toNat < st.d.arena.size + tableBytes c ∧ tableBytes c ≤ 132096 ∧ capH p ≠ 0 ∧
+        ∀ F, ∃ x, hrest K g p (availBits st.word st.count a pos (stepH a stop hs st pos).pos F) = K.w c x := by
+  unfold stepH at hm ⊢
+  rw [dite_eq_left (USize.le_iff_toNat_le.mpr hp)] at hm ⊢
+  obtain ⟨h1, h2, h3, _, _⟩ := refill_spec hs hp hrel.wf
+  obtain ⟨l1, l2⟩ := refill_local hs hp hrel.wf
+  dsimp only at hm ⊢
+  generalize refill st.word st.count a pos stop hs hp = R at h1 h2 h3 l1 l2 hm ⊢
+  have e2 : (stepAtH { st with word := R.word, count := R.count } R.pos).pos = R.pos :=
+    (congrArg Hd.pos (stepAtH_pos _ R.pos)).trans rfl
+  rw [e2]
+  refine ⟨h2, h3, l2, ?_⟩
+  have hok := stepAtH_ok (K := K) (a := a) (stop := R.pos) (hrel.withBits h1) (Nat.le_refl _) (Or.inr rfl)
+  obtain ⟨c, c1, c2, c3, c4⟩ := hok.memory hm
+  refine ⟨c, c1, c2, c3, fun F => ?_⟩
+  obtain ⟨x, hx⟩ := c4 F
+  rw [avail_mk, chunkBits_self, List.nil_append] at hx
+  refine ⟨x, ?_⟩
+  rw [avail_mk, ← List.append_assoc, ← l1]
+  exact hx
+
+end
+
+end Brotli.Decoder

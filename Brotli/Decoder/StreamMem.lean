@@ -1166,7 +1166,7 @@ theorem endCheck_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize
 
 /-- What a call does with what the loop left. -/
 theorem afterRun_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {t : List UInt8} {r : Dec} {final : Bool} (hr : StepM Ws X L a stop t r)
-    (hend : r.status = .next → ∃ st, DRel r (.ended st)) (pos0 : USize) (buf : ByteArray) (space : Nat) : CallMem Ws X L a stop t (afterRun r stop final pos0 buf space) := by
+    (hend : r.status = .next → ∃ st, DRel r (.ended st)) (buf : ByteArray) (space : Nat) : CallMem Ws X L a stop t (afterRun r stop final buf space) := by
   unfold afterRun
   cases hst : r.status with
   | bad => exact callMem_dead rfl (fun e => Status.noConfusion e)
@@ -1221,7 +1221,7 @@ theorem callD_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {
         exact callMem_run rfl (fun e => Status.noConfusion e) hM
     · rw [dite_eq_right hO]
       obtain ⟨p, hrel⟩ := h.1
-      refine afterRun_mem hr (fun e => ?_) _ _ _
+      refine afterRun_mem hr (fun e => ?_) _ _
       obtain ⟨st, b1, _⟩ := (runD_ok (hs := hs) ⟨withCap D space, h.withCap space⟩ p (hrel.withCap _)).next e
       exact ⟨st, b1⟩
 

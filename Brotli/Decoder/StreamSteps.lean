@@ -39,9 +39,11 @@ theorem stepDHdr_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {last 
   have ht' : tag = .hdr := ht
   subst ht'
   have hstep := stepH_ok (K := hdrK w (S.after w last) st mlen) (a := a) (hs := hs) hR hpos
+  have hbadH := stepH_bad (K := hdrK w (S.after w last) st mlen) (a := a) (hs := hs) hR hpos
+  have hmemH := stepH_memory (K := hdrK w (S.after w last) st mlen) (a := a) (hs := hs) hR hpos
   unfold stepDHdr takeHd
   dsimp only
-  generalize stepH a stop hs hd pos = r at hstep
+  generalize stepH a stop hs hd pos = r at hstep hbadH hmemH
   cases hst : r.status with
   | next =>
     dsimp only
@@ -57,12 +59,15 @@ theorem stepDHdr_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {last 
       ⟨_, _, .refl _ _, short_hdr h6, rfl⟩⟩, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
   | bad =>
     dsimp only
+    obtain ⟨g1, g2, g3, g4⟩ := hbadH hst
     exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e,
-      fun _ t => hstep.bad hst _⟩
+      fun _ => ⟨fun t => hstep.bad hst _, .hdr w st last mlen g p, (BitBuffer.mk hd.word hd.count).held, pos, Nat.le_refl _, g1, g2,
+        by rw [BitBuffer.held_length]; exact g3, fun t => .refl _ _, fun t => g4 _⟩⟩
   | memory =>
     dsimp only
+    obtain ⟨g1, g2, _, _⟩ := hmemH hst
     exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e,
-      fun _ => ⟨rfl, hp0, Or.inr ⟨_, _, _, _, _, _, rfl⟩⟩, fun e => DStatus.noConfusion e⟩
+      fun _ => ⟨g1, g2, rfl, hp0, Or.inr ⟨_, _, _, _, _, _, rfl⟩⟩, fun e => DStatus.noConfusion e⟩
   | ready =>
     dsimp only
     obtain ⟨g', hu, hw, h1, h2, h3, _, _, _, h4⟩ := hstep.ready hst
@@ -232,7 +237,7 @@ def stepDMeta (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : D
       let r := metaStartFast ⟨rf.word, rf.count⟩
       match r.status with
       | .short => { D with cmd := { D.cmd with word := rf.word, count := rf.count }, pos := rp, status := .needsInput }
-      | .bad => { D with pos := pos, status := .bad }
+      | .bad => { D with pos := rp, status := .bad }
       | .ok => metaGo D D.cmd r rp
     else { D with pos := pos, status := .bad }
   else { D with pos := pos, status := .needsOutput }
@@ -276,7 +281,14 @@ theorem stepDMeta_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {a : 
     show (BitBuffer.mk cmd.word cmd.count).held ++ (chunkBits a pos.toNat stop.toNat ++ F) =
       (refill cmd.word cmd.count a pos stop hs hpos).buf.held ++ (chunkBits a (refill cmd.word cmd.count a pos stop hs hpos).pos.toNat stop.toNat ++ F)
     rw [← List.append_assoc, ← List.append_assoc, r4]
-  generalize hrf : refill cmd.word cmd.count a pos stop hs hpos = rf at r1 r2 r3 r4 r5 hbits
+  obtain ⟨l1, l2⟩ := refill_local (word := cmd.word) (count := cmd.count) hs hpos hw
+  generalize hrf : refill cmd.word cmd.count a pos stop hs hpos = rf at r1 r2 r3 r4 r5 hbits l1 l2
+  have hloc : ∀ t : List UInt8, (BitBuffer.mk cmd.word cmd.count).held ++ (chunkBits a pos.toNat rf.pos.toNat ++ bits t) =
+      (BitBuffer.mk rf.word rf.count).held ++ bits t := by
+    intro t
+    rw [← List.append_assoc, ← l1]
+    rfl
+  have hwhole : ∀ t : List UInt8, (bits t).length % 8 = 0 := fun t => by rw [bits_length]; omega
   have hsrc : ∀ t : List UInt8, sLeave S (.mblock w st) (Dec.bits ⟨.mblock, cmd, hd, H, k, last', left, limit, pos', status⟩ a pos stop (bits t)) =
       sLeave S (.mblock w st) ((BitBuffer.mk rf.word rf.count).held ++ (chunkBits a rf.pos.toNat stop.toNat ++ bits t)) := by
     intro t
@@ -311,7 +323,8 @@ theorem stepDMeta_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {a : 
   | bad =>
     dsimp only
     exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e,
-      fun _ t => by rw [hsrc]; exact Rbad hsr _⟩
+      fun _ => ⟨fun t => by rw [hsrc]; exact Rbad hsr _, .mblock w st, (BitBuffer.mk cmd.word cmd.count).held, pos, Nat.le_refl _, r2, r3,
+        by rw [BitBuffer.held_length]; exact l2, fun t => .refl _ _, fun t => by rw [hloc]; exact Rbad hsr _⟩⟩
   | ok =>
     dsimp only
     obtain ⟨hw2, hN⟩ := Rok hsr
@@ -320,6 +333,10 @@ theorem stepDMeta_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {a : 
         afterStart w (S.after w) st (msValue r) (r.buf.held ++ (chunkBits a rf.pos.toNat stop.toNat ++ bits t)) := by
       intro t
       rw [hsrc, hN]
+    have hfinL : ∀ t : List UInt8, sLeave S (.mblock w st) ((BitBuffer.mk cmd.word cmd.count).held ++ (chunkBits a pos.toNat rf.pos.toNat ++ bits t)) =
+        afterStart w (S.after w) st (msValue r) (r.buf.held ++ bits t) := by
+      intro t
+      rw [hloc, hN]
     unfold metaGo
     by_cases h0 : r.a = 0
     · rw [ite_eq_left h0]
@@ -335,7 +352,7 @@ theorem stepDMeta_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {a : 
       have hv : msValue r = .metadata (r.b != 0) r.c.toNat := by
         unfold msValue
         rw [ite_eq_right h0, ite_eq_left h1]
-      rw [hv] at hfin hms
+      rw [hv] at hfin hfinL hms
       have hms' : r.c.toNat ≤ 16777216 := hms
       obtain ⟨fa1, fa2⟩ := fill_aligned hw2
       by_cases hz : r.buf.peek (r.count &&& 7) = 0
@@ -353,16 +370,23 @@ theorem stepDMeta_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {a : 
           rw [readFill_held _ (whole_bytes hs t), ite_eq_left (show r.buf.peek (r.buf.count &&& 7) = 0 from hz)]
           rfl
       · rw [ite_eq_right hz]
-        refine ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun _ t => ?_⟩
-        rw [hfin]
-        show (readFill _ >>= _) = _
-        rw [readFill_held _ (whole_bytes hs t), ite_eq_right (show ¬ r.buf.peek (r.buf.count &&& 7) = 0 from hz)]
-        rfl
+        refine ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e,
+          fun _ => ⟨fun t => ?_, .mblock w st, (BitBuffer.mk cmd.word cmd.count).held, pos, Nat.le_refl _, r2, r3,
+            by rw [BitBuffer.held_length]; exact l2, fun t => .refl _ _, fun t => ?_⟩⟩
+        · rw [hfin]
+          show (readFill _ >>= _) = _
+          rw [readFill_held _ (whole_bytes hs t), ite_eq_right (show ¬ r.buf.peek (r.buf.count &&& 7) = 0 from hz)]
+          rfl
+        · show sLeave S (.mblock w st) _ = none
+          rw [hfinL]
+          show (readFill _ >>= _) = _
+          rw [readFill_held _ (hwhole t), ite_eq_right (show ¬ r.buf.peek (r.buf.count &&& 7) = 0 from hz)]
+          rfl
     rw [ite_eq_right h1]
     have hv : msValue r = .data (r.b != 0) r.c.toNat (r.d != 0) := by
       unfold msValue
       rw [ite_eq_right h0, ite_eq_right h1]
-    rw [hv] at hfin hms
+    rw [hv] at hfin hfinL hms
     obtain ⟨hm1, hm2⟩ := (hms : 1 ≤ r.c.toNat ∧ r.c.toNat ≤ 16777216)
     obtain ⟨fa1, fa2⟩ := fill_aligned hw2
     by_cases hu : (r.d != 0) = true
@@ -386,13 +410,22 @@ theorem stepDMeta_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {a : 
           rw [readFill_held _ (whole_bytes hs t), ite_eq_left (show r.buf.peek (r.buf.count &&& 7) = 0 from hz)]
           rfl
       · rw [ite_eq_right hz]
-        refine ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun _ t => ?_⟩
-        rw [hfin]
-        unfold afterStart
-        rw [hu]
-        show (readFill _ >>= _) = _
-        rw [readFill_held _ (whole_bytes hs t), ite_eq_right (show ¬ r.buf.peek (r.buf.count &&& 7) = 0 from hz)]
-        rfl
+        refine ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e,
+          fun _ => ⟨fun t => ?_, .mblock w st, (BitBuffer.mk cmd.word cmd.count).held, pos, Nat.le_refl _, r2, r3,
+            by rw [BitBuffer.held_length]; exact l2, fun t => .refl _ _, fun t => ?_⟩⟩
+        · rw [hfin]
+          unfold afterStart
+          rw [hu]
+          show (readFill _ >>= _) = _
+          rw [readFill_held _ (whole_bytes hs t), ite_eq_right (show ¬ r.buf.peek (r.buf.count &&& 7) = 0 from hz)]
+          rfl
+        · show sLeave S (.mblock w st) _ = none
+          rw [hfinL]
+          unfold afterStart
+          rw [hu]
+          show (readFill _ >>= _) = _
+          rw [readFill_held _ (hwhole t), ite_eq_right (show ¬ r.buf.peek (r.buf.count &&& 7) = 0 from hz)]
+          rfl
     · rw [ite_eq_right hu]
       have hu' : (r.d != 0) = false := by simpa using hu
       refine ⟨fun _ => ⟨.hdr w st (r.b != 0) r.c.toNat Gh.start (.cat .L), ⟨rfl, ⟨hwin, hprod, hlim⟩, rfl, rfl, hm1, hm2, hdStart_rel hw2 hlim, hz0⟩, r2, r3, (fun t => ?_), trivial, ⟨[], rfl, rfl⟩,
@@ -423,12 +456,12 @@ def stepDWbits (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : 
     let r := wbitsFast ⟨rf.word, rf.count⟩
     match r.status with
     | .short => { D with cmd := { D.cmd with word := rf.word, count := rf.count }, pos := rp, status := .needsInput }
-    | .bad => { D with pos := pos, status := .bad }
+    | .bad => { D with pos := rp, status := .bad }
     | .ok =>
       let need := (1 : UInt64) <<< r.a
       if need ≤ D.limit then
         { D with tag := .mblock, cmd := winStart D.cmd r.word r.count need, k := r.a.toUSize, limit := D.limit - need, pos := rp, status := .next }
-      else { D with pos := pos, status := .memory }
+      else { D with pos := rp, status := .memory }
   else { D with pos := pos, status := .bad }
 
 /-- WBITS is in 10..24 (§9.1). -/
@@ -493,7 +526,13 @@ theorem stepDWbits_ok {α : Type} {S : Sem α} {a : ByteArray} {stop : USize} {h
     show (BitBuffer.mk cmd.word cmd.count).held ++ (chunkBits a pos.toNat stop.toNat ++ F) =
       (refill cmd.word cmd.count a pos stop hs hpos).buf.held ++ (chunkBits a (refill cmd.word cmd.count a pos stop hs hpos).pos.toNat stop.toNat ++ F)
     rw [← List.append_assoc, ← List.append_assoc, r4]
-  generalize refill cmd.word cmd.count a pos stop hs hpos = rf at r1 r2 r3 r4 r5 hbits
+  obtain ⟨l1, l2⟩ := refill_local (word := cmd.word) (count := cmd.count) hs hpos hw
+  generalize refill cmd.word cmd.count a pos stop hs hpos = rf at r1 r2 r3 r4 r5 hbits l1 l2
+  have hloc : ∀ t : List UInt8, (BitBuffer.mk cmd.word cmd.count).held ++ (chunkBits a pos.toNat rf.pos.toNat ++ bits t) =
+      (BitBuffer.mk rf.word rf.count).held ++ bits t := by
+    intro t
+    rw [← List.append_assoc, ← l1]
+    rfl
   have hsrc : ∀ t : List UInt8, sLeave S .wbits (Dec.bits ⟨.wbits, cmd, hd, H, k, last', left, limit, pos', status⟩ a pos stop (bits t)) =
       sLeave S .wbits ((BitBuffer.mk rf.word rf.count).held ++ (chunkBits a rf.pos.toNat stop.toNat ++ bits t)) := by
     intro t
@@ -521,7 +560,8 @@ theorem stepDWbits_ok {α : Type} {S : Sem α} {a : ByteArray} {stop : USize} {h
   | bad =>
     dsimp only
     exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e,
-      fun _ t => by rw [hsrc]; exact Rbad hsr _⟩
+      fun _ => ⟨fun t => by rw [hsrc]; exact Rbad hsr _, .wbits, (BitBuffer.mk cmd.word cmd.count).held, pos, Nat.le_refl _, r2, r3,
+        by rw [BitBuffer.held_length]; exact l2, fun t => .refl _ _, fun t => by rw [hloc]; exact Rbad hsr _⟩⟩
   | ok =>
     dsimp only
     obtain ⟨hw2, hN⟩ := Rok hsr
@@ -554,7 +594,7 @@ theorem stepDWbits_ok {α : Type} {S : Sem α} {a : ByteArray} {stop : USize} {h
         show readIn 7 readWBITS ((BitBuffer.mk rf.word rf.count).held ++ (chunkBits a rf.pos.toNat stop.toNat ++ bits t)) _ = _
         exact readIn_some ((hval hsr).2 _)
     · rw [ite_eq_right hc]
-      exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun _ => ⟨rfl, hz', Or.inl rfl⟩,
+      exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun _ => ⟨r2, r3, rfl, hz', Or.inl rfl⟩,
         fun e => DStatus.noConfusion e⟩
 
 /-! ### Metadata -/

@@ -247,6 +247,30 @@ def SDownEq : SPhase → SPhase → Prop → Prop
 /-- A move's bytes: they go on the front of the output, and they're waiting to go out. -/
 def OutD (p p' : SPhase) (D r : Dec) : Prop := ∃ l, p'.out = l ++ p.out ∧ r.cmd.pend.toNat = D.cmd.pend.toNat + l.length
 
+/-- Where a step that stopped decided to: at a place `p1` the reading in order reaches from `p`, at position `pos1` with the
+bits `h1` held there, on the bits up to `q` whatever follows them. The decision lies within 64 bits of the first bit held
+there. -/
+abbrev DecidedAt (a : ByteArray) (stop : USize) (p : SPhase) (B : List UInt8 → List Bool) (pos q : USize)
+    (P : SPhase → List Bool → Prop) : Prop :=
+  ∃ (p1 : SPhase) (h1 : List Bool) (pos1 : USize), pos.toNat ≤ pos1.toNat ∧ pos1.toNat ≤ q.toNat ∧ q.toNat ≤ stop.toNat ∧
+    8 * q.toNat + h1.length ≤ 8 * pos1.toNat + 64 ∧
+    (∀ t : List UInt8, Reach sStep p (B t) p1 (h1 ++ (chunkBits a pos1.toNat stop.toNat ++ bits t))) ∧
+    ∀ t : List UInt8, P p1 (h1 ++ (chunkBits a pos1.toNat q.toNat ++ bits t))
+
+/-- Deciding after the reading in order moved on is deciding from where it started. -/
+theorem DecidedAt.pre {a : ByteArray} {stop : USize} {p p' : SPhase} {B B' : List UInt8 → List Bool} {pos pos' q : USize}
+    {P : SPhase → List Bool → Prop} (hj : ∀ t, Reach sStep p (B t) p' (B' t)) (hle : pos.toNat ≤ pos'.toNat)
+    (h : DecidedAt a stop p' B' pos' q P) : DecidedAt a stop p B pos q P := by
+  obtain ⟨p1, h1, pos1, a1, a2, a3, a4, a5, a6⟩ := h
+  exact ⟨p1, h1, pos1, Nat.le_trans hle a1, a2, a3, a4, fun t => (hj t).trans (a5 t), a6⟩
+
+/-- A decision another worth gives the same way. -/
+theorem DecidedAt.mono {a : ByteArray} {stop : USize} {p : SPhase} {B : List UInt8 → List Bool} {pos q : USize}
+    {P Q : SPhase → List Bool → Prop} (hPQ : ∀ p bs, P p bs → Q p bs) (h : DecidedAt a stop p B pos q P) :
+    DecidedAt a stop p B pos q Q := by
+  obtain ⟨p1, h1, pos1, a1, a2, a3, a4, a5, a6⟩ := h
+  exact ⟨p1, h1, pos1, a1, a2, a3, a4, a5, fun t => hPQ _ _ (a6 t)⟩
+
 /-- What a stream step must do, for the input so far and whatever whole bytes follow. -/
 structure DStepOk {α : Type} (S : Sem α) (a : ByteArray) (stop : USize) (p : SPhase) (D : Dec) (pos : USize) (r : Dec) : Prop where
   next : r.status = .next → ∃ p', DRel r p' ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
@@ -260,7 +284,9 @@ structure DStepOk {α : Type} (S : Sem α) (a : ByteArray) (stop : USize) (p : S
     (∀ t : List UInt8, sLeave S p (D.bits a pos stop (bits t)) = sLeave S p' (r.bits a r.pos stop (bits t))) ∧ r.cmd.pend.toNat ≠ 0 ∧ SDownEq p p' (r.cmd.pend = D.cmd.pend) ∧
     (∀ w st, p = .mblock w st → ∀ t : List UInt8, r.bits a r.pos stop (bits t) = D.bits a pos stop (bits t)) ∧ OutD p p' D r ∧
     ∀ t : List UInt8, Reach sStep p (D.bits a pos stop (bits t)) p' (r.bits a r.pos stop (bits t))
-  memory : r.status = .memory → r.limit = D.limit ∧ D.cmd.pend = 0 ∧ (p = .wbits ∨ ∃ w st last mlen g q, p = .hdr w st last mlen g q)
-  bad : r.status = .bad → ∀ t : List UInt8, sLeave S p (D.bits a pos stop (bits t)) = none
+  memory : r.status = .memory → pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧ r.limit = D.limit ∧ D.cmd.pend = 0 ∧
+    (p = .wbits ∨ ∃ w st last mlen g q, p = .hdr w st last mlen g q)
+  bad : r.status = .bad → (∀ t : List UInt8, sLeave S p (D.bits a pos stop (bits t)) = none) ∧
+    DecidedAt a stop p (fun t => D.bits a pos stop (bits t)) pos r.pos (fun p1 bs => sLeave S p1 bs = none)
 
 end Brotli.Decoder

@@ -349,6 +349,44 @@ theorem refill_spec {word count : UInt64} {a : ByteArray} {pos stop : USize} (hs
       exact ⟨w, p1, p2, e, Or.inl c⟩
     · exact BitBuffer.fillSlow_spec hs _ word count pos rfl hw hp
 
+/-- No bytes between a position and itself. -/
+theorem chunkBits_self (input : ByteArray) (n : Nat) : chunkBits input n n = [] := by
+  simp [chunkBits, chunk, bits]
+
+/-- A chunk's bits, cut at a position between its ends. -/
+theorem chunkBits_split (input : ByteArray) {pos q stop : Nat} (h1 : pos ≤ q) (h2 : q ≤ stop) :
+    chunkBits input pos stop = chunkBits input pos q ++ chunkBits input q stop := by
+  unfold chunkBits chunk
+  rw [← bits_append]
+  congr 1
+  have e : stop - pos = (q - pos) + (stop - q) := by omega
+  rw [e, List.take_add]
+  simp only [List.drop_drop, Nat.add_sub_cancel' h1]
+
+/-- What a refill takes, on its own: the bits held after it are the bits held before and the bytes it took, and so at most
+64 bits lie between the first bit held before it and the position after it. -/
+theorem refill_local {word count : UInt64} {a : ByteArray} {pos stop : USize} (hs : stop.toNat ≤ a.size)
+    (hp : pos.toNat ≤ stop.toNat) (hw : (BitBuffer.mk word count).Wf) :
+    (refill word count a pos stop hs hp).buf.held =
+        (BitBuffer.mk word count).held ++ chunkBits a pos.toNat (refill word count a pos stop hs hp).pos.toNat ∧
+      8 * (refill word count a pos stop hs hp).pos.toNat + count.toNat ≤ 8 * pos.toNat + 64 := by
+  obtain ⟨w, h1, h2, e, -⟩ := refill_spec hs hp hw
+  rw [chunkBits_split a h1 h2, ← List.append_assoc] at e
+  have e' := List.append_cancel_right e
+  refine ⟨e', ?_⟩
+  have hl := congrArg List.length e'
+  have hc := w.count_le
+  rw [List.length_append, chunkBits_length (Nat.le_trans h2 hs)] at hl
+  have l1 : (refill word count a pos stop hs hp).buf.held.length = (refill word count a pos stop hs hp).count.toNat :=
+    lowBits_length _ _
+  have l2 : (BitBuffer.mk word count).held.length = count.toNat := lowBits_length _ _
+  have l3 : (refill word count a pos stop hs hp).buf.count = (refill word count a pos stop hs hp).count := rfl
+  rw [l1, l2] at hl
+  rw [l3] at hc
+  have := Nat.sub_add_cancel h1
+  rw [Nat.sub_mul] at hl
+  omega
+
 /-! ### The same unread bytes in two arrays -/
 
 /-- Two positions, each in its own array with its own stop, with the same unread bytes. -/

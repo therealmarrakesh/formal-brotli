@@ -1,4 +1,5 @@
 import Brotli.Decoder.StreamState
+import Brotli.Decoder.Positions
 
 /-!
 # From a header to its commands, and on
@@ -189,9 +190,10 @@ theorem stepDCmds_ok {α : Type} {S : Sem α} {w : Nat} {last : Bool} {m : MetaB
   have hl0 : last' = last := hl
   subst hl0
   have hstep := runCmd_ok (hs := hs) (K := cmdK w (S.after w last') m) (a := a) (fun s bs h0 => cmdK_step s bs h0) hH _ cmdBudget p cmd pos rfl hR hp
+  have hbad := runCmd_bad (hs := hs) (K := cmdK w (S.after w last') m) (a := a) (fun s bs h0 => cmdK_step s bs h0) hH _ cmdBudget p cmd pos rfl hR hp
   unfold stepDCmds takeCmd
   dsimp only
-  generalize runCmd H k a stop hs cmdBudget cmd pos = r at hstep
+  generalize runCmd H k a stop hs cmdBudget cmd pos = r at hstep hbad
   cases hst : r.status with
   | next =>
     dsimp only
@@ -212,7 +214,10 @@ theorem stepDCmds_ok {α : Type} {S : Sem α} {w : Nat} {last : Bool} {m : MetaB
       trivial, (fun _ _ e => SPhase.noConfusion e), h5, fun t => reach_cmds (h6 _)⟩, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
   | bad =>
     dsimp only
-    exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun _ t => hstep.bad hst _⟩
+    obtain ⟨p1, st1, pos1, g1, g2, g3, g4, g5, g6⟩ := hbad hst
+    exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e,
+      fun _ => ⟨fun t => hstep.bad hst _, .cmds w last' m p1, (BitBuffer.mk st1.word st1.count).held, pos1, g1, g2, g3,
+        by rw [BitBuffer.held_length]; exact g4, fun t => reach_cmds (g5 _), fun t => g6 _⟩⟩
   | done =>
     obtain ⟨s, hR', h1, h2, h3, h4, h5, h6⟩ := hstep.done hst
     have hsee := seenOk_iff hH hR'
@@ -241,12 +246,21 @@ theorem stepDCmds_ok {α : Type} {S : Sem α} {w : Nat} {last : Bool} {m : MetaB
           fun t => hj _⟩, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
     · rw [ite_eq_right hc]
       rw [hsee] at hc
-      refine ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun _ t => ?_⟩
-      show rest w m (cmdK w (S.after w last') m) p (stateBits cmd a pos stop (bits t)) = _
-      rw [h3]
-      show cmdK w (S.after w last') m s _ = _
-      rw [cmdK_stop _ _ h4]
-      unfold finishC
-      rw [ite_eq_right hc]
+      have hrej : ∀ bs, rest w m (cmdK w (S.after w last') m) (.command s) bs = none := by
+        intro bs
+        show cmdK w (S.after w last') m s bs = _
+        rw [cmdK_stop _ _ h4]
+        unfold finishC
+        rw [ite_eq_right hc]
+      have hcl := hR'.wf.count_le
+      refine ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e,
+        fun _ => ⟨fun t => ?_, .cmds w last' m (.command s), (BitBuffer.mk r.word r.count).held, r.pos, h1, Nat.le_refl _, h2, ?_,
+          fun t => reach_cmds (h6 _), fun t => hrej _⟩⟩
+      · show rest w m (cmdK w (S.after w last') m) p (stateBits cmd a pos stop (bits t)) = _
+        rw [h3]
+        exact hrej _
+      · rw [BitBuffer.held_length]
+        show 8 * r.pos.toNat + r.count.toNat ≤ 8 * r.pos.toNat + 64
+        exact Nat.add_le_add_left hcl _
 
 end Brotli.Decoder

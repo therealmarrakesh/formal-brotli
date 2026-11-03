@@ -375,8 +375,8 @@ theorem endCheck_lim (D : Dec) (l a : UInt64) (stop : USize) (final : Bool) (buf
     first | exact OLim.same (l := 0) (a := 0) rfl rfl rfl rfl | exact OLim.same (l := l) (a := a) rfl rfl rfl rfl | contradiction |
       (simp_all [decSet, hdSet]; done)
 
-theorem afterRun_lim {r1 r2 : Dec} (h : DLim r1 r2) (stop : USize) (final : Bool) (pos0 : USize) (buf : ByteArray) (space : Nat) :
-    OLim (afterRun r1 stop final pos0 buf space) (afterRun r2 stop final pos0 buf space) := by
+theorem afterRun_lim {r1 r2 : Dec} (h : DLim r1 r2) (stop : USize) (final : Bool) (buf : ByteArray) (space : Nat) :
+    OLim (afterRun r1 stop final buf space) (afterRun r2 stop final buf space) := by
   rcases h with h | h | ⟨l, a, rfl⟩
   · refine Or.inl ?_
     simp only [afterRun, h]
@@ -458,5 +458,4 @@ theorem callD_lim (ar : ByteArray) (stop : USize) (hs : stop.toNat ≤ ar.size) 
           exact OLim.same (l := l') (a := a') rfl hb (by rw [hDD]; rfl) hDD
       · have hn1 : ¬ (runD ar stop hs (withCap (decSet D l a) space) (h1.withCap space)).status = .needsOutput := by rw [e]; exact hn
         rw [dite_eq_right hn1, dite_eq_right hn]
-        rw [show (decSet D l a).pos = D.pos from rfl]
-        exact afterRun_lim (DLim.same e) stop final D.pos buf space
+        exact afterRun_lim (DLim.same e) stop final buf space

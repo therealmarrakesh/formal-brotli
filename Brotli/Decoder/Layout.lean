@@ -11,227 +11,6 @@ namespace Brotli.Decoder
 
 open Brotli.Spec
 
-/-- Splits the first branch in the goal, and takes the same branch wherever its condition recurs. -/
-macro "split_all" : tactic => `(tactic| split <;> (try (rename_i hc; first
-  | simp only [dite_eq_left hc, ite_eq_left hc] | simp only [dite_eq_right hc, ite_eq_right hc] | simp only [hc])))
-
-/-! ### Steps that only record the position
-
-A step that reads no input only records the position it is given: its result is the same, but for that position, whatever
-position it is given and whatever position its state held. -/
-
-theorem stepCommand_pos (H : Hdr) (st : Cmd) (p : USize) :
-    stepCommand H st p = { stepCommand H { st with pos := 0 } 0 with pos := p } := by
-  unfold stepCommand markStep clearSeen
-  try dsimp only
-  repeat' (first | split_all | rfl)
-
-theorem stepInsertCopy_pos (H : Hdr) (st : Cmd) (p : USize) :
-    stepInsertCopy H st p = { stepInsertCopy H { st with pos := 0 } 0 with pos := p } := by
-  unfold stepInsertCopy insertStep markStep
-  try dsimp only
-  repeat' (first | split_all | rfl)
-
-theorem stepCopyLength_pos (st : Cmd) (p : USize) :
-    stepCopyLength st p = { stepCopyLength { st with pos := 0 } 0 with pos := p } := by
-  unfold stepCopyLength markStep
-  try dsimp only
-  repeat' (first | split_all | rfl)
-
-theorem applyBuilt_pos (st : Cmd) (p : USize) (word : ByteArray) :
-    applyBuilt st p word = { applyBuilt { st with pos := 0 } 0 word with pos := p } := by
-  unfold applyBuilt markStep
-  try dsimp only
-  repeat' (first | split_all | rfl)
-
-theorem applyWord_pos (st : Cmd) (p : USize) (wordId : UInt64) :
-    applyWord st p wordId = { applyWord { st with pos := 0 } 0 wordId with pos := p } := by
-  unfold applyWord markStep
-  simp only [applyBuilt_pos _ p]
-  try dsimp only
-  repeat' (first | split_all | rfl)
-
-theorem applyDistance_pos (st : Cmd) (p : USize) (dcode d : UInt64) :
-    applyDistance st p dcode d = { applyDistance { st with pos := 0 } 0 dcode d with pos := p } := by
-  unfold applyDistance markStep
-  simp only [applyWord_pos _ p]
-  try dsimp only
-  repeat' (first | split_all | rfl)
-
-theorem distanceStep_pos (H : Hdr) (st : Cmd) (p : USize) (v : UInt64) :
-    distanceStep H st p v = { distanceStep H { st with pos := 0 } 0 v with pos := p } := by
-  unfold distanceStep markStep
-  simp only [applyDistance_pos _ p]
-  try dsimp only
-  repeat' (first | split_all | rfl)
-
-theorem distanceThrough_pos (H : Hdr) (st : Cmd) (p : USize) (tree : UInt8) (htree : tree.toNat < H.treesD.toNat) :
-    distanceThrough H st p tree htree = { distanceThrough H { st with pos := 0 } 0 tree htree with pos := p } := by
-  unfold distanceThrough
-  simp only [distanceStep_pos _ _ p]
-
-theorem stepDistance_pos (H : Hdr) (st : Cmd) (p : USize) :
-    stepDistance H st p = { stepDistance H { st with pos := 0 } 0 with pos := p } := by
-  unfold stepDistance markStep clearSeen
-  simp only [applyDistance_pos _ p]
-  try dsimp only
-  repeat' (first | split_all | rfl)
-
-theorem stepDistanceSymbol_pos (H : Hdr) (st : Cmd) (p : USize) :
-    stepDistanceSymbol H st p = { stepDistanceSymbol H { st with pos := 0 } 0 with pos := p } := by
-  unfold stepDistanceSymbol markStep
-  simp only [distanceThrough_pos _ _ p]
-  try dsimp only
-  repeat' (first | split_all | rfl)
-
-theorem stepCopy_pos (k : USize) (st : Cmd) (p : USize) :
-    stepCopy k st p = { stepCopy k { st with pos := 0 } 0 with pos := p } := by
-  unfold stepCopy finishCopy markStep
-  try dsimp only
-  repeat' (first | split_all | rfl)
-
-theorem stepWord_pos (k : USize) (st : Cmd) (p : USize) :
-    stepWord k st p = { stepWord k { st with pos := 0 } 0 with pos := p } := by
-  unfold stepWord finishWord markStep
-  try dsimp only
-  repeat' (first | split_all | rfl)
-
-/-! A helper on the header's state keeps the position its state holds. -/
-
-theorem clTable_pos (st : Hd) (q : USize) : clTable { st with pos := q } = clTable st := rfl
-
-theorem mapSizeFast_pos (st : Hd) (q : USize) : mapSizeFast { st with pos := q } = mapSizeFast st := rfl
-
-theorem installTable_nf (st : Hd) (base : UInt64) :
-    installTable st base = { installTable { st with pos := 0 } base with pos := st.pos } := by
-  unfold installTable clearFill
-  cases st
-  try dsimp only
-  repeat' (first | split_all | rfl)
-
-theorem growPlanned_nf (st : Hd) (lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) (pl : Plan) :
-    growPlanned st lens n hn pl = { growPlanned { st with pos := 0 } lens n hn pl with pos := st.pos } := rfl
-
-theorem growSingle_nf (st : Hd) (sym : UInt64) :
-    growSingle st sym = { growSingle { st with pos := 0 } sym with pos := st.pos } := rfl
-
-theorem mapTableDone_nf (st : Hd) (t : ByteArray) :
-    mapTableDone st t = { mapTableDone { st with pos := 0 } t with pos := st.pos } := by
-  unfold mapTableDone
-  try dsimp only
-  repeat' (first | split_all | rfl)
-
-set_option maxRecDepth 8192 in
-theorem tableDone_nf (st : Hd) (single : Bool) (sym : UInt64) :
-    tableDone st single sym = { tableDone { st with pos := 0 } single sym with pos := st.pos } := by
-  unfold tableDone
-  cases st
-  try dsimp only
-  repeat' (first | split_all | exact (installTable_nf _ _).trans rfl | exact (mapTableDone_nf _ _).trans rfl | rfl)
-
-theorem catMoveOn_nf (st : Hd) : catMoveOn st = { catMoveOn { st with pos := 0 } with pos := st.pos } := by
-  unfold catMoveOn
-  cases st
-  try dsimp only
-  repeat' (first | split_all | rfl)
-
-theorem clFinish_nf (st : Hd) : clFinish st = { clFinish { st with pos := 0 } with pos := st.pos } := by
-  unfold clFinish
-  dsimp only
-  by_cases hc : fitsFast (clTable st) 0 = true
-  · have hc' : fitsFast (clTable { st with pos := 0 }) 0 = true := hc
-    rw [dite_eq_left hc, dite_eq_left hc']
-    rfl
-  · have hc' : ¬ fitsFast (clTable { st with pos := 0 }) 0 = true := hc
-    rw [dite_eq_right hc, dite_eq_right hc']
-
-theorem mapFinish_nf (st : Hd) (n : UInt64) (map : ByteArray) :
-    mapFinish st n map = { mapFinish { st with pos := 0 } n map with pos := st.pos } := by
-  unfold mapFinish
-  cases st
-  try dsimp only
-  repeat' (first | split_all | rfl)
-
-theorem ckFinish_nf (st : Hd) : ckFinish st = { ckFinish { st with pos := 0 } with pos := st.pos } := by
-  unfold ckFinish
-  cases st
-  try dsimp only
-  repeat' (first | split_all | rfl)
-
-/-- Closes the goals the steps on the header's state leave. -/
-macro "hd_nf" : tactic => `(tactic| ((try unfold markH) <;> (try dsimp only) <;> (try simp only [clTable_pos, mapSizeFast_pos]) <;>
-  repeat' (first
-    | split_all
-    | exact (installTable_nf _ _).trans rfl
-    | exact (mapTableDone_nf _ _).trans rfl
-    | exact (tableDone_nf _ _ _).trans rfl
-    | exact (catMoveOn_nf _).trans rfl
-    | exact (clFinish_nf _).trans rfl
-    | exact (mapFinish_nf _ _ _).trans rfl
-    | exact (ckFinish_nf _).trans rfl
-    | rfl)))
-
-theorem stepHCat_pos (st : Hd) (p : USize) : stepHCat st p = { stepHCat { st with pos := 0 } 0 with pos := p } := by
-  unfold stepHCat
-  cases st
-  hd_nf
-
-theorem stepHCode_pos (st : Hd) (p : USize) : stepHCode st p = { stepHCode { st with pos := 0 } 0 with pos := p } := by
-  unfold stepHCode
-  cases st
-  hd_nf
-
-theorem stepHClens_pos (st : Hd) (p : USize) : stepHClens st p = { stepHClens { st with pos := 0 } 0 with pos := p } := by
-  unfold stepHClens
-  cases st
-  hd_nf
-
-set_option maxHeartbeats 2000000 in
-theorem stepHSyms_pos (st : Hd) (p : USize) : stepHSyms st p = { stepHSyms { st with pos := 0 } 0 with pos := p } := by
-  unfold stepHSyms
-  cases st
-  hd_nf
-
-theorem stepHFirst_pos (st : Hd) (p : USize) : stepHFirst st p = { stepHFirst { st with pos := 0 } 0 with pos := p } := by
-  unfold stepHFirst
-  cases st
-  hd_nf
-
-theorem stepHNp_pos (st : Hd) (p : USize) : stepHNp st p = { stepHNp { st with pos := 0 } 0 with pos := p } := by
-  unfold stepHNp
-  cases st
-  hd_nf
-
-theorem stepHModes_pos (st : Hd) (p : USize) : stepHModes st p = { stepHModes { st with pos := 0 } 0 with pos := p } := by
-  unfold stepHModes
-  cases st
-  hd_nf
-
-theorem stepHTrees_pos (st : Hd) (p : USize) : stepHTrees st p = { stepHTrees { st with pos := 0 } 0 with pos := p } := by
-  unfold stepHTrees
-  cases st
-  hd_nf
-
-theorem stepHRlemax_pos (st : Hd) (p : USize) : stepHRlemax st p = { stepHRlemax { st with pos := 0 } 0 with pos := p } := by
-  unfold stepHRlemax
-  cases st
-  hd_nf
-
-theorem stepHVals_pos (st : Hd) (p : USize) : stepHVals st p = { stepHVals { st with pos := 0 } 0 with pos := p } := by
-  unfold stepHVals
-  cases st
-  hd_nf
-
-theorem stepHImtf_pos (st : Hd) (p : USize) : stepHImtf st p = { stepHImtf { st with pos := 0 } 0 with pos := p } := by
-  unfold stepHImtf
-  cases st
-  hd_nf
-
-theorem stepHCodes_pos (st : Hd) (p : USize) : stepHCodes st p = { stepHCodes { st with pos := 0 } 0 with pos := p } := by
-  unfold stepHCodes
-  cases st
-  hd_nf
-
 /-! ### Loops that read the input -/
 
 /-- The loop for uncompressed bytes depends only on the unread bytes. -/
@@ -454,25 +233,6 @@ theorem hd_er {s t : Hd} (h : { s with pos := 0 } = { t with pos := 0 }) : t = {
   cases t
   cases h
   rfl
-
-theorem stepAtH_pos (st : Hd) (p : USize) : stepAtH st p = { stepAtH { st with pos := 0 } 0 with pos := p } := by
-  unfold stepAtH
-  cases st
-  dsimp only
-  split
-  · exact (stepHCat_pos _ _).trans rfl
-  · exact (stepHCode_pos _ _).trans rfl
-  · exact (stepHClens_pos _ _).trans rfl
-  · exact (stepHSyms_pos _ _).trans rfl
-  · exact (stepHFirst_pos _ _).trans rfl
-  · exact (stepHNp_pos _ _).trans rfl
-  · exact (stepHModes_pos _ _).trans rfl
-  · exact (stepHTrees_pos _ _).trans rfl
-  · exact (stepHRlemax_pos _ _).trans rfl
-  · exact (stepHVals_pos _ _).trans rfl
-  · exact (stepHImtf_pos _ _).trans rfl
-  · exact (stepHCodes_pos _ _).trans rfl
-  · rfl
 
 theorem stepH_same {a1 a2 : ByteArray} {e1 e2 : USize} (hs1 : e1.toNat ≤ a1.size) (hs2 : e2.toNat ≤ a2.size) {s t : Hd}
     (he : { s with pos := 0 } = { t with pos := 0 }) {p1 p2 : USize} (h : Same a1 e1 a2 e2 p1 p2) :
@@ -813,14 +573,23 @@ theorem endCheck_same {a1 a2 : ByteArray} {e1 e2 : USize} {D1 D2 : Dec} (he : D1
       · exact ⟨rfl, h, rfl, rfl, rfl⟩
     · rw [ite_eq_right hc, ite_eq_right (show ¬ (((BitBuffer.mk D1.cmd.word D1.cmd.count).drop (D1.cmd.count &&& 7)).count = 0 ∧
         q0 = e2) from fun e => hc ⟨e.1, hst.mpr e.2⟩)]
-      exact ⟨rfl, h, rfl, rfl, rfl⟩
+      by_cases hb0 : ((BitBuffer.mk D1.cmd.word D1.cmd.count).drop (D1.cmd.count &&& 7)).count = 0
+      · rw [ite_eq_left hb0, ite_eq_left hb0]
+        have hne : D1.pos ≠ e1 := fun e => hc ⟨hb0, e⟩
+        have h1 : (USize.ofNat 1).toNat = 1 := by
+          rw [USize.toNat_ofNat', ← USize.size_eq_two_pow]
+          exact Nat.mod_eq_of_lt (by have := USize.le_size; omega)
+        have hle := h.2.2.1
+        have hlt : D1.pos.toNat ≠ e1.toNat := fun e => hne (USize.toNat_inj.mp e)
+        exact ⟨rfl, h.adv (by rw [h1]; omega), rfl, rfl, rfl⟩
+      · rw [ite_eq_right hb0, ite_eq_right hb0]
+        exact ⟨rfl, h, rfl, rfl, rfl⟩
   · rw [ite_eq_right hp, ite_eq_right hp]
     exact ⟨rfl, h, rfl, rfl, rfl⟩
 
 theorem afterRun_same {a1 a2 : ByteArray} {e1 e2 : USize} {r1 r2 : Dec} (he : r1.er = r2.er)
-    (h : Same a1 e1 a2 e2 r1.pos r2.pos) (final : Bool) {q1 q2 : USize} (hq : Same a1 e1 a2 e2 q1 q2) (b1 b2 : ByteArray)
-    (space : Nat) :
-    OutSame a1 e1 a2 e2 b1 b2 (afterRun r1 e1 final q1 b1 space) (afterRun r2 e2 final q2 b2 space) := by
+    (h : Same a1 e1 a2 e2 r1.pos r2.pos) (final : Bool) (b1 b2 : ByteArray) (space : Nat) :
+    OutSame a1 e1 a2 e2 b1 b2 (afterRun r1 e1 final b1 space) (afterRun r2 e2 final b2 space) := by
   have hstat : r2.status = r1.status := by rw [dec_er he]
   obtain ⟨f1, f2, f3, f4, L, f5, f6⟩ := flushD_same he b1 b2 space
   have hf : Same a1 e1 a2 e2 (flushD r1 b1 space).D.pos (flushD r2 b2 space).D.pos := by rw [f2, f3]; exact h
@@ -844,8 +613,8 @@ theorem afterRun_same {a1 a2 : ByteArray} {e1 e2 : USize} {r1 r2 : Dec} (he : r1
     · rw [ite_eq_right hz, ite_eq_right (fun e => hz (hpend.symm.trans e))]
       exact ⟨f1, hf, rfl, L, f5, f6⟩
   · exact ⟨he, h, rfl, [], by simp, by simp⟩
-  · exact ⟨rfl, hq, rfl, [], by simp, by simp⟩
-  · exact ⟨rfl, hq, rfl, [], by simp, by simp⟩
+  · exact ⟨rfl, h, rfl, [], by simp, by simp⟩
+  · exact ⟨rfl, h, rfl, [], by simp, by simp⟩
 
 theorem withCap_er (D : Dec) (space : Nat) :
     (withCap D space).er = { D.er with cmd := { D.er.cmd with cap := capFor space } } := rfl
@@ -887,7 +656,7 @@ theorem callD_same {a1 a2 : ByteArray} {e1 e2 : USize} (hs1 : e1.toNat ≤ a1.si
       · rw [ite_eq_right hz, ite_eq_right (fun e => hz (hpend.symm.trans e))]
         exact ⟨f1, hf, rfl, L, f5, f6⟩
     · rw [dite_eq_right hO, dite_eq_right (fun e => hO (hstat.symm.trans e))]
-      exact afterRun_same e hS final h b1 b2 space
+      exact afterRun_same e hS final b1 b2 space
 
 /-! ### What the caller sees -/
 

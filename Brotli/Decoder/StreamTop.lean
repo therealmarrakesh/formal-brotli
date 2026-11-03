@@ -292,7 +292,7 @@ theorem top_inv {limit : Nat} {x : List UInt8} {R : Run DState} (h : Reaches dec
   | @call R c hR ha ih =>
     obtain ⟨p, hrel, hE, hdec⟩ := ih.running ha.running
     obtain ⟨o, e1, e2, e3, e4, hok⟩ := reply_ok ha hrel hE
-    obtain ⟨c1, c2, _, n, c3, c4, c5, c6, c7, c8, c9⟩ := hok
+    obtain ⟨c1, c2, _, ⟨n, c3, c4, c5, c6, c7, c8, c9⟩, _⟩ := hok
     have hin := ha.inside
     have hfit := ha.fits
     have hstop : (USize.ofNat (c.pre.length + c.size)).toNat = c.pre.length + c.size := usize_of (by omega)
@@ -412,7 +412,7 @@ theorem order_inv {limit : Nat} {x : List UInt8} {R : Run DState} (h : Reaches d
     | false =>
     obtain ⟨p, hrel, hE, hro, hreach, _⟩ := ih.running ha.running
     obtain ⟨o, e1, e2, e3, e4, hok⟩ := reply_ok ha hrel hE
-    obtain ⟨c1, c2, _, n, c3, _, c5, c6, _, _, _⟩ := hok
+    obtain ⟨c1, c2, _, ⟨n, c3, _, c5, c6, _, _, _⟩, _⟩ := hok
     have hstop : (USize.ofNat (c.pre.length + c.size)).toNat = c.pre.length + c.size := usize_of (by omega)
     have hpos0 : (atPos R.state.val c.pre.length).pos.toNat = c.pre.length + 0 := usize_of (by omega)
     rw [buf_list] at c3
@@ -489,7 +489,7 @@ theorem decoder_limitHandsOut {limit : Nat} {x : List UInt8} {R : Run DState} (h
     have hfit := ha.fits
     obtain ⟨p, hrel, hE, hro, hreach, _⟩ := (order_inv hR).running ha.running
     obtain ⟨o, _, _, e3, e4, hok⟩ := reply_ok ha hrel hE
-    obtain ⟨_, _, _, n, c3, _, _, _, _, _, c9⟩ := hok
+    obtain ⟨_, _, _, ⟨n, c3, _, _, _, _, _, c9⟩, _⟩ := hok
     have hst : o.status = .memoryLimit := by rw [← e4]; exact hs
     obtain ⟨p2, D2, _, d2, d3, d4, d5, d6, d7⟩ := (c9 hst).2
     have hstop : (USize.ofNat (c.pre.length + c.size)).toNat = c.pre.length + c.size := usize_of (by omega)
@@ -571,7 +571,7 @@ private theorem reply_list {limit : Nat} {x : List UInt8} {R : Run DState} {c : 
       ((R.reply decoder x c).status = .needsOutput → L2.length = c.space) := by
   obtain ⟨p, hrel, hE, _⟩ := (top_inv hR).running ha.running
   obtain ⟨o, _, e2, e3, e4, hok⟩ := reply_ok ha hrel hE
-  obtain ⟨_, c2, _, n, c3, c4, c5, c6, _, _, _⟩ := hok
+  obtain ⟨_, c2, _, ⟨n, c3, c4, c5, c6, _, _, _⟩, _⟩ := hok
   have hfit := ha.fits
   have hstop : (USize.ofNat (c.pre.length + c.size)).toNat = c.pre.length + c.size := usize_of (by omega)
   rw [buf_list] at c3
