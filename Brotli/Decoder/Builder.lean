@@ -138,7 +138,7 @@ private theorem u64_shl {a d : UInt64} (hd : d.toNat < 64) (h : a.toNat * 2 ^ d.
 private theorem u64_shr {a d : UInt64} (hd : d.toNat < 64) : (a >>> d).toNat = a.toNat / 2 ^ d.toNat := by
   rw [UInt64.toNat_shiftRight, Nat.mod_eq_of_lt hd, Nat.shiftRight_eq_div_pow]
 
-private theorem one_shl {d : UInt64} (hd : d.toNat < 32) : ((1 : UInt64) <<< d).toNat = 2 ^ d.toNat := by
+theorem one_shl {d : UInt64} (hd : d.toNat < 32) : ((1 : UInt64) <<< d).toNat = 2 ^ d.toNat := by
   have hp : 2 ^ d.toNat < 2 ^ 32 := Nat.pow_lt_pow_right (by decide) hd
   rw [u64_shl (by omega) (by rw [show (1 : UInt64).toNat = 1 from rfl]; omega)]
   exact Nat.one_mul _
@@ -723,7 +723,7 @@ def ByteMatch (a : Array Nat) (b : ByteArray) : Prop :=
     let old := (getU D r).toUInt64
     setU D r (if old < d then d else old).toUInt8
 
-private theorem rootIdx {l c : UInt64} (hl : l.toNat ≤ 15) (hc : c.toNat < 2 ^ l.toNat) :
+theorem rootIdx {l c : UInt64} (hl : l.toNat ≤ 15) (hc : c.toNat < 2 ^ l.toNat) :
     (revFast l c &&& 255).toUSize.toNat = rootOf l.toNat c.toNat := by
   rw [word_toUSize (by rw [and255]; omega), and255, revFast_toNat hl hc]
   rfl
