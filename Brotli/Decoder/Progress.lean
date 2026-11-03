@@ -999,6 +999,224 @@ theorem hStep_ndirect {g : Gh} (hn : g.m.ndirect ≤ 120) : ∀ {p : HPhase} {bs
     exact hn
   | .codes .D done 0, bs, q, c, h => by cases h
 
+/-! ### How high a header's places rank -/
+
+/-- What a header so far has: at most 256 block types for literals and distances, and NPOSTFIX and NDIRECT in range. -/
+def GOk (g : Gh) : Prop := g.m.literal.n ≤ 256 ∧ g.m.distance.n ≤ 256 ∧ g.m.npostfix ≤ 3 ∧ g.m.ndirect ≤ 120
+
+/-- What a code's owner has: at most 256 block types. -/
+def OOk : Owner → Prop
+  | .type _ n => n ≤ 256
+  | .count _ n _ => n ≤ 256
+  | _ => True
+
+/-- What a header's place has: an alphabet of at most 1024 symbols, at most 256 block types or trees, and at most 16384
+context map values left. -/
+def HOk : HPhase → Prop
+  | .code o size => size ≤ 1024 ∧ OOk o
+  | .clens o size _ _ _ => size ≤ 1024 ∧ OOk o
+  | .syms o size _ _ => size ≤ 1024 ∧ OOk o
+  | .first _ n _ _ => n ≤ 256
+  | .rlemax _ ntrees => ntrees ≤ 256
+  | .vals _ _ _ _ _ left => left ≤ 16384
+  | _ => True
+
+theorem mapSize_le {g : Gh} (hg : GOk g) (isL : Bool) : mapSize g isL ≤ 16384 := by
+  obtain ⟨h1, h2, _⟩ := hg
+  unfold mapSize literalContextMapSize distanceContextMapSize
+  split <;> omega
+
+theorem hstage_le {g : Gh} {p : HPhase} (hg : GOk g) (hp : HOk p) : hstage g p ≤ 17500 := by
+  have ho : ∀ o, oStage g o ≤ 16387 := by
+    intro o
+    cases o with
+    | type => simp only [oStage]; omega
+    | count => simp only [oStage]; omega
+    | map isL => have := mapSize_le hg isL; simp only [oStage]; omega
+    | codes k done left =>
+      simp only [oStage]
+      cases left with
+      | succ => simp only [ckStage]; omega
+      | zero => cases k <;> simp only [ckStage] <;> (repeat' split) <;> omega
+  cases p with
+  | clens o size order acc sum =>
+    cases order with
+    | nil => have := ho o; have := hp.1; simp only [hstage]; omega
+    | cons => simp only [hstage]; omega
+  | syms o size clc st => have := ho o; have := hp.1; simp only [hstage]; omega
+  | vals => have : _ ≤ 16384 := hp; simp only [hstage]; omega
+  | codes k done n =>
+    simp only [hstage]
+    cases n with
+    | succ => simp only [ckStage]; omega
+    | zero => cases k <;> simp only [ckStage] <;> (repeat' split) <;> omega
+  | modes done n => cases n <;> simp only [hstage] <;> omega
+  | cat => simp only [hstage]; omega
+  | code => simp only [hstage]; omega
+  | first => simp only [hstage]; omega
+  | np => simp only [hstage]; omega
+  | trees => simp only [hstage]; omega
+  | rlemax => simp only [hstage]; omega
+  | imtf => simp only [hstage]; omega
+
+theorem setCat_gok {g : Gh} (hg : GOk g) (i : Cat) {c : BlockCategory} (hc : c.n ≤ 256) : GOk (g.setCat i c) := by
+  obtain ⟨h1, h2, h3, h4⟩ := hg
+  cases i
+  · exact ⟨hc, h2, h3, h4⟩
+  · exact ⟨h1, h2, h3, h4⟩
+  · exact ⟨h1, hc, h3, h4⟩
+
+theorem setMap_gok {g : Gh} (hg : GOk g) (isL : Bool) (n : Nat) (cmap : List Nat) : GOk (g.setMap isL n cmap) := by
+  cases isL <;> exact hg
+
+theorem setCodes_gok {g : Gh} (hg : GOk g) (k : CK) (cs : List PrefixCode) : GOk (g.setCodes k cs) := by
+  cases k <;> exact hg
+
+theorem ownerPlace_ok {g : Gh} (hg : GOk g) {o : Owner} (ho : OOk o) (c : PrefixCode) : HOk (ownerPlace g o c) := by
+  cases o with
+  | type i n => exact ⟨by decide, ho⟩
+  | count i n tc => exact ho
+  | map isL ntrees rlemax => exact mapSize_le hg isL
+  | codes => trivial
+
+theorem ckSize_le {g : Gh} (hg : GOk g) (k : CK) : ckSize k g ≤ 1024 := by
+  obtain ⟨_, _, h3, h4⟩ := hg
+  cases k with
+  | L => show literalAlphabetSize ≤ 1024; decide
+  | I => show insertCopyAlphabetSize ≤ 1024; decide
+  | D =>
+    show 16 + g.m.ndirect + (48 <<< g.m.npostfix) ≤ 1024
+    rw [Nat.shiftLeft_eq]
+    have : 2 ^ g.m.npostfix ≤ 2 ^ 3 := Nat.pow_le_pow_right (by decide) h3
+    have h8 : (2 : Nat) ^ 3 = 8 := rfl
+    rw [h8] at this
+    omega
+
+/-- Each step of a header read in order keeps what its places have. -/
+theorem hStep_ok {g : Gh} (hg : GOk g) : ∀ {p : HPhase} {bs : List Bool} {q : Gh × HPhase} {c : List Bool}, HOk p →
+    hStepP (g, p) bs = .next q c → GOk q.1 ∧ HOk q.2
+  | .cat i, bs, q, c, _, h => by
+    obtain ⟨v, b, e1, e2⟩ := readIn_next' (show hStep g (.cat i) bs = _ from h)
+    have hv := readVarLen_range e1
+    split at e2 <;> cases e2
+    · refine ⟨setCat_gok hg i (by show v ≤ 256; omega), ?_⟩
+      cases i <;> trivial
+    · exact ⟨hg, by show v + 2 ≤ 1024 ∧ v ≤ 256; omega⟩
+  | .code o size, bs, q, c, hp, h => by
+    obtain ⟨v, b, _, e2⟩ := readIn_next' (show hStep g (.code o size) bs = _ from h)
+    split at e2
+    · obtain ⟨cd, _, _, e4⟩ := readIn_next' e2
+      cases e4
+      exact ⟨hg, ownerPlace_ok hg hp.2 cd⟩
+    · cases e2
+      exact ⟨hg, hp⟩
+  | .clens o size [] acc sum, bs, q, c, hp, h => by
+    have h' : (if (acc.filter (·.2 != 0)).length = 1 then ORes.next (g, HPhase.syms o size (codeLengthCode acc) ⟨[], 8, none⟩) bs
+        else .bad) = .next q c := h
+    split at h' <;> cases h'
+    exact ⟨hg, hp⟩
+  | .clens o size (x :: rest) acc sum, bs, q, c, hp, h => by
+    obtain ⟨v, b, _, e2⟩ := readIn_next' (show hStep g (.clens o size (x :: rest) acc sum) bs = _ from h)
+    split at e2
+    · cases e2; exact ⟨hg, hp⟩
+    · split at e2
+      · cases e2; exact ⟨hg, hp⟩
+      · split at e2
+        · cases e2
+        · cases e2; exact ⟨hg, hp⟩
+  | .syms o size clc st, bs, q, c, hp, h => by
+    have h' : (if size < st.lens.length then ORes.bad
+        else if lengthSum st.lens = 32768 then
+          .next (g, ownerPlace g o (.canonical (st.lens ++ List.replicate (size - st.lens.length) 0))) bs
+        else if st.lens.length = size then .bad
+        else readIn 18 (lenSym clc) bs fun v b =>
+          if size < (applyCodeLength st v.1 v.2).lens.length then .bad
+          else if 32768 < lengthSum (applyCodeLength st v.1 v.2).lens then .bad
+          else .next (g, .syms o size clc (applyCodeLength st v.1 v.2)) b) = .next q c := h
+    split at h'
+    · cases h'
+    · split at h'
+      · cases h'; exact ⟨hg, ownerPlace_ok hg hp.2 _⟩
+      · split at h'
+        · cases h'
+        · obtain ⟨v, b, _, e2⟩ := readIn_next' h'
+          split at e2
+          · cases e2
+          · split at e2
+            · cases e2
+            · cases e2; exact ⟨hg, hp⟩
+  | .first i n tc cc, bs, q, c, hp, h => by
+    obtain ⟨v, b, _, e2⟩ := readIn_next' (show hStep g (.first i n tc cc) bs = _ from h)
+    cases e2
+    refine ⟨setCat_gok hg i hp, ?_⟩
+    cases i <;> trivial
+  | .np, bs, q, c, _, h => by
+    obtain ⟨v, b, e1, e2⟩ := readIn_next' (show hStep g .np bs = _ from h)
+    cases e2
+    obtain ⟨h1, h2⟩ := readNp_lt e1
+    obtain ⟨g1, g2, _, _⟩ := hg
+    refine ⟨⟨g1, g2, by show v.1 ≤ 3; omega, ?_⟩, trivial⟩
+    show v.2 <<< v.1 ≤ 120
+    rw [Nat.shiftLeft_eq]
+    have : 2 ^ v.1 ≤ 2 ^ 3 := Nat.pow_le_pow_right (by decide) (by omega)
+    have h8 : (2 : Nat) ^ 3 = 8 := rfl
+    rw [h8] at this
+    have : v.2 * 2 ^ v.1 ≤ 15 * 8 := Nat.mul_le_mul (by omega) this
+    omega
+  | .modes done 0, bs, q, c, _, h => by
+    cases h
+    exact ⟨hg, trivial⟩
+  | .modes done (n + 1), bs, q, c, _, h => by
+    obtain ⟨v, b, _, e2⟩ := readIn_next' (show hStep g (.modes done (n + 1)) bs = _ from h)
+    cases e2
+    exact ⟨hg, trivial⟩
+  | .trees isL, bs, q, c, _, h => by
+    obtain ⟨v, b, e1, e2⟩ := readIn_next' (show hStep g (.trees isL) bs = _ from h)
+    have hv := readVarLen_range e1
+    split at e2 <;> cases e2
+    · refine ⟨setMap_gok hg _ _ _, ?_⟩
+      cases isL <;> trivial
+    · exact ⟨hg, by show v ≤ 256; omega⟩
+  | .rlemax isL ntrees, bs, q, c, hp, h => by
+    obtain ⟨v, b, e1, e2⟩ := readIn_next' (show hStep g (.rlemax isL ntrees) bs = _ from h)
+    cases e2
+    have := readRLEMAX_range e1
+    have hn : ntrees ≤ 256 := hp
+    exact ⟨hg, (show ntrees + v ≤ 1024 by omega), trivial⟩
+  | .vals isL ntrees rlemax code done left, bs, q, c, hp, h => by
+    have h' : (if left = 0 then ORes.next (g, HPhase.imtf isL ntrees done) bs
+        else readIn 31 (mapSym rlemax code) bs fun v b =>
+          if left < v.2 then .bad else .next (g, .vals isL ntrees rlemax code (done ++ List.replicate v.2 v.1) (left - v.2)) b) =
+        .next q c := h
+    split at h'
+    · cases h'; exact ⟨hg, trivial⟩
+    · obtain ⟨v, b, _, e2⟩ := readIn_next' h'
+      split at e2
+      · cases e2
+      · cases e2
+        have hl : left ≤ 16384 := hp
+        exact ⟨hg, by show left - v.2 ≤ 16384; omega⟩
+  | .imtf isL ntrees vals, bs, q, c, _, h => by
+    obtain ⟨v, b, _, e2⟩ := readIn_next' (show hStep g (.imtf isL ntrees vals) bs = _ from h)
+    generalize (if v = 0 then vals else inverseMoveToFront vals) = fin at e2
+    by_cases hc : (List.range ntrees).all fin.contains = true
+    · rw [ite_eq_left hc] at e2
+      cases e2
+      refine ⟨setMap_gok hg _ _ _, ?_⟩
+      cases isL <;> trivial
+    · rw [ite_eq_right hc] at e2
+      cases e2
+  | .codes k done (n + 1), bs, q, c, _, h => by
+    cases h
+    exact ⟨hg, ckSize_le hg k, trivial⟩
+  | .codes .L done 0, bs, q, c, _, h => by
+    cases h
+    exact ⟨setCodes_gok hg _ _, trivial⟩
+  | .codes .I done 0, bs, q, c, _, h => by
+    cases h
+    exact ⟨setCodes_gok hg _ _, trivial⟩
+  | .codes .D done 0, bs, q, c, _, h => by cases h
+
 /-! ### The stream -/
 
 /-- What every place of the stream the reading in order reaches has. -/
@@ -1007,7 +1225,7 @@ def SInv : SPhase → Prop
   | .mblock w st => DistOk w st.distances st.produced
   | .skip w st _ _ => DistOk w st.distances st.produced
   | .raw w st _ _ => DistOk w st.distances st.produced
-  | .hdr w st _ _ g _ => DistOk w st.distances st.produced ∧ g.m.ndirect ≤ 120
+  | .hdr w st _ _ g p => DistOk w st.distances st.produced ∧ GOk g ∧ HOk p
   | .cmds w _ m p => m.ndirect ≤ 120 ∧ CInv w p
   | .ended _ => True
 
@@ -1022,6 +1240,16 @@ def sstage : SPhase → Nat
   | .hdr _ _ _ _ g p => hstage g p
   | .cmds _ _ _ p => cstage p
   | .ended _ => 1
+
+theorem sstage_le {p : SPhase} (h : SInv p) : sstage p ≤ 17500 := by
+  cases p with
+  | hdr w st last mlen g q => exact hstage_le h.2.1 h.2.2
+  | cmds w last m q => have := cstage_le q; simp only [sstage]; omega
+  | skip w st last n => cases n <;> simp only [sstage] <;> omega
+  | raw w st last n => cases n <;> simp only [sstage] <;> omega
+  | wbits => simp only [sstage]; omega
+  | mblock => simp only [sstage]; omega
+  | ended => simp only [sstage]; omega
 
 theorem afterBlock_facts (w : Nat) (last : Bool) (st : StreamState) (h : DistOk w st.distances st.produced) :
     SInv (afterBlock w last st) ∧ (afterBlock w last st).out = st.output ∧ sstage (afterBlock w last st) = 1 := by
@@ -1082,7 +1310,7 @@ theorem sStep_moves : ∀ (p : SPhase) (bs : List Bool) (q : SPhase) (c : List B
       | false =>
         simp only [startPlace, Bool.false_eq_true, ↓reduceIte] at e2
         cases e2
-        exact ⟨⟨hi, by decide⟩, ⟨[], rfl⟩, Or.inl (Or.inl hl)⟩
+        exact ⟨⟨hi, ⟨Nat.zero_le _, Nat.zero_le _, Nat.zero_le _, Nat.zero_le _⟩, trivial⟩, ⟨[], rfl⟩, Or.inl (Or.inl hl)⟩
   | .skip w st last 0, bs, q, c, hi, h => by
     cases h
     obtain ⟨f1, f2, f3⟩ := afterBlock_facts w last st hi
@@ -1112,7 +1340,7 @@ theorem sStep_moves : ∀ (p : SPhase) (bs : List Bool) (q : SPhase) (c : List B
         simp only [sStep, e]
       rw [h'] at h
       cases h
-      refine ⟨⟨hi.1, hStep_ndirect hi.2 (show hStepP (g, p) bs = _ from e)⟩, ⟨[], rfl⟩, ?_⟩
+      refine ⟨⟨hi.1, hStep_ok hi.2.1 hi.2.2 (show hStepP (g, p) bs = _ from e)⟩, ⟨[], rfl⟩, ?_⟩
       rcases hStep_moves g p bs q' _ e with hl | hl
       · exact Or.inl (Or.inl hl)
       · exact Or.inr hl
@@ -1122,7 +1350,7 @@ theorem sStep_moves : ∀ (p : SPhase) (bs : List Bool) (q : SPhase) (c : List B
       rw [h'] at h
       cases h
       obtain ⟨done, rfl, rfl⟩ := hStep_exit (show hStepP (g, p) bs = _ from e)
-      refine ⟨⟨by rw [setCodes_ndirect]; exact hi.2, hi.1⟩, ⟨[], rfl⟩, Or.inr ?_⟩
+      refine ⟨⟨by rw [setCodes_ndirect]; exact hi.2.1.2.2.2, hi.1⟩, ⟨[], rfl⟩, Or.inr ?_⟩
       show cstage (.command (startState st mlen _)) < ckStage .D g 0
       simp only [cstage, ckStage]
       split <;> omega
@@ -1188,5 +1416,49 @@ theorem sStep_moves : ∀ (p : SPhase) (bs : List Bool) (q : SPhase) (c : List B
         cases h
         have := readFill_len e
         exact ⟨trivial, ⟨[], rfl⟩, Or.inl (Or.inl (by omega))⟩
+
+/-! ### Counting the steps -/
+
+/-- The places the reading in order reaches from a place in `n` steps. -/
+inductive ReachN {P E : Type} (step : P → List Bool → ORes P E) : Nat → P → List Bool → P → List Bool → Prop
+  | refl (p : P) (bs : List Bool) : ReachN step 0 p bs p bs
+  | next {n : Nat} {p : P} {bs : List Bool} {p' : P} {bs' : List Bool} {q : P} {c : List Bool} :
+      step p bs = .next p' bs' → ReachN step n p' bs' q c → ReachN step (n + 1) p bs q c
+
+theorem ReachN.reach {P E : Type} {step : P → List Bool → ORes P E} {n : Nat} {p q : P} {bs c : List Bool}
+    (h : ReachN step n p bs q c) : Reach step p bs q c := by
+  induction h with
+  | refl => exact .refl _ _
+  | next hs _ ih => exact .next hs ih
+
+theorem Reach.count {P E : Type} {step : P → List Bool → ORes P E} {p q : P} {bs c : List Bool} (h : Reach step p bs q c) :
+    ∃ n, ReachN step n p bs q c := by
+  induction h with
+  | refl => exact ⟨0, .refl _ _⟩
+  | next hs _ ih =>
+    obtain ⟨n, hn⟩ := ih
+    exact ⟨n + 1, .next hs hn⟩
+
+/-- The reading in order of a stream takes at most 17501 steps for each bit it reads and each byte it produces, and 17500
+more. -/
+theorem steps_le : ∀ {n : Nat} {p : SPhase} {bs : List Bool} {q : SPhase} {c : List Bool}, ReachN sStep n p bs q c → SInv p →
+    SInv q ∧ c.length ≤ bs.length ∧ p.out.length ≤ q.out.length ∧
+      n + 17501 * c.length + 17501 * p.out.length ≤ 17501 * bs.length + 17501 * q.out.length + sstage p := by
+  intro n p bs q c h
+  induction h with
+  | refl => intro hi; exact ⟨hi, Nat.le_refl _, Nat.le_refl _, by omega⟩
+  | @next n p bs p' bs' q c hs _ ih =>
+    intro hi
+    obtain ⟨hi', ⟨l, hl⟩, hm⟩ := sStep_moves p bs p' bs' hi hs
+    obtain ⟨u, hu, _⟩ := nfaith_sStep p bs p' bs' hs
+    have hb : bs'.length + u.length = bs.length := by rw [hu, List.length_append]; omega
+    have ho : p'.out.length = l.length + p.out.length := by rw [hl, List.length_append]
+    have hs' := sstage_le hi'
+    obtain ⟨hq, h1, h2, h3⟩ := ih hi'
+    refine ⟨hq, by omega, by omega, ?_⟩
+    rcases hm with (hm | hm) | hm
+    · omega
+    · omega
+    · omega
 
 end Brotli.Decoder
