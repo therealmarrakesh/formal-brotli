@@ -243,11 +243,13 @@ structure OrderInv (x : List UInt8) (R : Run DState) : Prop where
   running : R.status.stopped = false → ∃ p, DRel R.state.val p ∧ Pend p R.state.val (R.emitted.map UInt8.toNat) ∧
     R.read ≤ R.offered ∧
     (∀ u : List UInt8, Reach sStep .wbits (bits (x.take R.offered ++ u)) p (R.state.val.held ++ bits ((x.take R.offered).drop R.read ++ u))) ∧
-    (R.status = .needsInput → SPause p R.state.val.held ∧ R.state.val.cmd.pend = 0)
+    (R.status = .needsInput → SPause p R.state.val.held ∧ R.state.val.cmd.pend = 0) ∧
+    (R.status = .needsOutput → R.state.val.cmd.pend ≠ 0)
 
-/-- A reply that needs input has no bytes waiting. -/
-private theorem reply_pend {x : List UInt8} {R : Run DState} {c : Call} {p : SPhase} (ha : R.Allowed x c) (hrel : DRel R.state.val p)
-    (hs : (R.reply decoder x c).status = .needsInput) : (R.reply decoder x c).state.val.cmd.pend = 0 := by
+/-- A reply that needs input has no bytes waiting, and one that needs output has some. -/
+private theorem reply_pend {x : List UInt8} {R : Run DState} {c : Call} {p : SPhase} (ha : R.Allowed x c) (hrel : DRel R.state.val p) :
+    ((R.reply decoder x c).status = .needsInput → (R.reply decoder x c).state.val.cmd.pend = 0) ∧
+    ((R.reply decoder x c).status = .needsOutput → (R.reply decoder x c).state.val.cmd.pend ≠ 0) := by
   have hin := ha.inside
   have hfit := ha.fits
   have hg : c.pre.length + c.size ≤ (R.input x c).size ∧ c.pre.length ≤ c.pre.length + c.size ∧ c.pre.length + c.size < USize.size :=
@@ -257,11 +259,13 @@ private theorem reply_pend {x : List UInt8} {R : Run DState} {c : Call} {p : SPh
     exact hg.1
   have hm := callD_down (hs := hs') (final := c.final) c.space (atPos R.state.val c.pre.length) (atPos_inv R.state hg.2.1 hg.2.2) p
     c.buf.toByteArray (atPos_rel hrel _)
-  have hs2 : (decStep R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.buf.toByteArray c.space c.final).status = .needsInput := hs
-  show (decStep R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.buf.toByteArray c.space c.final).state.val.cmd.pend = 0
-  unfold decStep at hs2 ⊢
-  rw [dite_eq_left hg] at hs2 ⊢
-  exact (hm.needsInput hs2).1
+  show ((decStep R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.buf.toByteArray c.space c.final).status = .needsInput →
+      (decStep R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.buf.toByteArray c.space c.final).state.val.cmd.pend = 0) ∧
+    ((decStep R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.buf.toByteArray c.space c.final).status = .needsOutput →
+      (decStep R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.buf.toByteArray c.space c.final).state.val.cmd.pend ≠ 0)
+  unfold decStep
+  rw [dite_eq_left hg]
+  exact ⟨fun hs2 => (hm.needsInput hs2).1, fun hs2 => (hm.needsOutput hs2).1⟩
 
 /-- Every run of the decoder holds the invariant. -/
 theorem top_inv {limit : Nat} {x : List UInt8} {R : Run DState} (h : Reaches decoder limit x R) : TopInv x R := by
@@ -392,7 +396,8 @@ theorem order_inv {limit : Nat} {x : List UInt8} {R : Run DState} (h : Reaches d
         unfold decStart
         rw [ite_eq_right hl]
       rw [e]
-      refine ⟨fun _ => ⟨.wbits, liveD_rel limit, rfl, Nat.le_refl _, fun u => ?_, fun _ => ⟨⟨.wbits, [], .refl _ _, rfl, Or.inl rfl⟩, rfl⟩⟩⟩
+      refine ⟨fun _ => ⟨.wbits, liveD_rel limit, rfl, Nat.le_refl _, fun u => ?_, fun _ => ⟨⟨.wbits, [], .refl _ _, rfl, Or.inl rfl⟩, rfl⟩,
+        fun e => Status.noConfusion e⟩⟩
       exact .refl _ _
   | @call R c hR ha ih =>
     have hin := ha.inside
@@ -454,12 +459,16 @@ theorem order_inv {limit : Nat} {x : List UInt8} {R : Run DState} (h : Reaches d
     cases hst : o.status with
     | needsInput =>
       obtain ⟨_, _, _, p', d4, d5, _, d7, d8⟩ := c5 hst
-      have hz := reply_pend ha hrel (e4.trans hst)
+      have hz := (reply_pend ha hrel).1 (e4.trans hst)
       rw [e1] at hz
-      refine ⟨p', by rw [hstate]; exact d4, by rw [hstate, hemit, hmap]; exact d5, hro', hgo p' d7, fun _ => by rw [hstate]; exact ⟨d8, hz⟩⟩
+      refine ⟨p', by rw [hstate]; exact d4, by rw [hstate, hemit, hmap]; exact d5, hro', hgo p' d7, fun _ => by rw [hstate]; exact ⟨d8, hz⟩,
+        fun e => Status.noConfusion e⟩
     | needsOutput =>
       obtain ⟨_, _, p', d4, d5, _, d7⟩ := c6 hst
-      refine ⟨p', by rw [hstate]; exact d4, by rw [hstate, hemit, hmap]; exact d5, hro', hgo p' d7, fun e => Status.noConfusion e⟩
+      have hz := (reply_pend ha hrel).2 (e4.trans hst)
+      rw [e1] at hz
+      refine ⟨p', by rw [hstate]; exact d4, by rw [hstate, hemit, hmap]; exact d5, hro', hgo p' d7, fun e => Status.noConfusion e,
+        fun _ => by rw [hstate]; exact hz⟩
     | done => rw [hst] at hs0; cases hs0
     | rejected => rw [hst] at hs0; cases hs0
     | memoryLimit => rw [hst] at hs0; cases hs0
@@ -497,24 +506,45 @@ theorem decoder_limitHandsOut {limit : Nat} {x : List UInt8} {R : Run DState} (h
     rw [hz, List.drop_zero] at d4
     rw [d4, hemit, ← hLn, ← List.map_append, map_roundtrip]
 
+/-- The reading in order of the bytes offered, cut back to the bytes used. -/
+private theorem reach_used {x : List UInt8} {R : Run DState} {p : SPhase} (hro : R.read ≤ R.offered)
+    (hreach : ∀ u : List UInt8, Reach sStep .wbits (bits (x.take R.offered ++ u)) p (R.state.val.held ++ bits ((x.take R.offered).drop R.read ++ u))) :
+    Reach sStep .wbits (bits (x.take R.read)) p R.state.val.held := by
+  have h1 := hreach []
+  simp only [List.append_nil] at h1
+  have e : bits (x.take R.offered) = bits (x.take R.read) ++ bits ((x.take R.offered).drop R.read) := by
+    rw [← bits_append, ← take_split x hro]
+  rw [e] at h1
+  exact reach_restrict nfaith_sStep h1 _ _ _ rfl rfl (by rw [bits_length]; omega)
+
 /-- A decoder that needs input stands where the spec's reading in order of the bytes it has used comes to, holding the
 bits that reading has left; from there the reading in order, producing nothing more, comes to too few bits or to the
 stream's end; and every byte the reading in order has produced has been handed out. -/
 theorem decoder_inOrder {limit : Nat} {x : List UInt8} {R : Run DState} (h : Reaches decoder limit x R) (hs : R.status = .needsInput) :
     ∃ p, Reach sStep .wbits (bits (x.take R.read)) p R.state.val.held ∧ SPause p R.state.val.held ∧
       p.out.reverse.map Nat.toUInt8 = R.emitted := by
-  obtain ⟨p, _, hE, hro, hreach, hpause⟩ := (order_inv h).running (by rw [hs]; rfl)
+  obtain ⟨p, _, hE, hro, hreach, hpause, _⟩ := (order_inv h).running (by rw [hs]; rfl)
   obtain ⟨hsp, hz⟩ := hpause hs
-  refine ⟨p, ?_, hsp, ?_⟩
-  · have h1 := hreach []
-    simp only [List.append_nil] at h1
-    have e : bits (x.take R.offered) = bits (x.take R.read) ++ bits ((x.take R.offered).drop R.read) := by
-      rw [← bits_append, ← take_split x hro]
-    rw [e] at h1
-    exact reach_restrict nfaith_sStep h1 _ _ _ rfl rfl (by rw [bits_length]; omega)
-  · unfold Pend at hE
-    simp only [hz, USize.toNat_zero, List.drop_zero] at hE
-    rw [hE, map_roundtrip]
+  refine ⟨p, reach_used hro hreach, hsp, ?_⟩
+  unfold Pend at hE
+  simp only [hz, USize.toNat_zero, List.drop_zero] at hE
+  rw [hE, map_roundtrip]
+
+/-- A decoder that needs output space stands where the spec's reading in order of the bytes it has used comes to, and that
+reading has produced more bytes than have been handed out, which start with them. -/
+theorem decoder_waits {limit : Nat} {x : List UInt8} {R : Run DState} (h : Reaches decoder limit x R) (hs : R.status = .needsOutput) :
+    ∃ p, Reach sStep .wbits (bits (x.take R.read)) p R.state.val.held ∧ R.emitted.length < p.out.length ∧
+      R.emitted <+: p.out.reverse.map Nat.toUInt8 := by
+  obtain ⟨p, hrel, hE, hro, hreach, _, hout⟩ := (order_inv h).running (by rw [hs]; rfl)
+  have hz : R.state.val.cmd.pend.toNat ≠ 0 := fun e => hout hs (USize.toNat_inj.mp e)
+  have hle := hrel.pendOut
+  unfold Pend at hE
+  refine ⟨p, reach_used hro hreach, ?_, ?_⟩
+  · have hl := congrArg List.length hE
+    simp only [List.length_reverse, List.length_drop, List.length_map] at hl
+    omega
+  · rw [← List.take_append_drop R.state.val.cmd.pend.toNat p.out, List.reverse_append, List.map_append, hE, map_roundtrip]
+    exact List.prefix_append _ _
 
 /-- A decoder never asks for input where the spec's reading in order of the bytes it has used rejects. -/
 theorem decoder_noLateReject {limit : Nat} {x : List UInt8} {R : Run DState} (h : Reaches decoder limit x R) (hs : R.status = .needsInput) :
