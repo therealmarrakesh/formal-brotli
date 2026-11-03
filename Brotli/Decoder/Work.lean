@@ -4,9 +4,10 @@ import Brotli.Decoder.Progress
 # The decoder's work
 
 The work bound counts the decoder's work in a model of its steps: each step of its loops of steps (the calls of `stepD`,
-`stepCmd` and the call's own rounds) counts one. Every other loop in the decoder moves one byte read, decoded or handed
-out, or one byte of a table it allocates, per round, so the bytes a call reads, decodes, hands out and allocates count the
-rest.
+`stepCmd` and the call's own rounds) counts one. Every other loop in the decoder either runs a bounded number of rounds
+inside one step (building a prefix code's table, a context map or a code's lengths, all of bounded size), or moves one
+byte read, decoded or handed out, or one byte of the window it allocates, per round. So a constant for each step, and the
+bytes a call reads, decodes, hands out and allocates, count the rest.
 
 A step that goes on takes at least one step of the spec's reading in order, which takes at most a constant number of
 steps for each bit it reads and each byte it produces. So a call's steps are at most a constant times the bytes it reads

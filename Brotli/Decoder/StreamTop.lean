@@ -30,7 +30,7 @@ def decStart (limit : Nat) : DState × Status :=
   if limit < fixedCost then (⟨deadD, _, deadD_rel⟩, .memoryLimit)
   else (⟨liveD limit, _, liveD_rel limit⟩, .needsInput)
 
-private theorem usize_of {n : Nat} (h : n < USize.size) : (USize.ofNat n).toNat = n := by
+theorem usize_of {n : Nat} (h : n < USize.size) : (USize.ofNat n).toNat = n := by
   rw [USize.toNat_ofNat', ← USize.size_eq_two_pow]
   exact Nat.mod_eq_of_lt h
 
@@ -72,15 +72,15 @@ def decoder : Machine DState := ⟨decStart, decStep⟩
 section
 variable {x : List UInt8} {R : Run DState} {c : Call}
 
-private theorem input_list :
+theorem input_list :
     (R.input x c).data.toList = c.pre ++ ((x.drop R.read).take c.size ++ c.post) := by
   simp [Run.input, List.data_toByteArray]
 
-private theorem take_length (h : R.read + c.size ≤ x.length) : ((x.drop R.read).take c.size).length = c.size := by
+theorem take_length (h : R.read + c.size ≤ x.length) : ((x.drop R.read).take c.size).length = c.size := by
   simp only [List.length_take, List.length_drop]
   omega
 
-private theorem input_size (h : R.read + c.size ≤ x.length) : (R.input x c).size = c.pre.length + c.size + c.post.length := by
+theorem input_size (h : R.read + c.size ≤ x.length) : (R.input x c).size = c.pre.length + c.size + c.post.length := by
   show (R.input x c).data.size = _
   rw [← Array.length_toList, input_list]
   simp only [List.length_append, take_length h]
@@ -175,7 +175,7 @@ private theorem buf_list (l : List UInt8) : l.toByteArray.data.toList = l := by
   simp [List.data_toByteArray]
 
 /-- A state's bits at a place in a call's chunk, with any bytes after the chunk. -/
-private theorem bits_at' {x : List UInt8} {R : Run DState} {c : Call} (h : R.read + c.size ≤ x.length) (D' : Dec) {pos stop : USize} {q : Nat}
+theorem bits_at' {x : List UInt8} {R : Run DState} {c : Call} (h : R.read + c.size ≤ x.length) (D' : Dec) {pos stop : USize} {q : Nat}
     (hq : pos.toNat = c.pre.length + q) (hqs : q ≤ c.size) (hstop : stop.toNat = c.pre.length + c.size) (t : List UInt8) :
     D'.bits (R.input x c) pos stop (bits t) = D'.held ++ bits (((x.drop R.read).take c.size).drop q ++ t) := by
   have hT := take_length (R := R) (c := c) h
