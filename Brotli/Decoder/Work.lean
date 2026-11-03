@@ -136,23 +136,26 @@ theorem stepCmd_count {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a :
     simp only [LexLt] at hlt
     omega
 
-/-- The command loop's steps are at most one more than the steps of the reading in order it takes, up to the state its
-last step starts from. -/
+/-- The command loop's steps are at most one more than the steps of the reading in order it takes, up to its result when
+it doesn't reject, and up to the state its last step starts from when it does. -/
 theorem runCmd_count {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size}
     (hH : HdrRel H m) : ∀ (N : Nat) (n : USize) (st : Cmd) (p : Phase) (pos : USize), n.toNat = N → Rel w k.toNat m st p →
       pos.toNat ≤ stop.toNat → ∀ F, ∃ c q st' pos', Rel w k.toNat m st' q ∧ pos.toNat ≤ pos'.toNat ∧ pos'.toNat ≤ stop.toNat ∧
         ReachN (cStep w m) c p (stateBits st a pos stop F) q (stateBits st' a pos' stop F) ∧ runCmdSteps H k a stop hs n st pos ≤ c + 1 ∧
-        ((runCmd H k a stop hs n st pos).status ≠ .bad → pos'.toNat ≤ (runCmd H k a stop hs n st pos).pos.toNat) := by
+        ((runCmd H k a stop hs n st pos).status ≠ .bad → st' = runCmd H k a stop hs n st pos ∧ pos' = (runCmd H k a stop hs n st pos).pos) ∧
+        ((runCmd H k a stop hs n st pos).status = .done → ∃ s, q = .command s ∧ s.remaining = 0) ∧
+        ((runCmd H k a stop hs n st pos).status = .next → n ≠ 0 → 1 ≤ c) := by
   intro N
   induction N with
   | zero =>
     intro n st p pos hN hrel hp F
     have hz : n = 0 := usize_zero hN
-    refine ⟨0, p, st, pos, hrel, Nat.le_refl _, hp, .refl _ _, ?_, fun _ => ?_⟩
-    · rw [runCmdSteps, dite_eq_left hz]
-      omega
-    · rw [runCmd, dite_eq_left hz]
-      exact Nat.le_refl _
+    have e : runCmd H k a stop hs n st pos = markStep st pos .next := by rw [runCmd, dite_eq_left hz]
+    rw [e]
+    refine ⟨0, p, markStep st pos .next, pos, hrel.mark _ _, Nat.le_refl _, hp, .refl _ _, ?_, fun _ => ⟨rfl, rfl⟩,
+      fun h => StepStatus.noConfusion h, fun _ h => absurd hz h⟩
+    rw [runCmdSteps, dite_eq_left hz]
+    omega
   | succ N ih =>
     intro n st p pos hN hrel hp F
     have hn : n ≠ 0 := fun e => by rw [e] at hN; exact Nat.succ_ne_zero _ hN.symm
@@ -172,21 +175,27 @@ theorem runCmd_count {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a : 
     case next =>
       obtain ⟨p1, hR1, h1, h2, hc1⟩ := stepCmd_count (hs := hs) hH hrel hp hst
       obtain ⟨n1, hn1, hr1⟩ := hc1 F
-      obtain ⟨c2, q, st', pos', hq, g1, g2, hr2, g3, g4⟩ := ih (n - USize.ofNat 1) _ p1 _ (by omega) hR1 h1 F
-      refine ⟨n1 + c2, q, st', pos', hq, by omega, g2, hr1.trans hr2, ?_, g4⟩
+      obtain ⟨c2, q, st', pos', hq, g1, g2, hr2, g3, g4, g5, _⟩ := ih (n - USize.ofNat 1) _ p1 _ (by omega) hR1 h1 F
+      refine ⟨n1 + c2, q, st', pos', hq, by omega, g2, hr1.trans hr2, ?_, g4, g5, fun _ _ => by omega⟩
       show runCmdSteps H k a stop hs (n - USize.ofNat 1) (stepCmd H k a stop hs st pos) (stepCmd H k a stop hs st pos).pos + 1 ≤ _
       omega
     case needsInput =>
-      obtain ⟨b1, _⟩ := hok.needsInput hst
-      refine ⟨0, p, st, pos, hrel, Nat.le_refl _, hp, .refl _ _, Nat.le_refl _, fun _ => ?_⟩
-      rw [b1]
-      exact hp
+      obtain ⟨b1, _, p', hR', _, _, _, _, hj, _⟩ := hok.needsInput hst
+      obtain ⟨c0, hc0⟩ := (hj F).count
+      refine ⟨c0, p', _, _, hR', by rw [b1]; exact hp, by rw [b1]; exact Nat.le_refl _, hc0, by show 1 ≤ _; omega,
+        fun _ => ⟨rfl, rfl⟩, (fun h => absurd (hst.symm.trans h) (by decide)), (fun h => absurd (hst.symm.trans h) (by decide))⟩
     case needsOutput =>
-      obtain ⟨_, _, b1, _⟩ := hok.needsOutput hst
-      exact ⟨0, p, st, pos, hrel, Nat.le_refl _, hp, .refl _ _, Nat.le_refl _, fun _ => b1⟩
+      obtain ⟨p', hR', b1, b2, _, _, _, _, hj⟩ := hok.needsOutput hst
+      obtain ⟨c0, hc0⟩ := (hj F).count
+      exact ⟨c0, p', _, _, hR', b1, b2, hc0, by show 1 ≤ _; omega, fun _ => ⟨rfl, rfl⟩,
+        (fun h => absurd (hst.symm.trans h) (by decide)), (fun h => absurd (hst.symm.trans h) (by decide))⟩
     case done =>
-      obtain ⟨_, _, b1, _⟩ := hok.done hst
-      exact ⟨0, p, st, pos, hrel, Nat.le_refl _, hp, .refl _ _, Nat.le_refl _, fun _ => b1⟩
-    case bad => exact ⟨0, p, st, pos, hrel, Nat.le_refl _, hp, .refl _ _, Nat.le_refl _, fun e => absurd hst e⟩
+      obtain ⟨s, hR', b1, b2, _, h0, _, hj⟩ := hok.done hst
+      obtain ⟨c0, hc0⟩ := (hj F).count
+      exact ⟨c0, .command s, _, _, hR', b1, b2, hc0, by show 1 ≤ _; omega, fun _ => ⟨rfl, rfl⟩, fun _ => ⟨s, rfl, h0⟩,
+        (fun h => absurd (hst.symm.trans h) (by decide))⟩
+    case bad =>
+      exact ⟨0, p, st, pos, hrel, Nat.le_refl _, hp, .refl _ _, Nat.le_refl _, fun e => absurd hst e,
+        (fun h => absurd (hst.symm.trans h) (by decide)), (fun h => absurd (hst.symm.trans h) (by decide))⟩
 
 end Brotli.Decoder

@@ -1443,7 +1443,7 @@ theorem Reach.count {P E : Type} {step : P → List Bool → ORes P E} {p q : P}
 more. -/
 theorem steps_le : ∀ {n : Nat} {p : SPhase} {bs : List Bool} {q : SPhase} {c : List Bool}, ReachN sStep n p bs q c → SInv p →
     SInv q ∧ c.length ≤ bs.length ∧ p.out.length ≤ q.out.length ∧
-      n + 17501 * c.length + 17501 * p.out.length ≤ 17501 * bs.length + 17501 * q.out.length + sstage p := by
+      n + sstage q + 17501 * c.length + 17501 * p.out.length ≤ 17501 * bs.length + 17501 * q.out.length + sstage p := by
   intro n p bs q c h
   induction h with
   | refl => intro hi; exact ⟨hi, Nat.le_refl _, Nat.le_refl _, by omega⟩
