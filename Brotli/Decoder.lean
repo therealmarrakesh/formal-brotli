@@ -51,6 +51,7 @@ import Brotli.Decoder.StreamCall
 import Brotli.Decoder.StreamMem
 import Brotli.Decoder.StreamLimit
 import Brotli.Decoder.StreamTop
+import Brotli.Decoder.OrderSpec
 
 /-!
 # Decoder
