@@ -130,7 +130,7 @@ theorem Hit.le_15 {c : PrefixCode} {w l s : Nat} (h : Hit c w l s) (hc : Complet
     omega
   | canonical lens => exact hc.1 l (List.mem_of_getElem? h.1)
 
-private theorem readCode_length : ∀ (n : Nat) (w : List Bool) (v : Nat) (r : List Bool),
+theorem readCode_length : ∀ (n : Nat) (w : List Bool) (v : Nat) (r : List Bool),
     readCode n w = some (v, r) → w.length = n + r.length
   | 0, w, v, r, h => by
     simp only [readCode, Option.some.injEq, Prod.mk.injEq] at h

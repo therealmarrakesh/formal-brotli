@@ -39,6 +39,7 @@ import Brotli.Decoder.HeaderMap
 import Brotli.Decoder.HeaderDone
 import Brotli.Decoder.StreamRest
 import Brotli.Decoder.StreamOrder
+import Brotli.Decoder.Restrict
 import Brotli.Decoder.StreamStart
 import Brotli.Decoder.StreamRaw
 import Brotli.Decoder.StreamState
