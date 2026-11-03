@@ -571,6 +571,9 @@ structure WbitsFacts (a : ByteArray) (stop : USize) (D : Dec) (pos : USize) (r :
   paused : r.status ≠ .next → r.tag = D.tag ∧ r.limit = D.limit ∧ r.cmd.ring = D.cmd.ring ∧ r.cmd.seen = D.cmd.seen ∧ r.cmd.wordBuf = D.cmd.wordBuf
   next : r.status = .next → r.tag = .mblock ∧ r.limit.toNat + 2 ^ r.k.toNat = D.limit.toNat
   memory : r.status = .memory → ∀ t : List UInt8, ∃ kv rest, readWBITS (D.bits a pos stop (bits t)) = some (kv, rest) ∧ D.limit.toNat < 2 ^ kv
+  memAt : r.status = .memory → pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧ 8 * r.pos.toNat + D.cmd.count.toNat ≤ 8 * pos.toNat + 64 ∧
+    ∀ s : List UInt8, ∃ kv rest, readWBITS ((BitBuffer.mk D.cmd.word D.cmd.count).held ++ (chunkBits a pos.toNat r.pos.toNat ++ bits s)) = some (kv, rest) ∧
+      D.limit.toNat < 2 ^ kv
 
 theorem stepDWbits_facts {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize} (hrel : DRel D .wbits) (hpos : pos.toNat ≤ stop.toNat) :
     WbitsFacts a stop D pos (stepDWbits a stop hs D pos) := by
@@ -589,17 +592,23 @@ theorem stepDWbits_facts {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.s
     show (BitBuffer.mk cmd.word cmd.count).held ++ (chunkBits a pos.toNat stop.toNat ++ F) =
       (refill cmd.word cmd.count a pos stop hs hpos).buf.held ++ (chunkBits a (refill cmd.word cmd.count a pos stop hs hpos).pos.toNat stop.toNat ++ F)
     rw [← List.append_assoc, ← List.append_assoc, r4]
-  generalize refill cmd.word cmd.count a pos stop hs hpos = rf at r1 r2 r3 r4 r5 hbits
+  obtain ⟨l1, l2⟩ := refill_local (word := cmd.word) (count := cmd.count) hs hpos hw
+  generalize refill cmd.word cmd.count a pos stop hs hpos = rf at r1 r2 r3 r4 r5 hbits l1 l2
+  have hloc : ∀ s : List UInt8, (BitBuffer.mk cmd.word cmd.count).held ++ (chunkBits a pos.toNat rf.pos.toNat ++ bits s) =
+      (BitBuffer.mk rf.word rf.count).held ++ bits s := by
+    intro s
+    rw [← List.append_assoc, ← l1]
+    rfl
   have R := wbitsFast_ok (b0 := ⟨rf.word, rf.count⟩) r1
   have hval := R.ok
   generalize wbitsFast ⟨rf.word, rf.count⟩ = r at hval
   cases hsr : r.status with
   | short =>
     dsimp only
-    exact ⟨rfl, rfl, fun _ => ⟨rfl, rfl, rfl, rfl, rfl⟩, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
+    exact ⟨rfl, rfl, fun _ => ⟨rfl, rfl, rfl, rfl, rfl⟩, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
   | bad =>
     dsimp only
-    exact ⟨rfl, rfl, fun _ => ⟨rfl, rfl, rfl, rfl, rfl⟩, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
+    exact ⟨rfl, rfl, fun _ => ⟨rfl, rfl, rfl, rfl, rfl⟩, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
   | ok =>
     dsimp only
     obtain ⟨h10, h24⟩ := readWBITS_range (by simpa using (hval hsr).2 [])
@@ -613,16 +622,20 @@ theorem stepDWbits_facts {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.s
       have hle := UInt64.le_iff_toNat_le.mp hc
       rw [hneed] at hle
       have hus : r.a.toUSize.toNat = r.a.toNat := word_toUSize (by omega)
-      refine ⟨rfl, rfl, fun e => absurd rfl e, fun _ => ⟨rfl, ?_⟩, fun e => DStatus.noConfusion e⟩
+      refine ⟨rfl, rfl, fun e => absurd rfl e, fun _ => ⟨rfl, ?_⟩, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
       show (limit - (1 : UInt64) <<< r.a).toNat + 2 ^ r.a.toUSize.toNat = limit.toNat
       rw [UInt64.toNat_sub_of_le _ _ hc, hneed, hus]
       omega
     · rw [ite_eq_right hc]
-      refine ⟨rfl, rfl, fun _ => ⟨rfl, rfl, rfl, rfl, rfl⟩, fun e => DStatus.noConfusion e, fun _ t => ⟨r.a.toNat, r.buf.held ++ (chunkBits a rf.pos.toNat stop.toNat ++ bits t), ?_, ?_⟩⟩
+      have hlt : limit.toNat < 2 ^ r.a.toNat := Nat.lt_of_not_le fun e => hc (UInt64.le_iff_toNat_le.mpr (by rw [hneed]; exact e))
+      refine ⟨rfl, rfl, fun _ => ⟨rfl, rfl, rfl, rfl, rfl⟩, fun e => DStatus.noConfusion e, fun _ t => ⟨r.a.toNat, r.buf.held ++ (chunkBits a rf.pos.toNat stop.toNat ++ bits t), ?_, hlt⟩,
+        fun _ => ⟨r2, r3, l2, fun s => ⟨r.a.toNat, r.buf.held ++ bits s, ?_, hlt⟩⟩⟩
       · show readWBITS (availBits cmd.word cmd.count a pos stop (bits t)) = _
         rw [hbits]
         exact (hval hsr).2 _
-      · exact Nat.lt_of_not_le fun e => hc (UInt64.le_iff_toNat_le.mpr (by rw [hneed]; exact e))
+      · show readWBITS ((BitBuffer.mk cmd.word cmd.count).held ++ (chunkBits a pos.toNat rf.pos.toNat ++ bits s)) = _
+        rw [hloc]
+        exact (hval hsr).2 _
 
 /-- WBITS's step. -/
 theorem wbits_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {t : List UInt8}

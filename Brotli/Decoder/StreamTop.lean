@@ -165,7 +165,7 @@ theorem reply_ok {x : List UInt8} {R : Run DState} {c : Call} {p : SPhase} (ha :
   · exact callD_ok _ _ _ p _ _ (atPos_rel hrel _) hE
 
 /-- A state's bits at a place in a call's chunk, with what follows the chunk. -/
-private theorem bits_at {x : List UInt8} {R : Run DState} {c : Call} (h : R.read + c.size ≤ x.length) (D' : Dec) {pos stop : USize} {q : Nat}
+theorem bits_at {x : List UInt8} {R : Run DState} {c : Call} (h : R.read + c.size ≤ x.length) (D' : Dec) {pos stop : USize} {q : Nat}
     (hq : pos.toNat = c.pre.length + q) (hqs : q ≤ c.size) (hstop : stop.toNat = c.pre.length + c.size) :
     D'.bits (R.input x c) pos stop (bits (x.drop (R.read + c.size))) = D'.held ++ bits (x.drop (R.read + q)) := by
   show D'.held ++ (chunkBits (R.input x c) pos.toNat stop.toNat ++ _) = _
