@@ -349,4 +349,132 @@ theorem refill_spec {word count : UInt64} {a : ByteArray} {pos stop : USize} (hs
       exact ⟨w, p1, p2, e, Or.inl c⟩
     · exact BitBuffer.fillSlow_spec hs _ word count pos rfl hw hp
 
+/-! ### The same unread bytes in two arrays -/
+
+/-- Two positions, each in its own array with its own stop, with the same unread bytes. -/
+def Same (a1 : ByteArray) (e1 : USize) (a2 : ByteArray) (e2 : USize) (p1 p2 : USize) : Prop :=
+  e1.toNat ≤ a1.size ∧ e2.toNat ≤ a2.size ∧ p1.toNat ≤ e1.toNat ∧ p2.toNat ≤ e2.toNat ∧
+    e1.toNat - p1.toNat = e2.toNat - p2.toNat ∧ chunk a1 p1.toNat e1.toNat = chunk a2 p2.toNat e2.toNat
+
+private theorem usize_add' {p u : USize} (h : p.toNat + u.toNat < USize.size) : (p + u).toNat = p.toNat + u.toNat := by
+  rw [USize.toNat_add]
+  apply Nat.mod_eq_of_lt
+  rwa [← USize.size_eq_two_pow]
+
+private theorem chunk_get? {a : ByteArray} {p e k : Nat} (h : p + k < e) : (chunk a p e)[k]? = a.data.toList[p + k]? := by
+  unfold chunk
+  rw [List.getElem?_take, ite_eq_left (by omega), List.getElem?_drop]
+
+private theorem chunk_drop' {a : ByteArray} {p e k : Nat} : chunk a (p + k) e = (chunk a p e).drop k := by
+  unfold chunk
+  rw [List.drop_take, List.drop_drop]
+  congr 1
+  omega
+
+/-- The bytes at the same distance into the same unread bytes. -/
+theorem Same.byte {a1 a2 : ByteArray} {e1 e2 p1 p2 : USize} (h : Same a1 e1 a2 e2 p1 p2) {k : Nat}
+    (hk : p1.toNat + k < e1.toNat) : a1.data.toList[p1.toNat + k]? = a2.data.toList[p2.toNat + k]? := by
+  obtain ⟨_, _, _, _, h5, h6⟩ := h
+  rw [← chunk_get? hk, ← chunk_get? (show p2.toNat + k < e2.toNat by omega), h6]
+
+/-- Moving both positions on by the same amount, within the unread bytes. -/
+theorem Same.adv {a1 a2 : ByteArray} {e1 e2 p1 p2 : USize} (h : Same a1 e1 a2 e2 p1 p2) {u : USize}
+    (hu : u.toNat ≤ e1.toNat - p1.toNat) : Same a1 e1 a2 e2 (p1 + u) (p2 + u) := by
+  obtain ⟨h1, h2, h3, h4, h5, h6⟩ := h
+  have q1 : (p1 + u).toNat = p1.toNat + u.toNat := usize_add' (by have := e1.toNat_lt_size; omega)
+  have q2 : (p2 + u).toNat = p2.toNat + u.toNat := usize_add' (by have := e2.toNat_lt_size; omega)
+  refine ⟨h1, h2, by omega, by omega, by omega, ?_⟩
+  rw [q1, q2, chunk_drop', chunk_drop', h6]
+
+private theorem uget_same {a1 a2 : ByteArray} {e1 e2 p1 p2 : USize} (h : Same a1 e1 a2 e2 p1 p2) {k : Nat}
+    (hk : p1.toNat + k < e1.toNat) (g1 : p1.toNat + k < a1.data.size) (g2 : p2.toNat + k < a2.data.size) :
+    a1.data[p1.toNat + k]'g1 = a2.data[p2.toNat + k]'g2 := by
+  have e := h.byte hk
+  simp only [Array.getElem?_toList, Array.getElem?_eq_getElem g1, Array.getElem?_eq_getElem g2] at e
+  exact Option.some.inj e
+
+private theorem loadBuffer_same {a1 a2 : ByteArray} {e1 e2 p1 p2 : USize} (h : Same a1 e1 a2 e2 p1 p2)
+    (hk : p1.toNat + 8 ≤ e1.toNat) (h81 : p1.toNat + 8 ≤ a1.size) (hu1 : p1.toNat + 8 ≤ USize.size)
+    (h82 : p2.toNat + 8 ≤ a2.size) (hu2 : p2.toNat + 8 ≤ USize.size) :
+    loadBuffer a1 p1 h81 hu1 = loadBuffer a2 p2 h82 hu2 := by
+  have s1 : a1.size = a1.data.size := rfl
+  have s2 : a2.size = a2.data.size := rfl
+  simp only [loadBuffer, byteAt_eq]
+  rw [uget_same h (k := 0) (by omega) (by omega) (by omega), uget_same h (k := 1) (by omega) (by omega) (by omega),
+    uget_same h (k := 2) (by omega) (by omega) (by omega), uget_same h (k := 3) (by omega) (by omega) (by omega),
+    uget_same h (k := 4) (by omega) (by omega) (by omega), uget_same h (k := 5) (by omega) (by omega) (by omega),
+    uget_same h (k := 6) (by omega) (by omega) (by omega), uget_same h (k := 7) (by omega) (by omega) (by omega)]
+
+private theorem fillSlow_same {a1 a2 : ByteArray} {e1 e2 : USize} (hs1 : e1.toNat ≤ a1.size) (hs2 : e2.toNat ≤ a2.size) :
+    ∀ (N : Nat) (word count : UInt64) (p1 p2 : USize), e1.toNat - p1.toNat = N → Same a1 e1 a2 e2 p1 p2 →
+    (BitBuffer.fillSlow a1 e1 hs1 word count p1).word = (BitBuffer.fillSlow a2 e2 hs2 word count p2).word ∧
+      (BitBuffer.fillSlow a1 e1 hs1 word count p1).count = (BitBuffer.fillSlow a2 e2 hs2 word count p2).count ∧
+      Same a1 e1 a2 e2 (BitBuffer.fillSlow a1 e1 hs1 word count p1).pos (BitBuffer.fillSlow a2 e2 hs2 word count p2).pos := by
+  intro N
+  induction N using Nat.strongRecOn with
+  | ind N ih =>
+    intro word count p1 p2 hN h
+    have hS := h
+    obtain ⟨_, _, h3, h4, h5, _⟩ := h
+    rw [BitBuffer.fillSlow, BitBuffer.fillSlow]
+    by_cases hc : count ≤ 56 ∧ p1 < e1
+    · have hlt := USize.lt_iff_toNat_lt.mp hc.2
+      have hc2 : count ≤ 56 ∧ p2 < e2 := ⟨hc.1, USize.lt_iff_toNat_lt.mpr (by omega)⟩
+      rw [dite_eq_left hc, dite_eq_left hc2]
+      have hb : ∀ g1 g2, a1.uget p1 g1 = a2.uget p2 g2 := by
+        intro g1 g2
+        rw [uget_eq, uget_eq]
+        exact uget_same hS (k := 0) (by omega) (by have : a1.size = a1.data.size := rfl; omega)
+          (by have : a2.size = a2.data.size := rfl; omega)
+      dsimp only
+      rw [hb]
+      have h1 : (USize.ofNat 1).toNat = 1 := usize_ofNat_toNat (by decide)
+      have hq : (p1 + USize.ofNat 1).toNat = p1.toNat + 1 := by
+        rw [usize_add' (by have := e1.toNat_lt_size; omega), h1]
+      exact ih _ (by omega) _ _ _ _ rfl (hS.adv (u := USize.ofNat 1) (by omega))
+    · have hc2 : ¬ (count ≤ 56 ∧ p2 < e2) := fun e => hc ⟨e.1, USize.lt_iff_toNat_lt.mpr
+        (by have := USize.lt_iff_toNat_lt.mp e.2; omega)⟩
+      rw [dite_eq_right hc, dite_eq_right hc2]
+      exact ⟨rfl, rfl, hS⟩
+
+/-- A refill depends only on the unread bytes: the same buffer, and positions with the same unread bytes. -/
+theorem refill_same {word count : UInt64} {a1 a2 : ByteArray} {e1 e2 p1 p2 : USize} (hs1 : e1.toNat ≤ a1.size)
+    (hs2 : e2.toNat ≤ a2.size) (hp1 : p1.toNat ≤ e1.toNat) (hp2 : p2.toNat ≤ e2.toNat) (h : Same a1 e1 a2 e2 p1 p2) :
+    (refill word count a1 p1 e1 hs1 hp1).word = (refill word count a2 p2 e2 hs2 hp2).word ∧
+      (refill word count a1 p1 e1 hs1 hp1).count = (refill word count a2 p2 e2 hs2 hp2).count ∧
+      Same a1 e1 a2 e2 (refill word count a1 p1 e1 hs1 hp1).pos (refill word count a2 p2 e2 hs2 hp2).pos := by
+  have hS := h
+  obtain ⟨_, _, _, _, h5, _⟩ := h
+  unfold refill
+  by_cases h56 : 56 < count
+  · rw [ite_eq_left h56, ite_eq_left h56]
+    exact ⟨rfl, rfl, hS⟩
+  · rw [ite_eq_right h56, ite_eq_right h56]
+    have d1 : (e1 - p1).toNat = e1.toNat - p1.toNat := USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr hp1)
+    have d2 : (e2 - p2).toNat = e2.toNat - p2.toNat := USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr hp2)
+    have h8 : (USize.ofNat 8).toNat = 8 := usize_ofNat_toNat (by decide)
+    by_cases hb : USize.ofNat 8 ≤ e1 - p1
+    · have hb1 := USize.le_iff_toNat_le.mp hb
+      have hb2 : USize.ofNat 8 ≤ e2 - p2 := USize.le_iff_toNat_le.mpr (by omega)
+      rw [dite_eq_left hb, dite_eq_left hb2]
+      have key : ∀ g1 u1 g2 u2, loadBuffer a1 p1 g1 u1 = loadBuffer a2 p2 g2 u2 :=
+        fun _ _ _ _ => loadBuffer_same hS (by omega) _ _ _ _
+      unfold BitBuffer.fill
+      dsimp only
+      rw [h8, d1] at hb1
+      rw [key _ _ (by omega) (by have := e2.toNat_lt_size; omega)]
+      refine ⟨rfl, rfl, hS.adv ?_⟩
+      have hc : count.toNat ≤ 56 := Nat.le_of_not_lt fun hl => h56 (UInt64.lt_iff_toNat_lt.mpr hl)
+      have hk : ((64 - count) >>> 3).toNat ≤ 8 := by
+        rw [UInt64.toNat_shiftRight, UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by show count.toNat ≤ 64; omega))]
+        rw [Nat.shiftRight_eq_div_pow]
+        show (64 - count.toNat) / 8 ≤ 8
+        omega
+      rw [UInt64.toNat_toUSize, Nat.mod_eq_of_lt (by rw [← USize.size_eq_two_pow]; have := USize.le_size; omega)]
+      omega
+    · have hb2 : ¬ USize.ofNat 8 ≤ e2 - p2 := fun e => hb (USize.le_iff_toNat_le.mpr
+        (by have := USize.le_iff_toNat_le.mp e; omega))
+      rw [dite_eq_right hb, dite_eq_right hb2]
+      exact fillSlow_same hs1 hs2 _ word count p1 p2 rfl hS
+
 end Brotli.Decoder
