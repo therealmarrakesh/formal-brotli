@@ -148,9 +148,12 @@ private theorem literals_after {α : Type} {w : Nat} {k : USize} {m : MetaBlockH
       (∀ F, rest w m K (.literals s ic c ilen clen n lit out) (availBits st.word st.count a pos stop F) =
         rest w m K (.literals s ic c ilen clen (n - (run.toNat - r.left.toNat)) lit' out') (availBits r.word r.count a r.pos stop F)) ∧
       (r.left.toNat ≠ 0 → r.pos = stop ∧
-        rest w m K (.literals s ic c ilen clen (n - (run.toNat - r.left.toNat)) lit' out') (BitBuffer.mk r.word r.count).held = none)) :
+        rest w m K (.literals s ic c ilen clen (n - (run.toNat - r.left.toNat)) lit' out') (BitBuffer.mk r.word r.count).held = none ∧
+        CShort w m (.literals s ic c ilen clen (n - (run.toNat - r.left.toNat)) lit' out') (BitBuffer.mk r.word r.count).held) ∧
+      (∀ F, Reach (cStep w m) (.literals s ic c ilen clen n lit out) (availBits st.word st.count a pos stop F)
+        (.literals s ic c ilen clen (n - (run.toNat - r.left.toNat)) lit' out') (availBits r.word r.count a r.pos stop F))) :
     StepOk w k.toNat m K a stop (.literals s ic c ilen clen n lit out) st pos (finishLiterals (clearRing st) r run (ringSize k)) := by
-  obtain ⟨lit', out', h1, h2, h3, h4, h5, ⟨lx, hlx⟩, h6, h7, h8, h9, h10, h11, h12, h13⟩ := hspec
+  obtain ⟨lit', out', h1, h2, h3, h4, h5, ⟨lx, hlx⟩, h6, h7, h8, h9, h10, h11, h12, h13, h14⟩ := hspec
   have hk := hC.k24
   have hRmax : 2 ^ k.toNat ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
   have h24 : (2 : Nat) ^ 24 = 16777216 := by decide
@@ -203,9 +206,11 @@ private theorem literals_after {α : Type} {w : Nat} {k : USize} {m : MetaBlockH
       simp only [rankC]
       split <;> split <;> omega
     exact StepOk.ofNext (p' := .literals s ic c ilen clen (n - (run.toNat - r.left.toNat)) lit' out')
-      (hd := Or.inr (Or.inr ⟨rfl, hdn⟩)) (hout := hoAll) (by show (if r.left = 0 then _ else _) = _; rw [ite_eq_left hz]) hnew h9 h10 fun F => h12 F
-  · obtain ⟨hstop, hnone⟩ := h13 (usize_ne hz)
+      (hd := Or.inr (Or.inr ⟨rfl, hdn⟩)) (hout := hoAll) (by show (if r.left = 0 then _ else _) = _; rw [ite_eq_left hz]) hnew h9 h10
+      (fun F => h12 F) (fun F => h14 F)
+  · obtain ⟨hstop, hnone, hcs⟩ := h13 (usize_ne hz)
     refine StepOk.ofInput (by show (if r.left = 0 then _ else _) = _; rw [ite_eq_right hz]) hstop hp hnew (fun F => h12 F) hnone ?_ hoAll
+      (fun F => h14 F) hcs
     by_cases hu : run.toNat - r.left.toNat = 0
     · refine Or.inr ⟨?_, ?_⟩
       · simp only [rankC, hu, h4, Nat.sub_zero]
@@ -287,7 +292,7 @@ theorem stepLiterals_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlo
       omega
     subst hn0
     refine StepOk.ofNext (p' := .distance (withLiterals s ic lit out ilen) c clen) rfl ⟨?_, rfl, ?_, hcode, hclen⟩
-      (Nat.le_refl _) hp fun F => rest_literals_distance _
+      (Nat.le_refl _) hp (fun F => rest_literals_distance _) (fun F => Reach.one rfl)
     · refine { hC with rem := ?_ }
       show st.remaining.toNat = s.remaining - ilen
       omega
@@ -328,7 +333,14 @@ theorem stepLiterals_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlo
           refine StepOk.ofNext (p' := .literals s ic c ilen clen (n' + 1)
             ⟨⟨st.lCur.toNat, r.cur.toNat⟩, r.blockCount.toNat, r.cur.toNat :: lit.seen⟩ out)
             (hd := Or.inr (Or.inr ⟨rfl, hdn⟩)) rfl
-            ⟨?_, htag, hprod, hcode, hilen, hclen, hleft, hnle, hirem, hlen⟩ (Nat.le_refl _) hp fun F => ?_
+            ⟨?_, htag, hprod, hcode, hilen, hclen, hleft, hnle, hirem, hlen⟩ (Nat.le_refl _) hp (fun F => ?_)
+            (fun F => Reach.one (by
+              rw [stateBits_eq]
+              show (if lit.count = 0 then _ else _) = _
+              rw [ite_eq_left hcz, nextIn_some (fun h => absurd h.2 (by omega)) (hnext _)]
+              show ORes.next (Phase.literals s ic c ilen clen (n' + 1) ⟨⟨st.lCur.toNat, r.cur.toNat⟩, r.blockCount.toNat - 1 + 1, r.cur.toNat :: lit.seen⟩ out) _ = _
+              rw [show r.blockCount.toNat - 1 + 1 = r.blockCount.toNat by omega]
+              rfl))
           · exact { hC with
               wf := hw
               lRel := hC.lRel.switched (by omega) hi hlt rfl
@@ -343,7 +355,10 @@ theorem stepLiterals_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlo
                 (by show r.blockCount.toNat ≠ 0; omega)]
         | short =>
           obtain ⟨_, _, hc54, hnone⟩ := hshort hst
-          refine StepOk.ofShort hrel0 (hfull.resolve_left (by omega)) ?_
+          refine StepOk.ofShort hrel0 (hfull.resolve_left (by omega)) ?_ (by
+            show (if lit.count = 0 then _ else _) = _
+            rw [ite_eq_left hcz]
+            exact nextIn_short (fun h => absurd h.2 (by omega)) hnone (by simp only [BitBuffer.held_length]; omega))
           rw [rest_literal, hnone]
           rfl
         | bad =>

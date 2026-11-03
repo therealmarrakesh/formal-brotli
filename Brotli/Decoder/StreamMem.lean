@@ -966,7 +966,7 @@ theorem hdr_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs
     | next =>
       rw [hst] at hD
       dsimp only at hD
-      obtain ⟨g', q', oc, hR', a1, a2, a3, _, hm⟩ := hH.next hst
+      obtain ⟨g', q', oc, hR', a1, a2, a3, _, hm, _⟩ := hH.next hst
       have hT := a3 (bits t)
       have hN := congrArg (Option.getD · 0) hT
       simp only [wr_tableK] at hN
@@ -988,7 +988,7 @@ theorem hdr_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs
     | needsInput =>
       rw [hst] at hD
       dsimp only at hD
-      obtain ⟨a1, a2, hR', a3, _, hm⟩ := hH.needsInput hst
+      obtain ⟨a1, a2, hR', a3, _, hm, _⟩ := hH.needsInput hst
       have hT := a3 (bits t)
       have hgrow := hm.grow
       have htag : ({ clearHd D with hd := r, pos := r.pos, status := .needsInput } : Dec).tag = .hdr := ht
@@ -1023,7 +1023,7 @@ theorem hdr_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs
     | ready =>
       rw [hst] at hD
       dsimp only at hD
-      obtain ⟨g', hu, _, _, _, a3, hmax, harena, hsz⟩ := hH.ready hst
+      obtain ⟨g', hu, _, _, _, a3, hmax, harena, hsz, _⟩ := hH.ready hst
       obtain ⟨H', hmk, _, e1, e2, e3, e4, e5, e6, e7⟩ := mkHdr_ok hu
       rw [hmk] at hD ⊢
       dsimp only at hD ⊢

@@ -139,7 +139,7 @@ theorem stepHVals_ok {isL : Bool} {ntrees rlemax : Nat} {code : PrefixCode} {don
       rfl
     subst hl0
     refine HStepOk.ofNext (g' := g) (p' := .imtf isL ntrees done) rfl ⟨hw, hu, rfl, hi, hn, h2, h256, ⟨hsz, by omega, fun i hi' => hat i (by omega), hlt⟩⟩
-      (Nat.le_refl _) hp (fun F => hrest_vals_zero K g isL ntrees rlemax code done _)
+      (Nat.le_refl _) hp (fun F => hrest_vals_zero K g isL ntrees rlemax code done _) (fun F => hStep_vals_zero _)
   rw [ite_eq_right h0]
   have hl0 : left ≠ 0 := by
     rw [← hleft]
@@ -150,11 +150,14 @@ theorem stepHVals_ok {isL : Bool} {ntrees rlemax : Nat} {code : PrefixCode} {don
     if left < v.2 then none else hrest K g (.vals isL ntrees rlemax code (done ++ List.replicate v.2 v.1) (left - v.2)) b)
     (fun bs => hrest_vals_step K g isL ntrees rlemax code done left bs hl0)
   have hval := R.ok
-  generalize mapSymFast st.mapT.t (USize.ofNat 0) st.mapT.fits st.mapT.h32 st.rlemax ⟨st.word, st.count⟩ = r at Rok Rshort Rbad hval
+  have hsh0 := R.short
+  generalize mapSymFast st.mapT.t (USize.ofNat 0) st.mapT.fits st.mapT.h32 st.rlemax ⟨st.word, st.count⟩ = r at Rok Rshort Rbad hval hsh0
   cases hsr : r.status with
   | short =>
     obtain ⟨_, _, h3, h4⟩ := Rshort hsr
+    obtain ⟨_, _, _, h5⟩ := hsh0 hsr
     exact HStepOk.ofShortRead (X := 31) hrel hfull (by omega) h3 h4
+      (by rw [hStep_vals_step _ hl0]; exact readIn_short h5 (by rw [held_len]; exact h3))
   | bad => exact HStepOk.ofBad rfl (fun F => Rbad hsr _)
   | ok =>
     dsimp only
@@ -183,7 +186,7 @@ theorem stepHVals_ok {isL : Bool} {ntrees rlemax : Nat} {code : PrefixCode} {don
       have hz' : r.a.toNat = 0 := by rw [hz]; rfl
       refine HStepOk.ofNext (g' := g) (p' := .vals isL ntrees rlemax code (done ++ List.replicate r.b.toNat r.a.toNat) (left - r.b.toNat))
         (hd := Or.inl (Or.inr ⟨rfl, show left - r.b.toNat < left by omega⟩)) rfl
-        ⟨hw2, hu, ht, hi, hn, hr, h2, h256, h16, hok, hC, hsy, ?_, hleft2, ?_, hsz, ?_, ?_, ?_⟩ (Nat.le_refl _) hp (fun F => ?_)
+        ⟨hw2, hu, ht, hi, hn, hr, h2, h256, h16, hok, hC, hsy, ?_, hleft2, ?_, hsz, ?_, ?_, ?_⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
       · show (st.idx + r.b).toNat = _
         rw [hidx2, hlen2]
       · rw [hlen2]
@@ -205,6 +208,9 @@ theorem stepHVals_ok {isL : Bool} {ntrees rlemax : Nat} {code : PrefixCode} {don
       · rw [avail_mk, hN]
         simp only [hbig', ↓reduceIte]
         rfl
+      · rw [avail_mk, hStep_vals_step _ hl0, readIn_some ((hval hsr).2 _)]
+        simp only [hbig', ↓reduceIte]
+        rfl
     · rw [ite_eq_right hz]
       have hz' : r.a.toNat ≠ 0 := fun e => hz (UInt64.toNat_inj.mp e)
       have hrun1 := hv1 hz'
@@ -217,7 +223,7 @@ theorem stepHVals_ok {isL : Bool} {ntrees rlemax : Nat} {code : PrefixCode} {don
         (hm := ⟨rfl, rfl, fun h => ⟨by show (setU st.fill st.idx.toUSize r.a.toUInt8).size ≤ _; rw [size_setU]; exact h.fill,
           h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩,
           by simp only [capH, Option.isSome, Bool.false_eq_true, ↓reduceIte]; omega, Nat.zero_le _⟩) rfl
-        ⟨hw2, hu, ht, hi, hn, hr, h2, h256, h16, hok, hC, hsy, ?_, hleft2, ?_, ?_, ?_, ?_, ?_⟩ (Nat.le_refl _) hp (fun F => ?_)
+        ⟨hw2, hu, ht, hi, hn, hr, h2, h256, h16, hok, hC, hsy, ?_, hleft2, ?_, ?_, ?_, ?_, ?_⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
       · show (st.idx + r.b).toNat = _
         rw [hidx2, hlen2]
       · rw [hlen2]
@@ -246,6 +252,9 @@ theorem stepHVals_ok {isL : Bool} {ntrees rlemax : Nat} {code : PrefixCode} {don
         rw [setU_get_ne (by rw [hus]; omega)]
         exact hzero i (by omega)
       · rw [avail_mk, hN]
+        simp only [hbig', ↓reduceIte]
+        rfl
+      · rw [avail_mk, hStep_vals_step _ hl0, readIn_some ((hval hsr).2 _)]
         simp only [hbig', ↓reduceIte]
         rfl
 
@@ -621,6 +630,14 @@ theorem stepHImtf_ok {isL : Bool} {ntrees : Nat} {vals : List Nat} {st : Hd} {g 
       show (readInt 1 _ >>= _) = _
       rw [show readInt 1 ((BitBuffer.mk st.word st.count).held ++ f) = _ from hread f]
       rfl
+    have hjspec : ∀ f, hStepP (g, .imtf isL ntrees vals) ((BitBuffer.mk st.word st.count).held ++ f) =
+        if (List.range ntrees).all (if im.toNat = 0 then vals else inverseMoveToFront vals).contains then
+          .next (g.setMap isL ntrees (if im.toNat = 0 then vals else inverseMoveToFront vals),
+            mapNextPhase (g.setMap isL ntrees (if im.toNat = 0 then vals else inverseMoveToFront vals)) isL) (b1.held ++ f)
+        else .bad := by
+      intro f
+      show readIn 1 (readInt 1) _ _ = _
+      rw [readIn_some (show readInt 1 ((BitBuffer.mk st.word st.count).held ++ f) = _ from hread f)]
     have hsz : (UInt64.ofNat st.fill.size).toNat = mapSize g isL := by
       rw [hm.sz]
       exact u64_lit (by omega)
@@ -636,7 +653,7 @@ theorem stepHImtf_ok {isL : Bool} {ntrees : Nat} {vals : List Nat} {st : Hd} {g 
         simp only [List.length_nil, Nat.zero_add, List.nil_append] at r1 r2
         exact ⟨r1, by rw [inverseMoveToFront, inverseMoveToFrontFrom_length]; exact hm.length, r2, inverseMoveToFront_lt hm.lt⟩
     generalize (if im = 0 then st.fill else imtfLoop mtfInitLut st.fill 0 (UInt64.ofNat st.fill.size)) = final at hfinal ⊢
-    generalize (if im.toNat = 0 then vals else inverseMoveToFront vals) = cmap at hfinal hspec
+    generalize (if im.toNat = 0 then vals else inverseMoveToFront vals) = cmap at hfinal hspec hjspec
     have hocc := allOccur_iff (map := final) (l := cmap) (size := UInt64.ofNat st.fill.size) (n := st.ntrees)
       (by rw [hsz]; omega) (by omega) (by rw [hsz]; exact hfinal.length) (by rw [hsz]; exact hfinal.at_)
     rw [hn] at hocc
@@ -648,8 +665,10 @@ theorem stepHImtf_ok {isL : Bool} {ntrees : Nat} {vals : List Nat} {st : Hd} {g 
       have hmv := mapFinish_move (st0 := st) (st := { clearFill st with word := b1.word, count := b1.count, pos := pos, status := .next }) (g := g) (p := .imtf isL ntrees vals)
         (n := st.ntrees) (ntrees := ntrees) (cmap := cmap) (map := final) hi hu hfinal.sz ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩ (fun _ => Nat.zero_le _) (Nat.le_refl _)
       generalize mapFinish { clearFill st with word := b1.word, count := b1.count, pos := pos, status := .next } st.ntrees final = r2 at hrel2 c1 c2 c3 c4 hmv ⊢
-      refine HStepOk.ofNext (hd := imtfNext_down _ _ _ _) (hm := hmv) c4 hrel2 (by rw [c3]; exact Nat.le_refl _) (by rw [c3]; exact hp) (fun F => ?_)
-      rw [avail_mk, hspec, ite_eq_left (hocc.mp hc), afterMap_eq, avail_mk, c1, c2, c3]
+      refine HStepOk.ofNext (hd := imtfNext_down _ _ _ _) (hm := hmv) c4 hrel2 (by rw [c3]; exact Nat.le_refl _) (by rw [c3]; exact hp)
+        (fun F => ?_) (fun F => ?_)
+      · rw [avail_mk, hspec, ite_eq_left (hocc.mp hc), afterMap_eq, avail_mk, c1, c2, c3]
+      · rw [avail_mk, hjspec, ite_eq_left (hocc.mp hc), avail_mk, c1, c2, c3]
     · rw [ite_eq_right hc]
       have hc' : ¬ (List.range ntrees).all cmap.contains = true := fun e => hc (hocc.mpr e)
       refine HStepOk.ofBad rfl (fun F => ?_)
@@ -661,6 +680,7 @@ theorem stepHImtf_ok {isL : Bool} {ntrees : Nat} {vals : List Nat} {st : Hd} {g 
       rw [readInt_short (b := ⟨st.word, st.count⟩) hc]
       rfl
     exact HStepOk.ofShortRead (X := 1) hrel hfull (by omega) hc hnone
+      (by show readIn 1 (readInt 1) _ _ = _; exact readIn_short (readInt_short (b := ⟨st.word, st.count⟩) hc) (by rw [held_len]; exact hc))
 
 end
 

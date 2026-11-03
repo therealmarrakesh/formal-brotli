@@ -1,4 +1,4 @@
-import Brotli.Decoder.HeaderRest
+import Brotli.Decoder.HeaderOrder
 import Brotli.Decoder.Builder
 import Brotli.Decoder.State
 
@@ -660,20 +660,26 @@ theorem catNext_cap (i : Cat) : capH (catNextPhase i) ≤ capH (.cat i) := by
 theorem firstNext_cap (i : Cat) (n : Nat) (tc cc : PrefixCode) : capH (catNextPhase i) ≤ capH (.first i n tc cc) := by
   cases i <;> simp only [catNextPhase, capH, catN] <;> omega
 
-/-- What a header step must do. It is `StepOk` for a header's places, and a header is finished when all of it is read. -/
+/-- What a header step must do. It is `StepOk` for a header's places, and a header is finished when all of it is read.
+Moving on goes where the header's reading in order goes, needing input means the reading in order has too few bits at
+the place, and finishing is where it ends. -/
 structure HStepOk {α : Type} (K : HK α) (a : ByteArray) (stop : USize) (g : Gh) (p : HPhase)
     (st : Hd) (pos : USize) (r : Hd) : Prop where
   next : r.status = .next → ∃ g' p' oc, HRel r g' p' ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
-    (∀ F, hrest K g p (availBits st.word st.count a pos stop F) = Wr K oc (hrest K g' p' (availBits r.word r.count a r.pos stop F))) ∧ HDown p p' ∧ HMove st r p p' oc
+    (∀ F, hrest K g p (availBits st.word st.count a pos stop F) = Wr K oc (hrest K g' p' (availBits r.word r.count a r.pos stop F))) ∧ HDown p p' ∧ HMove st r p p' oc ∧
+    ∀ F, Reach hStepP (g, p) (availBits st.word st.count a pos stop F) (g', p') (availBits r.word r.count a r.pos stop F)
   needsInput : r.status = .needsInput → r.pos = stop ∧ pos.toNat ≤ stop.toNat ∧ HRel r g p ∧
     (∀ F, hrest K g p (availBits st.word st.count a pos stop F) = hrest K g p (availBits r.word r.count a r.pos stop F)) ∧
-    hrest K g p (BitBuffer.mk r.word r.count).held = none ∧ HMove st r p p none
+    hrest K g p (BitBuffer.mk r.word r.count).held = none ∧ HMove st r p p none ∧
+    (∀ F, availBits r.word r.count a r.pos stop F = availBits st.word st.count a pos stop F) ∧
+    hStepP (g, p) (BitBuffer.mk r.word r.count).held = .short
   bad : r.status = .bad → ∀ F, hrest K g p (availBits st.word st.count a pos stop F) = none
   memory : r.status = .memory → ∃ c, st.d.arenaMax.toNat < st.d.arena.size + tableBytes c ∧ tableBytes c ≤ 132096 ∧ capH p ≠ 0 ∧
     ∀ F, ∃ x, hrest K g p (availBits st.word st.count a pos stop F) = K.w c x
   ready : r.status = .ready → ∃ g', Upto r.d g' 10 ∧ (BitBuffer.mk r.word r.count).Wf ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
     (∀ F, hrest K g p (availBits st.word st.count a pos stop F) = K.k g'.m (availBits r.word r.count a r.pos stop F)) ∧ r.d.arenaMax = st.d.arenaMax ∧
-    r.d.arena.size = st.d.arena.size ∧ (HSize st → HSize r)
+    r.d.arena.size = st.d.arena.size ∧ (HSize st → HSize r) ∧
+    ∀ F, hStepP (g, p) (availBits st.word st.count a pos stop F) = .exit g'.m (availBits r.word r.count a r.pos stop F)
 
 section
 variable {α : Type} {K : HK α} {a : ByteArray} {stop : USize} {g : Gh} {p : HPhase}
@@ -683,9 +689,10 @@ variable {α : Type} {K : HK α} {a : ByteArray} {stop : USize} {g : Gh} {p : HP
 theorem HStepOk.ofNext (hs : r.status = .next) {g' : Gh} {p' : HPhase} (hrel : HRel r g' p') (h1 : pos.toNat ≤ r.pos.toNat)
     (h2 : r.pos.toNat ≤ stop.toNat)
     (h : ∀ F, hrest K g p (availBits st.word st.count a pos stop F) = hrest K g' p' (availBits r.word r.count a r.pos stop F))
+    (hj : ∀ F, hStepP (g, p) (availBits st.word st.count a pos stop F) = .next (g', p') (availBits r.word r.count a r.pos stop F))
     (hd : HDown p p' := by hstep_down) (hm : HMove st r p p' none := by hstep_move) :
     HStepOk K a stop g p st pos r :=
-  ⟨fun _ => ⟨g', p', none, hrel, h1, h2, h, hd, hm⟩, fun e => HStatus.noConfusion (hs.symm.trans e),
+  ⟨fun _ => ⟨g', p', none, hrel, h1, h2, h, hd, hm, fun F => Reach.one (hj F)⟩, fun e => HStatus.noConfusion (hs.symm.trans e),
     fun e => HStatus.noConfusion (hs.symm.trans e), fun e => HStatus.noConfusion (hs.symm.trans e),
     fun e => HStatus.noConfusion (hs.symm.trans e)⟩
 
@@ -696,10 +703,11 @@ theorem HStepOk.ofBad (hs : r.status = .bad) (h : ∀ F, hrest K g p (availBits 
     fun e => HStatus.noConfusion (hs.symm.trans e), fun e => HStatus.noConfusion (hs.symm.trans e)⟩
 
 /-- A read that fell short and changed nothing. -/
-theorem HStepOk.ofShort (hrel : HRel st g p) (hstop : pos = stop) (hn : hrest K g p (BitBuffer.mk st.word st.count).held = none) :
+theorem HStepOk.ofShort (hrel : HRel st g p) (hstop : pos = stop) (hn : hrest K g p (BitBuffer.mk st.word st.count).held = none)
+    (hsh : hStepP (g, p) (BitBuffer.mk st.word st.count).held = .short) :
     HStepOk K a stop g p st pos (markH st pos .needsInput) :=
   ⟨fun e => HStatus.noConfusion e,
-    fun _ => ⟨hstop, by rw [hstop]; exact Nat.le_refl _, hrel.mark _ _, (fun _ => rfl), hn, by hstep_move⟩,
+    fun _ => ⟨hstop, by rw [hstop]; exact Nat.le_refl _, hrel.mark _ _, (fun _ => rfl), hn, by hstep_move, (fun _ => rfl), hsh⟩,
     fun e => HStatus.noConfusion e, fun e => HStatus.noConfusion e, fun e => HStatus.noConfusion e⟩
 
 /-- What a refill leaves alone. -/
@@ -736,19 +744,20 @@ theorem HStepOk.refilled {st1 : Hd} {pos1 : USize} (h : HStepOk K a stop g p st1
     (hb : ∀ F, availBits st.word st.count a pos stop F = availBits st1.word st1.count a pos1 stop F) (h1 : pos.toNat ≤ pos1.toNat)
     (h2 : pos1.toNat ≤ stop.toNat) (he : SameHeld st1 st) : HStepOk K a stop g p st pos r where
   next e := by
-    obtain ⟨g', p', oc, hrel, h3, h4, h5, h6, h7⟩ := h.next e
-    exact ⟨g', p', oc, hrel, Nat.le_trans h1 h3, h4, (fun F => by rw [hb]; exact h5 F), h6, h7.same he⟩
+    obtain ⟨g', p', oc, hrel, h3, h4, h5, h6, h7, h8⟩ := h.next e
+    exact ⟨g', p', oc, hrel, Nat.le_trans h1 h3, h4, (fun F => by rw [hb]; exact h5 F), h6, h7.same he, fun F => by rw [hb]; exact h8 F⟩
   needsInput e := by
-    obtain ⟨h3, _, hrel, h5, h6, h7⟩ := h.needsInput e
-    exact ⟨h3, Nat.le_trans h1 h2, hrel, (fun F => by rw [hb]; exact h5 F), h6, h7.same he⟩
+    obtain ⟨h3, _, hrel, h5, h6, h7, h8, h9⟩ := h.needsInput e
+    exact ⟨h3, Nat.le_trans h1 h2, hrel, (fun F => by rw [hb]; exact h5 F), h6, h7.same he, (fun F => by rw [hb]; exact h8 F), h9⟩
   bad e := fun F => by rw [hb]; exact h.bad e F
   memory e := by
     obtain ⟨c, h3, h4, h5, h6⟩ := h.memory e
     rw [he.d] at h3
     exact ⟨c, h3, h4, h5, fun F => by rw [hb]; exact h6 F⟩
   ready e := by
-    obtain ⟨g', h3, h4, h5, h6, h7, h8, h9, h10⟩ := h.ready e
-    exact ⟨g', h3, h4, Nat.le_trans h1 h5, h6, (fun F => by rw [hb]; exact h7 F), by rw [h8, he.d], by rw [h9, he.d], fun hs => h10 (hs.same he)⟩
+    obtain ⟨g', h3, h4, h5, h6, h7, h8, h9, h10, h11⟩ := h.ready e
+    exact ⟨g', h3, h4, Nat.le_trans h1 h5, h6, (fun F => by rw [hb]; exact h7 F), by rw [h8, he.d], by rw [h9, he.d], fun hs => h10 (hs.same he),
+      fun F => by rw [hb]; exact h11 F⟩
 
 end
 

@@ -221,17 +221,21 @@ private theorem step_of_apply {α : Type} {w k : Nat} {m : MetaBlockHeader} {K :
     (hprod : s.produced = s.output.length) (hclen : st1.clen.toNat = clen) (hd1 : 1 ≤ d.toNat) (hp : pos.toNat ≤ stop.toNat)
     (hrank : 1 < (rankC p).1) (hpo : p.out = s.output) (hpe : st1.pend = st.pend)
     (hrest : ∀ F, rest w m K p (stateBits st a pos stop F) =
-      copyPhase w s clen dcode.toNat d.toNat >>= fun q => rest w m K q (stateBits st1 a pos stop F)) :
+      copyPhase w s clen dcode.toNat d.toNat >>= fun q => rest w m K q (stateBits st1 a pos stop F))
+    (hj : ∀ F, cStep w m p (stateBits st a pos stop F) =
+      lookIn (copyPhase w s clen dcode.toNat d.toNat) fun q => .next q (stateBits st1 a pos stop F)) :
     StepOk w k m K a stop p st pos (applyDistance st1 pos dcode d) := by
   rcases applyDistance_spec (pos := pos) (dcode := dcode) hC hprod hclen hd1 with ⟨hn, hs⟩ | ⟨q, hq, hs, hpos, hw, hc, hR⟩
   · refine StepOk.ofBad hs fun F => ?_
     rw [hrest, hn]
     rfl
   · refine StepOk.ofNext (hd := Or.inr (Or.inl (by rw [copyPhase_rank hq]; exact hrank)))
-      (hout := ⟨[], by rw [copyPhase_out hq, hpo]; rfl, by rw [applyDistance_pend, hpe]; rfl⟩) hs hR (by rw [hpos]; exact Nat.le_refl _) (by rw [hpos]; exact hp) fun F => ?_
-    rw [hrest, hq]
-    show rest w m K q (stateBits st1 a pos stop F) = rest w m K q (stateBits _ a _ stop F)
-    rw [hpos, stateBits_eq, stateBits_eq, hw, hc]
+      (hout := ⟨[], by rw [copyPhase_out hq, hpo]; rfl, by rw [applyDistance_pend, hpe]; rfl⟩) hs hR (by rw [hpos]; exact Nat.le_refl _) (by rw [hpos]; exact hp) (fun F => ?_)
+      (fun F => Reach.one ?_)
+    · rw [hrest, hq]
+      show rest w m K q (stateBits st1 a pos stop F) = rest w m K q (stateBits _ a _ stop F)
+      rw [hpos, stateBits_eq, stateBits_eq, hw, hc]
+    · rw [hj, lookIn_some hq, hpos, stateBits_eq, stateBits_eq, hw, hc]
 
 /-! ### Where the distance comes from -/
 
@@ -272,7 +276,7 @@ theorem stepDistance_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} 
   · rename_i h0
     have h0N := u64_zero h0
     exact StepOk.ofNext (p' := .command s) rfl ⟨{ hC with }, rfl, hprod⟩ (Nat.le_refl _) hp
-      fun F => rest_distance_end _ (by omega)
+      (fun F => rest_distance_end _ (by omega)) (fun F => Reach.one (cStep_distance_end _ (by omega)))
   · rename_i h0
     have h0N := u64_ne h0
     have h0' : s.remaining ≠ 0 := by omega
@@ -290,9 +294,12 @@ theorem stepDistance_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} 
         rfl
       · rw [ite_eq_right hz]
         have hne := u64_ne hz
-        refine step_of_apply (s := s) (clen := clen) hC hprod hclen (by omega) hp (by simp only [rankC]; omega) rfl rfl fun F => ?_
-        rw [rest_distance_implicit _ h0' hc, distanceOf_zero, ite_eq_right (by rw [h0d]; exact hne), h0d]
-        rfl
+        refine step_of_apply (s := s) (clen := clen) hC hprod hclen (by omega) hp (by simp only [rankC]; omega) rfl rfl
+          (fun F => ?_) (fun F => ?_)
+        · rw [rest_distance_implicit _ h0' hc, distanceOf_zero, ite_eq_right (by rw [h0d]; exact hne), h0d]
+          rfl
+        · rw [cStep_distance_implicit _ h0' hc, distanceOf_zero, ite_eq_right (by rw [h0d]; exact hne), h0d]
+          rfl
     · rename_i himp
       have hc : implicitZeroDistance c = false := by
         unfold implicitZeroDistance
@@ -306,7 +313,8 @@ theorem stepDistance_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} 
           rw [hC.dRel.count]
           exact hcntN
         refine StepOk.ofNext (p' := .distanceSymbol s clen { s.distance with count := s.distance.count - 1 }) rfl
-          ⟨{ hC with dRel := hC.dRel.decr hcntN }, rfl, hprod, hclen⟩ (Nat.le_refl _) hp fun F => ?_
+          ⟨{ hC with dRel := hC.dRel.decr hcntN }, rfl, hprod, hclen⟩ (Nat.le_refl _) hp (fun F => ?_)
+          (fun F => Reach.one (by rw [cStep_distance_switch _ h0' hc, nextIn_some (fun h => hcs h.1) (nextElement_count _ hcs)]; rfl))
         rw [stateBits_eq, rest_distance_switch _ h0' hc, nextElement_count _ hcs]
         rfl
       · rename_i hcnt
@@ -332,7 +340,8 @@ theorem stepDistance_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} 
             have hsize := hC.seenSize
             have hi := seen_index (off := 512) (t := r.cur) (by omega) (by omega)
             refine StepOk.ofNext (p' := .distanceSymbol s clen ⟨⟨st.dCur.toNat, r.cur.toNat⟩, r.blockCount.toNat - 1,
-              r.cur.toNat :: s.distance.seen⟩) rfl ⟨?_, rfl, hprod, hclen⟩ (Nat.le_refl _) hp fun F => ?_
+              r.cur.toNat :: s.distance.seen⟩) rfl ⟨?_, rfl, hprod, hclen⟩ (Nat.le_refl _) hp (fun F => ?_)
+              (fun F => Reach.one (by rw [stateBits_eq, cStep_distance_switch _ h0' hc, nextIn_some (fun h => absurd h.2 (by omega)) (hnext _)]; rfl))
             · exact { hC with
                 wf := hw
                 dRel := hC.dRel.switched (by omega) hi hlt (u64_sub_one hc1).symm
@@ -347,6 +356,7 @@ theorem stepDistance_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} 
           | short =>
             obtain ⟨_, _, hc54, hnone⟩ := hshort hs
             refine StepOk.ofShort hrel0 (hfull.resolve_left (by omega)) ?_
+              (by rw [cStep_distance_switch _ h0' hc]; exact nextIn_short (fun h => absurd h.2 (by omega)) hnone (by simp only [BitBuffer.held_length]; omega))
             rw [rest_distance_switch _ h0' hc, hnone]
             rfl
           | bad =>
@@ -421,6 +431,15 @@ def stepDistanceSymbol (H : Hdr) (st : Cmd) (pos : USize) : Cmd :=
       omega
     distanceThrough H st pos (H.dMap.uget (dMapIndex st.dCur st.clen) hi) (H.dMapLt _ hi)
   else markStep st pos .bad
+
+private theorem readDistanceParts_eq {np nd : Nat} {code : PrefixCode} {bs r : List Bool} {dc : Nat}
+    (hd : decodeSymbol code bs = some (dc, r)) :
+    readDistanceParts np nd code bs = readInt (distanceExtraBits np nd dc) r >>= fun (e, b) => some ((dc, e), b) := by
+  simp only [readDistanceParts, bind, Option.bind, hd]
+
+private theorem readDistanceParts_none {np nd : Nat} {code : PrefixCode} {bs : List Bool} (hd : decodeSymbol code bs = none) :
+    readDistanceParts np nd code bs = none := by
+  simp only [readDistanceParts, bind, Option.bind, hd]
 
 /-- The distance's symbol and extra bits do their job. -/
 theorem distanceThrough_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
@@ -505,23 +524,40 @@ theorem distanceThrough_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeade
         rw [ite_eq_right hz] at hdE
         have hd1 := u64_ne hz
         refine step_of_apply (st1 := setBits st b2.word b2.count) (s := { s with distance := dist }) (clen := clen)
-          { hC with wf := hw2 } hprod hclen (by omega) hp (by simp only [rankC]; omega) rfl rfl fun F => ?_
-        rw [stateBits_eq, rest_distanceSymbol hindex hcode (hread hl _), hb1, hint]
-        show (distanceOf m.npostfix m.ndirect s.distances (wordValue v) _ >>= _) = _
-        rw [hdE]
-        rfl
+          { hC with wf := hw2 } hprod hclen (by omega) hp (by simp only [rankC]; omega) rfl rfl (fun F => ?_) (fun F => ?_)
+        · rw [stateBits_eq, rest_distanceSymbol hindex hcode (hread hl _), hb1, hint]
+          show (distanceOf m.npostfix m.ndirect s.distances (wordValue v) _ >>= _) = _
+          rw [hdE]
+          rfl
+        · rw [stateBits_eq]
+          show lookIn (distancePrefixCodeIndex m.distanceMap dist.types.cur (distanceContextId clen)) _ = _
+          rw [lookIn_some hindex, lookIn_some hcode]
+          show readIn 39 (readDistanceParts m.npostfix m.ndirect code) _ _ = _
+          rw [readIn, readDistanceParts_eq (hread hl _), hb1, hint]
+          show lookIn (distanceOf m.npostfix m.ndirect s.distances (wordValue v) _) _ = _
+          rw [lookIn_some hdE]
+          rfl
     · rename_i hle
       have hnot : b1.count.toNat < distanceExtraBits m.npostfix m.ndirect (wordValue v) := by
         rw [← hbitsE]
         exact Nat.lt_of_not_le fun h => hle (UInt64.le_iff_toNat_le.mpr h)
-      refine StepOk.ofShort hrel0 (hfull.resolve_left (by have := hC.wf.count_le; omega)) ?_
       have hd := hread hl []
       rw [List.append_nil, List.append_nil] at hd
-      rw [rest_distanceSymbol hindex hcode hd, hb1, readInt_short hnot]
-      rfl
+      refine StepOk.ofShort hrel0 (hfull.resolve_left (by have := hC.wf.count_le; omega)) ?_ ?_
+      · rw [rest_distanceSymbol hindex hcode hd, hb1, readInt_short hnot]
+        rfl
+      · show lookIn (distancePrefixCodeIndex m.distanceMap dist.types.cur (distanceContextId clen)) _ = _
+        rw [lookIn_some hindex, lookIn_some hcode]
+        show readIn 39 (readDistanceParts m.npostfix m.ndirect code) _ _ = _
+        refine readIn_short ?_ (by simp only [BitBuffer.held_length]; omega)
+        rw [readDistanceParts_eq hd, hb1, readInt_short hnot]
+        rfl
   · rename_i hl
     have hnot : st.count.toNat < (wordBits v).toNat := Nat.lt_of_not_le fun h => hl (UInt64.le_iff_toNat_le.mpr h)
-    exact StepOk.ofShort hrel0 (hfull.resolve_left (by omega)) (rest_distanceSymbol_none hindex hcode (hshort hl))
+    refine StepOk.ofShort hrel0 (hfull.resolve_left (by omega)) (rest_distanceSymbol_none hindex hcode (hshort hl)) ?_
+    show lookIn (distancePrefixCodeIndex m.distanceMap dist.types.cur (distanceContextId clen)) _ = _
+    rw [lookIn_some hindex, lookIn_some hcode]
+    exact readIn_short (readDistanceParts_none (hshort hl)) (by simp only [BitBuffer.held_length]; omega)
 
 /-- The distance's symbol does its job. -/
 theorem stepDistanceSymbol_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}

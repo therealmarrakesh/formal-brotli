@@ -1,5 +1,6 @@
 import Brotli.Decoder.Interface
 import Brotli.Decoder.Rest
+import Brotli.Decoder.Order
 import Brotli.Decoder.BitBuffer
 import Brotli.Decoder.Refill
 import Brotli.Decoder.Hit
@@ -25,6 +26,7 @@ import Brotli.Decoder.DictBytes
 import Brotli.Decoder.StepDistance
 import Brotli.Decoder.Loop
 import Brotli.Decoder.HeaderRest
+import Brotli.Decoder.HeaderOrder
 import Brotli.Decoder.HeaderState
 import Brotli.Decoder.HeaderStep
 import Brotli.Decoder.HeaderStep2
@@ -36,6 +38,7 @@ import Brotli.Decoder.HeaderSyms
 import Brotli.Decoder.HeaderMap
 import Brotli.Decoder.HeaderDone
 import Brotli.Decoder.StreamRest
+import Brotli.Decoder.StreamOrder
 import Brotli.Decoder.StreamStart
 import Brotli.Decoder.StreamRaw
 import Brotli.Decoder.StreamState

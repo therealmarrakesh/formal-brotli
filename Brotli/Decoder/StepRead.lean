@@ -214,7 +214,8 @@ theorem stepCommand_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {
   · rename_i h0
     have h0N := u64_zero h0
     exact ⟨fun h => StepStatus.noConfusion h, fun h => StepStatus.noConfusion h, fun h => StepStatus.noConfusion h,
-      fun _ => ⟨s, hrel0.mark _ _, Nat.le_refl _, hp, (fun _ => rfl), by omega, ⟨[], rfl, rfl⟩⟩, fun h => StepStatus.noConfusion h⟩
+      fun _ => ⟨s, hrel0.mark _ _, Nat.le_refl _, hp, (fun _ => rfl), by omega, ⟨[], rfl, rfl⟩, fun _ => Reach.refl _ _⟩,
+      fun h => StepStatus.noConfusion h⟩
   · rename_i h0
     have h0N := u64_ne h0
     have h0' : s.remaining ≠ 0 := by omega
@@ -226,7 +227,8 @@ theorem stepCommand_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {
         rw [hC.iRel.count]
         exact hcntN
       refine StepOk.ofNext (p' := .insertCopy s { s.insertCopy with count := s.insertCopy.count - 1 }) rfl
-        ⟨{ hC with iRel := hC.iRel.decr hcntN }, rfl, hprod⟩ (Nat.le_refl _) hp fun F => ?_
+        ⟨{ hC with iRel := hC.iRel.decr hcntN }, rfl, hprod⟩ (Nat.le_refl _) hp (fun F => ?_)
+        (fun F => Reach.one (by rw [cStep_command _ h0', nextIn_some (fun h => hcs h.1) (nextElement_count _ hcs)]; rfl))
       rw [stateBits_eq, rest_command_of hK _ h0', nextElement_count _ hcs]
       rfl
     · rename_i hcnt
@@ -252,7 +254,8 @@ theorem stepCommand_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {
           have hsize := hC.seenSize
           have hi := seen_index (off := 256) (t := r.cur) (by omega) (by omega)
           refine StepOk.ofNext (p' := .insertCopy s ⟨⟨st.iCur.toNat, r.cur.toNat⟩, r.blockCount.toNat - 1,
-            r.cur.toNat :: s.insertCopy.seen⟩) rfl ⟨?_, rfl, hprod⟩ (Nat.le_refl _) hp fun F => ?_
+            r.cur.toNat :: s.insertCopy.seen⟩) rfl ⟨?_, rfl, hprod⟩ (Nat.le_refl _) hp (fun F => ?_)
+            (fun F => Reach.one (by rw [stateBits_eq, cStep_command _ h0', nextIn_some (fun h => absurd h.2 (by omega)) (hnext _)]; rfl))
           · exact { hC with
               wf := hw
               iRel := hC.iRel.switched (by omega) hi hlt (u64_sub_one hc1).symm
@@ -267,6 +270,7 @@ theorem stepCommand_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {
         | short =>
           obtain ⟨_, _, hc54, hnone⟩ := hshort hs
           refine StepOk.ofShort hrel0 (hfull.resolve_left (by omega)) ?_
+            (by rw [cStep_command _ h0', nextIn_short (fun h => absurd h.2 (by omega)) hnone (by simpa using hc54)])
           rw [rest_command_of hK _ h0', hnone]
           rfl
         | bad =>
@@ -397,6 +401,18 @@ theorem rest_insertCopy_row {α : Type} {w : Nat} {m : MetaBlockHeader} {K : Com
   rw [rest_insertCopy, hcur, hcode]
   simp only [bind, Option.bind, hd, h1, h2, h3]
 
+/-- The element's symbol and insert extra bits, once its symbol is read. -/
+theorem readInsertHalf_row {code : PrefixCode} {bs r : List Bool} {c : Nat} (hd : decodeSymbol code bs = some (c, r))
+    (hc : c < 704) :
+    readInsertHalf code bs = readInt (cmdRow c).1 r >>= fun (e, b) =>
+      some ((c, (cmdRow c).2.1 + e, (cmdRow c).2.2.1, (cmdRow c).2.2.2), b) := by
+  obtain ⟨icode, ccode, ih, ch, h1, h2, h3⟩ := cmdRow_spec hc
+  simp only [readInsertHalf, bind, Option.bind, hd, h1, h2, h3]
+
+theorem readInsertHalf_none {code : PrefixCode} {bs : List Bool} (hd : decodeSymbol code bs = none) :
+    readInsertHalf code bs = none := by
+  simp only [readInsertHalf, bind, Option.bind, hd]
+
 /-- The element's symbol can't be read from these bits. -/
 theorem rest_insertCopy_none {α : Type} {w : Nat} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
     {s : CommandState} {ic : BlockState} {t : Nat} {code : PrefixCode} {bs : List Bool} (hcur : ic.types.cur = t)
@@ -413,13 +429,15 @@ private theorem insertCopy_next {α : Type} {w k : Nat} {m : MetaBlockHeader} {K
     (hw : b2.Wf) (hp : pos.toNat ≤ stop.toNat) (h1 : code.toNat = sym) (h2 : ilen.toNat = ilenN)
     (h3 : copyBits.toNat = copyBitsN) (h4 : copyBase.toNat = copyBaseN) (h5 : copyBitsN ≤ 24) (h6 : copyBaseN ≤ 2118)
     (hrest : ∀ F, rest w m K (.insertCopy s ic) (stateBits st a pos stop F) =
-      rest w m K (.copyLength s ic sym ilenN copyBitsN copyBaseN) (b2.held ++ (chunkBits a pos.toNat stop.toNat ++ F))) :
+      rest w m K (.copyLength s ic sym ilenN copyBitsN copyBaseN) (b2.held ++ (chunkBits a pos.toNat stop.toNat ++ F)))
+    (hj : ∀ F, cStep w m (.insertCopy s ic) (stateBits st a pos stop F) =
+      .next (.copyLength s ic sym ilenN copyBitsN copyBaseN) (b2.held ++ (chunkBits a pos.toNat stop.toNat ++ F))) :
     StepOk w k m K a stop (.insertCopy s ic) st pos
       { st with
         word := b2.word, count := b2.count, code := code, ilen := ilen, copyBits := copyBits, copyBase := copyBase
         tag := .copyLength, pos := pos, status := .next } :=
   StepOk.ofNext (p' := .copyLength s ic sym ilenN copyBitsN copyBaseN) rfl
-    ⟨{ hC with wf := hw }, rfl, hprod, h1, h2, h3, h4, h5, h6⟩ (Nat.le_refl _) hp hrest
+    ⟨{ hC with wf := hw }, rfl, hprod, h1, h2, h3, h4, h5, h6⟩ (Nat.le_refl _) hp hrest (fun F => Reach.one (hj F))
 
 /-- The element's step does its job. -/
 theorem stepInsertCopy_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
@@ -484,21 +502,36 @@ theorem stepInsertCopy_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader
       rw [hib] at hint
       -- Abstract too, or the kernel, comparing the new state with the old field by field, unfolds the shift.
       generalize b1.drop (rowBits row) = b2 at hw2 hint ⊢
-      refine insertCopy_next hC hprod hw2 hp hE (by rw [u64_add (by omega), hibase]) hcb hcbase s3 s4 fun F => ?_
-      rw [stateBits_eq, rest_insertCopy_row hcur hcode (hread hl _) hcN, hb1, hrow, hint]
-      rfl
+      refine insertCopy_next hC hprod hw2 hp hE (by rw [u64_add (by omega), hibase]) hcb hcbase s3 s4 (fun F => ?_) (fun F => ?_)
+      · rw [stateBits_eq, rest_insertCopy_row hcur hcode (hread hl _) hcN, hb1, hrow, hint]
+        rfl
+      · rw [stateBits_eq]
+        show lookIn m.insertCopyCodes[ic.types.cur]? _ = _
+        rw [hcur, lookIn_some hcode]
+        show readIn 39 (readInsertHalf code) _ _ = _
+        rw [readIn, readInsertHalf_row (hread hl _) hcN, hb1, hrow, hint]
+        rfl
     · rename_i hle
       have hnot : b1.count.toNat < cells.1 := by
         rw [← hib]
         exact Nat.lt_of_not_le fun h => hle (UInt64.le_iff_toNat_le.mpr h)
-      refine StepOk.ofShort hrel0 (hfull.resolve_left (by omega)) ?_
       have hd := hread hl []
       rw [List.append_nil, List.append_nil] at hd
-      rw [rest_insertCopy_row hcur hcode hd hcN, hb1, hrow, readInt_short hnot]
-      rfl
+      refine StepOk.ofShort hrel0 (hfull.resolve_left (by omega)) ?_ ?_
+      · rw [rest_insertCopy_row hcur hcode hd hcN, hb1, hrow, readInt_short hnot]
+        rfl
+      · show lookIn m.insertCopyCodes[ic.types.cur]? _ = _
+        rw [hcur, lookIn_some hcode]
+        show readIn 39 (readInsertHalf code) _ _ = _
+        refine readIn_short ?_ (by simp only [BitBuffer.held_length]; omega)
+        rw [readInsertHalf_row hd hcN, hb1, hrow, readInt_short hnot]
+        rfl
   · rename_i hl
     have hnot : st.count.toNat < (wordBits v).toNat := Nat.lt_of_not_le fun h => hl (UInt64.le_iff_toNat_le.mpr h)
-    exact StepOk.ofShort hrel0 (hfull.resolve_left (by omega)) (rest_insertCopy_none hcur hcode (hshort hl))
+    refine StepOk.ofShort hrel0 (hfull.resolve_left (by omega)) (rest_insertCopy_none hcur hcode (hshort hl)) ?_
+    show lookIn m.insertCopyCodes[ic.types.cur]? _ = _
+    rw [hcur, lookIn_some hcode]
+    exact readIn_short (readInsertHalf_none (hshort hl)) (by simp only [BitBuffer.held_length]; omega)
 
 /-! ### The copy length -/
 
@@ -546,7 +579,7 @@ theorem stepCopyLength_ok {α : Type} {w k : Nat} {m : MetaBlockHeader} {K : Com
       have h24 : (2 : Nat) ^ 24 = 16777216 := by decide
       refine StepOk.ofNext (p' := .literals s ic c ilen (copyBase + ((BitBuffer.mk st.word st.count).peek st.copyBits).toNat)
         ilen s.literal s.output) rfl ⟨{ hC with wf := BitBuffer.drop_wf hC.wf hk64 hle', rem := ?_ }, rfl, hprod, hcode, hilen,
-          ?_, hilen, Nat.le_refl _, by omega, rfl⟩ (Nat.le_refl _) hp fun F => ?_
+          ?_, hilen, Nat.le_refl _, by omega, rfl⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
       · show st.remaining.toNat = _
         omega
       · show (st.copyBase + (BitBuffer.mk st.word st.count).peek st.copyBits).toNat = _
@@ -555,12 +588,21 @@ theorem stepCopyLength_ok {α : Type} {w k : Nat} {m : MetaBlockHeader} {K : Com
         show (if s.remaining < ilen then none else _) = _
         rw [ite_eq_right (by omega)]
         rfl
+      · refine Reach.one ?_
+        rw [stateBits_eq]
+        show readIn 24 (readInt copyBits) _ _ = _
+        rw [readIn_some (hint _)]
+        show (if s.remaining < ilen then _ else _) = _
+        rw [ite_eq_right (by omega)]
+        rfl
   · rename_i hle
     have hnot : st.count.toNat < copyBits := by
       rw [← hbits]
       exact Nat.lt_of_not_le fun h => hle (UInt64.le_iff_toNat_le.mpr h)
-    refine StepOk.ofShort hrel0 (hfull.resolve_left (by omega)) ?_
-    rw [rest_copyLength, readInt_short (b := BitBuffer.mk st.word st.count) hnot]
-    rfl
+    refine StepOk.ofShort hrel0 (hfull.resolve_left (by omega)) ?_ ?_
+    · rw [rest_copyLength, readInt_short (b := BitBuffer.mk st.word st.count) hnot]
+      rfl
+    · show readIn 24 (readInt copyBits) _ _ = _
+      exact readIn_short (readInt_short hnot) (by simp only [BitBuffer.held_length]; omega)
 
 end Brotli.Decoder

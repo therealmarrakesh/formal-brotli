@@ -73,12 +73,15 @@ theorem stepHFirst_ok {i : Cat} {n : Nat} {tc cc : PrefixCode} {st : Hd} {g : Gh
   have R := blockCountFast_ok (hfit := (tableCheck_iff.mp hcheck).2) (h32 := (tableCheck_iff.mp hcheck).1) hw okC cC sC
   obtain ⟨Rok, Rshort, Rbad⟩ := R.run (X := hrest K g (.first st.cat n tc cc)) (N := fun v b =>
     afterCat K g st.cat ⟨n, tc, cc, v⟩ b) (fun bs => rfl)
+  have hval := R.ok
+  have hsh0 := R.short
   generalize blockCountFast st.d.arena (st.d.baseCOf st.cat) (tableCheck_iff.mp hcheck).2 (tableCheck_iff.mp hcheck).1
-    ⟨st.word, st.count⟩ = r at Rok Rshort Rbad
+    ⟨st.word, st.count⟩ = r at Rok Rshort Rbad hval hsh0
   cases hs : r.status with
   | short =>
     obtain ⟨_, _, h3, h4⟩ := Rshort hs
-    exact HStepOk.ofShortRead (X := 39) hrel hfull (by omega) h3 h4
+    obtain ⟨_, _, _, h5⟩ := hsh0 hs
+    exact HStepOk.ofShortRead (X := 39) hrel hfull (by omega) h3 h4 (readIn_short h5 (by rw [held_len]; exact h3))
   | bad =>
     exact HStepOk.ofBad rfl (fun F => Rbad hs _)
   | ok =>
@@ -111,10 +114,15 @@ theorem stepHFirst_ok {i : Cat} {n : Nat} {tc cc : PrefixCode} {st : Hd} {g : Gh
     generalize catMoveOn { st with
         word := r.word, count := r.count, pos := pos, status := .next
         d := st.d.setCount st.cat r.a } = r2 at hrel2 b1 b2 b3 b4 ha ⊢
-    refine HStepOk.ofNext (hd := firstNext_down _ _ _ _) (hm := HMove.ofArr ha (firstNext_cap _ _ _ _)) b4 hrel2 (by rw [b3]; exact Nat.le_refl _) (by rw [b3]; exact hp) (fun F => ?_)
-    have e := hN (chunkBits a pos.toNat stop.toNat ++ F)
-    rw [avail_mk, e, afterCat_eq, avail_mk, b1, b2, b3]
-    rfl
+    refine HStepOk.ofNext (hd := firstNext_down _ _ _ _) (hm := HMove.ofArr ha (firstNext_cap _ _ _ _)) b4 hrel2 (by rw [b3]; exact Nat.le_refl _) (by rw [b3]; exact hp)
+      (fun F => ?_) (fun F => ?_)
+    · have e := hN (chunkBits a pos.toNat stop.toNat ++ F)
+      rw [avail_mk, e, afterCat_eq, avail_mk, b1, b2, b3]
+      rfl
+    · rw [avail_mk]
+      show readIn 39 (readBlockCount cc) _ _ = _
+      rw [readIn_some ((hval hs).2 _), ← hc, avail_mk, b1, b2, b3]
+      rfl
 
 /-! ### NPOSTFIX and NDIRECT -/
 
@@ -190,13 +198,16 @@ theorem stepHNp_ok {st : Hd} {g : Gh} {pos : USize} (hrel : HRel st g .np) (hp :
         | none => rfl
         | some q => rfl)
   have hval := R.ok
+  have hsh0 := R.short
   unfold stepHNp
   dsimp only
-  generalize npFast ⟨st.word, st.count⟩ = r at Rok Rshort Rbad hval
+  generalize npFast ⟨st.word, st.count⟩ = r at Rok Rshort Rbad hval hsh0
   cases hs : r.status with
   | short =>
     obtain ⟨_, _, h3, h4⟩ := Rshort hs
+    obtain ⟨_, _, _, h5⟩ := hsh0 hs
     exact HStepOk.ofShortRead (X := 6) hrel hfull (by omega) h3 h4
+      (by show readIn 6 readNp _ _ = _; exact readIn_short h5 (by rw [held_len]; exact h3))
   | bad => exact HStepOk.ofBad rfl (fun F => Rbad hs _)
   | ok =>
     dsimp only
@@ -247,11 +258,15 @@ theorem stepHNp_ok {st : Hd} {g : Gh} {pos : USize} (hrel : HRel st g .np) (hp :
     refine HStepOk.ofNext (g' := { g with m := { g.m with npostfix := r.a.toNat, ndirect := r.b.toNat <<< r.a.toNat } })
       (p' := .modes [] g.m.literal.n) (hm := ⟨rfl, rfl, fun h => ⟨hfs, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩,
         by simp only [capH, Option.isSome, Bool.false_eq_true, ↓reduceIte]; omega, Nat.zero_le _⟩) rfl ⟨hw2, hu.npDone rfl hshift (by omega) hnd, rfl, rfl, hnL, by simp, ?_, by simp, by simp⟩
-      (Nat.le_refl _) hp (fun F => ?_)
+      (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
     · show (zeroBytes st.d.nL.toNat).size = g.m.literal.n
       rw [zeroBytes_size (by omega), hnL]
     · have e := hN (chunkBits a pos.toNat stop.toNat ++ F)
       rw [avail_mk, e]
+      rfl
+    · rw [avail_mk]
+      show readIn 6 readNp _ _ = _
+      rw [readIn_some (show readNp _ = _ from (hval hs).2 _)]
       rfl
 
 /-! ### The context modes -/
@@ -307,7 +322,7 @@ theorem stepHModes_ok {done : List Nat} {left : Nat} {st : Hd} {g : Gh} {pos : U
     refine HStepOk.ofNext (g' := { g with m := { g.m with contextModes := done } }) (p' := .trees true)
       (hm := ⟨rfl, rfl, fun h => ⟨h.fill, h.lens, h.clLens, h.clt, h.mapT, by show st.fill.size ≤ 256; rw [hsize]; exact h256, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩,
         by simp only [capH, Option.isSome, Bool.false_eq_true, ↓reduceIte]; omega, Nat.zero_le _⟩) rfl
-      ⟨hw, hu.modesDone hmap, rfl, rfl⟩ (Nat.le_refl _) hp (fun F => ?_)
+      ⟨hw, hu.modesDone hmap, rfl, rfl⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => rfl)
     exact hrest_modes_zero K g done _
   rw [ite_eq_right h0]
   have hl0 : st.left.toNat ≠ 0 := fun e => h0 (UInt64.toNat_inj.mp (by rw [e]; rfl))
@@ -335,7 +350,7 @@ theorem stepHModes_ok {done : List Nat} {left : Nat} {st : Hd} {g : Gh} {pos : U
       (hm := ⟨rfl, rfl, fun h => ⟨by show (setU st.fill st.idx.toUSize v.toUInt8).size ≤ 16384; rw [hsz']; omega, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩,
         by simp only [capH, Option.isSome, Bool.false_eq_true, ↓reduceIte]; omega, Nat.zero_le _⟩) rfl
       ⟨hw1, hu, ht, by simpa using hi1, hl1, by simp only [List.length_append, List.length_singleton]; omega, hsz', ?_, ?_⟩
-      (Nat.le_refl _) hp (fun F => ?_)
+      (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
     · intro x hx
       rcases List.mem_append.mp hx with h | h
       · exact hlt x h
@@ -359,12 +374,17 @@ theorem stepHModes_ok {done : List Nat} {left : Nat} {st : Hd} {g : Gh} {pos : U
       rw [avail_mk, hrest_modes_succ, show readInt 2 ((BitBuffer.mk st.word st.count).held ++
         (chunkBits a pos.toNat stop.toNat ++ F)) = _ from hread _]
       rfl
+    · rw [avail_mk]
+      show readIn 2 (readInt 2) _ _ = _
+      rw [readIn_some (show readInt 2 ((BitBuffer.mk st.word st.count).held ++ (chunkBits a pos.toNat stop.toNat ++ F)) = _ from hread _)]
+      rfl
   · rw [ite_eq_right h2]
     have hc : st.count.toNat < 2 := not_le_lt' h2
     have hnone : hrest K g (.modes done (n + 1)) (BitBuffer.mk st.word st.count).held = none := by
       rw [hrest_modes_succ, readInt_short (b := ⟨st.word, st.count⟩) hc]
       rfl
     exact HStepOk.ofShortRead (X := 2) hrel hfull (by omega) hc hnone
+      (readIn_short (readInt_short (b := ⟨st.word, st.count⟩) hc) (by rw [held_len]; exact hc))
 
 end
 

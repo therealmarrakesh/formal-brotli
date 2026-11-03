@@ -1,5 +1,6 @@
 import Brotli.Decoder.State
 import Brotli.Decoder.Copy
+import Brotli.Decoder.Order
 
 /-!
 # One step of the command loop
@@ -33,37 +34,34 @@ def DownEq (p p' : Phase) (st r : Cmd) : Prop := LexLt (rankC p') (rankC p) ∨ 
 /-- Settles `Down` for a move whose places are spelled out. -/
 macro "step_down" : tactic => `(tactic| first | exact Or.inl rfl | (simp only [Down, rankC, LexLt]; omega))
 
-/-- The bytes a place has produced so far, most recent first. -/
-def Phase.out : Phase → List Nat
-  | .command s => s.output
-  | .insertCopy s _ => s.output
-  | .copyLength s .. => s.output
-  | .literals _ _ _ _ _ _ _ out => out
-  | .literalSymbol _ _ _ _ _ _ _ out => out
-  | .distance s .. => s.output
-  | .distanceSymbol s .. => s.output
-  | .copy s .. => s.output
-  | .word s _ => s.output
-
 /-- A move's bytes: they go on the front of the output, and they're waiting to go out. -/
 def OutStep (p p' : Phase) (st r : Cmd) : Prop := ∃ l, p'.out = l ++ p.out ∧ r.pend.toNat = st.pend.toNat + l.length
 
+/-- A buffer holds as many bits as its count. -/
+@[simp] theorem BitBuffer.held_length (b : BitBuffer) : b.held.length = b.count.toNat := lowBits_length _ _
+
 /-- What a step must do. Moving on keeps the state tied to `rest`, whatever bits follow. Needing input means the chunk
 is used up, and the spec rejects if no more bits come. Needing output means the window is full of bytes not yet handed
-over. Finishing means MLEN is reached at the start of a command. Rejecting means the spec rejects, whatever bits follow. -/
+over. Finishing means MLEN is reached at the start of a command. Rejecting means the spec rejects, whatever bits follow.
+Whatever the step does short of rejecting, the place it ends at is where the spec's reading in order takes the place it
+started at, whatever bits follow, and needing input means the reading in order has too few bits there. -/
 structure StepOk {α : Type} (w k : Nat) (m : MetaBlockHeader) (K : CommandState → List Bool → Option α) (a : ByteArray)
     (stop : USize) (p : Phase) (st : Cmd) (pos : USize) (r : Cmd) : Prop where
   next : r.status = .next → ∃ p', Rel w k m r p' ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
-    (∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K p' (stateBits r a r.pos stop F)) ∧ Down p p' ∧ OutStep p p' st r
+    (∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K p' (stateBits r a r.pos stop F)) ∧ Down p p' ∧ OutStep p p' st r ∧
+    ∀ F, Reach (cStep w m) p (stateBits st a pos stop F) p' (stateBits r a r.pos stop F)
   needsInput : r.status = .needsInput → r.pos = stop ∧ pos.toNat ≤ stop.toNat ∧ ∃ p', Rel w k m r p' ∧
     (∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K p' (stateBits r a r.pos stop F)) ∧
-    rest w m K p' (BitBuffer.mk r.word r.count).held = none ∧ DownEq p p' st r ∧ OutStep p p' st r
+    rest w m K p' (BitBuffer.mk r.word r.count).held = none ∧ DownEq p p' st r ∧ OutStep p p' st r ∧
+    (∀ F, Reach (cStep w m) p (stateBits st a pos stop F) p' (stateBits r a r.pos stop F)) ∧
+    CShort w m p' (BitBuffer.mk r.word r.count).held
   needsOutput : r.status = .needsOutput → ∃ p', Rel w k m r p' ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
     (∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K p' (stateBits r a r.pos stop F)) ∧
-    r.pend.toNat = 2 ^ k ∧ DownEq p p' st r ∧ OutStep p p' st r
+    r.pend.toNat = 2 ^ k ∧ DownEq p p' st r ∧ OutStep p p' st r ∧
+    ∀ F, Reach (cStep w m) p (stateBits st a pos stop F) p' (stateBits r a r.pos stop F)
   done : r.status = .done → ∃ s, Rel w k m r (.command s) ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
     (∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K (.command s) (stateBits r a r.pos stop F)) ∧
-    s.remaining = 0 ∧ OutStep p (.command s) st r
+    s.remaining = 0 ∧ OutStep p (.command s) st r ∧ ∀ F, Reach (cStep w m) p (stateBits st a pos stop F) (.command s) (stateBits r a r.pos stop F)
   bad : r.status = .bad → ∀ F, rest w m K p (stateBits st a pos stop F) = none
 
 section
@@ -74,9 +72,10 @@ variable {α : Type} {w k : Nat} {m : MetaBlockHeader} {K : CommandState → Lis
 theorem StepOk.ofNext (hs : r.status = .next) {p' : Phase} (hrel : Rel w k m r p') (h1 : pos.toNat ≤ r.pos.toNat)
     (h2 : r.pos.toNat ≤ stop.toNat)
     (h : ∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K p' (stateBits r a r.pos stop F))
+    (hj : ∀ F, Reach (cStep w m) p (stateBits st a pos stop F) p' (stateBits r a r.pos stop F))
     (hd : Down p p' := by step_down) (hout : OutStep p p' st r := by exact ⟨[], rfl, rfl⟩) :
     StepOk w k m K a stop p st pos r :=
-  ⟨fun _ => ⟨p', hrel, h1, h2, h, hd, hout⟩, fun e => StepStatus.noConfusion (hs.symm.trans e),
+  ⟨fun _ => ⟨p', hrel, h1, h2, h, hd, hout, hj⟩, fun e => StepStatus.noConfusion (hs.symm.trans e),
     fun e => StepStatus.noConfusion (hs.symm.trans e), fun e => StepStatus.noConfusion (hs.symm.trans e),
     fun e => StepStatus.noConfusion (hs.symm.trans e)⟩
 
@@ -90,8 +89,10 @@ theorem StepOk.ofBad (hs : r.status = .bad) (h : ∀ F, rest w m K p (stateBits 
 theorem StepOk.ofInput (hs : r.status = .needsInput) (hstop : r.pos = stop) (hle : pos.toNat ≤ stop.toNat) {p' : Phase}
     (hrel : Rel w k m r p')
     (h : ∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K p' (stateBits r a r.pos stop F))
-    (hn : rest w m K p' (BitBuffer.mk r.word r.count).held = none) (hd : DownEq p p' st r) (hout : OutStep p p' st r) : StepOk w k m K a stop p st pos r :=
-  ⟨fun e => StepStatus.noConfusion (hs.symm.trans e), fun _ => ⟨hstop, hle, p', hrel, h, hn, hd, hout⟩,
+    (hn : rest w m K p' (BitBuffer.mk r.word r.count).held = none) (hd : DownEq p p' st r) (hout : OutStep p p' st r)
+    (hj : ∀ F, Reach (cStep w m) p (stateBits st a pos stop F) p' (stateBits r a r.pos stop F))
+    (hsh : CShort w m p' (BitBuffer.mk r.word r.count).held) : StepOk w k m K a stop p st pos r :=
+  ⟨fun e => StepStatus.noConfusion (hs.symm.trans e), fun _ => ⟨hstop, hle, p', hrel, h, hn, hd, hout, hj, hsh⟩,
     fun e => StepStatus.noConfusion (hs.symm.trans e), fun e => StepStatus.noConfusion (hs.symm.trans e),
     fun e => StepStatus.noConfusion (hs.symm.trans e)⟩
 
@@ -113,15 +114,17 @@ theorem copyPhase_rank {w : Nat} {s : CommandState} {clen dcode d : Nat} {q : Ph
 
 /-- A read that fell short and changed nothing. -/
 theorem StepOk.ofShort (hrel : Rel w k m st p) (hstop : pos = stop)
-    (hn : rest w m K p (BitBuffer.mk st.word st.count).held = none) :
+    (hn : rest w m K p (BitBuffer.mk st.word st.count).held = none)
+    (hsh : cStep w m p (BitBuffer.mk st.word st.count).held = .short) :
     StepOk w k m K a stop p st pos (markStep st pos .needsInput) :=
   StepOk.ofInput rfl hstop (by rw [hstop]; exact Nat.le_refl _) (hrel.mark _ _) (fun _ => rfl) hn (Or.inr ⟨rfl, rfl⟩) ⟨[], rfl, rfl⟩
+    (fun _ => Reach.refl _ _) (CShort.here hsh)
 
 /-- A step that found the window full, and changed nothing. -/
 theorem StepOk.ofFull (hrel : Rel w k m st p) (hp : pos.toNat ≤ stop.toNat) (hfull : st.pend.toNat = 2 ^ k) :
     StepOk w k m K a stop p st pos (markStep st pos .needsOutput) :=
   ⟨fun e => StepStatus.noConfusion e, fun e => StepStatus.noConfusion e,
-    fun _ => ⟨p, hrel.mark _ _, Nat.le_refl _, hp, (fun _ => rfl), hfull, Or.inr ⟨rfl, rfl⟩, ⟨[], rfl, rfl⟩⟩,
+    fun _ => ⟨p, hrel.mark _ _, Nat.le_refl _, hp, (fun _ => rfl), hfull, Or.inr ⟨rfl, rfl⟩, ⟨[], rfl, rfl⟩, fun _ => Reach.refl _ _⟩,
     fun e => StepStatus.noConfusion e, fun e => StepStatus.noConfusion e⟩
 
 /-- A move's bytes depend only on what was waiting before it. -/
@@ -140,17 +143,19 @@ theorem StepOk.refilled {st1 : Cmd} {pos1 : USize} (h : StepOk w k m K a stop p 
     (hb : ∀ F, stateBits st a pos stop F = stateBits st1 a pos1 stop F) (h1 : pos.toNat ≤ pos1.toNat)
     (h2 : pos1.toNat ≤ stop.toNat) (he : st1.pend = st.pend) : StepOk w k m K a stop p st pos r where
   next e := by
-    obtain ⟨p', hrel, h3, h4, h5, h6, h7⟩ := h.next e
-    exact ⟨p', hrel, Nat.le_trans h1 h3, h4, (fun F => by rw [hb]; exact h5 F), h6, h7.ofPend he⟩
+    obtain ⟨p', hrel, h3, h4, h5, h6, h7, h8⟩ := h.next e
+    exact ⟨p', hrel, Nat.le_trans h1 h3, h4, (fun F => by rw [hb]; exact h5 F), h6, h7.ofPend he, fun F => by rw [hb]; exact h8 F⟩
   needsInput e := by
-    obtain ⟨h3, _, p', hrel, h5, h6, h7, h8⟩ := h.needsInput e
-    exact ⟨h3, Nat.le_trans h1 h2, p', hrel, (fun F => by rw [hb]; exact h5 F), h6, h7.ofPend he, h8.ofPend he⟩
+    obtain ⟨h3, _, p', hrel, h5, h6, h7, h8, h9, h10⟩ := h.needsInput e
+    exact ⟨h3, Nat.le_trans h1 h2, p', hrel, (fun F => by rw [hb]; exact h5 F), h6, h7.ofPend he, h8.ofPend he,
+      (fun F => by rw [hb]; exact h9 F), h10⟩
   needsOutput e := by
-    obtain ⟨p', hrel, h3, h4, h5, h6, h7, h8⟩ := h.needsOutput e
-    exact ⟨p', hrel, Nat.le_trans h1 h3, h4, (fun F => by rw [hb]; exact h5 F), h6, h7.ofPend he, h8.ofPend he⟩
+    obtain ⟨p', hrel, h3, h4, h5, h6, h7, h8, h9⟩ := h.needsOutput e
+    exact ⟨p', hrel, Nat.le_trans h1 h3, h4, (fun F => by rw [hb]; exact h5 F), h6, h7.ofPend he, h8.ofPend he,
+      fun F => by rw [hb]; exact h9 F⟩
   done e := by
-    obtain ⟨s, hrel, h3, h4, h5, h6, h7⟩ := h.done e
-    exact ⟨s, hrel, Nat.le_trans h1 h3, h4, (fun F => by rw [hb]; exact h5 F), h6, h7.ofPend he⟩
+    obtain ⟨s, hrel, h3, h4, h5, h6, h7, h8⟩ := h.done e
+    exact ⟨s, hrel, Nat.le_trans h1 h3, h4, (fun F => by rw [hb]; exact h5 F), h6, h7.ofPend he, fun F => by rw [hb]; exact h8 F⟩
   bad e := fun F => by rw [hb]; exact h.bad e F
 
 end
@@ -268,7 +273,8 @@ private theorem copy_after {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeade
     exact pend_after hk hrunR
   refine StepOk.ofNext (p' := .copy { s with output := copyBytes d run.toNat s.output } d (n - run.toNat))
     (hd := Or.inr (Or.inr ⟨rfl, show n - run.toNat < n by omega⟩)) (hout := ⟨l, hl1, hpe⟩) rfl
-    ⟨?_, htag, ?_, hdn, ?_, hd1, hdw, ?_⟩ (Nat.le_refl _) hp fun F => ?_
+    ⟨?_, htag, ?_, hdn, ?_, hd1, hdw, ?_⟩ (Nat.le_refl _) hp (fun F => ?_)
+    (fun F => (cReach_copy w m d _ run.toNat n s (by omega)))
   · refine { hC with ring := h1, bytes := h3, ctx := h2, pendLe := ?_, pendOut := ?_, written := ?_ }
     · show (st.pend + run).toNat ≤ _
       rw [pend_after hk hrunR]
@@ -318,7 +324,8 @@ theorem stepCopy_ok {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeader} {K :
       have := u64_zero hz
       omega
     subst hn0
-    refine StepOk.ofNext (p' := .command s) rfl ⟨{ hC with }, rfl, by omega⟩ (Nat.le_refl _) hp fun F => rfl
+    exact StepOk.ofNext (p' := .command s) rfl ⟨{ hC with }, rfl, by omega⟩ (Nat.le_refl _) hp (fun F => rfl)
+      (fun F => (Reach.one rfl))
   · rename_i hnz
     have hnzN := u64_ne hnz
     split
@@ -406,7 +413,7 @@ private theorem word_after {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeade
   refine StepOk.ofNext (p' := .word { s with output := (pending.take run.toNat).reverse ++ s.output } (pending.drop run.toNat))
     (hd := Or.inr (Or.inr ⟨rfl, show (pending.drop run.toNat).length < pending.length by rw [List.length_drop]; omega⟩))
     (hout := ⟨_, rfl, hpe⟩) rfl
-    ⟨?_, htag, ?_, ?_, hsmall, ?_⟩ (Nat.le_refl _) hp fun F => ?_
+    ⟨?_, htag, ?_, ?_, hsmall, ?_⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => (cReach_word w m _ run.toNat s pending))
   · refine { hC with ring := h1, bytes := h3, ctx := h2, pendLe := ?_, pendOut := ?_, written := ?_ }
     · show (st.pend + run).toNat ≤ _
       rw [pend_after hk hrunR]
@@ -463,7 +470,8 @@ theorem stepWord_ok {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeader} {K :
       have : (st.wordBuf.usize - st.wordPos).toNat = 0 := by rw [hz]; rfl
       omega
     subst hnil
-    refine StepOk.ofNext (p' := .command s) rfl ⟨{ hC with }, rfl, by simpa using hprod⟩ (Nat.le_refl _) hp fun F => ?_
+    refine StepOk.ofNext (p' := .command s) rfl ⟨{ hC with }, rfl, by simpa using hprod⟩ (Nat.le_refl _) hp (fun F => ?_)
+      (fun F => (Reach.one rfl))
     show rest w m K (.word s []) _ = rest w m K (.command s) _
     rw [rest_word_end]
     rfl

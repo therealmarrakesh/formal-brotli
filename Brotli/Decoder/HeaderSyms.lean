@@ -229,7 +229,7 @@ theorem stepHSyms_ok {o : Owner} {size : Nat} {clc : PrefixCode} {ls : LengthSta
     have hdone := tableDone_ok K (st := { st with pos := pos, status := .next }) (c := .canonical (ls.lens ++ List.replicate (size - ls.lens.length) 0))
       (single := false) (sym := 0) hw hu hs ho rfl (fun e => Bool.noConfusion e) (fun _ => by rw [← hfullL]) hy.sz hC hsy
     exact hdone.toStep rfl hp rfl (fun h => ⟨h.fill, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩)
-      (fun F => hrest_syms_done K g o size clc ls _ hlenLe hsum)
+      (fun F => hrest_syms_done K g o size clc ls _ hlenLe hsum) (fun F => hStep_syms_done _ hlenLe hsum)
   rw [ite_eq_right h0]
   have hsumNe : lengthSum ls.lens ≠ 32768 := by
     rw [← hy.sumOk]
@@ -251,12 +251,15 @@ theorem stepHSyms_ok {o : Owner} {size : Nat} {clc : PrefixCode} {ls : LengthSta
     else if 32768 < lengthSum (applyCodeLength ls v.1 v.2).lens then none
     else hrest K g (.syms o size clc (applyCodeLength ls v.1 v.2)) b) (fun bs => hrest_syms_step K g o size clc ls bs hlenLt hsumNe)
   have hval := R.ok
+  have hsh0 := R.short
   dsimp only
-  generalize lenSymFast st.clt.t (USize.ofNat 0) st.clt.fits st.clt.h32 ⟨st.word, st.count⟩ = r at Rok Rshort Rbad hval
+  generalize lenSymFast st.clt.t (USize.ofNat 0) st.clt.fits st.clt.h32 ⟨st.word, st.count⟩ = r at Rok Rshort Rbad hval hsh0
   cases hsr : r.status with
   | short =>
     obtain ⟨_, _, h3, h4⟩ := Rshort hsr
+    obtain ⟨_, _, _, h5⟩ := hsh0 hsr
     exact HStepOk.ofShortRead (X := 18) hrel hfull (by omega) h3 h4
+      (by rw [hStep_syms_step _ hlenLt hsumNe]; exact readIn_short h5 (by rw [held_len]; exact h3))
   | bad => exact HStepOk.ofBad rfl (fun F => Rbad hsr _)
   | ok =>
     dsimp only
@@ -380,10 +383,13 @@ theorem stepHSyms_ok {o : Owner} {size : Nat} {clc : PrefixCode} {ls : LengthSta
         refine HStepOk.ofNext (g' := g) (p' := .syms o size clc (applyCodeLength ls r.a.toNat r.b.toNat))
           (hd := Or.inr ⟨rfl, Or.inr ⟨rfl, hgrow⟩⟩)
           (hm := HMove.ofD rfl (fun h => ⟨h.fill, Nat.le_trans (Nat.le_of_eq hnew.sz) hs3, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩) (Nat.le_refl _)) rfl
-          ⟨hw2, hu, ht, hs, ho, hnew⟩ (Nat.le_refl _) hp (fun F => ?_)
-        rw [avail_mk, hN]
-        simp only [hlt1, hbig2, ↓reduceIte]
-        rfl
+          ⟨hw2, hu, ht, hs, ho, hnew⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
+        · rw [avail_mk, hN]
+          simp only [hlt1, hbig2, ↓reduceIte]
+          rfl
+        · rw [avail_mk, hStep_syms_step _ hlenLt hsumNe, readIn_some ((hval hsr).2 _)]
+          simp only [hlt1, hbig2, ↓reduceIte]
+          rfl
     · rw [ite_eq_right hlow]
       have hhigh : ¬ r.a.toNat < 16 := fun h => hlow (UInt64.lt_iff_toNat_lt.mpr h)
       have hprevOk := hy.prevOk
@@ -615,10 +621,13 @@ theorem stepHSyms_ok {o : Owner} {size : Nat} {clc : PrefixCode} {ls : LengthSta
         refine HStepOk.ofNext (g' := g) (p' := .syms o size clc (applyCodeLength ls r.a.toNat r.b.toNat))
           (hd := Or.inr ⟨rfl, Or.inr ⟨rfl, hshorter⟩⟩)
           (hm := HMove.ofD rfl (fun h => ⟨h.fill, Nat.le_trans (Nat.le_of_eq hnew.sz) hs3, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩) (Nat.le_refl _)) rfl
-          ⟨hw2, hu, ht, hs, ho, hnew⟩ (Nat.le_refl _) hp (fun F => ?_)
-        rw [avail_mk, hN]
-        simp only [hover', hbig', ↓reduceIte]
-        rfl
+          ⟨hw2, hu, ht, hs, ho, hnew⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
+        · rw [avail_mk, hN]
+          simp only [hover', hbig', ↓reduceIte]
+          rfl
+        · rw [avail_mk, hStep_syms_step _ hlenLt hsumNe, readIn_some ((hval hsr).2 _)]
+          simp only [hover', hbig', ↓reduceIte]
+          rfl
 
 end
 

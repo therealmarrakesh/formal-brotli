@@ -160,13 +160,16 @@ theorem stepHTrees_ok {isL : Bool} {st : Hd} {g : Gh} {pos : USize} (hrel : HRel
     if v < 2 then afterMap K g isL v (List.replicate (mapSize g isL) 0) b
     else hrest K g (.rlemax isL v) b) (fun bs => hrest_trees K g isL bs)
   have hval := R.ok
+  have hsh0 := R.short
   unfold stepHTrees
   dsimp only
-  generalize varLenFast ⟨st.word, st.count⟩ = r at Rok Rshort Rbad hval
+  generalize varLenFast ⟨st.word, st.count⟩ = r at Rok Rshort Rbad hval hsh0
   cases hs : r.status with
   | short =>
     obtain ⟨_, _, h3, h4⟩ := Rshort hs
+    obtain ⟨_, _, _, h5⟩ := hsh0 hs
     exact HStepOk.ofShortRead (X := 11) hrel hfull (by omega) h3 h4
+      (by show readIn 11 readVarLen _ _ = _; exact readIn_short h5 (by rw [held_len]; exact h3))
   | bad => exact HStepOk.ofBad rfl (fun F => Rbad hs _)
   | ok =>
     dsimp only
@@ -192,20 +195,32 @@ theorem stepHTrees_ok {isL : Bool} {st : Hd} {g : Gh} {pos : USize} (hrel : HRel
         (ntrees := r.a.toNat) (cmap := List.replicate (mapSize g isL) 0) hi hu hmap.sz ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩ (fun h => h.fill) (Nat.le_refl _)
       generalize mapFinish { st with word := r.word, count := r.count, pos := pos, status := .next } r.a
         (zeroBytes (mapSizeFast st)) = r2 at hrel2 b1 b2 b3 b4 hmv ⊢
-      refine HStepOk.ofNext (hd := treesNext_down _ _) (hm := hmv) b4 hrel2 (by rw [b3]; exact Nat.le_refl _) (by rw [b3]; exact hp) (fun F => ?_)
-      have e := hN (chunkBits a pos.toNat stop.toNat ++ F)
-      rw [avail_mk, e]
-      simp only [h2', ↓reduceIte]
-      rw [afterMap_eq, avail_mk, b1, b2, b3]
-      rfl
+      refine HStepOk.ofNext (hd := treesNext_down _ _) (hm := hmv) b4 hrel2 (by rw [b3]; exact Nat.le_refl _) (by rw [b3]; exact hp)
+        (fun F => ?_) (fun F => ?_)
+      · have e := hN (chunkBits a pos.toNat stop.toNat ++ F)
+        rw [avail_mk, e]
+        simp only [h2', ↓reduceIte]
+        rw [afterMap_eq, avail_mk, b1, b2, b3]
+        rfl
+      · rw [avail_mk]
+        show readIn 11 readVarLen _ _ = _
+        rw [readIn_some ((hval hs).2 _)]
+        simp only [h2', ↓reduceIte]
+        rw [avail_mk, b1, b2, b3]
+        rfl
     · rw [ite_eq_right h2]
       have h2' : ¬ r.a.toNat < 2 := fun h => h2 (hsh.mpr h)
       refine HStepOk.ofNext (g' := g) (p' := .rlemax isL r.a.toNat) rfl ⟨hw2, hu, rfl, hi, rfl, by omega, hrange.2⟩
-        (Nat.le_refl _) hp (fun F => ?_)
-      have e := hN (chunkBits a pos.toNat stop.toNat ++ F)
-      rw [avail_mk, e]
-      simp only [h2', ↓reduceIte]
-      rfl
+        (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
+      · have e := hN (chunkBits a pos.toNat stop.toNat ++ F)
+        rw [avail_mk, e]
+        simp only [h2', ↓reduceIte]
+        rfl
+      · rw [avail_mk]
+        show readIn 11 readVarLen _ _ = _
+        rw [readIn_some ((hval hs).2 _)]
+        simp only [h2', ↓reduceIte]
+        rfl
 
 /-! ### RLEMAX -/
 
@@ -229,13 +244,16 @@ theorem stepHRlemax_ok {isL : Bool} {ntrees : Nat} {st : Hd} {g : Gh} {pos : USi
   obtain ⟨Rok, Rshort, Rbad⟩ := R.run (X := hrest K g (.rlemax isL ntrees)) (N := fun v b =>
     hrest K g (.code (.map isL ntrees v) (contextMapAlphabetSize ntrees v)) b) (fun bs => rfl)
   have hval := R.ok
+  have hsh0 := R.short
   unfold stepHRlemax
   dsimp only
-  generalize rlemaxFast ⟨st.word, st.count⟩ = r at Rok Rshort Rbad hval
+  generalize rlemaxFast ⟨st.word, st.count⟩ = r at Rok Rshort Rbad hval hsh0
   cases hs : r.status with
   | short =>
     obtain ⟨_, _, h3, h4⟩ := Rshort hs
+    obtain ⟨_, _, _, h5⟩ := hsh0 hs
     exact HStepOk.ofShortRead (X := 5) hrel hfull (by omega) h3 h4
+      (by show readIn 5 readRLEMAX _ _ = _; exact readIn_short h5 (by rw [held_len]; exact h3))
   | bad => exact HStepOk.ofBad rfl (fun F => Rbad hs _)
   | ok =>
     dsimp only
@@ -245,13 +263,17 @@ theorem stepHRlemax_ok {isL : Bool} {ntrees : Nat} {st : Hd} {g : Gh} {pos : USi
       rw [UInt64.toNat_add, hn]
       exact Nat.mod_eq_of_lt (by omega)
     refine HStepOk.ofNext (g' := g) (p' := .code (.map isL ntrees r.a.toNat) (contextMapAlphabetSize ntrees r.a.toNat)) rfl
-      ⟨hw2, hu, rfl, ⟨hsum, ?_, ?_⟩, rfl, hi, hn, rfl, h2, h256, hrange, rfl⟩ (Nat.le_refl _) hp (fun F => ?_)
+      ⟨hw2, hu, rfl, ⟨hsum, ?_, ?_⟩, rfl, hi, hn, rfl, h2, h256, hrange, rfl⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
     · unfold contextMapAlphabetSize
       omega
     · unfold contextMapAlphabetSize
       omega
     · have e := hN (chunkBits a pos.toNat stop.toNat ++ F)
       rw [avail_mk, e]
+      rfl
+    · rw [avail_mk]
+      show readIn 5 readRLEMAX _ _ = _
+      rw [readIn_some ((hval hs).2 _)]
       rfl
 
 /-! ### A group of codes -/
@@ -395,7 +417,7 @@ theorem stepHCodes_ok {k : CK} {done : List PrefixCode} {left : Nat} {st : Hd} {
       rw [e]
       refine HStepOk.ofNext (g' := g.setCodes .L done) (p' := .codes .I [] g.m.insertCopy.n) rfl
         ⟨hw, hu.codesDoneL hlen' hpart, ht, rfl, rfl, hn, by show 0 + g.m.insertCopy.n = g.m.insertCopy.n; omega, h256', ?_⟩
-        (Nat.le_refl _) hp (fun F => ?_)
+        (Nat.le_refl _) hp (fun F => ?_) (fun F => rfl)
         (hm := ⟨rfl, rfl, fun h => ⟨hfs, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, hfill, h.icBase, h.dBase⟩,
           by simp only [capH, ckN, Option.isSome, Bool.false_eq_true, ↓reduceIte]; omega, Nat.zero_le _⟩)
       · refine ⟨?_, by simp, fun i hi => absurd hi (by simp)⟩
@@ -416,7 +438,7 @@ theorem stepHCodes_ok {k : CK} {done : List PrefixCode} {left : Nat} {st : Hd} {
       rw [e]
       refine HStepOk.ofNext (g' := g.setCodes .I done) (p' := .codes .D [] g.treesD) rfl
         ⟨hw, hu.codesDoneI hlen' hpart, ht, rfl, rfl, hT, by show 0 + g.treesD = g.treesD; omega, hT2, ?_⟩
-        (Nat.le_refl _) hp (fun F => ?_)
+        (Nat.le_refl _) hp (fun F => ?_) (fun F => rfl)
         (hm := ⟨rfl, rfl, fun h => ⟨hfs, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, hfill, h.dBase⟩,
           by simp only [capH, ckN, Option.isSome, Bool.false_eq_true, ↓reduceIte]; omega, Nat.zero_le _⟩)
       · refine ⟨?_, by simp, fun i hi => absurd hi (by simp)⟩
@@ -432,7 +454,7 @@ theorem stepHCodes_ok {k : CK} {done : List PrefixCode} {left : Nat} {st : Hd} {
       rw [e]
       exact ⟨fun e => HStatus.noConfusion e, fun e => HStatus.noConfusion e, fun e => HStatus.noConfusion e, fun e => HStatus.noConfusion e,
         fun _ => ⟨g.setCodes .D done, hu.codesDoneD hlen' hpart, hw, Nat.le_refl _, hp, (fun F => hrest_codes_D K g done _), rfl, rfl,
-          fun h => ⟨h.fill, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, hfill⟩⟩⟩
+          fun h => ⟨h.fill, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, hfill⟩, fun F => rfl⟩⟩
   · rw [ite_eq_right h0]
     have hl0 : st.left.toNat ≠ 0 := fun e => h0 (UInt64.toNat_inj.mp (by rw [e]; rfl))
     obtain ⟨n, rfl⟩ : ∃ n, left = n + 1 := ⟨left - 1, by omega⟩
@@ -443,7 +465,7 @@ theorem stepHCodes_ok {k : CK} {done : List PrefixCode} {left : Nat} {st : Hd} {
     subst hk
     refine HStepOk.ofNext (g' := g) (p' := .code (.codes st.ck done n) (ckSize st.ck g))
       (hd := Or.inl (Or.inr ⟨rfl, show 2 * n + 1 < 2 * (n + 1) by omega⟩)) rfl
-      ⟨hw, hu, rfl, ⟨hs1, hs2, hs3⟩, rfl, rfl, hidx, hl1, rfl, by omega, h256, hpart⟩ (Nat.le_refl _) hp (fun F => ?_)
+      ⟨hw, hu, rfl, ⟨hs1, hs2, hs3⟩, rfl, rfl, hidx, hl1, rfl, by omega, h256, hpart⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => rfl)
     exact hrest_codes_succ K st.ck g done n _
 
 end

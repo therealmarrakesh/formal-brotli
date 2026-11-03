@@ -230,16 +230,18 @@ decreasing_by
 structure RunOk {α : Type} (w k : Nat) (m : MetaBlockHeader) (K : CommandState → List Bool → Option α) (a : ByteArray)
     (stop : USize) (p : Phase) (st : Cmd) (pos : USize) (r : Cmd) : Prop where
   next : r.status = .next → ∃ p', Rel w k m r p' ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
-    (∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K p' (stateBits r a r.pos stop F)) ∧ OutStep p p' st r
+    (∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K p' (stateBits r a r.pos stop F)) ∧ OutStep p p' st r ∧
+    ∀ F, Reach (cStep w m) p (stateBits st a pos stop F) p' (stateBits r a r.pos stop F)
   needsInput : r.status = .needsInput → r.pos = stop ∧ pos.toNat ≤ stop.toNat ∧ ∃ p', Rel w k m r p' ∧
     (∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K p' (stateBits r a r.pos stop F)) ∧
-    rest w m K p' (BitBuffer.mk r.word r.count).held = none ∧ OutStep p p' st r
+    rest w m K p' (BitBuffer.mk r.word r.count).held = none ∧ OutStep p p' st r ∧
+    (∀ F, Reach (cStep w m) p (stateBits st a pos stop F) p' (stateBits r a r.pos stop F)) ∧ CShort w m p' (BitBuffer.mk r.word r.count).held
   needsOutput : r.status = .needsOutput → ∃ p', Rel w k m r p' ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
     (∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K p' (stateBits r a r.pos stop F)) ∧
-    r.pend.toNat = 2 ^ k ∧ OutStep p p' st r
+    r.pend.toNat = 2 ^ k ∧ OutStep p p' st r ∧ ∀ F, Reach (cStep w m) p (stateBits st a pos stop F) p' (stateBits r a r.pos stop F)
   done : r.status = .done → ∃ s, Rel w k m r (.command s) ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
     (∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K (.command s) (stateBits r a r.pos stop F)) ∧
-    s.remaining = 0 ∧ OutStep p (.command s) st r
+    s.remaining = 0 ∧ OutStep p (.command s) st r ∧ ∀ F, Reach (cStep w m) p (stateBits st a pos stop F) (.command s) (stateBits r a r.pos stop F)
   bad : r.status = .bad → ∀ F, rest w m K p (stateBits st a pos stop F) = none
 
 /-- Two moves' bytes together. -/
@@ -257,33 +259,34 @@ variable {α : Type} {w k : Nat} {m : MetaBlockHeader} {K : CommandState → Lis
 /-- One step is a run. -/
 theorem StepOk.toRun (h : StepOk w k m K a stop p st pos r) : RunOk w k m K a stop p st pos r where
   next e := by
-    obtain ⟨p', h1, h2, h3, h4, _, h5⟩ := h.next e
-    exact ⟨p', h1, h2, h3, h4, h5⟩
-  needsInput e := by
-    obtain ⟨h1, h2, p', h3, h4, h5, _, h6⟩ := h.needsInput e
-    exact ⟨h1, h2, p', h3, h4, h5, h6⟩
-  needsOutput e := by
-    obtain ⟨p', h1, h2, h3, h4, h5, _, h6⟩ := h.needsOutput e
+    obtain ⟨p', h1, h2, h3, h4, _, h5, h6⟩ := h.next e
     exact ⟨p', h1, h2, h3, h4, h5, h6⟩
+  needsInput e := by
+    obtain ⟨h1, h2, p', h3, h4, h5, _, h6, h7, h8⟩ := h.needsInput e
+    exact ⟨h1, h2, p', h3, h4, h5, h6, h7, h8⟩
+  needsOutput e := by
+    obtain ⟨p', h1, h2, h3, h4, h5, _, h6, h7⟩ := h.needsOutput e
+    exact ⟨p', h1, h2, h3, h4, h5, h6, h7⟩
   done := h.done
   bad := h.bad
 
 /-- Two runs in a row, the first moving on, are one run. -/
 theorem RunOk.trans {r1 : Cmd} {p1 : Phase} (hle : pos.toNat ≤ r1.pos.toNat)
     (h : ∀ F, rest w m K p (stateBits st a pos stop F) = rest w m K p1 (stateBits r1 a r1.pos stop F)) (ho : OutStep p p1 st r1)
+    (hj : ∀ F, Reach (cStep w m) p (stateBits st a pos stop F) p1 (stateBits r1 a r1.pos stop F))
     (h2 : RunOk w k m K a stop p1 r1 r1.pos r) : RunOk w k m K a stop p st pos r where
   next e := by
-    obtain ⟨p', hrel, h3, h4, h5, h6⟩ := h2.next e
-    exact ⟨p', hrel, Nat.le_trans hle h3, h4, (fun F => by rw [h]; exact h5 F), ho.trans h6⟩
+    obtain ⟨p', hrel, h3, h4, h5, h6, h7⟩ := h2.next e
+    exact ⟨p', hrel, Nat.le_trans hle h3, h4, (fun F => by rw [h]; exact h5 F), ho.trans h6, fun F => (hj F).trans (h7 F)⟩
   needsInput e := by
-    obtain ⟨h3, h6, p', hrel, h5, h7, h8⟩ := h2.needsInput e
-    exact ⟨h3, Nat.le_trans hle h6, p', hrel, (fun F => by rw [h]; exact h5 F), h7, ho.trans h8⟩
+    obtain ⟨h3, h6, p', hrel, h5, h7, h8, h9, h10⟩ := h2.needsInput e
+    exact ⟨h3, Nat.le_trans hle h6, p', hrel, (fun F => by rw [h]; exact h5 F), h7, ho.trans h8, (fun F => (hj F).trans (h9 F)), h10⟩
   needsOutput e := by
-    obtain ⟨p', hrel, h3, h4, h5, h6, h7⟩ := h2.needsOutput e
-    exact ⟨p', hrel, Nat.le_trans hle h3, h4, (fun F => by rw [h]; exact h5 F), h6, ho.trans h7⟩
+    obtain ⟨p', hrel, h3, h4, h5, h6, h7, h8⟩ := h2.needsOutput e
+    exact ⟨p', hrel, Nat.le_trans hle h3, h4, (fun F => by rw [h]; exact h5 F), h6, ho.trans h7, fun F => (hj F).trans (h8 F)⟩
   done e := by
-    obtain ⟨s, hrel, h3, h4, h5, h6, h7⟩ := h2.done e
-    exact ⟨s, hrel, Nat.le_trans hle h3, h4, (fun F => by rw [h]; exact h5 F), h6, ho.trans h7⟩
+    obtain ⟨s, hrel, h3, h4, h5, h6, h7, h8⟩ := h2.done e
+    exact ⟨s, hrel, Nat.le_trans hle h3, h4, (fun F => by rw [h]; exact h5 F), h6, ho.trans h7, fun F => (hj F).trans (h8 F)⟩
   bad e := fun F => by rw [h]; exact h2.bad e F
 
 end
@@ -299,8 +302,9 @@ theorem runCmd_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHead
   | zero =>
     intro n p st pos hN hrel hp
     rw [runCmd, dite_eq_left (usize_zero hN)]
-    exact ⟨fun _ => ⟨p, hrel.mark _ _, Nat.le_refl _, hp, (fun _ => rfl), ⟨[], rfl, rfl⟩⟩, fun e => StepStatus.noConfusion e, fun e => StepStatus.noConfusion e,
-      fun e => StepStatus.noConfusion e, fun e => StepStatus.noConfusion e⟩
+    exact ⟨fun _ => ⟨p, hrel.mark _ _, Nat.le_refl _, hp, (fun _ => rfl), ⟨[], rfl, rfl⟩, fun _ => Reach.refl _ _⟩,
+      fun e => StepStatus.noConfusion e, fun e => StepStatus.noConfusion e, fun e => StepStatus.noConfusion e,
+      fun e => StepStatus.noConfusion e⟩
   | succ N ih =>
     intro n p st pos hN hrel hp
     have hn : n ≠ 0 := fun e => by rw [e] at hN; exact Nat.succ_ne_zero _ hN.symm
@@ -311,8 +315,8 @@ theorem runCmd_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHead
     generalize stepCmd H k a stop hs st pos = r at hstep
     cases hst : r.status with
     | next =>
-      obtain ⟨p', hR, h1, h2, h3, _, h4⟩ := hstep.next hst
-      exact RunOk.trans h1 h3 h4 (ih _ p' r r.pos (by omega) hR h2)
+      obtain ⟨p', hR, h1, h2, h3, _, h4, h5⟩ := hstep.next hst
+      exact RunOk.trans h1 h3 h4 h5 (ih _ p' r r.pos (by omega) hR h2)
     | needsInput => exact hstep.toRun
     | needsOutput => exact hstep.toRun
     | done => exact hstep.toRun

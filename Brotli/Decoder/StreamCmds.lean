@@ -187,24 +187,25 @@ theorem stepDCmds_ok {α : Type} {S : Sem α} {w : Nat} {last : Bool} {m : MetaB
   cases hst : r.status with
   | next =>
     dsimp only
-    obtain ⟨p', hR', h1, h2, h3, h4⟩ := hstep.next hst
-    exact ⟨fun _ => ⟨.cmds w last' m p', ⟨ht, hl, hlim, hH, hR'⟩, h1, h2, (fun t => h3 _), trivial, h4⟩, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e,
-      fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
+    obtain ⟨p', hR', h1, h2, h3, h4, h5⟩ := hstep.next hst
+    exact ⟨fun _ => ⟨.cmds w last' m p', ⟨ht, hl, hlim, hH, hR'⟩, h1, h2, (fun t => h3 _), trivial, h4, fun t => reach_cmds (h5 _)⟩,
+      fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
   | needsInput =>
     dsimp only
-    obtain ⟨h1, h2, p', hR', h3, h4, h5⟩ := hstep.needsInput hst
-    exact ⟨fun e => DStatus.noConfusion e, fun _ => ⟨h1, h2, .cmds w last' m p', ⟨ht, hl, hlim, hH, hR'⟩, (fun t => h3 _), h4, trivial, (fun _ _ e => SPhase.noConfusion e), h5⟩, fun e => DStatus.noConfusion e,
+    obtain ⟨h1, h2, p', hR', h3, h4, h5, h6, h7⟩ := hstep.needsInput hst
+    exact ⟨fun e => DStatus.noConfusion e, fun _ => ⟨h1, h2, .cmds w last' m p', ⟨ht, hl, hlim, hH, hR'⟩, (fun t => h3 _), h4, trivial,
+      (fun _ _ e => SPhase.noConfusion e), h5, (fun t => reach_cmds (h6 _)), short_cmds h7⟩, fun e => DStatus.noConfusion e,
       fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
   | needsOutput =>
     dsimp only
-    obtain ⟨p', hR', h1, h2, h3, h4, h5⟩ := hstep.needsOutput hst
-    exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun _ => ⟨.cmds w last' m p', ⟨ht, hl, hlim, hH, hR'⟩, h1, h2, (fun t => h3 _), h4, trivial, (fun _ _ e => SPhase.noConfusion e), h5⟩,
-      fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
+    obtain ⟨p', hR', h1, h2, h3, h4, h5, h6⟩ := hstep.needsOutput hst
+    exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun _ => ⟨.cmds w last' m p', ⟨ht, hl, hlim, hH, hR'⟩, h1, h2, (fun t => h3 _), h4,
+      trivial, (fun _ _ e => SPhase.noConfusion e), h5, fun t => reach_cmds (h6 _)⟩, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
   | bad =>
     dsimp only
     exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun _ t => hstep.bad hst _⟩
   | done =>
-    obtain ⟨s, hR', h1, h2, h3, h4, h5⟩ := hstep.done hst
+    obtain ⟨s, hR', h1, h2, h3, h4, h5, h6⟩ := hstep.done hst
     have hsee := seenOk_iff hH hR'
     dsimp only
     by_cases hc : seenOk r.seen H.nL H.nI H.nD = true
@@ -220,13 +221,15 @@ theorem stepDCmds_ok {α : Type} {S : Sem α} {w : Nat} {last : Bool} {m : MetaB
         rw [cmdK_stop _ _ h4]
         unfold finishC
         rw [ite_eq_left hc]
+      have hj : ∀ F, Reach sStep (.cmds w last' m p) (stateBits cmd a pos stop F) (afterBlock w last' ⟨s.output, s.produced, s.distances⟩)
+          (stateBits r a r.pos stop F) := fun F => (reach_cmds (h6 F)).trans ((Reach.one (sStep_cmds_end _ h4 hc)))
       cases last' with
       | true =>
-        exact ⟨fun _ => ⟨.ended ⟨s.output, s.produced, s.distances⟩, ⟨rfl, hC.wf, w, ⟨hwin, hprod, hlim⟩⟩, h1, h2, (fun t => (hfin _).trans (S.after_true ..)), trivial, h5⟩, fun e => DStatus.noConfusion e,
-          fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
+        exact ⟨fun _ => ⟨.ended ⟨s.output, s.produced, s.distances⟩, ⟨rfl, hC.wf, w, ⟨hwin, hprod, hlim⟩⟩, h1, h2, (fun t => (hfin _).trans (S.after_true ..)), trivial, h5,
+          fun t => hj _⟩, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
       | false =>
-        exact ⟨fun _ => ⟨.mblock w ⟨s.output, s.produced, s.distances⟩, ⟨rfl, hC.wf, ⟨hwin, hprod, hlim⟩⟩, h1, h2, (fun t => (hfin _).trans (S.after_false ..)), trivial, h5⟩, fun e => DStatus.noConfusion e,
-          fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
+        exact ⟨fun _ => ⟨.mblock w ⟨s.output, s.produced, s.distances⟩, ⟨rfl, hC.wf, ⟨hwin, hprod, hlim⟩⟩, h1, h2, (fun t => (hfin _).trans (S.after_false ..)), trivial, h5,
+          fun t => hj _⟩, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
     · rw [ite_eq_right hc]
       rw [hsee] at hc
       refine ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun _ t => ?_⟩

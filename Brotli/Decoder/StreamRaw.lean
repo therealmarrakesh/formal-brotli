@@ -1,4 +1,5 @@
 import Brotli.Decoder.StreamStart
+import Brotli.Decoder.StreamOrder
 
 /-!
 # Uncompressed bytes and metadata
@@ -145,6 +146,9 @@ structure RawOk (a : ByteArray) (stop : USize) (k : Nat) (word count : UInt64) (
   bits : ∀ {α : Type} (A : StreamState → List Bool → Option α) (st : StreamState) (E : Nat) (F : List Bool), st.output = out →
     rawK A st (N + E) (availBits word count a pos stop F) =
       rawK A ⟨moved.reverse ++ out, st.produced + moved.length, st.distances⟩ (r.left.toNat + E) (availBits r.word r.count a r.pos stop F)
+  reach : ∀ (w : Nat) (last : Bool) (st : StreamState) (E : Nat) (F : List Bool), st.output = out →
+    Reach sStep (.raw w st last (N + E)) (availBits word count a pos stop F)
+      (.raw w ⟨moved.reverse ++ out, st.produced + moved.length, st.distances⟩ last (r.left.toNat + E)) (availBits r.word r.count a r.pos stop F)
 
 /-- One byte taken from the buffer. -/
 theorem RawOk.take {a : ByteArray} {stop : USize} {k : Nat} {word count : UInt64} {pos : USize} {out moved : List Nat} {N : Nat} {r : RawRun}
@@ -152,7 +156,7 @@ theorem RawOk.take {a : ByteArray} {stop : USize} {k : Nat} {word count : UInt64
     RawOk a stop k word count pos out (N + 1) (word.toUInt8.toNat :: moved) r := by
   have hb : (word.toUInt8.toNat) < 256 := word.toUInt8.toNat_lt
   have hrev : (word.toUInt8.toNat :: moved).reverse ++ out = moved.reverse ++ word.toUInt8.toNat :: out := by simp
-  refine ⟨?_, ?_, ?_, ?_, h.wf, h.posLe, h.posStop, h.short, fun A st E F hst => ?_⟩
+  refine ⟨?_, ?_, ?_, ?_, h.wf, h.posLe, h.posStop, h.short, fun A st E F hst => ?_, fun w last st E F hst => ?_⟩
   · have := h.len
     simp only [List.length_cons]
     omega
@@ -175,6 +179,19 @@ theorem RawOk.take {a : ByteArray} {stop : USize} {k : Nat} {word count : UInt64
     rw [hb1, hrev]
     simp only [List.length_cons]
     rw [show st.produced + 1 + moved.length = st.produced + (moved.length + 1) by omega]
+  · have hread := read_int (b := ⟨word, count⟩) (k := 8) (chunkBits a pos.toNat stop.toNat ++ F) (by decide) h8
+    have hv : ((BitBuffer.mk word count).peek 8).toNat = word.toUInt8.toNat := by
+      rw [BitBuffer.peek_toNat _ (by decide), UInt64.toNat_toUInt8]
+      rfl
+    rw [hv] at hread
+    have hr1 := h.reach w last ⟨word.toUInt8.toNat :: st.output, st.produced + 1, st.distances⟩ E F (by rw [hst])
+    rw [show N + 1 + E = N + E + 1 by omega]
+    refine .next (show readIn 8 (readInt 8) (availBits word count a pos stop F) _ = _ by
+      rw [avail_mk, readIn_some (show readInt 8 ((BitBuffer.mk word count).held ++ (chunkBits a pos.toNat stop.toNat ++ F)) = _ from hread)]) ?_
+    rw [hrev]
+    simp only [List.length_cons]
+    rw [show st.produced + (moved.length + 1) = st.produced + 1 + moved.length by omega]
+    exact hr1
 
 /-- What the loop for uncompressed bytes does. -/
 theorem rawRun_spec {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {mask : USize} {k : Nat} (hk : k ≤ 24) (hmask : mask.toNat = 2 ^ k - 1) :
@@ -189,12 +206,18 @@ theorem rawRun_spec {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} 
     have hz := usize_zero hN
     rw [rawRun, dite_eq_left hz]
     refine ⟨[], ⟨by simp only [List.length_nil]; omega, by simp, by simpa using hr, by simpa using hc, hw, Nat.le_refl _, hp,
-      fun h => absurd hN h, fun A st E F hst => ?_⟩⟩
-    subst hst
-    have e : (⟨([] : List Nat).reverse ++ st.output, st.produced + ([] : List Nat).length, st.distances⟩ : StreamState) = st := rfl
-    rw [e]
-    show rawK A st (0 + E) _ = rawK A st (n.toNat + E) _
-    rw [hN]
+      fun h => absurd hN h, fun A st E F hst => ?_, fun w last st E F hst => ?_⟩⟩
+    · subst hst
+      have e : (⟨([] : List Nat).reverse ++ st.output, st.produced + ([] : List Nat).length, st.distances⟩ : StreamState) = st := rfl
+      rw [e]
+      show rawK A st (0 + E) _ = rawK A st (n.toNat + E) _
+      rw [hN]
+    · subst hst
+      have e : (⟨([] : List Nat).reverse ++ st.output, st.produced + ([] : List Nat).length, st.distances⟩ : StreamState) = st := rfl
+      rw [e]
+      show Reach sStep (.raw w st last (0 + E)) _ (.raw w st last (n.toNat + E)) _
+      rw [hN]
+      exact .refl _ _
   | succ N ih =>
     intro n word count pos ring wpos p1 p2 hp hsize hwp out hN hw hr hc
     have hn : n ≠ 0 := fun e => by rw [e] at hN; exact Nat.succ_ne_zero _ hN.symm
@@ -228,19 +251,28 @@ theorem rawRun_spec {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} 
           (refill word count a pos stop hs hp).pos _ _ (refill word count a pos stop hs hp).word.toUInt8 p1 (USize.le_iff_toNat_le.mp hle) _ _
           ((refill word count a pos stop hs hp).word.toUInt8.toNat :: out) (by omega) hw1 hrw (by rw [contextBytes_push, hc])
         have ht := hm.take h8r
-        refine ⟨_, ⟨ht.len, ht.bytes, ht.ring, ht.ctx, ht.wf, Nat.le_trans r2 ht.posLe, ht.posStop, ht.short, fun A st E F hst => ?_⟩⟩
-        rw [hbits]
-        exact ht.bits A st E F hst
+        refine ⟨_, ⟨ht.len, ht.bytes, ht.ring, ht.ctx, ht.wf, Nat.le_trans r2 ht.posLe, ht.posStop, ht.short, fun A st E F hst => ?_,
+          fun w last st E F hst => ?_⟩⟩
+        · rw [hbits]
+          exact ht.bits A st E F hst
+        · rw [hbits]
+          exact ht.reach w last st E F hst
       · rw [dite_eq_right (fun h => h8r h.1)]
         have hcr : (refill word count a pos stop hs hp).count.toNat < 8 := Nat.lt_of_not_le fun e => h8r (UInt64.le_iff_toNat_le.mpr e)
         have hposS : (refill word count a pos stop hs hp).pos = stop := r5.resolve_left (by omega)
         refine ⟨[], ⟨by simp only [List.length_nil]; omega, by simp, by simpa using hr, by simpa using hc, r1, r2, r3,
-          fun _ => ⟨hcr, hposS⟩, fun A st E F hst => ?_⟩⟩
-        subst hst
-        have e : (⟨([] : List Nat).reverse ++ st.output, st.produced + ([] : List Nat).length, st.distances⟩ : StreamState) = st := rfl
-        rw [e, hbits]
-        show rawK A st (N + 1 + E) _ = rawK A st (n.toNat + E) _
-        rw [hN]
+          fun _ => ⟨hcr, hposS⟩, fun A st E F hst => ?_, fun w last st E F hst => ?_⟩⟩
+        · subst hst
+          have e : (⟨([] : List Nat).reverse ++ st.output, st.produced + ([] : List Nat).length, st.distances⟩ : StreamState) = st := rfl
+          rw [e, hbits]
+          show rawK A st (N + 1 + E) _ = rawK A st (n.toNat + E) _
+          rw [hN]
+        · subst hst
+          have e : (⟨([] : List Nat).reverse ++ st.output, st.produced + ([] : List Nat).length, st.distances⟩ : StreamState) = st := rfl
+          rw [e, hbits]
+          show Reach sStep (.raw w st last (N + 1 + E)) _ (.raw w st last (n.toNat + E)) _
+          rw [hN]
+          exact .refl _ _
 
 /-- With input short of a byte, the spec has nothing to give. -/
 theorem rawK_short {α : Type} {A : StreamState → List Bool → Option α} {st : StreamState} {n : Nat} {b : BitBuffer} (h0 : n ≠ 0) (hc : b.count.toNat < 8) :

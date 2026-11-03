@@ -273,7 +273,7 @@ theorem install_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {c : PrefixCode} 
     (hk : Keep st.d.arena A1) (h4 : A1.size % 4 = 0) (hle : A1.size ≤ st.d.arenaMax.toNat) (htab : TableOk A1 base.toNat c)
     (hb : base.toNat = st.d.arena.size / 4) (hC : Complete c) (hsy : c.Symbols size) (hm : ∀ a b e, o ≠ .map a b e) :
     ∃ g' p', HRel (installTable { st with d := { st.d with arena := A1 } } base) g' p' ∧ (∀ bs, ownerK K g o c bs = K.w c (hrest K g' p' bs)) ∧
-      LexLt (rankH p').1 (rankO o) ∧ capH p' + 1 ≤ capO o := by
+      LexLt (rankH p').1 (rankO o) ∧ capH p' + 1 ≤ capO o ∧ (g', p') = (g, ownerPlace g o c) := by
   have hup := hu.frame hk h4 hle
   have hsmall : st.d.arena.size < 2 ^ 32 := by
     have := hu.le
@@ -291,7 +291,7 @@ theorem install_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {c : PrefixCode} 
     rw [hrole]
     dsimp only
     refine ⟨g, .code (.count st.cat n c) blockCountAlphabetSize, ⟨hw, ?_, rfl, ⟨rfl, by decide, by decide⟩, rfl, rfl, ?_, h2, h256, rfl, ?_, hC, hsy⟩, (fun bs => rfl),
-      by simp only [rankH, rankO, LexLt]; omega, by simp only [capH, capO]; omega⟩
+      by simp only [rankH, rankO, LexLt]; omega, by simp only [capH, capO]; omega, rfl⟩
     · have ha := setBaseT_arena { st.d with arena := A1 } st.cat base.toUSize
       exact Upto.setSame hup ha.1 ha.2 (setBaseT_others _ _ _)
     · show (({ st.d with arena := A1 }.setBaseT st.cat base.toUSize).nOf st.cat).toNat = n
@@ -311,7 +311,7 @@ theorem install_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {c : PrefixCode} 
     dsimp only
     have hT' : TableOk A1 (st.d.baseTOf st.cat).toNat tc := hT.frame hk.four hk.le hk.frame
     refine ⟨g, .first st.cat n tc c, ⟨hw, ?_, rfl, rfl, ?_, h2, h256, ?_, hTc, hTs, ?_, hC, hsy⟩, (fun bs => rfl),
-      by simp only [rankH, rankO, LexLt]; omega, by simp only [capH, capO]; omega⟩
+      by simp only [rankH, rankO, LexLt]; omega, by simp only [capH, capO]; omega, rfl⟩
     · have ha := setBaseC_arena { st.d with arena := A1 } st.cat base.toUSize
       exact Upto.setSame hup ha.1 ha.2 (setBaseC_others _ _ _)
     · show (({ st.d with arena := A1 }.setBaseC st.cat base.toUSize).nOf st.cat).toNat = n
@@ -339,7 +339,7 @@ theorem install_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {c : PrefixCode} 
       rw [UInt64.toNat_add, hidx, show (1 : UInt64).toNat = 1 from rfl]
       exact Nat.mod_eq_of_lt (by omega)
     refine ⟨g, .codes st.ck (done ++ [c]) left, ⟨hw, hup, rfl, rfl, by simpa using hidx1, hleft, ?_, h256, ?_⟩, (fun bs => rfl),
-      Or.inr ⟨rfl, show 2 * left < 2 * left + 1 by omega⟩, by simp only [capH, capO]; omega⟩
+      Or.inr ⟨rfl, show 2 * left < 2 * left + 1 by omega⟩, by simp only [capH, capO]; omega, rfl⟩
     · simp only [List.length_append, List.length_singleton]
       omega
     · refine ⟨?_, by simp only [List.length_append, List.length_singleton]; omega, fun i hi => ?_⟩
@@ -363,7 +363,7 @@ theorem install_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {c : PrefixCode} 
 structure TableDone (g : Gh) (o : Owner) (c : PrefixCode) (st r : Hd) : Prop where
   bits : r.word = st.word ∧ r.count = st.count ∧ r.pos = st.pos
   next : r.status = .next → ∃ g' p' oc, HRel r g' p' ∧ (∀ bs, ownerK K g o c bs = Wr K oc (hrest K g' p' bs)) ∧ LexLt (rankH p').1 (rankO o) ∧
-    ∀ q, capH q = capO o → HMove st r q p' oc
+    (∀ q, capH q = capO o → HMove st r q p' oc) ∧ (g', p') = (g, ownerPlace g o c)
   other : r.status ≠ .next → r.status = .memory ∧ r.d.arenaMax = st.d.arenaMax ∧ st.d.arenaMax.toNat < st.d.arena.size + tableBytes c ∧
     tableBytes c ≤ 132096 ∧ capO o ≠ 0 ∧ ∀ bs, ∃ x, ownerK K g o c bs = K.w c x
 
@@ -441,7 +441,7 @@ theorem tableDone_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {c : PrefixCode
       refine ⟨⟨rfl, rfl, rfl⟩, fun _ => ⟨g, .vals isL ntrees rlemax c [] (mapSize g isL), none, ⟨hw, hu, rfl, hi, hn, hr, h2, h256, h16, ?_, hC, ?_,
         rfl, hleft, by show 0 + _ = _; omega, hzs, by simp, by simp, fun i _ => ?_⟩, (fun bs => rfl), by simp only [rankH, rankO, LexLt]; omega,
         fun q hq => ⟨rfl, rfl, fun h => ⟨by rw [hzs]; exact hml, h.lens, h.clLens, h.clt, hsize, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩,
-          by rw [hq]; simp only [capH, capO, Option.isSome, Bool.false_eq_true, ↓reduceIte]; omega, Nat.zero_le _⟩⟩, fun h => absurd hst h⟩
+          by rw [hq]; simp only [capH, capO, Option.isSome, Bool.false_eq_true, ↓reduceIte]; omega, Nat.zero_le _⟩, rfl⟩, fun h => absurd hst h⟩
       · rw [usize_zero']
         exact hB.ok
       · rw [← hsz]
@@ -484,9 +484,9 @@ theorem tableDone_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {c : PrefixCode
       have hok : TableOk A1 (UInt64.ofNat (st.d.arena.size / 4)).toNat c := by
         rw [hbase]
         exact hB.ok
-      obtain ⟨g', p', h1, h2, h3, h4⟩ := install_ok K hw hu hs ho hB.keep hB.four hle hok hbase hC hsy hrole
+      obtain ⟨g', p', h1, h2, h3, h4, h5⟩ := install_ok K hw hu hs ho hB.keep hB.four hle hok hbase hC hsy hrole
       obtain ⟨b1, b2, b3, b4, b5⟩ := installTable_spec { st with d := { st.d with arena := A1 } } (UInt64.ofNat (st.d.arena.size / 4))
-      refine ⟨⟨b1, b2, b3⟩, fun _ => ⟨g', p', some c, h1, h2, h3, fun q hq => ⟨b5, ?_, ?_, ?_, hone⟩⟩, fun h => absurd (b4.trans hst) h⟩
+      refine ⟨⟨b1, b2, b3⟩, fun _ => ⟨g', p', some c, h1, h2, h3, fun q hq => ⟨b5, ?_, ?_, ?_, hone⟩, h5⟩, fun h => absurd (b4.trans hst) h⟩
       · rw [installTable_arena]
         exact hgrow
       · intro h

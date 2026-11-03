@@ -31,9 +31,13 @@ variable {α : Type} {K : HK α} {a : ByteArray} {stop : USize} {g : Gh} {p : HP
 
 /-- A short read of fewer than 56 bits means the chunk is used up. -/
 theorem HStepOk.ofShortRead {X : Nat} (hrel : HRel st g p) (hfull : 56 < st.count.toNat ∨ pos = stop) (hX : X ≤ 56)
-    (hc : st.count.toNat < X) (hn : hrest K g p (BitBuffer.mk st.word st.count).held = none) :
+    (hc : st.count.toNat < X) (hn : hrest K g p (BitBuffer.mk st.word st.count).held = none)
+    (hsh : hStepP (g, p) (BitBuffer.mk st.word st.count).held = .short) :
     HStepOk K a stop g p st pos (markH st pos .needsInput) :=
-  HStepOk.ofShort hrel (hfull.resolve_left (by omega)) hn
+  HStepOk.ofShort hrel (hfull.resolve_left (by omega)) hn hsh
+
+/-- A held buffer has as many bits as its count. -/
+theorem held_len (b : BitBuffer) : b.held.length = b.count.toNat := lowBits_length _ _
 
 /-- The bits after a read, whatever follows. -/
 theorem avail_mk (word count : UInt64) (F : List Bool) (pos stop : USize) :
@@ -191,13 +195,15 @@ theorem stepHCat_ok {i : Cat} {st : Hd} {g : Gh} {pos : USize} {α : Type} {K : 
     if v < 2 then afterCat K g i ⟨v, .single 0, .single 0, 16777216⟩ b
     else hrest K g (.code (.type i v) (blockTypeAlphabetSize v)) b) (fun bs => hrest_cat K g i bs)
   have hval := R.ok
+  have hsh0 := R.short
   unfold stepHCat
   dsimp only
-  generalize varLenFast ⟨st.word, st.count⟩ = r at Rok Rshort Rbad hval
+  generalize varLenFast ⟨st.word, st.count⟩ = r at Rok Rshort Rbad hval hsh0
   cases hs : r.status with
   | short =>
     obtain ⟨_, _, h3, h4⟩ := Rshort hs
-    exact HStepOk.ofShortRead (X := 11) hrel hfull (by omega) h3 h4
+    obtain ⟨_, _, _, h5⟩ := hsh0 hs
+    exact HStepOk.ofShortRead (X := 11) hrel hfull (by omega) h3 h4 (readIn_short h5 (by rw [held_len]; exact h3))
   | bad =>
     exact HStepOk.ofBad rfl (fun F => Rbad hs _)
   | ok =>
@@ -242,12 +248,19 @@ theorem stepHCat_ok {i : Cat} {st : Hd} {g : Gh} {pos : USize} {α : Type} {K : 
       generalize catMoveOn { st with
           word := r.word, count := r.count, pos := pos, status := .next
           d := (st.d.setN st.cat r.a).setCount st.cat 16777216 } = r2 at hrel2 b1 b2 b3 b4 ha ⊢
-      refine HStepOk.ofNext (hd := catNext_down _) (hm := HMove.ofArr ha (catNext_cap _)) b4 hrel2 (by rw [b3]; exact Nat.le_refl _) (by rw [b3]; exact hp) (fun F => ?_)
-      have e := hN (chunkBits a pos.toNat stop.toNat ++ F)
-      rw [avail_mk, e]
-      simp only [h2', ↓reduceIte]
-      rw [← hc, afterCat_eq, avail_mk, b1, b2, b3]
-      rfl
+      refine HStepOk.ofNext (hd := catNext_down _) (hm := HMove.ofArr ha (catNext_cap _)) b4 hrel2 (by rw [b3]; exact Nat.le_refl _) (by rw [b3]; exact hp)
+        (fun F => ?_) (fun F => ?_)
+      · have e := hN (chunkBits a pos.toNat stop.toNat ++ F)
+        rw [avail_mk, e]
+        simp only [h2', ↓reduceIte]
+        rw [← hc, afterCat_eq, avail_mk, b1, b2, b3]
+        rfl
+      · rw [avail_mk]
+        show readIn 11 readVarLen _ _ = _
+        rw [readIn_some ((hval hs).2 _)]
+        simp only [h2', ↓reduceIte]
+        rw [← hc, avail_mk, b1, b2, b3]
+        rfl
     · rw [ite_eq_right h2]
       have h2' : ¬ r.a.toNat < 2 := fun h => h2 (hsh.mpr h)
       have hd := setN_arena st.d st.cat r.a
@@ -259,10 +272,15 @@ theorem stepHCat_ok {i : Cat} {st : Hd} {g : Gh} {pos : USize} {α : Type} {K : 
         (hm := HMove.ofArr ⟨setN_arrays _ _ _, rfl, rfl, rfl, rfl, rfl⟩ (Nat.le_refl _)) rfl
         ⟨hw2, hu.setSame hd.1 hd.2 (setN_others st.d st.cat r.a), rfl, ⟨hsz, by unfold blockTypeAlphabetSize; omega, by unfold blockTypeAlphabetSize; omega⟩,
           rfl, rfl, by show ((st.d.setN st.cat r.a).nOf st.cat).toNat = _; rw [setN_nOf], by omega, hrange.2, rfl⟩
-        (Nat.le_refl _) hp (fun F => ?_)
-      have e := hN (chunkBits a pos.toNat stop.toNat ++ F)
-      rw [avail_mk, e]
-      simp only [h2', ↓reduceIte]
-      rfl
+        (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
+      · have e := hN (chunkBits a pos.toNat stop.toNat ++ F)
+        rw [avail_mk, e]
+        simp only [h2', ↓reduceIte]
+        rfl
+      · rw [avail_mk]
+        show readIn 11 readVarLen _ _ = _
+        rw [readIn_some ((hval hs).2 _)]
+        simp only [h2', ↓reduceIte]
+        rfl
 
 end Brotli.Decoder

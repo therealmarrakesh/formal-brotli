@@ -127,6 +127,7 @@ variable {α : Type} {K : HK α} {a : ByteArray} {stop : USize}
 theorem TableDone.toStep {g : Gh} {o : Owner} {c : PrefixCode} {p : HPhase} {st st0 r : Hd} {pos : USize}
     (h : TableDone K g o c st0 r) (h2 : st0.pos = pos) (hp : pos.toNat ≤ stop.toNat) (hd : st0.d = st.d) (hsz : HSize st → HSize st0)
     (heq : ∀ F, hrest K g p (availBits st.word st.count a pos stop F) = ownerK K g o c (availBits st0.word st0.count a pos stop F))
+    (hj : ∀ F, hStepP (g, p) (availBits st.word st.count a pos stop F) = .next (g, ownerPlace g o c) (availBits st0.word st0.count a pos stop F))
     (hrank : (rankH p).1 = rankO o := by rfl) (hcap : capH p = capO o := by rfl) :
     HStepOk K a stop g p st pos r := by
   obtain ⟨⟨b1, b2, b3⟩, hnext, hother⟩ := h
@@ -135,11 +136,13 @@ theorem TableDone.toStep {g : Gh} {o : Owner} {c : PrefixCode} {p : HPhase} {st 
     have := (hother (by rw [e]; exact h1)).1
     exact h2 (e.symm.trans this)
   refine ⟨fun e => ?_, fun e => ?_, fun e F => ?_, fun e => ?_, fun e => ?_⟩
-  · obtain ⟨g', p', oc, h4, h5, h6, h7⟩ := hnext e
+  · obtain ⟨g', p', oc, h4, h5, h6, h7, h8⟩ := hnext e
     have hmv := h7 p hcap
     refine ⟨g', p', oc, h4, by rw [b3, h2]; exact Nat.le_refl _, by rw [b3, h2]; exact hp, (fun F => ?_), Or.inl (by rw [hrank]; exact h6),
-      ⟨by rw [hmv.max, hd], by rw [hmv.grow, hd], fun hs => hmv.size (hsz hs), hmv.cap, hmv.one⟩⟩
-    rw [heq F, avail_mk, h5, avail_mk, b1, b2, b3, h2]
+      ⟨by rw [hmv.max, hd], by rw [hmv.grow, hd], fun hs => hmv.size (hsz hs), hmv.cap, hmv.one⟩, fun F => ?_⟩
+    · rw [heq F, avail_mk, h5, avail_mk, b1, b2, b3, h2]
+    · rw [h8]
+      exact Reach.one (by rw [hj F, avail_mk, avail_mk, b1, b2, b3, h2])
   · exact (hne _ (fun e => HStatus.noConfusion e) (fun e => HStatus.noConfusion e) e).elim
   · exact (hne _ (fun e => HStatus.noConfusion e) (fun e => HStatus.noConfusion e) e).elim
   · obtain ⟨_, _, h3, h4, h5, h6⟩ := hother (by rw [e]; exact fun e => HStatus.noConfusion e)
@@ -224,6 +227,7 @@ theorem stepHCode_ok {o : Owner} {size : Nat} {st : Hd} {g : Gh} {pos : USize} (
       rfl
     have hnil := hspec []
     rw [List.append_nil, List.append_nil] at hnil
+    have hr0 : readInt 2 (BitBuffer.mk st.word st.count).held = some (hskip.toNat, b1.held) := by simpa using hread []
     by_cases h1 : hskip = 1
     · rw [ite_eq_left h1]
       have h1' : hskip.toNat = 1 := by rw [h1]; rfl
@@ -235,12 +239,19 @@ theorem stepHCode_ok {o : Owner} {size : Nat} {st : Hd} {g : Gh} {pos : USize} (
       obtain ⟨Rok, Rshort, Rbad⟩ := R.run (X := fun bs => simpleChain size (alphabetBits size) bs >>= fun p => ownerK K g o p.1 p.2)
         (N := ownerK K g o) (fun bs => rfl)
       have hval := R.ok
+      have hsh0 := R.short
       have hsmall := simpleFast_small st.size (alphabetBitsFast st.size) b1 hbitsLe
-      generalize simpleFast st.size (alphabetBitsFast st.size) b1 = r at Rok Rshort Rbad hval hsmall
+      generalize simpleFast st.size (alphabetBitsFast st.size) b1 = r at Rok Rshort Rbad hval hsmall hsh0
       cases hsr : r.status with
       | short =>
         obtain ⟨_, _, h3, h4⟩ := Rshort hsr
-        exact HStepOk.ofShortRead (X := 45) hrel hfull (by omega) (by omega) (by rw [hnil]; exact h4)
+        obtain ⟨_, _, _, h5⟩ := hsh0 hsr
+        refine HStepOk.ofShortRead (X := 45) hrel hfull (by omega) (by omega) (by rw [hnil]; exact h4) ?_
+        show readIn 2 (readInt 2) _ _ = _
+        rw [readIn_some hr0]
+        show (if hskip.toNat = 1 then _ else _) = _
+        rw [ite_eq_left h1']
+        exact readIn_short h5 (by rw [held_len]; exact h3)
       | bad =>
         exact HStepOk.ofBad rfl (fun F => by rw [avail_mk, hspec]; exact Rbad hsr _)
       | ok =>
@@ -299,7 +310,15 @@ theorem stepHCode_ok {o : Owner} {size : Nat} {st : Hd} {g : Gh} {pos : USize} (
         exact hdone.toStep rfl hp rfl (fun h => ⟨h.fill, by show (writeSimple (zeroBytes st.size.toNat) r).size ≤ _; rw [hlensEq]; exact hs3,
             h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩) (fun F => by
           rw [avail_mk, hspec]
-          exact hN _)
+          exact hN _) (fun F => by
+          rw [avail_mk]
+          show readIn 2 (readInt 2) _ _ = _
+          rw [readIn_some (show readInt 2 _ = _ from hread _)]
+          show (if hskip.toNat = 1 then _ else _) = _
+          rw [ite_eq_left h1']
+          show readIn 43 (simpleChain size (alphabetBits size)) _ _ = _
+          rw [readIn_some ((hval hsr).2 _), hc]
+          rfl)
     · rw [ite_eq_right h1]
       have h1' : ¬ hskip.toNat = 1 := fun h => h1 (UInt64.toNat_inj.mp h)
       simp only [h1', ↓reduceIte] at hspec
@@ -307,15 +326,22 @@ theorem stepHCode_ok {o : Owner} {size : Nat} {st : Hd} {g : Gh} {pos : USize} (
         (hm := ⟨rfl, rfl, fun h => ⟨h.fill, h.lens, by show (zeroBytes 18).size ≤ _; rw [zeroBytes_size (by decide)]; exact Nat.le_refl _,
           h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩,
           by simp only [capH, Option.isSome, Bool.false_eq_true, ↓reduceIte]; omega, Nat.zero_le _⟩)
-        ⟨hw1, hu, rfl, hs, ho, clStart_rel hhlt rfl rfl rfl rfl rfl⟩ (Nat.le_refl _) hp (fun F => ?_)
-      rw [avail_mk, hspec]
-      rfl
+        ⟨hw1, hu, rfl, hs, ho, clStart_rel hhlt rfl rfl rfl rfl rfl⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
+      · rw [avail_mk, hspec]
+        rfl
+      · rw [avail_mk]
+        show readIn 2 (readInt 2) _ _ = _
+        rw [readIn_some (show readInt 2 _ = _ from hread _)]
+        show (if hskip.toNat = 1 then _ else _) = _
+        rw [ite_eq_right h1']
+        rfl
   · rw [ite_eq_right h2]
     have hc : st.count.toNat < 2 := not_le_lt'' h2
     have hnone : hrest K g (.code o size) (BitBuffer.mk st.word st.count).held = none := by
       rw [hrest_code, readInt_short (b := ⟨st.word, st.count⟩) hc]
       rfl
     exact HStepOk.ofShortRead (X := 2) hrel hfull (by omega) hc hnone
+      (by show readIn 2 (readInt 2) _ _ = _; exact readIn_short (readInt_short (b := ⟨st.word, st.count⟩) hc) (by rw [held_len]; exact hc))
 
 end
 

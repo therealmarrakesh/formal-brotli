@@ -243,11 +243,11 @@ theorem top_inv {limit : Nat} {x : List UInt8} {R : Run DState} (h : Reaches dec
     · rw [hemit]
       cases hst : o.status with
       | needsInput =>
-        obtain ⟨_, _, _, p', _, d5, d6⟩ := c5 hst
+        obtain ⟨_, _, _, p', _, d5, d6, _⟩ := c5 hst
         rw [hdec', d6, hbn] at hy
         exact hstart p' y d5 hy
       | needsOutput =>
-        obtain ⟨_, _, p', _, d5, d6⟩ := c6 hst
+        obtain ⟨_, _, p', _, d5, d6, _⟩ := c6 hst
         rw [hdec', d6, hbn] at hy
         exact hstart p' y d5 hy
       | done =>
@@ -267,10 +267,10 @@ theorem top_inv {limit : Nat} {x : List UInt8} {R : Run DState} (h : Reaches dec
       rw [hstate, hemit, hread, hmap]
       cases hst : o.status with
       | needsInput =>
-        obtain ⟨_, _, _, p', d4, d5, d6⟩ := c5 hst
+        obtain ⟨_, _, _, p', d4, d5, d6, _⟩ := c5 hst
         exact ⟨p', d4, d5, by rw [hdec', d6, hbn]⟩
       | needsOutput =>
-        obtain ⟨_, _, p', d4, d5, d6⟩ := c6 hst
+        obtain ⟨_, _, p', d4, d5, d6, _⟩ := c6 hst
         exact ⟨p', d4, d5, by rw [hdec', d6, hbn]⟩
       | done => rw [hst] at hs; cases hs
       | rejected => rw [hst] at hs; cases hs
