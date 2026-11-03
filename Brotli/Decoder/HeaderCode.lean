@@ -141,8 +141,7 @@ theorem TableDone.toStep {g : Gh} {o : Owner} {c : PrefixCode} {p : HPhase} {st 
     refine ⟨g', p', oc, h4, by rw [b3, h2]; exact Nat.le_refl _, by rw [b3, h2]; exact hp, (fun F => ?_), Or.inl (by rw [hrank]; exact h6),
       ⟨by rw [hmv.max, hd], by rw [hmv.grow, hd], fun hs => hmv.size (hsz hs), hmv.cap, hmv.one⟩, fun F => ?_⟩
     · rw [heq F, avail_mk, h5, avail_mk, b1, b2, b3, h2]
-    · rw [h8]
-      exact Reach.one (by rw [hj F, avail_mk, avail_mk, b1, b2, b3, h2])
+    · rw [h8, hj F, avail_mk, avail_mk, b1, b2, b3, h2]
   · exact (hne _ (fun e => HStatus.noConfusion e) (fun e => HStatus.noConfusion e) e).elim
   · exact (hne _ (fun e => HStatus.noConfusion e) (fun e => HStatus.noConfusion e) e).elim
   · obtain ⟨_, _, h3, h4, h5, h6⟩ := hother (by rw [e]; exact fun e => HStatus.noConfusion e)

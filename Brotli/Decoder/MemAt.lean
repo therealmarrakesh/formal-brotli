@@ -305,7 +305,8 @@ theorem stepDHdr_x {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} 
         HdLoc rh D.limit last' mlen' g' q' um u' ∧
         u ++ availBits D.hd.word D.hd.count a D.pos stop (bits t) = u' ++ availBits rh.word rh.count a rh.pos stop (bits t) := by
       intro last mlen g q um u hL
-      obtain ⟨g', p', oc, hR', hM', h1, h2, hW, hJ⟩ := hN g q hL.rel hst
+      obtain ⟨g', p', oc, hR', hM', h1, h2, hW, hJ1⟩ := hN g q hL.rel hst
+      have hJ := fun F => Reach.one (step := hStepP) (hJ1 F)
       obtain ⟨v, hv⟩ := reach_suffix (step := hStepP) (fun q => (kfaith_hStep q.1 q.2).nfaith) (hJ [])
       have hv' : (BitBuffer.mk D.hd.word D.hd.count).held ++ chunkBits a D.pos.toNat rh.pos.toNat =
           v ++ (BitBuffer.mk rh.word rh.count).held := by

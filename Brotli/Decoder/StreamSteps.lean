@@ -49,7 +49,7 @@ theorem stepDHdr_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {last 
     dsimp only
     obtain ⟨g', p', oc, hR', h1, h2, h3, h4, _, h5⟩ := hstep.next hst
     exact ⟨fun _ => ⟨.hdr w st last mlen g' p', ⟨rfl, ⟨hall.win, hall.produced, hall.limit⟩, hl, hleft, hm1, hm2, hR', hp0⟩, h1, h2, (fun t => (h3 _).trans (Wr_id (fun _ _ => rfl) oc _)), h4, ⟨[], rfl, rfl⟩,
-      fun t => (sreach_hdr (q := (g, p)) (q' := (g', p')) (h5 _))⟩,
+      fun t => (sreach_hdr (q := (g, p)) (q' := (g', p')) (Reach.one (h5 _)))⟩,
       fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
   | needsInput =>
     dsimp only

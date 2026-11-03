@@ -667,7 +667,7 @@ structure HStepOk {α : Type} (K : HK α) (a : ByteArray) (stop : USize) (g : Gh
     (st : Hd) (pos : USize) (r : Hd) : Prop where
   next : r.status = .next → ∃ g' p' oc, HRel r g' p' ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
     (∀ F, hrest K g p (availBits st.word st.count a pos stop F) = Wr K oc (hrest K g' p' (availBits r.word r.count a r.pos stop F))) ∧ HDown p p' ∧ HMove st r p p' oc ∧
-    ∀ F, Reach hStepP (g, p) (availBits st.word st.count a pos stop F) (g', p') (availBits r.word r.count a r.pos stop F)
+    ∀ F, hStepP (g, p) (availBits st.word st.count a pos stop F) = .next (g', p') (availBits r.word r.count a r.pos stop F)
   needsInput : r.status = .needsInput → r.pos = stop ∧ pos.toNat ≤ stop.toNat ∧ HRel r g p ∧
     (∀ F, hrest K g p (availBits st.word st.count a pos stop F) = hrest K g p (availBits r.word r.count a r.pos stop F)) ∧
     hrest K g p (BitBuffer.mk r.word r.count).held = none ∧ HMove st r p p none ∧
@@ -692,7 +692,7 @@ theorem HStepOk.ofNext (hs : r.status = .next) {g' : Gh} {p' : HPhase} (hrel : H
     (hj : ∀ F, hStepP (g, p) (availBits st.word st.count a pos stop F) = .next (g', p') (availBits r.word r.count a r.pos stop F))
     (hd : HDown p p' := by hstep_down) (hm : HMove st r p p' none := by hstep_move) :
     HStepOk K a stop g p st pos r :=
-  ⟨fun _ => ⟨g', p', none, hrel, h1, h2, h, hd, hm, fun F => Reach.one (hj F)⟩, fun e => HStatus.noConfusion (hs.symm.trans e),
+  ⟨fun _ => ⟨g', p', none, hrel, h1, h2, h, hd, hm, hj⟩, fun e => HStatus.noConfusion (hs.symm.trans e),
     fun e => HStatus.noConfusion (hs.symm.trans e), fun e => HStatus.noConfusion (hs.symm.trans e),
     fun e => HStatus.noConfusion (hs.symm.trans e)⟩
 

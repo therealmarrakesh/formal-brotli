@@ -419,7 +419,7 @@ theorem stepH_next {g : Gh} {p : HPhase} {st : Hd} {pos : USize} (hrel : HRel st
       pos.toNat ≤ (stepH a stop hs st pos).pos.toNat ∧ (stepH a stop hs st pos).pos.toNat ≤ stop.toNat ∧
       (∀ F, hrest K g p (availBits st.word st.count a pos (stepH a stop hs st pos).pos F) =
         Wr K oc (hrest K g' p' ((BitBuffer.mk (stepH a stop hs st pos).word (stepH a stop hs st pos).count).held ++ F))) ∧
-      ∀ F, Reach hStepP (g, p) (availBits st.word st.count a pos (stepH a stop hs st pos).pos F) (g', p')
+      ∀ F, hStepP (g, p) (availBits st.word st.count a pos (stepH a stop hs st pos).pos F) = .next (g', p')
         ((BitBuffer.mk (stepH a stop hs st pos).word (stepH a stop hs st pos).count).held ++ F) := by
   unfold stepH at hn ⊢
   rw [dite_eq_left (USize.le_iff_toNat_le.mpr hp)] at hn ⊢
