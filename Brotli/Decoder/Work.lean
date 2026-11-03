@@ -403,4 +403,124 @@ theorem runD_count {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} (
       · rw [dite_eq_right hn, dite_eq_right hn]
         exact ⟨c1, q1, D1, hR1, p1, p2, hr1, by omega, fun h => absurd h hn, hin, hout⟩
 
+theorem buf_size_of {b b' : ByteArray} {n : List Nat} (h : b'.data.toList.map UInt8.toNat = b.data.toList.map UInt8.toNat ++ n) :
+    b'.size = b.size + n.length := by
+  have := congrArg List.length h
+  simp only [List.length_map, List.length_append] at this
+  show b'.data.size = b.data.size + n.length
+  rw [← Array.length_toList, ← Array.length_toList]
+  exact this
+
+/-- What a call's end does with the loop's result: it keeps the buffer's bytes, and when it doesn't stop the call, it
+leaves the loop's position. -/
+theorem afterRun_facts {r : Dec} {q : SPhase} (hR : r.status = .next ∨ r.status = .needsInput → DRel r q) (stop : USize)
+    (final : Bool) (pos0 : USize) (buf : ByteArray) (space : Nat) :
+    buf.size ≤ (afterRun r stop final pos0 buf space).buf.size ∧
+      ((afterRun r stop final pos0 buf space).status.stopped = false → (afterRun r stop final pos0 buf space).pos = r.pos) ∧
+      ((afterRun r stop final pos0 buf space).status = .done → (afterRun r stop final pos0 buf space).pos = r.pos) := by
+  unfold afterRun
+  cases hst : r.status with
+  | bad => exact ⟨Nat.le_refl _, fun h => Bool.noConfusion h, fun h => Status.noConfusion h⟩
+  | memory => exact ⟨Nat.le_refl _, fun h => Bool.noConfusion h, fun h => Status.noConfusion h⟩
+  | needsOutput => exact ⟨Nat.le_refl _, fun _ => rfl, fun h => Status.noConfusion h⟩
+  | needsInput =>
+    obtain ⟨len, _, _, _, _, _, _, a7, a8, _⟩ := flushD_spec (hR (Or.inr hst)) buf space
+    have hb := buf_size_of a7
+    dsimp only
+    split
+    · split
+      · exact ⟨(by show buf.size ≤ (flushD r buf space).buf.size; omega),fun h => Bool.noConfusion h, fun h => Status.noConfusion h⟩
+      · exact ⟨(by show buf.size ≤ (flushD r buf space).buf.size; omega),fun _ => a8, fun h => Status.noConfusion h⟩
+    · exact ⟨(by show buf.size ≤ (flushD r buf space).buf.size; omega),fun _ => a8, fun h => Status.noConfusion h⟩
+  | next =>
+    obtain ⟨len, _, _, _, _, _, _, a7, a8, _⟩ := flushD_spec (hR (Or.inl hst)) buf space
+    have hb := buf_size_of a7
+    dsimp only
+    split
+    · unfold endCheck
+      dsimp only
+      split
+      · split
+        · split
+          · exact ⟨(by show buf.size ≤ (flushD r buf space).buf.size; omega),fun h => Bool.noConfusion h, fun _ => a8⟩
+          · exact ⟨(by show buf.size ≤ (flushD r buf space).buf.size; omega),fun _ => a8, fun h => Status.noConfusion h⟩
+        · exact ⟨(by show buf.size ≤ (flushD r buf space).buf.size; omega),fun h => Bool.noConfusion h, fun h => Status.noConfusion h⟩
+      · exact ⟨(by show buf.size ≤ (flushD r buf space).buf.size; omega),fun h => Bool.noConfusion h, fun h => Status.noConfusion h⟩
+    · exact ⟨(by show buf.size ≤ (flushD r buf space).buf.size; omega),fun _ => a8, fun h => Status.noConfusion h⟩
+
+/-- A call's steps are at most twice the steps of the reading in order it takes, plus two for each round of handing bytes out
+and two more. -/
+theorem callD_count {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {final : Bool} (t : List UInt8) :
+    ∀ (space : Nat) (D : Dec) (h : DInv stop D) (p : SPhase) (buf : ByteArray), DRel D p →
+    ∃ c q D', DRel D' q ∧ D.pos.toNat ≤ D'.pos.toNat ∧ D'.pos.toNat ≤ stop.toNat ∧
+      ReachN sStep c p (D.bits a D.pos stop (bits t)) q (D'.bits a D'.pos stop (bits t)) ∧
+      callDSteps a stop hs final D h buf space + 2 * buf.size ≤ 2 * c + 2 + 2 * (callD a stop hs final D h buf space).buf.size ∧
+      (((callD a stop hs final D h buf space).status.stopped = false ∨ (callD a stop hs final D h buf space).status = .done) →
+        D'.pos.toNat ≤ (callD a stop hs final D h buf space).pos.toNat) := by
+  intro space
+  induction space using Nat.strongRecOn with
+  | _ space ih =>
+    intro D h p buf hrel
+    rw [callDSteps, callD]
+    dsimp only
+    obtain ⟨c1, q1, D1, hR1, p1, p2, hr1, g1, g2, g3, g4⟩ := runD_count (hs := hs) t ⟨D, h⟩ p hrel
+    dsimp only at p1 g1 g2 g3 g4
+    by_cases hO : (runD a stop hs D h).status = .needsOutput
+    · rw [dite_eq_left hO, dite_eq_left hO]
+      have e1 := g4 hO
+      subst e1
+      obtain ⟨len, _, _, a3, a4, _, _, a7, a8, _, a9, _⟩ := flushD_spec hR1 buf space
+      have hb := buf_size_of a7
+      have hpo := hR1.pendOut
+      have hl : (((q1.out.take (runD a stop hs D h).cmd.pend.toNat).reverse).take len).length = len := by
+        simp only [List.length_take, List.length_reverse]
+        omega
+      rw [hl] at hb
+      by_cases hz : (flushD (runD a stop hs D h) buf space).D.cmd.pend = 0
+      · rw [ite_eq_left hz, ite_eq_left hz]
+        by_cases hlt : (flushD (runD a stop hs D h) buf space).space < space
+        · rw [dite_eq_left hlt, dite_eq_left hlt]
+          obtain ⟨c2, q, D', hR, f1, f2, hr2, f3, f4⟩ := ih _ hlt _ (flushD_inv (runD_full hO) buf space) q1 _ a4
+          rw [a8] at f1
+          have hr2' : ReachN sStep c2 q1 ((runD a stop hs D h).bits a (runD a stop hs D h).pos stop (bits t)) q
+              (D'.bits a D'.pos stop (bits t)) := by
+            rw [← a9, ← a8]
+            exact hr2
+          refine ⟨c1 + c2, q, D', hR, by omega, f2, hr1.trans hr2', by omega, f4⟩
+        · rw [dite_eq_right hlt, dite_eq_right hlt]
+          refine ⟨c1, q1, _, hR1, p1, p2, hr1, ?_, fun h => ?_⟩
+          · dsimp only
+            omega
+          · rcases h with h | h <;> cases h
+      · rw [ite_eq_right hz, ite_eq_right hz]
+        refine ⟨c1, q1, _, hR1, p1, p2, hr1, ?_, fun _ => ?_⟩
+        · dsimp only
+          omega
+        · show _ ≤ (flushD (runD a stop hs D h) buf space).D.pos.toNat
+          rw [a8]
+          exact Nat.le_refl _
+    · rw [dite_eq_right hO, dite_eq_right hO]
+      obtain ⟨f1, f2, f3⟩ := afterRun_facts (r := runD a stop hs D h)
+        (fun e => e.elim (fun e => g2 e ▸ hR1) (fun e => g3 e ▸ hR1)) stop final D.pos buf space
+      refine ⟨c1, q1, D1, hR1, p1, p2, hr1, by omega, fun hs' => ?_⟩
+      have hr : (afterRun (runD a stop hs D h) stop final D.pos buf space).pos = (runD a stop hs D h).pos := by
+        rcases hs' with hs' | hs'
+        · exact f2 hs'
+        · exact f3 hs'
+      rw [hr]
+      cases hrs : (runD a stop hs D h).status with
+      | next => exact Nat.le_of_eq (congrArg (fun D => D.pos.toNat) (g2 hrs))
+      | needsInput => exact Nat.le_of_eq (congrArg (fun D => D.pos.toNat) (g3 hrs))
+      | needsOutput => exact absurd hrs hO
+      | bad =>
+        exfalso
+        unfold afterRun at hs'
+        rw [hrs] at hs'
+        rcases hs' with hs' | hs' <;> cases hs'
+      | memory =>
+        exfalso
+        unfold afterRun at hs'
+        rw [hrs] at hs'
+        rcases hs' with hs' | hs' <;> cases hs'
+
 end Brotli.Decoder
