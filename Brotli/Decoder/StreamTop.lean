@@ -210,6 +210,32 @@ private theorem chunk_seg {α : Type} (x : List α) {r s u H : Nat} (hu : u ≤ 
   congr 1
   omega
 
+/-- The reading in order of the bytes offered before a call, then of a call's chunk up to a place in it. -/
+private theorem chain_reach {x : List UInt8} {R : Run DState} {c : Call} (hin : R.read + c.size ≤ x.length)
+    (hfit : c.pre.length + c.size + c.post.length < USize.size) (hro : R.read ≤ R.offered) {p p' : SPhase} {D' : Dec}
+    (hreach : ∀ u : List UInt8, Reach sStep .wbits (bits (x.take R.offered ++ u)) p (R.state.val.held ++ bits ((x.take R.offered).drop R.read ++ u)))
+    (hq1 : c.pre.length ≤ D'.pos.toNat) (hq2 : D'.pos.toNat ≤ c.pre.length + c.size)
+    (hj : ∀ t : List UInt8, Reach sStep p ((atPos R.state.val c.pre.length).bits (R.input x c) (atPos R.state.val c.pre.length).pos
+      (USize.ofNat (c.pre.length + c.size)) (bits t)) p' (D'.bits (R.input x c) D'.pos (USize.ofNat (c.pre.length + c.size)) (bits t))) :
+    ∀ u : List UInt8, Reach sStep .wbits (bits (x.take (max R.offered (R.read + c.size)) ++ u)) p'
+      (D'.held ++ bits ((x.take (max R.offered (R.read + c.size))).drop (R.read + (D'.pos.toNat - c.pre.length)) ++ u)) := by
+  intro u
+  have hstop : (USize.ofNat (c.pre.length + c.size)).toNat = c.pre.length + c.size := usize_of (by omega)
+  have hpos0 : (atPos R.state.val c.pre.length).pos.toNat = c.pre.length + 0 := usize_of (by omega)
+  have hq : D'.pos.toNat = c.pre.length + (D'.pos.toNat - c.pre.length) := by omega
+  have hqs : D'.pos.toNat - c.pre.length ≤ c.size := by omega
+  generalize hH : max R.offered (R.read + c.size) = H
+  have h1 := hreach ((x.take H).drop R.offered ++ u)
+  rw [← List.append_assoc, ← take_split x (show R.offered ≤ H by omega), ← List.append_assoc,
+    ← seg_split x hro (show R.offered ≤ H by omega) (by omega)] at h1
+  have h2 := hj ((x.take H).drop (R.read + c.size) ++ u)
+  rw [bits_at' hin _ hpos0 (Nat.zero_le _) hstop, bits_at' hin _ hq hqs hstop, ← List.append_assoc, ← List.append_assoc,
+    chunk_seg x (Nat.zero_le _) (show R.read + c.size ≤ H by omega) hin, chunk_seg x hqs (show R.read + c.size ≤ H by omega) hin,
+    Nat.add_zero] at h2
+  have e0 : (atPos R.state.val c.pre.length).held = R.state.val.held := rfl
+  rw [e0] at h2
+  exact h1.trans h2
+
 /-- What every run of the decoder holds of the spec's reading in order: a running state stands for a place where the
 reading in order takes the bytes offered so far, with the bytes offered but not used still to read, whatever bytes follow;
 and needing input means the reading in order pauses there with the bits the state holds. -/
@@ -325,7 +351,7 @@ theorem top_inv {limit : Nat} {x : List UInt8} {R : Run DState} (h : Reaches dec
         cases hy
       | memoryLimit =>
         rw [hdec'] at hy
-        have := c9 hst _ y hy
+        have := (c9 hst).1 _ y hy
         rwa [← hmap, map_roundtrip] at this
     · rw [hstatus] at hs
       rw [hstate, hemit, hread, hmap]
@@ -437,6 +463,39 @@ theorem order_inv {limit : Nat} {x : List UInt8} {R : Run DState} (h : Reaches d
     | done => rw [hst] at hs0; cases hs0
     | rejected => rw [hst] at hs0; cases hs0
     | memoryLimit => rw [hst] at hs0; cases hs0
+
+/-- A decoder that reports the memory limit has handed out every byte the spec's reading in order of the bytes offered has
+produced up to where the limit binds: at WBITS, for the window, or in a meta-block's header, for its tables. -/
+theorem decoder_limitHandsOut {limit : Nat} {x : List UInt8} {R : Run DState} (h : Reaches decoder limit x R) (hs : R.status = .memoryLimit) :
+    ∃ p, (p = .wbits ∨ ∃ w st last mlen g q, p = .hdr w st last mlen g q) ∧ p.out.reverse.map Nat.toUInt8 = R.emitted ∧
+      ∀ u : List UInt8, ∃ bs, Reach sStep .wbits (bits (x.take R.offered ++ u)) p bs := by
+  cases h with
+  | start => exact ⟨.wbits, Or.inl rfl, rfl, fun u => ⟨_, .refl _ _⟩⟩
+  | @call R0 c hR ha =>
+    have hin := ha.inside
+    have hfit := ha.fits
+    obtain ⟨p, hrel, hE, hro, hreach, _⟩ := (order_inv hR).running ha.running
+    obtain ⟨o, _, _, e3, e4, hok⟩ := reply_ok ha hrel hE
+    obtain ⟨_, _, _, n, c3, _, _, _, _, _, c9⟩ := hok
+    have hst : o.status = .memoryLimit := by rw [← e4]; exact hs
+    obtain ⟨p2, D2, _, d2, d3, d4, d5, d6, d7⟩ := (c9 hst).2
+    have hstop : (USize.ofNat (c.pre.length + c.size)).toNat = c.pre.length + c.size := usize_of (by omega)
+    have hpos0 : (atPos R0.state.val c.pre.length).pos.toNat = c.pre.length := usize_of (by omega)
+    rw [hpos0] at d2
+    rw [hstop] at d3
+    refine ⟨p2, d7, ?_, fun u => ⟨_, chain_reach hin hfit hro hreach d2 d3 d5 u⟩⟩
+    rw [buf_list] at c3
+    obtain ⟨L2, hL, hLn⟩ := map_split c.buf _ n c3
+    have hdrop : o.buf.data.toList.drop c.buf.length = L2 := by
+      rw [hL]
+      simp
+    have hemit : (R0.after decoder x c).emitted = R0.emitted ++ L2 := by
+      show R0.emitted ++ (R0.reply decoder x c).output.data.toList.drop c.buf.length = _
+      rw [e3, hdrop]
+    unfold Pend at d4
+    have hz : D2.cmd.pend.toNat = 0 := by rw [d6]; rfl
+    rw [hz, List.drop_zero] at d4
+    rw [d4, hemit, ← hLn, ← List.map_append, map_roundtrip]
 
 /-- A decoder that needs input stands where the spec's reading in order of the bytes it has used comes to, holding the
 bits that reading has left; from there the reading in order, producing nothing more, comes to too few bits or to the

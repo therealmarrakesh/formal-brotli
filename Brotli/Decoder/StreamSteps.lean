@@ -35,7 +35,7 @@ theorem stepDHdr_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {last 
     {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize} (hrel : DRel D (.hdr w st last mlen g p)) (hpos : pos.toNat ≤ stop.toNat) :
     DStepOk S a stop (.hdr w st last mlen g p) D pos (stepDHdr a stop hs D pos) := by
   obtain ⟨tag, cmd, hd, H, k, last', left, limit, pos', status⟩ := D
-  obtain ⟨ht, hall, hl, hleft, hm1, hm2, hR⟩ := hrel
+  obtain ⟨ht, hall, hl, hleft, hm1, hm2, hR, hp0⟩ := hrel
   have ht' : tag = .hdr := ht
   subst ht'
   have hstep := stepH_ok (K := hdrK w (S.after w last) st mlen) (a := a) (hs := hs) hR hpos
@@ -46,13 +46,13 @@ theorem stepDHdr_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {last 
   | next =>
     dsimp only
     obtain ⟨g', p', oc, hR', h1, h2, h3, h4, _, h5⟩ := hstep.next hst
-    exact ⟨fun _ => ⟨.hdr w st last mlen g' p', ⟨rfl, ⟨hall.win, hall.produced, hall.limit⟩, hl, hleft, hm1, hm2, hR'⟩, h1, h2, (fun t => (h3 _).trans (Wr_id (fun _ _ => rfl) oc _)), h4, ⟨[], rfl, rfl⟩,
+    exact ⟨fun _ => ⟨.hdr w st last mlen g' p', ⟨rfl, ⟨hall.win, hall.produced, hall.limit⟩, hl, hleft, hm1, hm2, hR', hp0⟩, h1, h2, (fun t => (h3 _).trans (Wr_id (fun _ _ => rfl) oc _)), h4, ⟨[], rfl, rfl⟩,
       fun t => (reach_hdr (q := (g, p)) (q' := (g', p')) (h5 _))⟩,
       fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
   | needsInput =>
     dsimp only
     obtain ⟨h1, h2, hR', h3, h4, _, h5, h6⟩ := hstep.needsInput hst
-    exact ⟨fun e => DStatus.noConfusion e, fun _ => ⟨h1, h2, .hdr w st last mlen g p, ⟨rfl, ⟨hall.win, hall.produced, hall.limit⟩, hl, hleft, hm1, hm2, hR'⟩,
+    exact ⟨fun e => DStatus.noConfusion e, fun _ => ⟨h1, h2, .hdr w st last mlen g p, ⟨rfl, ⟨hall.win, hall.produced, hall.limit⟩, hl, hleft, hm1, hm2, hR', hp0⟩,
       (fun t => h3 _), h4, ⟨rfl, rfl⟩, (fun _ _ e => SPhase.noConfusion e), ⟨[], rfl, rfl⟩, (fun t => Reach.ofEq (h5 _)),
       ⟨_, _, .refl _ _, short_hdr h6, rfl⟩⟩, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
   | bad =>
@@ -61,7 +61,8 @@ theorem stepDHdr_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {last 
       fun _ t => hstep.bad hst _⟩
   | memory =>
     dsimp only
-    exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun _ => rfl, fun e => DStatus.noConfusion e⟩
+    exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e,
+      fun _ => ⟨rfl, hp0, Or.inr ⟨_, _, _, _, _, _, rfl⟩⟩, fun e => DStatus.noConfusion e⟩
   | ready =>
     dsimp only
     obtain ⟨g', hu, hw, h1, h2, h3, _, _, _, h4⟩ := hstep.ready hst
@@ -394,7 +395,7 @@ theorem stepDMeta_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {a : 
         rfl
     · rw [ite_eq_right hu]
       have hu' : (r.d != 0) = false := by simpa using hu
-      refine ⟨fun _ => ⟨.hdr w st (r.b != 0) r.c.toNat Gh.start (.cat .L), ⟨rfl, ⟨hwin, hprod, hlim⟩, rfl, rfl, hm1, hm2, hdStart_rel hw2 hlim⟩, r2, r3, (fun t => ?_), trivial, ⟨[], rfl, rfl⟩,
+      refine ⟨fun _ => ⟨.hdr w st (r.b != 0) r.c.toNat Gh.start (.cat .L), ⟨rfl, ⟨hwin, hprod, hlim⟩, rfl, rfl, hm1, hm2, hdStart_rel hw2 hlim, hz0⟩, r2, r3, (fun t => ?_), trivial, ⟨[], rfl, rfl⟩,
         fun t => (Reach.one ?_)⟩,
         fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
       · rw [hfin]
@@ -553,7 +554,8 @@ theorem stepDWbits_ok {α : Type} {S : Sem α} {a : ByteArray} {stop : USize} {h
         show readIn 7 readWBITS ((BitBuffer.mk rf.word rf.count).held ++ (chunkBits a rf.pos.toNat stop.toNat ++ bits t)) _ = _
         exact readIn_some ((hval hsr).2 _)
     · rw [ite_eq_right hc]
-      exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun _ => rfl, fun e => DStatus.noConfusion e⟩
+      exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun _ => ⟨rfl, hz', Or.inl rfl⟩,
+        fun e => DStatus.noConfusion e⟩
 
 /-! ### Metadata -/
 

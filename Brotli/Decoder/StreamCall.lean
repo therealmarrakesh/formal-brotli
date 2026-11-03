@@ -26,6 +26,9 @@ structure RunD (a : ByteArray) (stop : USize) (p : SPhase) (D r : Dec) : Prop wh
     (∀ t : List UInt8, srest specSem p (D.bits a D.pos stop (bits t)) = srest specSem p' (r.bits a r.pos stop (bits t))) ∧ r.cmd.pend.toNat ≠ 0 ∧
     ∀ t : List UInt8, Reach sStep p (D.bits a D.pos stop (bits t)) p' (r.bits a r.pos stop (bits t))
   bad : r.status = .bad → ∀ t : List UInt8, srest specSem p (D.bits a D.pos stop (bits t)) = none
+  memory : r.status = .memory → ∃ p' D', DRel D' p' ∧ D.pos.toNat ≤ D'.pos.toNat ∧ D'.pos.toNat ≤ stop.toNat ∧ OutD p p' D D' ∧
+    (∀ t : List UInt8, Reach sStep p (D.bits a D.pos stop (bits t)) p' (D'.bits a D'.pos stop (bits t))) ∧ D'.cmd.pend = 0 ∧
+    (p' = .wbits ∨ ∃ w st last mlen g q, p' = .hdr w st last mlen g q)
 
 /-- Two moves' bytes together. -/
 theorem OutD.trans {p p1 p2 : SPhase} {D r1 r : Dec} (h1 : OutD p p1 D r1) (h2 : OutD p1 p2 r1 r) : OutD p p2 D r := by
@@ -53,7 +56,7 @@ theorem runD_ok {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} : �
           obtain ⟨h1, h2, w, h3, h4, h5⟩ := hrel
           exact ⟨h1, h2, w, { h3 with }, h4, h5⟩
         refine ⟨fun _ => ⟨st, hrel', Nat.le_refl _, hinv.2, ⟨[], rfl, rfl⟩, (fun t => ?_), fun t => Reach.refl _ _⟩, fun e => DStatus.noConfusion e,
-          fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
+          fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
         have hb : Dec.bits { D with status := .next } a D.pos stop (bits t) = Dec.bits D a D.pos stop (bits t) := rfl
         show _ = srest specSem (.ended st) (Dec.bits { D with status := .next } a D.pos stop (bits t))
         rw [hb]
@@ -72,7 +75,10 @@ theorem runD_ok {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} : �
         have hih := ih ⟨stepD a stop hs D, hinv.step he hn⟩ ⟨he, hn, rfl⟩ p' hR
         dsimp only at hih
         generalize runD a stop hs (stepD a stop hs D) (hinv.step he hn) = r at hih ⊢
-        refine ⟨fun e => ?_, fun e => ?_, fun e => ?_, fun e t => ?_⟩
+        refine ⟨fun e => ?_, fun e => ?_, fun e => ?_, fun e t => ?_, fun e => ?_⟩
+        rotate_right
+        · obtain ⟨p2, D2, b1, b2, b3, b4, b5, b6, b7⟩ := hih.memory e
+          exact ⟨p2, D2, b1, Nat.le_trans h1 b2, b3, h4.trans b4, fun t => (h5 t).trans (b5 t), b6, b7⟩
         · obtain ⟨st, b1, b2, b3, b4, b5, b6⟩ := hih.next e
           refine ⟨st, b1, Nat.le_trans h1 b2, b3, h4.trans b4, (fun t => ?_), fun t => (h5 t).trans (b6 t)⟩
           rw [← sLeave_spec, h3, b5]
@@ -84,7 +90,10 @@ theorem runD_ok {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} : �
           rw [← sLeave_spec, h3, b5]
         · rw [← sLeave_spec, h3, hih.bad e t]
       · rw [dite_eq_right hn]
-        refine ⟨fun e => absurd e hn, fun e => ?_, fun e => ?_, fun e t => ?_⟩
+        refine ⟨fun e => absurd e hn, fun e => ?_, fun e => ?_, fun e t => ?_, fun e => ?_⟩
+        rotate_right
+        · obtain ⟨_, b2, b3⟩ := hstep.memory e
+          exact ⟨p, D, hrel, Nat.le_refl _, hinv.2, ⟨[], rfl, rfl⟩, fun t => .refl _ _, b2, b3⟩
         · obtain ⟨b1, b2, p2, b3, b4, b5, _, _, b6, b7, b8⟩ := hstep.needsInput e
           refine ⟨b1, b2, p2, b3, b6, (fun t => ?_), ?_, b7, b8⟩
           · rw [← sLeave_spec, ← sLeave_spec, b4]
@@ -212,8 +221,8 @@ theorem DRel.congr {D D' : Dec} {p : SPhase} (h : DRel D p) (e1 : D'.tag = D.tag
     obtain ⟨a1, a2, a3, a4, a5, a6⟩ := h
     exact ⟨e1.trans a1, by rw [e2]; exact a2, a3.congr e5 e2 e8, e6.trans a4, by rw [e7]; exact a5, a6⟩
   | hdr =>
-    obtain ⟨a1, a2, a3, a4, a5, a6, a7⟩ := h
-    exact ⟨e1.trans a1, a2.congr e5 e2 e8, e6.trans a3, by rw [e7]; exact a4, a5, a6, by rw [e3]; exact a7⟩
+    obtain ⟨a1, a2, a3, a4, a5, a6, a7, a8⟩ := h
+    exact ⟨e1.trans a1, a2.congr e5 e2 e8, e6.trans a3, by rw [e7]; exact a4, a5, a6, by rw [e3]; exact a7, by rw [e2]; exact a8⟩
   | cmds =>
     obtain ⟨a1, a2, a3, a4, a5⟩ := h
     exact ⟨e1.trans a1, e6.trans a2, by rw [e8]; exact a3, by rw [e4]; exact a4, by rw [e5, e2]; exact a5⟩
@@ -245,8 +254,9 @@ theorem DRel.withPend {D : Dec} {p : SPhase} (h : DRel D p) {x : USize} (hx : x.
     obtain ⟨a1, a2, a3, a4, a5, a6⟩ := h
     exact ⟨a1, a2, hwin a3, a4, a5, a6⟩
   | hdr =>
-    obtain ⟨a1, a2, a3, a4, a5, a6, a7⟩ := h
-    exact ⟨a1, hwin a2, a3, a4, a5, a6, a7⟩
+    obtain ⟨a1, a2, a3, a4, a5, a6, a7, a8⟩ := h
+    have h0 : D.cmd.pend.toNat = 0 := by rw [a8]; rfl
+    exact ⟨a1, hwin a2, a3, a4, a5, a6, a7, USize.toNat_inj.mp (by show x.toNat = 0; omega)⟩
   | cmds =>
     obtain ⟨a1, a2, a3, a4, a5⟩ := h
     exact ⟨a1, a2, a3, a4, a5.withPend hx⟩
@@ -606,7 +616,10 @@ structure CallOk (a : ByteArray) (stop : USize) (final : Bool) (p : SPhase) (D :
       ∀ t : List UInt8, Reach sStep p (D.bits a D.pos stop (bits t)) p' (o.D.bits a o.pos stop (bits t))) ∧
     (o.status = .done → final = true ∧ o.pos = stop ∧ srest specSem p (D.bits a D.pos stop (bits [])) = some ((E ++ n).map Nat.toUInt8)) ∧
     (o.status = .rejected → ∀ t : List UInt8, (final = true → t = []) → srest specSem p (D.bits a D.pos stop (bits t)) = none) ∧
-    (o.status = .memoryLimit → ∀ (t : List UInt8) (y : List UInt8), srest specSem p (D.bits a D.pos stop (bits t)) = some y → (E ++ n).map Nat.toUInt8 <+: y)
+    (o.status = .memoryLimit → (∀ (t : List UInt8) (y : List UInt8), srest specSem p (D.bits a D.pos stop (bits t)) = some y → (E ++ n).map Nat.toUInt8 <+: y) ∧
+      ∃ p' D', DRel D' p' ∧ D.pos.toNat ≤ D'.pos.toNat ∧ D'.pos.toNat ≤ stop.toNat ∧ Pend p' D' (E ++ n) ∧
+        (∀ t : List UInt8, Reach sStep p (D.bits a D.pos stop (bits t)) p' (D'.bits a D'.pos stop (bits t))) ∧ D'.cmd.pend = 0 ∧
+        (p' = .wbits ∨ ∃ w st last mlen g q, p' = .hdr w st last mlen g q))
 
 /-- The bytes handed out are the start of any output a place gets to. -/
 theorem Pend.prefix {p : SPhase} {D : Dec} {E : List Nat} {y : List UInt8} (h : Pend p D E) (hx : Ext p.out y) : E.map Nat.toUInt8 <+: y := by
@@ -618,10 +631,13 @@ theorem Pend.prefix {p : SPhase} {D : Dec} {E : List Nat} {y : List UInt8} (h : 
 /-- A call that stopped, with no bytes handed out. -/
 private theorem callOk_stop {a : ByteArray} {stop : USize} {final : Bool} {p : SPhase} {D : Dec} {E : List Nat} {buf : ByteArray} {space : Nat} {s : Status}
     (hp : D.pos.toNat ≤ stop.toNat) (hE : Pend p D E) (hr : s = .rejected → ∀ t : List UInt8, (final = true → t = []) → srest specSem p (D.bits a D.pos stop (bits t)) = none)
-    (h1 : s ≠ .needsInput) (h2 : s ≠ .needsOutput) (h3 : s ≠ .done) :
+    (h1 : s ≠ .needsInput) (h2 : s ≠ .needsOutput) (h3 : s ≠ .done)
+    (hm : s = .memoryLimit → ∃ p' D', DRel D' p' ∧ D.pos.toNat ≤ D'.pos.toNat ∧ D'.pos.toNat ≤ stop.toNat ∧ Pend p' D' E ∧
+      (∀ t : List UInt8, Reach sStep p (D.bits a D.pos stop (bits t)) p' (D'.bits a D'.pos stop (bits t))) ∧ D'.cmd.pend = 0 ∧
+      (p' = .wbits ∨ ∃ w st last mlen g q, p' = .hdr w st last mlen g q)) :
     CallOk a stop final p D E buf space ⟨deadD, buf, D.pos, s⟩ :=
   ⟨Nat.le_refl _, hp, ⟨_, deadD_rel⟩, [], by simp, Nat.zero_le _, fun e => absurd e h1, fun e => absurd e h2, fun e => absurd e h3, hr,
-    fun _ t y hy => by rw [List.append_nil]; exact hE.prefix (srest_out hy)⟩
+    fun e => ⟨fun t y hy => by rw [List.append_nil]; exact hE.prefix (srest_out hy), by rw [List.append_nil]; exact hm e⟩⟩
 
 /-- A call that paused for room after handing out what it could. -/
 private theorem callOk_full {a : ByteArray} {stop : USize} {final : Bool} {p p' : SPhase} {D r : Dec} {E : List Nat} {buf : ByteArray} {space : Nat}
@@ -653,8 +669,11 @@ theorem afterRun_ok {a : ByteArray} {stop : USize} (hs : stop.toNat ≤ a.size) 
   | needsOutput => exact absurd hst hn
   | bad =>
     exact callOk_stop hp hE (fun _ t _ => hr.bad hst t) (fun e => Status.noConfusion e) (fun e => Status.noConfusion e) (fun e => Status.noConfusion e)
+      (fun e => Status.noConfusion e)
   | memory =>
+    obtain ⟨p', D', b1, b2, b3, b4, b5, b6, b7⟩ := hr.memory hst
     exact callOk_stop hp hE (fun e => Status.noConfusion e) (fun e => Status.noConfusion e) (fun e => Status.noConfusion e) (fun e => Status.noConfusion e)
+      (fun _ => ⟨p', D', b1, b2, b3, hE.move b4, b5, b6, b7⟩)
   | needsInput =>
     obtain ⟨b1, b2, p', hR, ho, heq, hnone, hj, hsh⟩ := hr.needsInput hst
     have hE' := hE.move ho
@@ -771,7 +790,7 @@ theorem callD_ok {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {fi
         rw [a7] at c4
         have hl1 := flush_length (p := p') hR a1
         refine ⟨Nat.le_trans (by rw [a8]; exact b1) c1, c2, c3, ((p'.out.take (runD a stop hs D h).cmd.pend.toNat).reverse).take len ++ n,
-          by rw [c4, List.append_assoc], ?_, fun e => ?_, fun e => ?_, fun e => ?_, (fun e t ht => ?_), fun e t y hy => ?_⟩
+          by rw [c4, List.append_assoc], ?_, fun e => ?_, fun e => ?_, fun e => ?_, (fun e t ht => ?_), fun e => ⟨fun t y hy => ?_, ?_⟩⟩
         · rw [List.length_append, hl1]
           rw [a3] at c5
           omega
@@ -790,7 +809,10 @@ theorem callD_ok {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {fi
           exact c9 e t ht
         · rw [hchain] at hy
           rw [← List.append_assoc]
-          exact c10 e t y hy
+          exact (c10 e).1 t y hy
+        · obtain ⟨p2, D2, d1, d2, d3, d4, d5, d6, d7⟩ := (c10 e).2
+          refine ⟨p2, D2, d1, Nat.le_trans (by rw [a8]; exact b1) d2, d3, by rw [← List.append_assoc]; exact d4,
+            fun t => (hjoin t).trans (d5 t), d6, d7⟩
       · rw [ite_eq_right hz]
         exact callOk_full b1 b2 hR hE' heq hj hz
     · rw [dite_eq_right hO]

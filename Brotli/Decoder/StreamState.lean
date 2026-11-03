@@ -194,7 +194,8 @@ def DRel (D : Dec) : SPhase → Prop
     D.cmd.count.toNat % 8 = 0 ∧ n < 2 ^ 32
   | .raw w st last n => D.tag = .raw ∧ (BitBuffer.mk D.cmd.word D.cmd.count).Wf ∧ WinAll D w st ∧ D.last = last ∧ D.left.toNat = n ∧
     n < 2 ^ 32
-  | .hdr w st last mlen g p => D.tag = .hdr ∧ WinAll D w st ∧ D.last = last ∧ D.left.toNat = mlen ∧ 1 ≤ mlen ∧ mlen ≤ 16777216 ∧ HRel D.hd g p
+  | .hdr w st last mlen g p => D.tag = .hdr ∧ WinAll D w st ∧ D.last = last ∧ D.left.toNat = mlen ∧ 1 ≤ mlen ∧ mlen ≤ 16777216 ∧ HRel D.hd g p ∧
+    D.cmd.pend = 0
   | .cmds w last m p => D.tag = .cmds ∧ D.last = last ∧ D.limit.toNat + 132096 < 2 ^ 32 ∧ HdrRel D.H m ∧ Rel w D.k.toNat m D.cmd p
   | .ended st => D.tag = .ended ∧ (BitBuffer.mk D.cmd.word D.cmd.count).Wf ∧ ∃ w, WinAll D w st
 
@@ -259,7 +260,7 @@ structure DStepOk {α : Type} (S : Sem α) (a : ByteArray) (stop : USize) (p : S
     (∀ t : List UInt8, sLeave S p (D.bits a pos stop (bits t)) = sLeave S p' (r.bits a r.pos stop (bits t))) ∧ r.cmd.pend.toNat ≠ 0 ∧ SDownEq p p' (r.cmd.pend = D.cmd.pend) ∧
     (∀ w st, p = .mblock w st → ∀ t : List UInt8, r.bits a r.pos stop (bits t) = D.bits a pos stop (bits t)) ∧ OutD p p' D r ∧
     ∀ t : List UInt8, Reach sStep p (D.bits a pos stop (bits t)) p' (r.bits a r.pos stop (bits t))
-  memory : r.status = .memory → r.limit = D.limit
+  memory : r.status = .memory → r.limit = D.limit ∧ D.cmd.pend = 0 ∧ (p = .wbits ∨ ∃ w st last mlen g q, p = .hdr w st last mlen g q)
   bad : r.status = .bad → ∀ t : List UInt8, sLeave S p (D.bits a pos stop (bits t)) = none
 
 end Brotli.Decoder
