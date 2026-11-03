@@ -507,4 +507,242 @@ theorem cStep_moves {w : Nat} {m : MetaBlockHeader} (hm : m.ndirect ≤ 120) : �
     cases h
     exact ⟨hi, ⟨[b], rfl⟩, Or.inl (Or.inr (by simp [Phase.out]))⟩
 
+/-! ### A header -/
+
+/-- A read that looks at no bit after the ones it takes, and fails on no bits, takes at least one. -/
+theorem takes_one {A : Type} {rd : List Bool → Option (A × List Bool)} (hf : Faith rd) (h0 : rd [] = none) {bs b : List Bool} {v : A}
+    (h : rd bs = some (v, b)) : b.length < bs.length := by
+  obtain ⟨u, hu, hk⟩ := hf bs v b h
+  cases u with
+  | nil =>
+    have := hk []
+    simp only [List.append_nil] at this
+    rw [h0] at this
+    cases this
+  | cons x u =>
+    rw [hu]
+    simp only [List.cons_append, List.length_cons, List.length_append]
+    omega
+
+theorem faith_le {A : Type} {rd : List Bool → Option (A × List Bool)} (hf : Faith rd) {bs b : List Bool} {v : A}
+    (h : rd bs = some (v, b)) : b.length ≤ bs.length := by
+  obtain ⟨u, hu, _⟩ := hf bs v b h
+  rw [hu, List.length_append]
+  omega
+
+/-- A context map's run is at least one value. -/
+theorem mapSym_run {rlemax : Nat} {code : PrefixCode} {bs b : List Bool} {v : Nat × Nat} (h : mapSym rlemax code bs = some (v, b)) :
+    1 ≤ v.2 := by
+  unfold mapSym at h
+  cases hd : decodeSymbol code bs with
+  | none => rw [hd] at h; cases h
+  | some p =>
+    rw [hd] at h
+    dsimp only [bind, Option.bind] at h
+    cases hc : contextMapValue rlemax p.1 with
+    | some x =>
+      rw [hc] at h
+      simp only [Option.some.injEq, Prod.mk.injEq] at h
+      obtain ⟨rfl, -⟩ := h
+      exact Nat.le_refl _
+    | none =>
+      rw [hc] at h
+      dsimp only at h
+      cases hi : readInt p.1 p.2 with
+      | none => rw [hi] at h; cases h
+      | some q =>
+        rw [hi] at h
+        simp only [Option.some.injEq, Prod.mk.injEq] at h
+        rw [← h.1]
+        show 1 ≤ (1 <<< p.1) + q.1
+        rw [Nat.shiftLeft_eq, Nat.one_mul]
+        have := Nat.two_pow_pos p.1
+        omega
+
+/-- How a group of codes is ranked: by whether codes are left, and what follows. -/
+def ckStage (k : CK) (g : Gh) : Nat → Nat
+  | _ + 1 => 2
+  | 0 => match k with
+    | .D => 22
+    | .I => (if g.treesD = 0 then 22 else 2) + 1
+    | .L => (if g.m.insertCopy.n = 0 then (if g.treesD = 0 then 22 else 2) + 1 else 2) + 1
+
+/-- How a code is ranked by what it is for: above where its owner goes on to. -/
+def oStage (g : Gh) : Owner → Nat
+  | .type .. => 2
+  | .count .. => 2
+  | .map isL _ _ => mapSize g isL + 3
+  | .codes k _ left => ckStage k g left + 1
+
+/-- A ranking of a header's places: a step that reads nothing goes lower. -/
+def hstage (g : Gh) : HPhase → Nat
+  | .cat _ => 1
+  | .code _ _ => 1
+  | .clens o size [] _ _ => oStage g o + size + 2
+  | .clens _ _ (_ :: _) _ _ => 1
+  | .syms o size _ st => oStage g o + (size - st.lens.length) + 1
+  | .first .. => 1
+  | .np => 1
+  | .modes _ 0 => 2
+  | .modes _ (_ + 1) => 1
+  | .trees _ => 1
+  | .rlemax _ _ => 1
+  | .vals _ _ _ _ _ left => left + 2
+  | .imtf .. => 1
+  | .codes k _ n => ckStage k g n
+
+theorem ownerPlace_stage (g : Gh) (o : Owner) (c : PrefixCode) : hstage g (ownerPlace g o c) < oStage g o := by
+  cases o with
+  | type => simp only [ownerPlace, hstage, oStage]; omega
+  | count => simp only [ownerPlace, hstage, oStage]; omega
+  | map => simp only [ownerPlace, hstage, oStage]; omega
+  | codes => simp only [ownerPlace, hstage, oStage]; omega
+
+/-- Each step of a header read in order reads bits or goes lower in the ranking. -/
+theorem hStep_moves (g : Gh) : ∀ (p : HPhase) (bs : List Bool) (q : Gh × HPhase) (c : List Bool),
+    hStepP (g, p) bs = .next q c → c.length < bs.length ∨ hstage q.1 q.2 < hstage g p
+  | .cat i, bs, q, c, h => by
+    obtain ⟨v, b, e1, e2⟩ := readIn_next' (show hStep g (.cat i) bs = _ from h)
+    have hl := takes_one faith_readVarLen rfl e1
+    split at e2 <;> cases e2 <;> exact Or.inl hl
+  | .code o size, bs, q, c, h => by
+    obtain ⟨v, b, e1, e2⟩ := readIn_next' (show hStep g (.code o size) bs = _ from h)
+    have hl := readInt_length _ _ _ _ e1
+    split at e2
+    · obtain ⟨c', b', e3, e4⟩ := readIn_next' e2
+      cases e4
+      have := faith_le (faith_simpleChain _ _) e3
+      exact Or.inl (by omega)
+    · cases e2
+      exact Or.inl (by omega)
+  | .clens o size [] acc sum, bs, q, c, h => by
+    have h' : (if (acc.filter (·.2 != 0)).length = 1 then ORes.next (g, HPhase.syms o size (codeLengthCode acc) ⟨[], 8, none⟩) bs
+        else .bad) = .next q c := h
+    split at h'
+    · cases h'
+      right
+      simp only [hstage, List.length_nil, Nat.sub_zero]
+      omega
+    · cases h'
+  | .clens o size (x :: rest) acc sum, bs, q, c, h => by
+    obtain ⟨v, b, e1, e2⟩ := readIn_next' (show hStep g (.clens o size (x :: rest) acc sum) bs = _ from h)
+    have hl := takes_one faith_readCodeLengthCodeLength rfl e1
+    split at e2
+    · cases e2; exact Or.inl hl
+    · split at e2
+      · cases e2; exact Or.inl hl
+      · split at e2
+        · cases e2
+        · cases e2; exact Or.inl hl
+  | .syms o size clc st, bs, q, c, h => by
+    have h' : (if size < st.lens.length then ORes.bad
+        else if lengthSum st.lens = 32768 then
+          .next (g, ownerPlace g o (.canonical (st.lens ++ List.replicate (size - st.lens.length) 0))) bs
+        else if st.lens.length = size then .bad
+        else readIn 18 (lenSym clc) bs fun v b =>
+          if size < (applyCodeLength st v.1 v.2).lens.length then .bad
+          else if 32768 < lengthSum (applyCodeLength st v.1 v.2).lens then .bad
+          else .next (g, .syms o size clc (applyCodeLength st v.1 v.2)) b) = .next q c := h
+    split at h'
+    · cases h'
+    · rename_i h1
+      split at h'
+      · cases h'
+        right
+        have := ownerPlace_stage g o (.canonical (st.lens ++ List.replicate (size - st.lens.length) 0))
+        show hstage g (ownerPlace g o (.canonical (st.lens ++ List.replicate (size - st.lens.length) 0))) <
+          oStage g o + (size - st.lens.length) + 1
+        omega
+      · split at h'
+        · cases h'
+        · rename_i h3
+          obtain ⟨v, b, _, e2⟩ := readIn_next' h'
+          split at e2
+          · cases e2
+          · rename_i h4
+            split at e2
+            · cases e2
+            · cases e2
+              right
+              have := applyCodeLength_length st v.1 v.2
+              show oStage g o + (size - (applyCodeLength st v.1 v.2).lens.length) + 1 < oStage g o + (size - st.lens.length) + 1
+              omega
+  | .first i n tc cc, bs, q, c, h => by
+    obtain ⟨v, b, e1, e2⟩ := readIn_next' (show hStep g (.first i n tc cc) bs = _ from h)
+    cases e2
+    have := readBlockCount_lt e1
+    exact Or.inl (by omega)
+  | .np, bs, q, c, h => by
+    obtain ⟨v, b, e1, e2⟩ := readIn_next' (show hStep g .np bs = _ from h)
+    cases e2
+    exact Or.inl (takes_one faith_readNp rfl e1)
+  | .modes done 0, bs, q, c, h => by
+    cases h
+    right
+    simp only [hstage]
+    omega
+  | .modes done (n + 1), bs, q, c, h => by
+    obtain ⟨v, b, e1, e2⟩ := readIn_next' (show hStep g (.modes done (n + 1)) bs = _ from h)
+    cases e2
+    have := readInt_length _ _ _ _ e1
+    exact Or.inl (by omega)
+  | .trees isL, bs, q, c, h => by
+    obtain ⟨v, b, e1, e2⟩ := readIn_next' (show hStep g (.trees isL) bs = _ from h)
+    have hl := takes_one faith_readVarLen rfl e1
+    split at e2 <;> cases e2 <;> exact Or.inl hl
+  | .rlemax isL ntrees, bs, q, c, h => by
+    obtain ⟨v, b, e1, e2⟩ := readIn_next' (show hStep g (.rlemax isL ntrees) bs = _ from h)
+    cases e2
+    exact Or.inl (takes_one faith_readRLEMAX rfl e1)
+  | .vals isL ntrees rlemax code done left, bs, q, c, h => by
+    have h' : (if left = 0 then ORes.next (g, HPhase.imtf isL ntrees done) bs
+        else readIn 31 (mapSym rlemax code) bs fun v b =>
+          if left < v.2 then .bad else .next (g, .vals isL ntrees rlemax code (done ++ List.replicate v.2 v.1) (left - v.2)) b) =
+        .next q c := h
+    split at h'
+    · cases h'
+      right
+      simp only [hstage]
+      omega
+    · rename_i h0
+      obtain ⟨v, b, e1, e2⟩ := readIn_next' h'
+      split at e2
+      · cases e2
+      · cases e2
+        right
+        have := mapSym_run e1
+        show (left - v.2) + 2 < left + 2
+        omega
+  | .imtf isL ntrees vals, bs, q, c, h => by
+    obtain ⟨v, b, e1, e2⟩ := readIn_next' (show hStep g (.imtf isL ntrees vals) bs = _ from h)
+    have := readInt_length _ _ _ _ e1
+    generalize (if v = 0 then vals else inverseMoveToFront vals) = fin at e2
+    by_cases hc : (List.range ntrees).all fin.contains = true
+    · rw [ite_eq_left hc] at e2
+      cases e2
+      exact Or.inl (by omega)
+    · rw [ite_eq_right hc] at e2
+      cases e2
+  | .codes k done (n + 1), bs, q, c, h => by
+    cases h
+    right
+    simp only [hstage, ckStage]
+    omega
+  | .codes .L done 0, bs, q, c, h => by
+    cases h
+    right
+    show ckStage .I (g.setCodes .L done) g.m.insertCopy.n < ckStage .L g 0
+    have e : (g.setCodes .L done).treesD = g.treesD := rfl
+    cases hn : g.m.insertCopy.n with
+    | zero => simp only [ckStage, e, hn, ↓reduceIte]; omega
+    | succ n => simp only [ckStage, hn]; split <;> omega
+  | .codes .I done 0, bs, q, c, h => by
+    cases h
+    right
+    show ckStage .D (g.setCodes .I done) g.treesD < ckStage .I g 0
+    cases hn : g.treesD with
+    | zero => simp only [ckStage, hn, ↓reduceIte]; omega
+    | succ n => simp only [ckStage, hn]; split <;> omega
+  | .codes .D done 0, bs, q, c, h => by cases h
+
 end Brotli.Decoder
