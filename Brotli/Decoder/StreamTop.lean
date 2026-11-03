@@ -173,6 +173,51 @@ private theorem bits_at {x : List UInt8} {R : Run DState} {c : Call} (h : R.read
 private theorem buf_list (l : List UInt8) : l.toByteArray.data.toList = l := by
   simp [List.data_toByteArray]
 
+/-- A state's bits at a place in a call's chunk, with any bytes after the chunk. -/
+private theorem bits_at' {x : List UInt8} {R : Run DState} {c : Call} (h : R.read + c.size ≤ x.length) (D' : Dec) {pos stop : USize} {q : Nat}
+    (hq : pos.toNat = c.pre.length + q) (hqs : q ≤ c.size) (hstop : stop.toNat = c.pre.length + c.size) (t : List UInt8) :
+    D'.bits (R.input x c) pos stop (bits t) = D'.held ++ bits (((x.drop R.read).take c.size).drop q ++ t) := by
+  have hT := take_length (R := R) (c := c) h
+  have e1 : chunk (R.input x c) (c.pre.length + q) (c.pre.length + c.size) = ((x.drop R.read).take c.size).drop q := by
+    unfold chunk
+    rw [input_list, List.drop_append, List.drop_eq_nil_of_le (by omega), List.nil_append,
+      show c.pre.length + q - c.pre.length = q by omega, List.drop_append_of_le_length (by omega),
+      show c.pre.length + c.size - (c.pre.length + q) = c.size - q by omega]
+    exact List.take_left' (by rw [List.length_drop, hT])
+  show D'.held ++ (chunkBits (R.input x c) pos.toNat stop.toNat ++ _) = _
+  rw [hq, hstop]
+  unfold chunkBits
+  rw [e1, ← bits_append]
+
+/-- A stream's first bytes, cut further on. -/
+private theorem take_split {α : Type} (x : List α) {i j : Nat} (h : i ≤ j) : x.take j = x.take i ++ (x.take j).drop i := by
+  conv => lhs; rw [← List.take_append_drop i (x.take j)]
+  rw [List.take_take, Nat.min_eq_left h]
+
+/-- The bytes between two places, cut at a third. -/
+private theorem seg_split {α : Type} (x : List α) {i j k : Nat} (hij : i ≤ j) (hjk : j ≤ k) (hi : i ≤ x.length) :
+    (x.take k).drop i = (x.take j).drop i ++ (x.take k).drop j := by
+  conv => lhs; rw [← List.take_append_drop j (x.take k)]
+  rw [List.take_take, Nat.min_eq_left hjk, List.drop_append_of_le_length (by rw [List.length_take]; omega)]
+
+/-- A chunk's bytes from a place in it, then the bytes up to further on. -/
+private theorem chunk_seg {α : Type} (x : List α) {r s u H : Nat} (hu : u ≤ s) (hs : r + s ≤ H) (hx : r + s ≤ x.length) :
+    ((x.drop r).take s).drop u ++ (x.take H).drop (r + s) = (x.take H).drop (r + u) := by
+  rw [seg_split x (show r + u ≤ r + s by omega) hs (by omega)]
+  congr 1
+  rw [List.drop_take, List.drop_drop, List.drop_take]
+  congr 1
+  omega
+
+/-- What every run of the decoder holds of the spec's reading in order: a running state stands for a place where the
+reading in order takes the bytes offered so far, with the bytes offered but not used still to read, whatever bytes follow;
+and needing input means the reading in order pauses there with the bits the state holds. -/
+structure OrderInv (x : List UInt8) (R : Run DState) : Prop where
+  running : R.status.stopped = false → ∃ p, DRel R.state.val p ∧ Pend p R.state.val (R.emitted.map UInt8.toNat) ∧
+    R.read ≤ R.offered ∧
+    (∀ u : List UInt8, Reach sStep .wbits (bits (x.take R.offered ++ u)) p (R.state.val.held ++ bits ((x.take R.offered).drop R.read ++ u))) ∧
+    (R.status = .needsInput → SPause p R.state.val.held)
+
 /-- Every run of the decoder holds the invariant. -/
 theorem top_inv {limit : Nat} {x : List UInt8} {R : Run DState} (h : Reaches decoder limit x R) : TopInv x R := by
   induction h with
@@ -286,6 +331,91 @@ theorem top_inv {limit : Nat} {x : List UInt8} {R : Run DState} (h : Reaches dec
         have := ha.whole d1
         omega
       · rw [hemit, hdec', hrestt (ha.whole d1), d3, ← hmap, map_roundtrip]
+
+/-- Every run of the decoder holds the invariant of the spec's reading in order. -/
+theorem order_inv {limit : Nat} {x : List UInt8} {R : Run DState} (h : Reaches decoder limit x R) : OrderInv x R := by
+  induction h with
+  | start =>
+    show OrderInv x { state := (decStart limit).1, status := (decStart limit).2, read := 0, offered := 0, emitted := [], ended := false }
+    by_cases hl : limit < fixedCost
+    · have e : decStart limit = (⟨deadD, _, deadD_rel⟩, .memoryLimit) := by
+        unfold decStart
+        rw [ite_eq_left hl]
+      rw [e]
+      exact ⟨fun hs => Bool.noConfusion hs⟩
+    · have e : decStart limit = (⟨liveD limit, _, liveD_rel limit⟩, .needsInput) := by
+        unfold decStart
+        rw [ite_eq_right hl]
+      rw [e]
+      refine ⟨fun _ => ⟨.wbits, liveD_rel limit, rfl, Nat.le_refl _, fun u => ?_, fun _ => ⟨.wbits, [], .refl _ _, rfl, Or.inl rfl⟩⟩⟩
+      exact .refl _ _
+  | @call R c hR ha ih =>
+    have hin := ha.inside
+    have hfit := ha.fits
+    have hox := hR.offered_le
+    cases hs0 : (R.after decoder x c).status.stopped with
+    | true => exact ⟨fun e => by rw [hs0] at e; cases e⟩
+    | false =>
+    obtain ⟨p, hrel, hE, hro, hreach, _⟩ := ih.running ha.running
+    obtain ⟨o, e1, e2, e3, e4, hok⟩ := reply_ok ha hrel hE
+    obtain ⟨c1, c2, _, n, c3, _, c5, c6, _, _, _⟩ := hok
+    have hstop : (USize.ofNat (c.pre.length + c.size)).toNat = c.pre.length + c.size := usize_of (by omega)
+    have hpos0 : (atPos R.state.val c.pre.length).pos.toNat = c.pre.length + 0 := usize_of (by omega)
+    rw [buf_list] at c3
+    have hq : o.pos.toNat = c.pre.length + (o.pos.toNat - c.pre.length) := by
+      rw [hpos0] at c1
+      omega
+    have hqs : o.pos.toNat - c.pre.length ≤ c.size := by
+      rw [hstop] at c2
+      omega
+    obtain ⟨L2, hL, hLn⟩ := map_split c.buf _ n c3
+    have hdrop : o.buf.data.toList.drop c.buf.length = L2 := by
+      rw [hL]
+      simp
+    have hmap : (R.emitted ++ L2).map UInt8.toNat = R.emitted.map UInt8.toNat ++ n := by
+      rw [List.map_append, hLn]
+    have hstate : (R.after decoder x c).state.val = o.D := e1
+    have hstatus : (R.after decoder x c).status = o.status := e4
+    have hread : (R.after decoder x c).read = R.read + (o.pos.toNat - c.pre.length) := by
+      show R.read + (R.reply decoder x c).used = _
+      rw [e2]
+    have hemit : (R.after decoder x c).emitted = R.emitted ++ L2 := by
+      show R.emitted ++ (R.reply decoder x c).output.data.toList.drop c.buf.length = _
+      rw [e3, hdrop]
+    have hoff : (R.after decoder x c).offered = max R.offered (R.read + c.size) := rfl
+    -- The reading in order, from the bytes offered before the call to those offered after it.
+    have hgo : ∀ p' : SPhase, (∀ t : List UInt8, Reach sStep p ((atPos R.state.val c.pre.length).bits (R.input x c) (atPos R.state.val c.pre.length).pos
+        (USize.ofNat (c.pre.length + c.size)) (bits t)) p' (o.D.bits (R.input x c) o.pos (USize.ofNat (c.pre.length + c.size)) (bits t))) →
+        ∀ u : List UInt8, Reach sStep .wbits (bits (x.take (R.after decoder x c).offered ++ u)) p'
+          ((R.after decoder x c).state.val.held ++ bits ((x.take (R.after decoder x c).offered).drop (R.after decoder x c).read ++ u)) := by
+      intro p' hj u
+      rw [hstate, hread, hoff]
+      generalize hH : max R.offered (R.read + c.size) = H
+      have h1 := hreach ((x.take H).drop R.offered ++ u)
+      rw [← List.append_assoc, ← take_split x (show R.offered ≤ H by omega), ← List.append_assoc,
+        ← seg_split x hro (show R.offered ≤ H by omega) (by omega)] at h1
+      have h2 := hj ((x.take H).drop (R.read + c.size) ++ u)
+      rw [bits_at' hin _ hpos0 (Nat.zero_le _) hstop, bits_at' hin _ hq hqs hstop, ← List.append_assoc, ← List.append_assoc,
+        chunk_seg x (Nat.zero_le _) (show R.read + c.size ≤ H by omega) hin, chunk_seg x hqs (show R.read + c.size ≤ H by omega) hin,
+        Nat.add_zero] at h2
+      have e0 : (atPos R.state.val c.pre.length).held = R.state.val.held := rfl
+      rw [e0] at h2
+      exact h1.trans h2
+    have hro' : (R.after decoder x c).read ≤ (R.after decoder x c).offered := by
+      rw [hread, hoff]
+      omega
+    refine ⟨fun _ => ?_⟩
+    rw [hstatus] at hs0 ⊢
+    cases hst : o.status with
+    | needsInput =>
+      obtain ⟨_, _, _, p', d4, d5, _, d7, d8⟩ := c5 hst
+      refine ⟨p', by rw [hstate]; exact d4, by rw [hstate, hemit, hmap]; exact d5, hro', hgo p' d7, fun _ => by rw [hstate]; exact d8⟩
+    | needsOutput =>
+      obtain ⟨_, _, p', d4, d5, _, d7⟩ := c6 hst
+      refine ⟨p', by rw [hstate]; exact d4, by rw [hstate, hemit, hmap]; exact d5, hro', hgo p' d7, fun e => Status.noConfusion e⟩
+    | done => rw [hst] at hs0; cases hs0
+    | rejected => rw [hst] at hs0; cases hs0
+    | memoryLimit => rw [hst] at hs0; cases hs0
 
 /-- The reply to an allowed call, in the caller's terms. -/
 private theorem reply_list {limit : Nat} {x : List UInt8} {R : Run DState} {c : Call} (hR : Reaches decoder limit x R) (ha : R.Allowed x c) :
