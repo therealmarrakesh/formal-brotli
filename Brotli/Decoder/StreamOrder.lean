@@ -101,12 +101,46 @@ theorem SShort.pause {p : SPhase} {bs : List Bool} (h : SShort p bs) : SPause p 
   obtain ⟨q, c, h1, h2, h3⟩ := h
   exact ⟨q, c, h1, h3, Or.inl h2⟩
 
-/-- The commands' reading in order is the stream's. -/
-theorem reach_cmds {w : Nat} {last : Bool} {m : MetaBlockHeader} {p q : Phase} {bs c : List Bool} (h : Reach (cStep w m) p bs q c) :
-    Reach sStep (.cmds w last m p) bs (.cmds w last m q) c := by
+/-- The reading in order from one place to another that passes no meta-block's start on the way: a meta-block's start it
+comes to is where it ends. -/
+inductive SReach : SPhase → List Bool → SPhase → List Bool → Prop
+  | refl (p : SPhase) (bs : List Bool) : SReach p bs p bs
+  | next {p q r : SPhase} {bs c d : List Bool} : sStep p bs = .next q c → (∀ w st, q = .mblock w st → q = r ∧ c = d) →
+      SReach q c r d → SReach p bs r d
+
+theorem SReach.toReach {p q : SPhase} {bs c : List Bool} (h : SReach p bs q c) : Reach sStep p bs q c := by
   induction h with
   | refl => exact .refl _ _
-  | next hs _ ih => exact .next (by simp only [sStep, hs]) ih
+  | next hs _ _ ih => exact .next hs ih
+
+theorem SReach.one {p q : SPhase} {bs c : List Bool} (h : sStep p bs = .next q c) : SReach p bs q c :=
+  .next h (fun _ _ _ => ⟨rfl, rfl⟩) (.refl _ _)
+
+theorem SReach.ofEq {p : SPhase} {a a' : List Bool} (h : a' = a) : SReach p a p a' := by
+  subst h
+  exact .refl _ _
+
+/-- A step on from a place that isn't a meta-block's start. -/
+theorem SReach.snoc {p q r : SPhase} {bs c d : List Bool} (h : SReach p bs q c) (hq : ∀ w st, q ≠ .mblock w st)
+    (hs : sStep q c = .next r d) : SReach p bs r d := by
+  induction h with
+  | refl => exact .one hs
+  | next h1 hq1 _ ih =>
+    refine .next h1 (fun w st e => ?_) (ih hq hs)
+    obtain ⟨e1, _⟩ := hq1 w st e
+    exact absurd (e1.symm.trans e) (hq w st)
+
+/-- The commands' reading in order is the stream's, and passes no meta-block's start. -/
+theorem sreach_cmds {w : Nat} {last : Bool} {m : MetaBlockHeader} {p q : Phase} {bs c : List Bool} (h : Reach (cStep w m) p bs q c) :
+    SReach (.cmds w last m p) bs (.cmds w last m q) c := by
+  induction h with
+  | refl => exact .refl _ _
+  | next hs _ ih => exact .next (by simp only [sStep, hs]) (fun _ _ e => SPhase.noConfusion e) ih
+
+/-- The commands' reading in order is the stream's. -/
+theorem reach_cmds {w : Nat} {last : Bool} {m : MetaBlockHeader} {p q : Phase} {bs c : List Bool} (h : Reach (cStep w m) p bs q c) :
+    Reach sStep (.cmds w last m p) bs (.cmds w last m q) c :=
+  (sreach_cmds h).toReach
 
 theorem short_cmds {w : Nat} {last : Bool} {m : MetaBlockHeader} {p : Phase} {bs : List Bool} (h : CShort w m p bs) :
     SShort (.cmds w last m p) bs := by
@@ -119,12 +153,17 @@ theorem sStep_cmds_end {w : Nat} {last : Bool} {m : MetaBlockHeader} {s : Comman
     sStep (.cmds w last m (.command s)) bs = .next (afterBlock w last ⟨s.output, s.produced, s.distances⟩) bs := by
   simp only [sStep, cStep, h0, ↓reduceIte, hc]
 
-/-- A header's reading in order is the stream's. -/
-theorem reach_hdr {w : Nat} {st : StreamState} {last : Bool} {mlen : Nat} {q q' : Gh × HPhase} {bs c : List Bool}
-    (h : Reach hStepP q bs q' c) : Reach sStep (.hdr w st last mlen q.1 q.2) bs (.hdr w st last mlen q'.1 q'.2) c := by
+/-- A header's reading in order is the stream's, and passes no meta-block's start. -/
+theorem sreach_hdr {w : Nat} {st : StreamState} {last : Bool} {mlen : Nat} {q q' : Gh × HPhase} {bs c : List Bool}
+    (h : Reach hStepP q bs q' c) : SReach (.hdr w st last mlen q.1 q.2) bs (.hdr w st last mlen q'.1 q'.2) c := by
   induction h with
   | refl => exact .refl _ _
-  | next hs _ ih => exact .next (by simp only [sStep, show hStep _ _ _ = _ from hs]) ih
+  | next hs _ ih => exact .next (by simp only [sStep, show hStep _ _ _ = _ from hs]) (fun _ _ e => SPhase.noConfusion e) ih
+
+/-- A header's reading in order is the stream's. -/
+theorem reach_hdr {w : Nat} {st : StreamState} {last : Bool} {mlen : Nat} {q q' : Gh × HPhase} {bs c : List Bool}
+    (h : Reach hStepP q bs q' c) : Reach sStep (.hdr w st last mlen q.1 q.2) bs (.hdr w st last mlen q'.1 q'.2) c :=
+  (sreach_hdr h).toReach
 
 theorem short_hdr {w : Nat} {st : StreamState} {last : Bool} {mlen : Nat} {g : Gh} {p : HPhase} {bs : List Bool}
     (h : hStepP (g, p) bs = .short) : sStep (.hdr w st last mlen g p) bs = .short := by
@@ -144,13 +183,13 @@ theorem readInt_of_le : ∀ (k : Nat) (bs : List Bool), k ≤ bs.length → ∃ 
     exact ⟨b.toNat + 2 * v, by simp only [readInt, hv, Option.map_some, List.drop_succ_cons]⟩
 
 /-- Metadata, `m` bytes at a time. -/
-theorem reach_skip {w : Nat} {st : StreamState} {last : Bool} : ∀ (m n : Nat) (bs : List Bool), m ≤ n → m * 8 ≤ bs.length →
-    Reach sStep (.skip w st last n) bs (.skip w st last (n - m)) (bs.drop (m * 8))
-  | 0, n, bs, _, _ => by simpa using Reach.refl _ _
+theorem sreach_skip {w : Nat} {st : StreamState} {last : Bool} : ∀ (m n : Nat) (bs : List Bool), m ≤ n → m * 8 ≤ bs.length →
+    SReach (.skip w st last n) bs (.skip w st last (n - m)) (bs.drop (m * 8))
+  | 0, n, bs, _, _ => by simpa using SReach.refl _ _
   | m + 1, n + 1, bs, h1, h2 => by
     obtain ⟨v, hv⟩ := readInt_of_le 8 bs (by omega)
-    refine .next (show readIn 8 (readInt 8) bs _ = _ by rw [readIn_some hv]) ?_
-    have := reach_skip (w := w) (st := st) (last := last) m n (bs.drop 8) (by omega) (by simp; omega)
+    refine .next (show readIn 8 (readInt 8) bs _ = _ by rw [readIn_some hv]) (fun _ _ e => SPhase.noConfusion e) ?_
+    have := sreach_skip (w := w) (st := st) (last := last) m n (bs.drop 8) (by omega) (by simp; omega)
     have e : (bs.drop 8).drop (m * 8) = bs.drop ((m + 1) * 8) := by
       rw [List.drop_drop]
       congr 1
@@ -159,14 +198,19 @@ theorem reach_skip {w : Nat} {st : StreamState} {last : Bool} : ∀ (m n : Nat) 
     exact this
   | _ + 1, 0, _, h1, _ => absurd h1 (by omega)
 
+/-- Metadata, `m` bytes at a time. -/
+theorem reach_skip {w : Nat} {st : StreamState} {last : Bool} (m n : Nat) (bs : List Bool) (h1 : m ≤ n) (h2 : m * 8 ≤ bs.length) :
+    Reach sStep (.skip w st last n) bs (.skip w st last (n - m)) (bs.drop (m * 8)) :=
+  (sreach_skip m n bs h1 h2).toReach
+
 /-- Uncompressed bytes, as many as are read. -/
-theorem reach_raw {w : Nat} {last : Bool} : ∀ (j n : Nat) (st : StreamState) (bs : List Bool) (vs : List Nat) (b : List Bool),
+theorem sreach_raw {w : Nat} {last : Bool} : ∀ (j n : Nat) (st : StreamState) (bs : List Bool) (vs : List Nat) (b : List Bool),
     j ≤ n → readBytes j bs = some (vs, b) →
-    Reach sStep (.raw w st last n) bs (.raw w ⟨vs.reverse ++ st.output, st.produced + j, st.distances⟩ last (n - j)) b
+    SReach (.raw w st last n) bs (.raw w ⟨vs.reverse ++ st.output, st.produced + j, st.distances⟩ last (n - j)) b
   | 0, n, st, bs, vs, b, _, h => by
     simp only [readBytes, Option.some.injEq, Prod.mk.injEq] at h
     obtain ⟨rfl, rfl⟩ := h
-    simpa using Reach.refl _ _
+    simpa using SReach.refl _ _
   | j + 1, n + 1, st, bs, vs, b, h1, h => by
     simp only [readBytes] at h
     cases hv : readInt 8 bs with
@@ -180,11 +224,17 @@ theorem reach_raw {w : Nat} {last : Bool} : ∀ (j n : Nat) (st : StreamState) (
         obtain ⟨vs1, b2⟩ := q
         simp only [hr, bind, Option.bind, Option.some.injEq, Prod.mk.injEq] at h
         obtain ⟨rfl, rfl⟩ := h
-        refine .next (show readIn 8 (readInt 8) bs _ = _ by rw [readIn_some hv]) ?_
-        have := reach_raw (w := w) (last := last) j n ⟨v :: st.output, st.produced + 1, st.distances⟩ b1 vs1 b2 (by omega) hr
+        refine .next (show readIn 8 (readInt 8) bs _ = _ by rw [readIn_some hv]) (fun _ _ e => SPhase.noConfusion e) ?_
+        have := sreach_raw (w := w) (last := last) j n ⟨v :: st.output, st.produced + 1, st.distances⟩ b1 vs1 b2 (by omega) hr
         have e1 : vs1.reverse ++ v :: st.output = (v :: vs1).reverse ++ st.output := by simp
         rw [e1, show st.produced + 1 + j = st.produced + (j + 1) by omega, show n - j = n + 1 - (j + 1) by omega] at this
         exact this
   | _ + 1, 0, _, _, _, _, h1, _ => absurd h1 (by omega)
+
+/-- Uncompressed bytes, as many as are read. -/
+theorem reach_raw {w : Nat} {last : Bool} (j n : Nat) (st : StreamState) (bs : List Bool) (vs : List Nat) (b : List Bool)
+    (h1 : j ≤ n) (h : readBytes j bs = some (vs, b)) :
+    Reach sStep (.raw w st last n) bs (.raw w ⟨vs.reverse ++ st.output, st.produced + j, st.distances⟩ last (n - j)) b :=
+  (sreach_raw j n st bs vs b h1 h).toReach
 
 end Brotli.Decoder

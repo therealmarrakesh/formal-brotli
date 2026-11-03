@@ -79,6 +79,7 @@ theorem runD_ok {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} : �
       by_cases hn : (stepD a stop hs D).status = .next
       · rw [dite_eq_left hn]
         obtain ⟨p', hR, h1, h2, h3, _, h4, h5⟩ := hstep.next hn
+        replace h5 := fun t => (h5 t).toReach
         have hih := ih ⟨stepD a stop hs D, hinv.step he hn⟩ ⟨he, hn, rfl⟩ p' hR
         dsimp only at hih
         generalize runD a stop hs (stepD a stop hs D) (hinv.step he hn) = r at hih ⊢
@@ -102,11 +103,11 @@ theorem runD_ok {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} : �
         · obtain ⟨m1, m2, _, b2, b3⟩ := hstep.memory e
           exact ⟨m1, m2, p, D, hrel, Nat.le_refl _, hinv.2, ⟨[], rfl, rfl⟩, fun t => .refl _ _, b2, b3⟩
         · obtain ⟨b1, b2, p2, b3, b4, b5, _, _, b6, b7, b8⟩ := hstep.needsInput e
-          refine ⟨b1, b2, p2, b3, b6, (fun t => ?_), ?_, b7, b8⟩
+          refine ⟨b1, b2, p2, b3, b6, (fun t => ?_), ?_, fun t => (b7 t).toReach, b8⟩
           · rw [← sLeave_spec, ← sLeave_spec, b4]
           · rw [← sLeave_spec, b5]
         · obtain ⟨p2, b1, b2, b3, b4, b5, _, _, b6, b7⟩ := hstep.needsOutput e
-          refine ⟨p2, b1, b2, b3, b6, (fun t => ?_), b5, b7⟩
+          refine ⟨p2, b1, b2, b3, b6, (fun t => ?_), b5, fun t => (b7 t).toReach⟩
           rw [← sLeave_spec, ← sLeave_spec, b4]
         · exact ⟨fun t => by rw [← sLeave_spec]; exact (hstep.bad e).1 t,
             DecidedAt.mono (fun p1 bs h => by rw [← sLeave_spec]; exact h) (hstep.bad e).2⟩

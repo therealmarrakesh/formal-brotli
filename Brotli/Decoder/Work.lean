@@ -244,17 +244,17 @@ theorem stepD_count_other {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.
   cases hst : (stepD a stop hs D).status with
   | next =>
     obtain ⟨p', hR, h1, h2, _, hsd, hout, hj⟩ := hok.next hst
-    obtain ⟨n, hn1, hr⟩ := (hj t).count_pos fun ⟨e1, _⟩ => sdown_ne hsd hc hen e1
+    obtain ⟨n, hn1, hr⟩ := (hj t).toReach.count_pos fun ⟨e1, _⟩ => sdown_ne hsd hc hen e1
     exact ⟨n, p', _, hR, hout, stepD_pendLe a stop hs D, h1, h2, hr, by omega, fun _ => ⟨rfl, hn1⟩,
       (fun h => absurd (hst.symm.trans h) (by decide)), (fun h => absurd (hst.symm.trans h) (by decide))⟩
   | needsInput =>
     obtain ⟨b1, b2, p', hR, _, _, _, _, hout, hj, _⟩ := hok.needsInput hst
-    obtain ⟨n, hr⟩ := (hj t).count
+    obtain ⟨n, hr⟩ := (hj t).toReach.count
     exact ⟨n, p', _, hR, hout, stepD_pendLe a stop hs D, by rw [b1]; exact b2, by rw [b1]; exact Nat.le_refl _, hr, by omega,
       (fun h => absurd (hst.symm.trans h) (by decide)), (fun _ => rfl), (fun h => absurd (hst.symm.trans h) (by decide))⟩
   | needsOutput =>
     obtain ⟨p', hR, h1, h2, _, _, _, _, hout, hj⟩ := hok.needsOutput hst
-    obtain ⟨n, hr⟩ := (hj t).count
+    obtain ⟨n, hr⟩ := (hj t).toReach.count
     exact ⟨n, p', _, hR, hout, stepD_pendLe a stop hs D, h1, h2, hr, by omega, (fun h => absurd (hst.symm.trans h) (by decide)),
       (fun h => absurd (hst.symm.trans h) (by decide)), (fun _ => rfl)⟩
   | bad =>

@@ -147,7 +147,7 @@ structure RawOk (a : ByteArray) (stop : USize) (k : Nat) (word count : UInt64) (
     rawK A st (N + E) (availBits word count a pos stop F) =
       rawK A ⟨moved.reverse ++ out, st.produced + moved.length, st.distances⟩ (r.left.toNat + E) (availBits r.word r.count a r.pos stop F)
   reach : ∀ (w : Nat) (last : Bool) (st : StreamState) (E : Nat) (F : List Bool), st.output = out →
-    Reach sStep (.raw w st last (N + E)) (availBits word count a pos stop F)
+    SReach (.raw w st last (N + E)) (availBits word count a pos stop F)
       (.raw w ⟨moved.reverse ++ out, st.produced + moved.length, st.distances⟩ last (r.left.toNat + E)) (availBits r.word r.count a r.pos stop F)
 
 /-- One byte taken from the buffer. -/
@@ -187,7 +187,8 @@ theorem RawOk.take {a : ByteArray} {stop : USize} {k : Nat} {word count : UInt64
     have hr1 := h.reach w last ⟨word.toUInt8.toNat :: st.output, st.produced + 1, st.distances⟩ E F (by rw [hst])
     rw [show N + 1 + E = N + E + 1 by omega]
     refine .next (show readIn 8 (readInt 8) (availBits word count a pos stop F) _ = _ by
-      rw [avail_mk, readIn_some (show readInt 8 ((BitBuffer.mk word count).held ++ (chunkBits a pos.toNat stop.toNat ++ F)) = _ from hread)]) ?_
+      rw [avail_mk, readIn_some (show readInt 8 ((BitBuffer.mk word count).held ++ (chunkBits a pos.toNat stop.toNat ++ F)) = _ from hread)])
+      (fun _ _ e => SPhase.noConfusion e) ?_
     rw [hrev]
     simp only [List.length_cons]
     rw [show st.produced + (moved.length + 1) = st.produced + 1 + moved.length by omega]
@@ -215,7 +216,7 @@ theorem rawRun_spec {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} 
     · subst hst
       have e : (⟨([] : List Nat).reverse ++ st.output, st.produced + ([] : List Nat).length, st.distances⟩ : StreamState) = st := rfl
       rw [e]
-      show Reach sStep (.raw w st last (0 + E)) _ (.raw w st last (n.toNat + E)) _
+      show SReach (.raw w st last (0 + E)) _ (.raw w st last (n.toNat + E)) _
       rw [hN]
       exact .refl _ _
   | succ N ih =>
@@ -270,7 +271,7 @@ theorem rawRun_spec {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} 
         · subst hst
           have e : (⟨([] : List Nat).reverse ++ st.output, st.produced + ([] : List Nat).length, st.distances⟩ : StreamState) = st := rfl
           rw [e, hbits]
-          show Reach sStep (.raw w st last (N + 1 + E)) _ (.raw w st last (n.toNat + E)) _
+          show SReach (.raw w st last (N + 1 + E)) _ (.raw w st last (n.toNat + E)) _
           rw [hN]
           exact .refl _ _
 

@@ -275,15 +275,15 @@ theorem DecidedAt.mono {a : ByteArray} {stop : USize} {p : SPhase} {B : List UIn
 structure DStepOk {α : Type} (S : Sem α) (a : ByteArray) (stop : USize) (p : SPhase) (D : Dec) (pos : USize) (r : Dec) : Prop where
   next : r.status = .next → ∃ p', DRel r p' ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
     (∀ t : List UInt8, sLeave S p (D.bits a pos stop (bits t)) = srest S p' (r.bits a r.pos stop (bits t))) ∧ SDown p p' ∧ OutD p p' D r ∧
-    ∀ t : List UInt8, Reach sStep p (D.bits a pos stop (bits t)) p' (r.bits a r.pos stop (bits t))
+    ∀ t : List UInt8, SReach p (D.bits a pos stop (bits t)) p' (r.bits a r.pos stop (bits t))
   needsInput : r.status = .needsInput → r.pos = stop ∧ pos.toNat ≤ stop.toNat ∧ ∃ p', DRel r p' ∧
     (∀ t : List UInt8, sLeave S p (D.bits a pos stop (bits t)) = sLeave S p' (r.bits a r.pos stop (bits t))) ∧ sLeave S p' r.held = none ∧ SDownEq p p' (r.cmd.pend = D.cmd.pend) ∧
     (∀ w st, p = .mblock w st → ∀ t : List UInt8, r.bits a r.pos stop (bits t) = D.bits a pos stop (bits t)) ∧ OutD p p' D r ∧
-    (∀ t : List UInt8, Reach sStep p (D.bits a pos stop (bits t)) p' (r.bits a r.pos stop (bits t))) ∧ SShort p' r.held
+    (∀ t : List UInt8, SReach p (D.bits a pos stop (bits t)) p' (r.bits a r.pos stop (bits t))) ∧ SShort p' r.held
   needsOutput : r.status = .needsOutput → ∃ p', DRel r p' ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
     (∀ t : List UInt8, sLeave S p (D.bits a pos stop (bits t)) = sLeave S p' (r.bits a r.pos stop (bits t))) ∧ r.cmd.pend.toNat ≠ 0 ∧ SDownEq p p' (r.cmd.pend = D.cmd.pend) ∧
     (∀ w st, p = .mblock w st → ∀ t : List UInt8, r.bits a r.pos stop (bits t) = D.bits a pos stop (bits t)) ∧ OutD p p' D r ∧
-    ∀ t : List UInt8, Reach sStep p (D.bits a pos stop (bits t)) p' (r.bits a r.pos stop (bits t))
+    ∀ t : List UInt8, SReach p (D.bits a pos stop (bits t)) p' (r.bits a r.pos stop (bits t))
   memory : r.status = .memory → pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧ r.limit = D.limit ∧ D.cmd.pend = 0 ∧
     (p = .wbits ∨ ∃ w st last mlen g q, p = .hdr w st last mlen g q)
   bad : r.status = .bad → (∀ t : List UInt8, sLeave S p (D.bits a pos stop (bits t)) = none) ∧

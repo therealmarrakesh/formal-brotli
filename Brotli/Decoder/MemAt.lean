@@ -282,10 +282,10 @@ theorem stepD_x {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs
   | cmds => exact stepDCmds_x ht
   | ended => exact absurd ht he
 
-/-- A step that neither rejects nor finds the limit moves on in the reading in order. -/
+/-- A step that neither rejects nor finds the limit moves on in the reading in order, passing no meta-block's start. -/
 theorem DStepOk.reach {α : Type} {S : Sem α} {a : ByteArray} {stop : USize} {p : SPhase} {D r : Dec} {pos : USize}
     (h : DStepOk S a stop p D pos r) (h0 : r.status ≠ .memory) (h1 : r.status ≠ .bad) :
-    ∃ p', DRel r p' ∧ pos.toNat ≤ r.pos.toNat ∧ ∀ t : List UInt8, Reach sStep p (D.bits a pos stop (bits t)) p' (r.bits a r.pos stop (bits t)) := by
+    ∃ p', DRel r p' ∧ pos.toNat ≤ r.pos.toNat ∧ ∀ t : List UInt8, SReach p (D.bits a pos stop (bits t)) p' (r.bits a r.pos stop (bits t)) := by
   cases hs : r.status with
   | next =>
     obtain ⟨p', a1, a2, _, _, _, _, a7⟩ := h.next hs
@@ -336,7 +336,7 @@ theorem runD_x {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs 
         have h1 : ∀ z Z, Anch z Z a stop t D D.pos → Anch z Z a stop t (stepD a stop hs D) (stepD a stop hs D).pos := fun z Z h =>
           Anch.move h (fun p hrel => by
             obtain ⟨p', b1, _, b3⟩ := (hok p hrel).reach (by rw [hn]; decide) (by rw [hn]; decide)
-            exact ⟨p', b1, b3 t⟩) (hstep.hdr (by rw [hn]; decide) (by rw [hn]; decide))
+            exact ⟨p', b1, (b3 t).toReach⟩) (hstep.hdr (by rw [hn]; decide) (by rw [hn]; decide))
         generalize runD a stop hs (stepD a stop hs D) (hinv.step he hn) = r at hih ⊢
         refine ⟨fun h0 h1' z Z h => hih.go h0 h1' z Z (h1 z Z h), fun e => ?_⟩
         obtain ⟨m1, m2, m3⟩ := hih.why e
@@ -346,7 +346,7 @@ theorem runD_x {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs 
       · rw [dite_eq_right hn]
         refine ⟨fun h0 h1 z Z h => Anch.move h (fun p hrel => ?_) (hstep.hdr h0 h1), fun e => ?_⟩
         · obtain ⟨p', b1, _, b3⟩ := (hok p hrel).reach h0 h1
-          exact ⟨p', b1, b3 t⟩
+          exact ⟨p', b1, (b3 t).toReach⟩
         · obtain ⟨m1, m2, m3, m4⟩ := hstep.why e
           exact ⟨m1, m2, fun z Z h => ⟨D, D.pos, Nat.le_refl _, m1, m3, h, m4⟩⟩
 
