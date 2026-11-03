@@ -745,4 +745,448 @@ theorem hStep_moves (g : Gh) : ∀ (p : HPhase) (bs : List Bool) (q : Gh × HPha
     | succ n => simp only [ckStage, hn]; split <;> omega
   | .codes .D done 0, bs, q, c, h => by cases h
 
+/-! ### Where a layer ends -/
+
+section
+variable {A P E : Type}
+
+/-- A step that never ends its layer. -/
+def NoExit (k : List Bool → ORes P E) : Prop := ∀ bs e c, k bs ≠ .exit e c
+
+theorem noExit_next (q : P) : NoExit fun bs => (.next q bs : ORes P E) := fun _ _ _ h => by cases h
+
+theorem noExit_bad : NoExit fun _ => (.bad : ORes P E) := fun _ _ _ h => by cases h
+
+theorem noExit_ite {c : Prop} [Decidable c] {f g : List Bool → ORes P E} (hf : NoExit f) (hg : NoExit g) :
+    NoExit fun bs => if c then f bs else g bs := by
+  by_cases h : c
+  · simpa only [h, ↓reduceIte] using hf
+  · simpa only [h, ↓reduceIte] using hg
+
+theorem noExit_lookIn {o : Option A} {k : A → List Bool → ORes P E} (h : ∀ a, NoExit (k a)) : NoExit fun bs => lookIn o fun a => k a bs := by
+  cases o with
+  | none => exact noExit_bad
+  | some a => exact h a
+
+theorem noExit_readIn {room : Nat} {rd : List Bool → Option (A × List Bool)} {k : A → List Bool → ORes P E} (hk : ∀ a, NoExit (k a)) :
+    NoExit fun bs => readIn room rd bs k := by
+  intro bs e c h
+  have h' : readIn room rd bs k = .exit e c := h
+  unfold readIn at h'
+  cases hr : rd bs with
+  | none =>
+    rw [hr] at h'
+    dsimp only at h'
+    by_cases hl : bs.length < room
+    · rw [ite_eq_left hl] at h'
+      cases h'
+    · rw [ite_eq_right hl] at h'
+      cases h'
+  | some p =>
+    rw [hr] at h'
+    exact hk p.1 p.2 e c h'
+
+theorem noExit_nextIn {cat : BlockCategory} {st : BlockState} {k : BlockState → List Bool → ORes P E} (hk : ∀ a, NoExit (k a)) :
+    NoExit fun bs => nextIn cat st bs k := by
+  show NoExit fun bs => if st.count = 0 ∧ cat.n < 2 then .bad else readIn 54 (nextElement cat st) bs k
+  exact noExit_ite noExit_bad (noExit_readIn hk)
+
+end
+
+/-- A header ends only at its last group of codes. -/
+theorem hStep_exit {g : Gh} : ∀ {p : HPhase} {bs : List Bool} {m : MetaBlockHeader} {b : List Bool}, hStepP (g, p) bs = .exit m b →
+    ∃ done, p = .codes .D done 0 ∧ m = (g.setCodes .D done).m
+  | .cat _, bs, _, _, h => absurd h (noExit_readIn (fun _ => noExit_ite (noExit_next _) (noExit_next _)) bs _ _)
+  | .code _ _, bs, _, _, h =>
+    absurd h (noExit_readIn (fun _ => noExit_ite (noExit_readIn fun _ => noExit_next _) (noExit_next _)) bs _ _)
+  | .clens _ _ [] _ _, bs, _, _, h => absurd h (noExit_ite (noExit_next _) noExit_bad bs _ _)
+  | .clens _ _ (_ :: _) _ _, bs, _, _, h =>
+    absurd h (noExit_readIn (fun _ => noExit_ite (noExit_next _) (noExit_ite (noExit_next _) (noExit_ite noExit_bad (noExit_next _)))) bs _ _)
+  | .syms _ _ _ _, bs, _, _, h =>
+    absurd h (noExit_ite noExit_bad (noExit_ite (noExit_next _) (noExit_ite noExit_bad
+      (noExit_readIn fun _ => noExit_ite noExit_bad (noExit_ite noExit_bad (noExit_next _))))) bs _ _)
+  | .first _ _ _ _, bs, _, _, h => absurd h (noExit_readIn (fun _ => noExit_next _) bs _ _)
+  | .np, bs, _, _, h => absurd h (noExit_readIn (fun _ => noExit_next _) bs _ _)
+  | .modes _ 0, bs, _, _, h => absurd h (noExit_next _ bs _ _)
+  | .modes _ (_ + 1), bs, _, _, h => absurd h (noExit_readIn (fun _ => noExit_next _) bs _ _)
+  | .trees _, bs, _, _, h => absurd h (noExit_readIn (fun _ => noExit_ite (noExit_next _) (noExit_next _)) bs _ _)
+  | .rlemax _ _, bs, _, _, h => absurd h (noExit_readIn (fun _ => noExit_next _) bs _ _)
+  | .vals _ _ _ _ _ _, bs, _, _, h =>
+    absurd h (noExit_ite (noExit_next _) (noExit_readIn fun _ => noExit_ite noExit_bad (noExit_next _)) bs _ _)
+  | .imtf _ _ _, bs, _, _, h => absurd h (noExit_readIn (fun _ => noExit_ite (noExit_next _) noExit_bad) bs _ _)
+  | .codes _ _ (_ + 1), bs, _, _, h => absurd h (noExit_next _ bs _ _)
+  | .codes .L _ 0, bs, _, _, h => absurd h (noExit_next _ bs _ _)
+  | .codes .I _ 0, bs, _, _, h => absurd h (noExit_next _ bs _ _)
+  | .codes .D done 0, _, _, _, h => by
+    cases h
+    exact ⟨done, rfl, rfl⟩
+
+/-- The commands end only at a command's start at MLEN. -/
+theorem cStep_exit {w : Nat} {m : MetaBlockHeader} : ∀ {p : Phase} {bs : List Bool} {s : CommandState} {b : List Bool},
+    cStep w m p bs = .exit s b → p = .command s ∧ s.remaining = 0
+  | .command s, bs, s', b, h => by
+    have h' : (if s.remaining = 0 then ORes.exit s bs else nextIn m.insertCopy s.insertCopy bs fun ic b => .next (Phase.insertCopy s ic) b) =
+        .exit s' b := h
+    split at h'
+    · rename_i h0
+      cases h'
+      exact ⟨rfl, h0⟩
+    · exact absurd h' (noExit_nextIn (fun _ => noExit_next _) bs _ _)
+  | .insertCopy _ _, bs, _, _, h => absurd h (noExit_lookIn (fun _ => noExit_readIn fun _ => noExit_next _) bs _ _)
+  | .copyLength _ _ _ _ _ _, bs, _, _, h => absurd h (noExit_ite noExit_bad (noExit_readIn fun _ => noExit_next _) bs _ _)
+  | .literals _ _ _ _ _ 0 _ _, bs, _, _, h => absurd h (noExit_next _ bs _ _)
+  | .literals _ _ _ _ _ (_ + 1) _ _, bs, _, _, h =>
+    absurd h (noExit_ite (noExit_nextIn fun _ => noExit_next _) (noExit_next _) bs _ _)
+  | .literalSymbol _ _ _ _ _ _ _ _, bs, _, _, h =>
+    absurd h (noExit_lookIn (fun _ => noExit_lookIn fun _ => noExit_lookIn fun _ => noExit_readIn fun _ => noExit_next _) bs _ _)
+  | .distance _ _ _, bs, _, _, h =>
+    absurd h (noExit_ite (noExit_next _) (noExit_ite (noExit_lookIn fun _ => noExit_lookIn fun q => noExit_next q)
+      (noExit_nextIn fun _ => noExit_next _)) bs _ _)
+  | .distanceSymbol _ _ _, bs, _, _, h =>
+    absurd h (noExit_lookIn (fun _ => noExit_lookIn fun _ => noExit_readIn fun _ =>
+      noExit_lookIn fun _ => noExit_lookIn fun q => noExit_next q) bs _ _)
+  | .copy _ _ 0, bs, _, _, h => absurd h (noExit_next _ bs _ _)
+  | .copy _ _ (_ + 1), bs, _, _, h => absurd h (noExit_next _ bs _ _)
+  | .word _ [], bs, _, _, h => absurd h (noExit_next _ bs _ _)
+  | .word _ (_ :: _), bs, _, _, h => absurd h (noExit_next _ bs _ _)
+
+theorem setCat_ndirect (g : Gh) (i : Cat) (c : BlockCategory) : (g.setCat i c).m.ndirect = g.m.ndirect := by
+  cases i <;> rfl
+
+theorem setMap_ndirect (g : Gh) (isL : Bool) (n : Nat) (cmap : List Nat) : (g.setMap isL n cmap).m.ndirect = g.m.ndirect := by
+  cases isL <;> rfl
+
+theorem setCodes_ndirect (g : Gh) (k : CK) (cs : List PrefixCode) : (g.setCodes k cs).m.ndirect = g.m.ndirect := by
+  cases k <;> rfl
+
+theorem readNp_lt {bs b : List Bool} {v : Nat × Nat} (h : readNp bs = some (v, b)) : v.1 < 4 ∧ v.2 < 16 := by
+  unfold readNp at h
+  cases h1 : readInt 2 bs with
+  | none => rw [h1] at h; cases h
+  | some p =>
+    rw [h1] at h
+    dsimp only [bind, Option.bind] at h
+    cases h2 : readInt 4 p.2 with
+    | none => rw [h2] at h; cases h
+    | some q =>
+      rw [h2] at h
+      simp only [Option.some.injEq, Prod.mk.injEq] at h
+      rw [← h.1]
+      exact ⟨readInt_lt _ _ _ _ h1, readInt_lt _ _ _ _ h2⟩
+
+/-- A header's NDIRECT stays at most 120. -/
+theorem hStep_ndirect {g : Gh} (hn : g.m.ndirect ≤ 120) : ∀ {p : HPhase} {bs : List Bool} {q : Gh × HPhase} {c : List Bool},
+    hStepP (g, p) bs = .next q c → q.1.m.ndirect ≤ 120
+  | .cat i, bs, q, c, h => by
+    obtain ⟨v, b, _, e2⟩ := readIn_next' (show hStep g (.cat i) bs = _ from h)
+    split at e2 <;> cases e2
+    · show (g.setCat i _).m.ndirect ≤ 120
+      rw [setCat_ndirect]
+      exact hn
+    · exact hn
+  | .code o size, bs, q, c, h => by
+    obtain ⟨v, b, _, e2⟩ := readIn_next' (show hStep g (.code o size) bs = _ from h)
+    split at e2
+    · obtain ⟨_, _, _, e4⟩ := readIn_next' e2
+      cases e4
+      exact hn
+    · cases e2
+      exact hn
+  | .clens o size [] acc sum, bs, q, c, h => by
+    have h' : (if (acc.filter (·.2 != 0)).length = 1 then ORes.next (g, HPhase.syms o size (codeLengthCode acc) ⟨[], 8, none⟩) bs
+        else .bad) = .next q c := h
+    split at h' <;> cases h'
+    exact hn
+  | .clens o size (x :: rest) acc sum, bs, q, c, h => by
+    obtain ⟨v, b, _, e2⟩ := readIn_next' (show hStep g (.clens o size (x :: rest) acc sum) bs = _ from h)
+    split at e2
+    · cases e2; exact hn
+    · split at e2
+      · cases e2; exact hn
+      · split at e2
+        · cases e2
+        · cases e2; exact hn
+  | .syms o size clc st, bs, q, c, h => by
+    have h' : (if size < st.lens.length then ORes.bad
+        else if lengthSum st.lens = 32768 then
+          .next (g, ownerPlace g o (.canonical (st.lens ++ List.replicate (size - st.lens.length) 0))) bs
+        else if st.lens.length = size then .bad
+        else readIn 18 (lenSym clc) bs fun v b =>
+          if size < (applyCodeLength st v.1 v.2).lens.length then .bad
+          else if 32768 < lengthSum (applyCodeLength st v.1 v.2).lens then .bad
+          else .next (g, .syms o size clc (applyCodeLength st v.1 v.2)) b) = .next q c := h
+    split at h'
+    · cases h'
+    · split at h'
+      · cases h'; exact hn
+      · split at h'
+        · cases h'
+        · obtain ⟨v, b, _, e2⟩ := readIn_next' h'
+          split at e2
+          · cases e2
+          · split at e2
+            · cases e2
+            · cases e2; exact hn
+  | .first i n tc cc, bs, q, c, h => by
+    obtain ⟨v, b, _, e2⟩ := readIn_next' (show hStep g (.first i n tc cc) bs = _ from h)
+    cases e2
+    show (g.setCat i _).m.ndirect ≤ 120
+    rw [setCat_ndirect]
+    exact hn
+  | .np, bs, q, c, h => by
+    obtain ⟨v, b, e1, e2⟩ := readIn_next' (show hStep g .np bs = _ from h)
+    cases e2
+    obtain ⟨h1, h2⟩ := readNp_lt e1
+    show v.2 <<< v.1 ≤ 120
+    rw [Nat.shiftLeft_eq]
+    have : 2 ^ v.1 ≤ 2 ^ 3 := Nat.pow_le_pow_right (by decide) (by omega)
+    have h8 : (2 : Nat) ^ 3 = 8 := rfl
+    rw [h8] at this
+    have : v.2 * 2 ^ v.1 ≤ 15 * 8 := Nat.mul_le_mul (by omega) this
+    omega
+  | .modes done 0, bs, q, c, h => by
+    cases h
+    exact hn
+  | .modes done (n + 1), bs, q, c, h => by
+    obtain ⟨v, b, _, e2⟩ := readIn_next' (show hStep g (.modes done (n + 1)) bs = _ from h)
+    cases e2
+    exact hn
+  | .trees isL, bs, q, c, h => by
+    obtain ⟨v, b, _, e2⟩ := readIn_next' (show hStep g (.trees isL) bs = _ from h)
+    split at e2 <;> cases e2
+    · show (g.setMap isL _ _).m.ndirect ≤ 120
+      rw [setMap_ndirect]
+      exact hn
+    · exact hn
+  | .rlemax isL ntrees, bs, q, c, h => by
+    obtain ⟨v, b, _, e2⟩ := readIn_next' (show hStep g (.rlemax isL ntrees) bs = _ from h)
+    cases e2
+    exact hn
+  | .vals isL ntrees rlemax code done left, bs, q, c, h => by
+    have h' : (if left = 0 then ORes.next (g, HPhase.imtf isL ntrees done) bs
+        else readIn 31 (mapSym rlemax code) bs fun v b =>
+          if left < v.2 then .bad else .next (g, .vals isL ntrees rlemax code (done ++ List.replicate v.2 v.1) (left - v.2)) b) =
+        .next q c := h
+    split at h'
+    · cases h'; exact hn
+    · obtain ⟨v, b, _, e2⟩ := readIn_next' h'
+      split at e2
+      · cases e2
+      · cases e2; exact hn
+  | .imtf isL ntrees vals, bs, q, c, h => by
+    obtain ⟨v, b, _, e2⟩ := readIn_next' (show hStep g (.imtf isL ntrees vals) bs = _ from h)
+    generalize (if v = 0 then vals else inverseMoveToFront vals) = fin at e2
+    by_cases hc : (List.range ntrees).all fin.contains = true
+    · rw [ite_eq_left hc] at e2
+      cases e2
+      show (g.setMap isL ntrees fin).m.ndirect ≤ 120
+      rw [setMap_ndirect]
+      exact hn
+    · rw [ite_eq_right hc] at e2
+      cases e2
+  | .codes k done (n + 1), bs, q, c, h => by
+    cases h
+    exact hn
+  | .codes .L done 0, bs, q, c, h => by
+    cases h
+    show (g.setCodes .L done).m.ndirect ≤ 120
+    rw [setCodes_ndirect]
+    exact hn
+  | .codes .I done 0, bs, q, c, h => by
+    cases h
+    show (g.setCodes .I done).m.ndirect ≤ 120
+    rw [setCodes_ndirect]
+    exact hn
+  | .codes .D done 0, bs, q, c, h => by cases h
+
+/-! ### The stream -/
+
+/-- What every place of the stream the reading in order reaches has. -/
+def SInv : SPhase → Prop
+  | .wbits => True
+  | .mblock w st => DistOk w st.distances st.produced
+  | .skip w st _ _ => DistOk w st.distances st.produced
+  | .raw w st _ _ => DistOk w st.distances st.produced
+  | .hdr w st _ _ g _ => DistOk w st.distances st.produced ∧ g.m.ndirect ≤ 120
+  | .cmds w _ m p => m.ndirect ≤ 120 ∧ CInv w p
+  | .ended _ => True
+
+/-- A ranking of the stream's places: a step that reads and produces nothing goes lower. -/
+def sstage : SPhase → Nat
+  | .wbits => 1
+  | .mblock .. => 1
+  | .skip _ _ _ 0 => 2
+  | .skip _ _ _ (_ + 1) => 1
+  | .raw _ _ _ 0 => 2
+  | .raw _ _ _ (_ + 1) => 1
+  | .hdr _ _ _ _ g p => hstage g p
+  | .cmds _ _ _ p => cstage p
+  | .ended _ => 1
+
+theorem afterBlock_facts (w : Nat) (last : Bool) (st : StreamState) (h : DistOk w st.distances st.produced) :
+    SInv (afterBlock w last st) ∧ (afterBlock w last st).out = st.output ∧ sstage (afterBlock w last st) = 1 := by
+  cases last
+  · exact ⟨h, rfl, rfl⟩
+  · exact ⟨trivial, rfl, rfl⟩
+
+/-- The fill bits take the bits up to a byte boundary. -/
+theorem readFill_len {bs b : List Bool} (h : readFill bs = some b) : b.length + bs.length % 8 = bs.length := by
+  unfold readFill at h
+  cases e : readInt (bs.length % 8) bs with
+  | none => rw [e] at h; simp at h
+  | some p =>
+    obtain ⟨v, r⟩ := p
+    rw [e] at h
+    dsimp only [bind, Option.bind] at h
+    have := readInt_length _ _ _ _ e
+    by_cases hv : v = 0
+    · rw [ite_eq_left hv] at h
+      cases h
+      exact this
+    · rw [ite_eq_right hv] at h
+      cases h
+
+/-- Each step of the stream read in order keeps what its places have, grows the output, and reads bits, produces bytes or
+goes lower in the ranking. -/
+theorem sStep_moves : ∀ (p : SPhase) (bs : List Bool) (q : SPhase) (c : List Bool), SInv p → sStep p bs = .next q c →
+    SInv q ∧ (∃ l, q.out = l ++ p.out) ∧ (Moved bs c p.out q.out ∨ sstage q < sstage p)
+  | .wbits, bs, q, c, _, h => by
+    obtain ⟨v, b, e1, e2⟩ := readIn_next' h
+    cases e2
+    exact ⟨ringOk_initial _, ⟨[], rfl⟩, Or.inl (Or.inl (takes_one faith_readWBITS rfl e1))⟩
+  | .mblock w st, bs, q, c, hi, h => by
+    obtain ⟨ms, b, e1, e2⟩ := readIn_next' h
+    have hl := takes_one faith_metaStart rfl e1
+    cases ms with
+    | lastEmpty =>
+      cases e2
+      exact ⟨trivial, ⟨[], rfl⟩, Or.inl (Or.inl hl)⟩
+    | metadata last skip =>
+      cases hf : readFill b with
+      | none => simp only [startPlace, hf] at e2; cases e2
+      | some b' =>
+        simp only [startPlace, hf] at e2
+        cases e2
+        have := readFill_len hf
+        exact ⟨hi, ⟨[], rfl⟩, Or.inl (Or.inl (by omega))⟩
+    | data last mlen unc =>
+      cases unc with
+      | true =>
+        cases hf : readFill b with
+        | none => simp only [startPlace, hf, ↓reduceIte] at e2; cases e2
+        | some b' =>
+          simp only [startPlace, hf, ↓reduceIte] at e2
+          cases e2
+          have := readFill_len hf
+          exact ⟨hi, ⟨[], rfl⟩, Or.inl (Or.inl (by omega))⟩
+      | false =>
+        simp only [startPlace, Bool.false_eq_true, ↓reduceIte] at e2
+        cases e2
+        exact ⟨⟨hi, by decide⟩, ⟨[], rfl⟩, Or.inl (Or.inl hl)⟩
+  | .skip w st last 0, bs, q, c, hi, h => by
+    cases h
+    obtain ⟨f1, f2, f3⟩ := afterBlock_facts w last st hi
+    refine ⟨f1, ⟨[], by rw [f2]; rfl⟩, Or.inr ?_⟩
+    rw [f3]
+    exact (show 1 < 2 by decide)
+  | .skip w st last (n + 1), bs, q, c, hi, h => by
+    obtain ⟨v, b, e1, e2⟩ := readIn_next' h
+    cases e2
+    have := readInt_length _ _ _ _ e1
+    exact ⟨hi, ⟨[], rfl⟩, Or.inl (Or.inl (by omega))⟩
+  | .raw w st last 0, bs, q, c, hi, h => by
+    cases h
+    obtain ⟨f1, f2, f3⟩ := afterBlock_facts w last st hi
+    refine ⟨f1, ⟨[], by rw [f2]; rfl⟩, Or.inr ?_⟩
+    rw [f3]
+    exact (show 1 < 2 by decide)
+  | .raw w st last (n + 1), bs, q, c, hi, h => by
+    obtain ⟨v, b, e1, e2⟩ := readIn_next' h
+    cases e2
+    have := readInt_length _ _ _ _ e1
+    exact ⟨hi.mono (Nat.le_add_right _ _), ⟨[v], rfl⟩, Or.inl (Or.inl (by omega))⟩
+  | .hdr w st last mlen g p, bs, q, c, hi, h => by
+    cases e : hStep g p bs with
+    | next q' b =>
+      have h' : sStep (.hdr w st last mlen g p) bs = .next (.hdr w st last mlen q'.1 q'.2) b := by
+        simp only [sStep, e]
+      rw [h'] at h
+      cases h
+      refine ⟨⟨hi.1, hStep_ndirect hi.2 (show hStepP (g, p) bs = _ from e)⟩, ⟨[], rfl⟩, ?_⟩
+      rcases hStep_moves g p bs q' _ e with hl | hl
+      · exact Or.inl (Or.inl hl)
+      · exact Or.inr hl
+    | exit m' b =>
+      have h' : sStep (.hdr w st last mlen g p) bs = .next (.cmds w last m' (.command (startState st mlen m'))) b := by
+        simp only [sStep, e]
+      rw [h'] at h
+      cases h
+      obtain ⟨done, rfl, rfl⟩ := hStep_exit (show hStepP (g, p) bs = _ from e)
+      refine ⟨⟨by rw [setCodes_ndirect]; exact hi.2, hi.1⟩, ⟨[], rfl⟩, Or.inr ?_⟩
+      show cstage (.command (startState st mlen _)) < ckStage .D g 0
+      simp only [cstage, ckStage]
+      split <;> omega
+    | bad =>
+      have h' : sStep (.hdr w st last mlen g p) bs = .bad := by simp only [sStep, e]
+      rw [h'] at h
+      cases h
+    | short =>
+      have h' : sStep (.hdr w st last mlen g p) bs = .short := by simp only [sStep, e]
+      rw [h'] at h
+      cases h
+  | .cmds w last m p, bs, q, c, hi, h => by
+    cases e : cStep w m p bs with
+    | next p' b =>
+      have h' : sStep (.cmds w last m p) bs = .next (.cmds w last m p') b := by simp only [sStep, e]
+      rw [h'] at h
+      cases h
+      obtain ⟨f1, f2, f3⟩ := cStep_moves hi.1 p bs p' _ hi.2 e
+      exact ⟨⟨hi.1, f1⟩, f2, f3⟩
+    | exit s b =>
+      obtain ⟨rfl, h0⟩ := cStep_exit e
+      have hb : b = bs := by
+        have e' : cStep w m (.command s) bs = .exit s bs := by
+          show (if s.remaining = 0 then _ else _) = _
+          rw [ite_eq_left h0]
+        rw [e'] at e
+        cases e
+        rfl
+      subst hb
+      by_cases hc : (usesEveryType m.literal s.literal && usesEveryType m.insertCopy s.insertCopy &&
+          usesEveryType m.distance s.distance) = true
+      · have h' : sStep (.cmds w last m (.command s)) b = .next (afterBlock w last ⟨s.output, s.produced, s.distances⟩) b := by
+          simp only [sStep, e, hc, ↓reduceIte]
+        rw [h'] at h
+        cases h
+        obtain ⟨f1, f2, f3⟩ := afterBlock_facts w last ⟨s.output, s.produced, s.distances⟩ hi.2
+        refine ⟨f1, ⟨[], by rw [f2]; rfl⟩, Or.inr ?_⟩
+        rw [f3]
+        show 1 < cstage (.command s)
+        simp only [cstage, h0, ↓reduceIte]
+        omega
+      · have h' : sStep (.cmds w last m (.command s)) b = .bad := by
+          simp only [sStep, e]
+          exact ite_eq_right hc
+        rw [h'] at h
+        cases h
+    | bad =>
+      have h' : sStep (.cmds w last m p) bs = .bad := by simp only [sStep, e]
+      rw [h'] at h
+      cases h
+    | short =>
+      have h' : sStep (.cmds w last m p) bs = .short := by simp only [sStep, e]
+      rw [h'] at h
+      cases h
+  | .ended st, bs, q, c, _, h => by
+    by_cases hm : bs.length % 8 = 0
+    · simp only [sStep, hm, ↓reduceIte] at h
+      split at h <;> cases h
+    · cases e : readFill bs with
+      | none => simp only [sStep, hm, ↓reduceIte, e] at h; cases h
+      | some b =>
+        simp only [sStep, hm, ↓reduceIte, e] at h
+        cases h
+        have := readFill_len e
+        exact ⟨trivial, ⟨[], rfl⟩, Or.inl (Or.inl (by omega))⟩
+
 end Brotli.Decoder
