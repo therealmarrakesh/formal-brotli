@@ -314,4 +314,388 @@ theorem literalRun_same {nTrees : Nat} {arena litBase lMap : ByteArray} (C : Lit
       · exact ih _ hlt _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ rfl rfl rfl rfl rfl rfl rfl hS
       · exact ⟨trivial, hS⟩
 
+/-! ### The command loop -/
+
+/-- Two command states the same but for their positions, which have the same unread bytes. -/
+def CmdSame (a1 : ByteArray) (e1 : USize) (a2 : ByteArray) (e2 : USize) (s1 s2 : Cmd) : Prop :=
+  { s1 with pos := 0 } = { s2 with pos := 0 } ∧ Same a1 e1 a2 e2 s1.pos s2.pos
+
+theorem cmd_er {s t : Cmd} (h : { s with pos := 0 } = { t with pos := 0 }) : t = { s with pos := t.pos } := by
+  cases s
+  cases t
+  cases h
+  rfl
+
+theorem litRun_er {s t : LitRun} (h : { s with pos := 0 } = { t with pos := 0 }) : s = { t with pos := s.pos } := by
+  cases s
+  cases t
+  cases h
+  rfl
+
+/-- A step that only records the position. -/
+theorem nf_same {a1 a2 : ByteArray} {e1 e2 : USize} {f : Cmd → USize → Cmd}
+    (hf : ∀ st p, f st p = { f { st with pos := 0 } 0 with pos := p }) {s t : Cmd}
+    (he : { s with pos := 0 } = { t with pos := 0 }) {p1 p2 : USize} (h : Same a1 e1 a2 e2 p1 p2) :
+    CmdSame a1 e1 a2 e2 (f s p1) (f t p2) := by
+  rw [hf s p1, hf t p2]
+  refine ⟨?_, h⟩
+  show { f { s with pos := 0 } 0 with pos := 0 } = { f { t with pos := 0 } 0 with pos := 0 }
+  rw [he]
+
+theorem literalsRun_same (H : Hdr) (k : USize) {a1 a2 : ByteArray} {e1 e2 : USize} (hs1 : e1.toNat ≤ a1.size)
+    (hs2 : e2.toNat ≤ a2.size) (s : Cmd) (q : USize) {p1 p2 : USize} (h : Same a1 e1 a2 e2 p1 p2) :
+    CmdSame a1 e1 a2 e2 (literalsRun H k a1 e1 hs1 s p1) (literalsRun H k a2 e2 hs2 { s with pos := q } p2) := by
+  have hq1 : p1 ≤ e1 := USize.le_iff_toNat_le.mpr h.2.2.1
+  have hq2 : p2 ≤ e2 := USize.le_iff_toNat_le.mpr h.2.2.2.1
+  unfold literalsRun
+  dsimp only
+  by_cases ht : s.lCur < H.nL
+  · rw [dite_eq_left ht, dite_eq_left ht]
+    by_cases hc : winCheck k s.wpos s.ring = true ∧ wfCheck s.word s.count = true
+    · rw [dite_eq_left (show winCheck k s.wpos s.ring = true ∧ p1 ≤ e1 ∧ wfCheck s.word s.count = true from ⟨hc.1, hq1, hc.2⟩),
+        dite_eq_left (show winCheck k s.wpos s.ring = true ∧ p2 ≤ e2 ∧ wfCheck s.word s.count = true from ⟨hc.1, hq2, hc.2⟩)]
+      obtain ⟨e, hS⟩ := literalRun_same H.lit hs1 hs2
+        _ _ _ _ _ _ _ _ _
+        _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+        _ _ _ _ _ _ _ _
+        rfl rfl rfl rfl rfl rfl rfl h
+      refine ⟨?_, hS⟩
+      rw [litRun_er e]
+      rfl
+    · rw [dite_eq_right (show ¬ (winCheck k s.wpos s.ring = true ∧ p1 ≤ e1 ∧ wfCheck s.word s.count = true) from
+          fun e => hc ⟨e.1, e.2.2⟩),
+        dite_eq_right (show ¬ (winCheck k s.wpos s.ring = true ∧ p2 ≤ e2 ∧ wfCheck s.word s.count = true) from
+          fun e => hc ⟨e.1, e.2.2⟩)]
+      exact ⟨rfl, h⟩
+  · rw [dite_eq_right ht, dite_eq_right ht]
+    exact ⟨rfl, h⟩
+
+theorem stepLiterals_same (H : Hdr) (k : USize) {a1 a2 : ByteArray} {e1 e2 : USize} (hs1 : e1.toNat ≤ a1.size)
+    (hs2 : e2.toNat ≤ a2.size) {s t : Cmd} (he : { s with pos := 0 } = { t with pos := 0 }) {p1 p2 : USize}
+    (h : Same a1 e1 a2 e2 p1 p2) :
+    CmdSame a1 e1 a2 e2 (stepLiterals H k a1 e1 hs1 s p1) (stepLiterals H k a2 e2 hs2 t p2) := by
+  rw [cmd_er he]
+  generalize t.pos = q
+  have hL := literalsRun_same H k hs1 hs2 s q h
+  unfold stepLiterals markStep clearSeen
+  cases s
+  dsimp only at hL ⊢
+  repeat' (first | split_all | exact hL | exact ⟨rfl, h⟩)
+
+theorem stepAt_same (H : Hdr) (k : USize) {a1 a2 : ByteArray} {e1 e2 : USize} (hs1 : e1.toNat ≤ a1.size)
+    (hs2 : e2.toNat ≤ a2.size) {s t : Cmd} (he : { s with pos := 0 } = { t with pos := 0 }) {p1 p2 : USize}
+    (h : Same a1 e1 a2 e2 p1 p2) :
+    CmdSame a1 e1 a2 e2 (stepAt H k a1 e1 hs1 s p1) (stepAt H k a2 e2 hs2 t p2) := by
+  have htag : t.tag = s.tag := by rw [cmd_er he]
+  unfold stepAt
+  rw [htag]
+  cases s.tag
+  · exact nf_same (stepCommand_pos H) he h
+  · exact nf_same (stepInsertCopy_pos H) he h
+  · exact nf_same stepCopyLength_pos he h
+  · exact stepLiterals_same H k hs1 hs2 he h
+  · exact nf_same (stepDistance_pos H) he h
+  · exact nf_same (stepDistanceSymbol_pos H) he h
+  · exact nf_same (stepCopy_pos k) he h
+  · exact nf_same (stepWord_pos k) he h
+
+theorem stepCmd_same (H : Hdr) (k : USize) {a1 a2 : ByteArray} {e1 e2 : USize} (hs1 : e1.toNat ≤ a1.size)
+    (hs2 : e2.toNat ≤ a2.size) {s t : Cmd} (he : { s with pos := 0 } = { t with pos := 0 }) {p1 p2 : USize}
+    (h : Same a1 e1 a2 e2 p1 p2) :
+    CmdSame a1 e1 a2 e2 (stepCmd H k a1 e1 hs1 s p1) (stepCmd H k a2 e2 hs2 t p2) := by
+  have hq1 : p1 ≤ e1 := USize.le_iff_toNat_le.mpr h.2.2.1
+  have hq2 : p2 ≤ e2 := USize.le_iff_toNat_le.mpr h.2.2.2.1
+  have hw : t.word = s.word := by rw [cmd_er he]
+  have hc : t.count = s.count := by rw [cmd_er he]
+  unfold stepCmd
+  rw [dite_eq_left hq1, dite_eq_left hq2]
+  dsimp only
+  obtain ⟨ew, ec, hS⟩ := refill_same (word := s.word) (count := s.count) hs1 hs2 h.2.2.1 h.2.2.2.1 h
+  rw [hw, hc]
+  refine stepAt_same H k hs1 hs2 ?_ hS
+  show { s with word := _, count := _, pos := 0 } = { t with word := _, count := _, pos := 0 }
+  rw [ew, ec, cmd_er he]
+
+theorem runCmd_same (H : Hdr) (k : USize) {a1 a2 : ByteArray} {e1 e2 : USize} (hs1 : e1.toNat ≤ a1.size)
+    (hs2 : e2.toNat ≤ a2.size) : ∀ (N : Nat) (n : USize) {s t : Cmd} {p1 p2 : USize}, n.toNat = N →
+    { s with pos := 0 } = { t with pos := 0 } → Same a1 e1 a2 e2 p1 p2 →
+    CmdSame a1 e1 a2 e2 (runCmd H k a1 e1 hs1 n s p1) (runCmd H k a2 e2 hs2 n t p2) := by
+  intro N
+  induction N using Nat.strongRecOn with
+  | ind N ih =>
+    intro n s t p1 p2 hN he h
+    rw [runCmd, runCmd]
+    by_cases hn : n = 0
+    · rw [dite_eq_left hn, dite_eq_left hn]
+      refine ⟨?_, h⟩
+      show { s with pos := 0, status := .next } = { t with pos := 0, status := .next }
+      rw [cmd_er he]
+    · rw [dite_eq_right hn, dite_eq_right hn]
+      dsimp only
+      have hlt : (n - USize.ofNat 1).toNat < N := by
+        have := usize_pred hn
+        have := usize_ne hn
+        omega
+      obtain ⟨e, hS⟩ := stepCmd_same H k hs1 hs2 he h
+      have hst : (stepCmd H k a2 e2 hs2 t p2).status = (stepCmd H k a1 e1 hs1 s p1).status := by rw [cmd_er e]
+      rw [hst]
+      split
+      · exact ih _ hlt _ rfl e hS
+      · exact ⟨e, hS⟩
+
+/-! ### The header machine -/
+
+/-- Two header states the same but for their positions, which have the same unread bytes. -/
+def HdSame (a1 : ByteArray) (e1 : USize) (a2 : ByteArray) (e2 : USize) (s1 s2 : Hd) : Prop :=
+  { s1 with pos := 0 } = { s2 with pos := 0 } ∧ Same a1 e1 a2 e2 s1.pos s2.pos
+
+theorem hd_er {s t : Hd} (h : { s with pos := 0 } = { t with pos := 0 }) : t = { s with pos := t.pos } := by
+  cases s
+  cases t
+  cases h
+  rfl
+
+theorem stepAtH_pos (st : Hd) (p : USize) : stepAtH st p = { stepAtH { st with pos := 0 } 0 with pos := p } := by
+  unfold stepAtH
+  cases st
+  dsimp only
+  split
+  · exact (stepHCat_pos _ _).trans rfl
+  · exact (stepHCode_pos _ _).trans rfl
+  · exact (stepHClens_pos _ _).trans rfl
+  · exact (stepHSyms_pos _ _).trans rfl
+  · exact (stepHFirst_pos _ _).trans rfl
+  · exact (stepHNp_pos _ _).trans rfl
+  · exact (stepHModes_pos _ _).trans rfl
+  · exact (stepHTrees_pos _ _).trans rfl
+  · exact (stepHRlemax_pos _ _).trans rfl
+  · exact (stepHVals_pos _ _).trans rfl
+  · exact (stepHImtf_pos _ _).trans rfl
+  · exact (stepHCodes_pos _ _).trans rfl
+  · rfl
+
+theorem stepH_same {a1 a2 : ByteArray} {e1 e2 : USize} (hs1 : e1.toNat ≤ a1.size) (hs2 : e2.toNat ≤ a2.size) {s t : Hd}
+    (he : { s with pos := 0 } = { t with pos := 0 }) {p1 p2 : USize} (h : Same a1 e1 a2 e2 p1 p2) :
+    HdSame a1 e1 a2 e2 (stepH a1 e1 hs1 s p1) (stepH a2 e2 hs2 t p2) := by
+  have hq1 : p1 ≤ e1 := USize.le_iff_toNat_le.mpr h.2.2.1
+  have hq2 : p2 ≤ e2 := USize.le_iff_toNat_le.mpr h.2.2.2.1
+  have hw : t.word = s.word := by rw [hd_er he]
+  have hc : t.count = s.count := by rw [hd_er he]
+  unfold stepH
+  rw [dite_eq_left hq1, dite_eq_left hq2]
+  dsimp only
+  obtain ⟨ew, ec, hS⟩ := refill_same (word := s.word) (count := s.count) hs1 hs2 h.2.2.1 h.2.2.2.1 h
+  rw [hw, hc, stepAtH_pos _ (refill s.word s.count a1 p1 e1 hs1 _).pos, stepAtH_pos _ (refill s.word s.count a2 p2 e2 hs2 _).pos]
+  refine ⟨?_, hS⟩
+  show { stepAtH { s with word := _, count := _, pos := 0 } 0 with pos := 0 } =
+    { stepAtH { t with word := _, count := _, pos := 0 } 0 with pos := 0 }
+  rw [ew, ec, hd_er he]
+
+/-! ### The stream's steps -/
+
+/-- A stream state without the positions it holds. -/
+def Dec.er (D : Dec) : Dec := { D with pos := 0, cmd := { D.cmd with pos := 0 }, hd := { D.hd with pos := 0 } }
+
+/-- Two stream states the same but for their positions, which have the same unread bytes. -/
+def DecSame (a1 : ByteArray) (e1 : USize) (a2 : ByteArray) (e2 : USize) (D1 D2 : Dec) : Prop :=
+  D1.er = D2.er ∧ Same a1 e1 a2 e2 D1.pos D2.pos
+
+theorem dec_er {s t : Dec} (h : s.er = t.er) :
+    t = { s with pos := t.pos, cmd := { s.cmd with pos := t.cmd.pos }, hd := { s.hd with pos := t.hd.pos } } := by
+  cases s with
+  | mk tag c d H k last left limit pos status =>
+    cases c
+    cases d
+    cases t with
+    | mk tag' c' d' H' k' last' left' limit' pos' status' =>
+      cases c'
+      cases d'
+      cases h
+      rfl
+
+theorem rawRun_er {s t : RawRun} (h : { s with pos := 0 } = { t with pos := 0 }) : s = { t with pos := s.pos } := by
+  cases s
+  cases t
+  cases h
+  rfl
+
+section
+variable {a1 a2 : ByteArray} {e1 e2 : USize} (hs1 : e1.toNat ≤ a1.size) (hs2 : e2.toNat ≤ a2.size)
+
+include hs1 hs2 in
+theorem stepDWbits_same {s t : Dec} (he : s.er = t.er) {p1 p2 : USize} (h : Same a1 e1 a2 e2 p1 p2) :
+    DecSame a1 e1 a2 e2 (stepDWbits a1 e1 hs1 s p1) (stepDWbits a2 e2 hs2 t p2) := by
+  have hq1 : p1 ≤ e1 := USize.le_iff_toNat_le.mpr h.2.2.1
+  have hq2 : p2 ≤ e2 := USize.le_iff_toNat_le.mpr h.2.2.2.1
+  rw [dec_er he]
+  generalize t.pos = q0
+  generalize t.cmd.pos = q1
+  generalize t.hd.pos = q2
+  unfold stepDWbits
+  rw [dite_eq_left hq1, dite_eq_left hq2]
+  dsimp only
+  obtain ⟨ew, ec, hS⟩ := refill_same (word := s.cmd.word) (count := s.cmd.count) hs1 hs2 h.2.2.1 h.2.2.2.1 h
+  simp only [← ew, ← ec]
+  repeat' (first | split_all | (refine ⟨rfl, ?_⟩; exact hS) | (refine ⟨rfl, ?_⟩; exact h))
+
+include hs1 hs2 in
+theorem stepDMeta_same {s t : Dec} (he : s.er = t.er) {p1 p2 : USize} (h : Same a1 e1 a2 e2 p1 p2) :
+    DecSame a1 e1 a2 e2 (stepDMeta a1 e1 hs1 s p1) (stepDMeta a2 e2 hs2 t p2) := by
+  have hq1 : p1 ≤ e1 := USize.le_iff_toNat_le.mpr h.2.2.1
+  have hq2 : p2 ≤ e2 := USize.le_iff_toNat_le.mpr h.2.2.2.1
+  rw [dec_er he]
+  generalize t.pos = q0
+  generalize t.cmd.pos = q1
+  generalize t.hd.pos = q2
+  unfold stepDMeta metaGo
+  dsimp only
+  by_cases hz : s.cmd.pend = 0
+  · rw [ite_eq_left hz, ite_eq_left hz, dite_eq_left hq1, dite_eq_left hq2]
+    try dsimp only
+    obtain ⟨ew, ec, hS⟩ := refill_same (word := s.cmd.word) (count := s.cmd.count) hs1 hs2 h.2.2.1 h.2.2.2.1 h
+    simp only [← ew, ← ec]
+    repeat' (first | split_all | (refine ⟨rfl, ?_⟩; exact hS) | (refine ⟨rfl, ?_⟩; exact h))
+  · rw [ite_eq_right hz, ite_eq_right hz]
+    exact ⟨rfl, h⟩
+
+theorem stepDSkip_same {s t : Dec} (he : s.er = t.er) {p1 p2 : USize} (h : Same a1 e1 a2 e2 p1 p2) :
+    DecSame a1 e1 a2 e2 (stepDSkip e1 s p1) (stepDSkip e2 t p2) := by
+  have hq1 : p1 ≤ e1 := USize.le_iff_toNat_le.mpr h.2.2.1
+  have hq2 : p2 ≤ e2 := USize.le_iff_toNat_le.mpr h.2.2.2.1
+  have hd : e2 - p2 = e1 - p1 := USize.toNat_inj.mp (by
+    rw [USize.toNat_sub_of_le _ _ hq1, USize.toNat_sub_of_le _ _ hq2]
+    exact h.2.2.2.2.1.symm)
+  rw [dec_er he]
+  generalize t.pos = q0
+  generalize t.cmd.pos = q1
+  generalize t.hd.pos = q2
+  unfold stepDSkip moveOn
+  dsimp only
+  rw [ite_eq_left hq1, ite_eq_left hq2, hd]
+  repeat' (first | split_all | (refine ⟨rfl, ?_⟩; exact h))
+  all_goals
+    refine ⟨rfl, h.adv ?_⟩
+    rw [UInt64.toNat_toUSize]
+    have hsz := e1.toNat_lt_size
+    have hsub : (e1 - p1).toNat = e1.toNat - p1.toNat := USize.toNat_sub_of_le _ _ hq1
+    have hpow : USize.size = 2 ^ System.Platform.numBits := USize.size_eq_two_pow
+    first
+      | (rename_i hlt _
+         have := UInt64.lt_iff_toNat_lt.mp hlt
+         rw [USize.toNat_toUInt64, hsub] at this
+         rw [Nat.mod_eq_of_lt (by omega)]
+         omega)
+      | ((rw [USize.toNat_toUInt64, hsub, Nat.mod_eq_of_lt (by omega)]) <;> exact Nat.le_refl _)
+
+include hs1 hs2 in
+theorem stepDRaw_same {s t : Dec} (he : s.er = t.er) {p1 p2 : USize} (h : Same a1 e1 a2 e2 p1 p2) :
+    DecSame a1 e1 a2 e2 (stepDRaw a1 e1 hs1 s p1) (stepDRaw a2 e2 hs2 t p2) := by
+  have hq1 : p1 ≤ e1 := USize.le_iff_toNat_le.mpr h.2.2.1
+  have hq2 : p2 ≤ e2 := USize.le_iff_toNat_le.mpr h.2.2.2.1
+  rw [dec_er he]
+  generalize t.pos = q0
+  generalize t.cmd.pos = q1
+  generalize t.hd.pos = q2
+  unfold stepDRaw moveOn rawFinish clearCmd clearRing
+  dsimp only
+  by_cases hl : s.left = 0
+  · rw [ite_eq_left hl, ite_eq_left hl]
+    exact ⟨rfl, h⟩
+  · rw [ite_eq_right hl, ite_eq_right hl]
+    by_cases hw : winCheck s.k s.cmd.wpos s.cmd.ring = true
+    · rw [dite_eq_left (show winCheck s.k s.cmd.wpos s.cmd.ring = true ∧ p1 ≤ e1 from ⟨hw, hq1⟩),
+        dite_eq_left (show winCheck s.k s.cmd.wpos s.cmd.ring = true ∧ p2 ≤ e2 from ⟨hw, hq2⟩)]
+      by_cases hp : s.cmd.pend = ringSize s.k
+      · rw [ite_eq_left hp, ite_eq_left hp]
+        exact ⟨rfl, h⟩
+      · rw [ite_eq_right hp, ite_eq_right hp]
+        obtain ⟨e, hS⟩ := rawRun_same hs1 hs2 _ _ _ _
+          _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+          _ _ _ _ _ _
+          rfl rfl rfl rfl rfl rfl rfl h
+        refine ⟨?_, hS⟩
+        rw [rawRun_er e]
+        rfl
+    · rw [dite_eq_right (fun e => hw e.1), dite_eq_right (fun e => hw e.1)]
+      exact ⟨rfl, h⟩
+
+include hs1 hs2 in
+theorem stepDHdr_same {s t : Dec} (he : s.er = t.er) {p1 p2 : USize} (h : Same a1 e1 a2 e2 p1 p2) :
+    DecSame a1 e1 a2 e2 (stepDHdr a1 e1 hs1 s p1) (stepDHdr a2 e2 hs2 t p2) := by
+  rw [dec_er he]
+  generalize t.pos = q0
+  generalize t.cmd.pos = q1
+  generalize t.hd.pos = q2
+  obtain ⟨e, hS⟩ := stepH_same hs1 hs2 (s := s.hd) (t := { s.hd with pos := q2 }) rfl h
+  have e' := hd_er e
+  unfold stepDHdr clearHd
+  dsimp only at e' hS ⊢
+  rw [e']
+  generalize (stepH a2 e2 hs2 { s.hd with pos := q2 } p2).pos = q3 at hS ⊢
+  generalize stepH a1 e1 hs1 s.hd p1 = R at hS ⊢
+  cases R
+  dsimp only at hS ⊢
+  repeat' (first | split_all | (refine ⟨rfl, ?_⟩; exact hS))
+
+include hs1 hs2 in
+theorem stepDCmds_same {s t : Dec} (he : s.er = t.er) {p1 p2 : USize} (h : Same a1 e1 a2 e2 p1 p2) :
+    DecSame a1 e1 a2 e2 (stepDCmds a1 e1 hs1 s p1) (stepDCmds a2 e2 hs2 t p2) := by
+  rw [dec_er he]
+  generalize t.pos = q0
+  generalize t.cmd.pos = q1
+  generalize t.hd.pos = q2
+  obtain ⟨e, hS⟩ := runCmd_same s.H s.k hs1 hs2 _ cmdBudget (s := s.cmd) (t := { s.cmd with pos := q1 }) rfl rfl h
+  have e' := cmd_er e
+  unfold stepDCmds clearCmd
+  dsimp only at e' hS ⊢
+  rw [e']
+  generalize (runCmd s.H s.k a2 e2 hs2 cmdBudget { s.cmd with pos := q1 } p2).pos = q3 at hS ⊢
+  generalize runCmd s.H s.k a1 e1 hs1 cmdBudget s.cmd p1 = R at hS ⊢
+  cases R
+  dsimp only at hS ⊢
+  repeat' (first | split_all | (refine ⟨rfl, ?_⟩; exact hS))
+
+include hs1 hs2 in
+theorem stepD_same {s t : Dec} (he : s.er = t.er) (h : Same a1 e1 a2 e2 s.pos t.pos) :
+    DecSame a1 e1 a2 e2 (stepD a1 e1 hs1 s) (stepD a2 e2 hs2 t) := by
+  have htag : t.tag = s.tag := by rw [dec_er he]
+  unfold stepD
+  rw [htag]
+  cases s.tag
+  · exact stepDWbits_same hs1 hs2 he h
+  · exact stepDMeta_same hs1 hs2 he h
+  · exact stepDSkip_same he h
+  · exact stepDRaw_same hs1 hs2 he h
+  · exact stepDHdr_same hs1 hs2 he h
+  · exact stepDCmds_same hs1 hs2 he h
+  · exact ⟨he, h⟩
+
+include hs1 hs2 in
+theorem runD_same : ∀ (x : RunArg a1 e1 hs1) (t : Dec) (ht : DInv e2 t), x.D.er = t.er → Same a1 e1 a2 e2 x.D.pos t.pos →
+    DecSame a1 e1 a2 e2 (runD a1 e1 hs1 x.D x.inv) (runD a2 e2 hs2 t ht) := by
+  intro x
+  induction x using (runRel_wf a1 e1 hs1).induction with
+  | _ x ih =>
+    intro t ht he h
+    obtain ⟨D, hinv⟩ := x
+    dsimp only at he h ih ⊢
+    rw [runD, runD]
+    have htag : t.tag = D.tag := by rw [dec_er he]
+    by_cases hE : D.tag = .ended
+    · rw [dite_eq_left hE, dite_eq_left (htag.trans hE)]
+      refine ⟨?_, h⟩
+      rw [dec_er he]
+      rfl
+    · rw [dite_eq_right hE, dite_eq_right (fun e => hE (htag.symm.trans e))]
+      dsimp only
+      obtain ⟨e, hS⟩ := stepD_same hs1 hs2 he h
+      have hst : (stepD a2 e2 hs2 t).status = (stepD a1 e1 hs1 D).status := by rw [dec_er e]
+      by_cases hn : (stepD a1 e1 hs1 D).status = .next
+      · rw [dite_eq_left hn, dite_eq_left (hst.trans hn)]
+        exact ih ⟨_, hinv.step hE hn⟩ ⟨hE, hn, rfl⟩ _ _ e hS
+      · rw [dite_eq_right hn, dite_eq_right (fun e => hn (hst.symm.trans e))]
+        exact ⟨e, hS⟩
+
+end
+
 end Brotli.Decoder
