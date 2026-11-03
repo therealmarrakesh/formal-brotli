@@ -133,6 +133,10 @@ structure Streams (D : Machine σ) (size : σ → Nat) (demand : List UInt8 → 
 def LimitUsed (D : Machine σ) (demand : List UInt8 → Nat) : Prop :=
   ∀ {limit x} {R : Run σ}, Reaches D limit x R → R.status = .memoryLimit → limit < demand (x.take R.read)
 
+/-- The limit, reported in time: nine bytes before the bytes used, the input didn't yet demand more than the limit. -/
+def LimitPrompt (D : Machine σ) (demand : List UInt8 → Nat) : Prop :=
+  ∀ {limit x} {R : Run σ}, Reaches D limit x R → R.status = .memoryLimit → ∀ n, n + 9 ≤ R.read → demand (x.take n) ≤ limit
+
 /-- The window a stream declares: the window size its WBITS gives, or none before WBITS is read. -/
 def declaredWindow (y : List UInt8) : Nat :=
   match readWBITS (bits y) with

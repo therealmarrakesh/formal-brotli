@@ -743,6 +743,8 @@ structure MetaFacts (a : ByteArray) (stop : USize) (D : Dec) (pos : USize) (r : 
   tag : r.tag ≠ .wbits ∧ r.tag ≠ .cmds
   start : r.tag = .hdr → r.status = .next ∧ (∀ t : List UInt8, ∃ last mlen, metaStart (D.bits a pos stop (bits t)) = some (.data last mlen false, r.bits a r.pos stop (bits t))) ∧
     HRel r.hd Gh.start (.cat .L) ∧ r.hd.d.arena.size = 0 ∧ r.hd.d.arenaMax = D.limit ∧ HSize r.hd
+  plain : r.status = .next → r.tag ≠ .hdr → ∀ t : List UInt8, ∃ v rest, metaStart (D.bits a pos stop (bits t)) = some (v, rest) ∧
+    ∀ l ml, v ≠ .data l ml false
 
 /-- The header machine's first state holds only small tables. -/
 theorem hsize_start (word count limit : UInt64) : HSize (hdStart word count limit) where
@@ -771,7 +773,7 @@ theorem stepDMeta_facts {w : Nat} {st : StreamState} {a : ByteArray} {stop : USi
   by_cases hz0 : cmd.pend = 0
   rotate_left
   · rw [ite_eq_right hz0]
-    exact ⟨rfl, rfl, rfl, (fun e => DStatus.noConfusion e), fun _ => rfl, fun _ => rfl, hdec, fun e => absurd e hnh⟩
+    exact ⟨rfl, rfl, rfl, (fun e => DStatus.noConfusion e), fun _ => rfl, fun _ => rfl, hdec, fun e => absurd e hnh, fun e _ => DStatus.noConfusion e⟩
   rw [ite_eq_left hz0]
   rw [dite_eq_left (USize.le_iff_toNat_le.mpr hpos)]
   dsimp only
@@ -790,25 +792,37 @@ theorem stepDMeta_facts {w : Nat} {st : StreamState} {a : ByteArray} {stop : USi
   cases hsr : r.status with
   | short =>
     dsimp only
-    exact ⟨rfl, rfl, rfl, (fun e => DStatus.noConfusion e), fun _ => rfl, fun _ => rfl, hdec, fun e => absurd e hnh⟩
+    exact ⟨rfl, rfl, rfl, (fun e => DStatus.noConfusion e), fun _ => rfl, fun _ => rfl, hdec, fun e => absurd e hnh, fun e _ => DStatus.noConfusion e⟩
   | bad =>
     dsimp only
-    exact ⟨rfl, rfl, rfl, (fun e => DStatus.noConfusion e), fun _ => rfl, fun _ => rfl, hdec, fun e => absurd e hnh⟩
+    exact ⟨rfl, rfl, rfl, (fun e => DStatus.noConfusion e), fun _ => rfl, fun _ => rfl, hdec, fun e => absurd e hnh, fun e _ => DStatus.noConfusion e⟩
   | ok =>
     dsimp only
     have hw2 := (hval hsr).1
+    have hms : ∀ t : List UInt8, metaStart (availBits cmd.word cmd.count a pos stop (bits t)) =
+        some (msValue r, r.buf.held ++ (chunkBits a rf.pos.toNat stop.toNat ++ bits t)) := fun t => by
+      rw [hbits]
+      exact (hval hsr).2 _
     unfold metaGo
     by_cases h0 : r.a = 0
     · rw [ite_eq_left h0]
-      exact ⟨rfl, rfl, rfl, (fun e => DStatus.noConfusion e), fun e => absurd rfl e, fun _ => rfl, ⟨fun e => DTag.noConfusion e, fun e => DTag.noConfusion e⟩, fun e => DTag.noConfusion e⟩
+      have hv0 : msValue r = .lastEmpty := by
+        unfold msValue
+        rw [ite_eq_left h0]
+      exact ⟨rfl, rfl, rfl, (fun e => DStatus.noConfusion e), fun e => absurd rfl e, fun _ => rfl, ⟨fun e => DTag.noConfusion e, fun e => DTag.noConfusion e⟩,
+        fun e => DTag.noConfusion e, fun _ _ t => ⟨msValue r, _, hms t, fun l ml e => MetaStart.noConfusion (hv0.symm.trans e)⟩⟩
     rw [ite_eq_right h0]
     by_cases h1 : r.a = 1
     · rw [ite_eq_left h1]
+      have hv1 : msValue r = .metadata (r.b != 0) r.c.toNat := by
+        unfold msValue
+        rw [ite_eq_right h0, ite_eq_left h1]
       by_cases hz : r.buf.peek (r.count &&& 7) = 0
       · rw [ite_eq_left hz]
-        exact ⟨rfl, rfl, rfl, (fun e => DStatus.noConfusion e), fun e => absurd rfl e, fun _ => rfl, ⟨fun e => DTag.noConfusion e, fun e => DTag.noConfusion e⟩, fun e => DTag.noConfusion e⟩
+        exact ⟨rfl, rfl, rfl, (fun e => DStatus.noConfusion e), fun e => absurd rfl e, fun _ => rfl, ⟨fun e => DTag.noConfusion e, fun e => DTag.noConfusion e⟩,
+          fun e => DTag.noConfusion e, fun _ _ t => ⟨msValue r, _, hms t, fun l ml e => MetaStart.noConfusion (hv1.symm.trans e)⟩⟩
       · rw [ite_eq_right hz]
-        exact ⟨rfl, rfl, rfl, (fun e => DStatus.noConfusion e), fun _ => rfl, fun _ => rfl, hdec, fun e => absurd e hnh⟩
+        exact ⟨rfl, rfl, rfl, (fun e => DStatus.noConfusion e), fun _ => rfl, fun _ => rfl, hdec, fun e => absurd e hnh, fun e _ => DStatus.noConfusion e⟩
     rw [ite_eq_right h1]
     have hv : msValue r = .data (r.b != 0) r.c.toNat (r.d != 0) := by
       unfold msValue
@@ -817,12 +831,19 @@ theorem stepDMeta_facts {w : Nat} {st : StreamState} {a : ByteArray} {stop : USi
     · rw [ite_eq_left hu]
       by_cases hz : r.buf.peek (r.count &&& 7) = 0
       · rw [ite_eq_left hz]
-        exact ⟨rfl, rfl, rfl, (fun e => DStatus.noConfusion e), fun e => absurd rfl e, fun _ => rfl, ⟨fun e => DTag.noConfusion e, fun e => DTag.noConfusion e⟩, fun e => DTag.noConfusion e⟩
+        have hne : ∀ l ml, msValue r ≠ .data l ml false := fun l ml e => by
+          rw [hv] at e
+          injection e with _ _ e3
+          rw [hu] at e3
+          cases e3
+        exact ⟨rfl, rfl, rfl, (fun e => DStatus.noConfusion e), fun e => absurd rfl e, fun _ => rfl, ⟨fun e => DTag.noConfusion e, fun e => DTag.noConfusion e⟩,
+          fun e => DTag.noConfusion e, fun _ _ t => ⟨msValue r, _, hms t, hne⟩⟩
       · rw [ite_eq_right hz]
-        exact ⟨rfl, rfl, rfl, (fun e => DStatus.noConfusion e), fun _ => rfl, fun _ => rfl, hdec, fun e => absurd e hnh⟩
+        exact ⟨rfl, rfl, rfl, (fun e => DStatus.noConfusion e), fun _ => rfl, fun _ => rfl, hdec, fun e => absurd e hnh, fun e _ => DStatus.noConfusion e⟩
     · rw [ite_eq_right hu]
       have hu' : (r.d != 0) = false := by simpa using hu
-      refine ⟨rfl, rfl, rfl, (fun e => DStatus.noConfusion e), fun e => absurd rfl e, fun e => absurd rfl e, ⟨fun e => DTag.noConfusion e, fun e => DTag.noConfusion e⟩, fun _ => ⟨rfl, fun t => ⟨r.b != 0, r.c.toNat, ?_⟩, hdStart_rel hw2 hlim, rfl, rfl, hsize_start _ _ _⟩⟩
+      refine ⟨rfl, rfl, rfl, (fun e => DStatus.noConfusion e), fun e => absurd rfl e, fun e => absurd rfl e, ⟨fun e => DTag.noConfusion e, fun e => DTag.noConfusion e⟩, fun _ => ⟨rfl, fun t => ⟨r.b != 0, r.c.toNat, ?_⟩, hdStart_rel hw2 hlim, rfl, rfl, hsize_start _ _ _⟩,
+        fun _ e => absurd rfl e⟩
       show metaStart (availBits cmd.word cmd.count a pos stop (bits t)) = some (.data (r.b != 0) r.c.toNat false, availBits r.word r.count a rf.pos stop (bits t))
       rw [hbits, ← hu', ← hv]
       exact (hval hsr).2 _
