@@ -26,7 +26,9 @@ def Status.stopped : Status → Bool
   | .needsInput | .needsOutput => false
 
 /-- What a call returns: the new state, the input bytes it used, the caller's buffer with the output appended, and
-a status. -/
+a status. The bytes used are the whole chunk when it needs input, the whole stream when it is done, and, when it rejects
+or reports the limit, the bytes up to where it decided that: `RejectUsed` and `LimitUsed` say what those bytes alone
+settle. -/
 structure Reply (σ : Type) where
   state : σ
   used : Nat
@@ -108,6 +110,11 @@ structure Correct (D : Machine σ) : Prop where
     R.ended = true ∧ R.read = x.length ∧ decode x = some R.emitted
   rejected : ∀ {limit x} {R : Run σ}, Reaches D limit x R → R.status = .rejected → decode x = none
 
+/-- A rejection's bytes used: the whole stream after the end signal, or bytes that no continuation makes valid. -/
+def RejectUsed (D : Machine σ) : Prop :=
+  ∀ {limit x} {R : Run σ}, Reaches D limit x R → R.status = .rejected →
+    (R.ended = true ∧ R.read = x.length) ∨ ∀ t : List UInt8, decode (x.take R.read ++ t) = none
+
 /-- Prefix soundness. What's been handed out is always a prefix of the output of a valid stream. `prefix_of_completion`
 and `rejected_final` state it for every continuation of the input so far. -/
 def NoWrongBytes (D : Machine σ) : Prop :=
@@ -121,6 +128,10 @@ structure Streams (D : Machine σ) (size : σ → Nat) (demand : List UInt8 → 
   honest_limit : ∀ {limit x} {R : Run σ}, Reaches D limit x R → R.status = .memoryLimit →
     limit < demand (x.take R.offered)
   honest_stream : ∀ {limit x} {R : Run σ}, Reaches D limit x R → R.status = .memoryLimit → limit < demand x
+
+/-- The limit's bytes used: they alone demand more than the limit. -/
+def LimitUsed (D : Machine σ) (demand : List UInt8 → Nat) : Prop :=
+  ∀ {limit x} {R : Run σ}, Reaches D limit x R → R.status = .memoryLimit → limit < demand (x.take R.read)
 
 /-- The window a stream declares: the window size its WBITS gives, or none before WBITS is read. -/
 def declaredWindow (y : List UInt8) : Nat :=

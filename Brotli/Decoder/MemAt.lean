@@ -777,4 +777,11 @@ theorem decoder_limitAt {limit : Nat} {x : List UInt8} {R : Run DState} (h : Rea
       rw [hwb]
       exact limit_hdr hlim g3 hbind hT hht hdr hmax hK hpw
 
+/-- Memory usage correctness, for the bytes used: when the decoder reports the limit, those bytes alone demand more. -/
+theorem decoder_limitUsed : LimitUsed decoder demand := fun h hs => (decoder_limitAt h hs).1
+
+/-- Soundness, for the bytes used: a rejection's bytes used are the whole stream after the end signal, or bytes no
+continuation makes valid. -/
+theorem decoder_rejectUsed : RejectUsed decoder := fun h hs => (decoder_rejectsAt h hs).imp id (·.1)
+
 end Brotli.Decoder
