@@ -181,8 +181,10 @@ reserves the groups' tables, or the limit is reported. -/
 theorem mapFinish_ok {st0 st : Hd} {g : Gh} {p : HPhase} {isL : Bool} {n : UInt64} {ntrees : Nat} {cmap : List Nat}
     {map : ByteArray} (hw : (BitBuffer.mk st.word st.count).Wf) (hi : st.isL = isL) (hu : Upto st.d g (mapIdx isL))
     (hm : MapOk map cmap (mapSize g isL) ntrees) (hn : n.toNat = ntrees) (h1 : 1 ≤ ntrees) (h2 : ntrees ≤ 256)
-    (hs : st.status = .next) (hp : st.pos.toNat ≤ stop.toNat) (he : SameHeld { st with fill := st0.fill } st0)
-    (hf : HSize st0 → st.fill.size ≤ 16384) (hb : budH g p = 0) (hs6 : stageOf p ≤ 6)
+    (hs : st.status = .next) (hp : st.pos.toNat ≤ stop.toNat)
+    (he : SameHeld { st with fill := st0.fill, xf := st0.xf, mtf := st0.mtf, seenR := st0.seenR, seenX := st0.seenX } st0)
+    (hf : HSize st0 → st.fill.size ≤ 16384 ∧ st.xf.size ≤ 16384 ∧ st.mtf.size ≤ 256 ∧ st.seenR.size ≤ 256 ∧ st.seenX.size ≤ 256)
+    (hb : budH g p = 0) (hs6 : stageOf p ≤ 6)
     (hd : HDown p (mapNextPhase (g.setMap isL ntrees cmap) isL))
     (hr : ∀ F, hrest K g p (availBits st0.word st0.count a st.pos stop F) =
       afterMap K g isL ntrees cmap (availBits st.word st.count a st.pos stop F))
@@ -207,7 +209,7 @@ theorem mapFinish_ok {st0 st : Hd} {g : Gh} {p : HPhase} {isL : Bool} {n : UInt6
       ⟨hw, hu.lmapDone hn h1 h2 hm, rfl, rfl⟩ (Nat.le_refl _) hp (fun F => by rw [hr, afterMap_eq]; rfl) (fun F => hj F) hd
       ⟨hmx, by show st.d.arena.size = _; rw [ha]; rfl, fun h0 => ?_, ⟨hcp, by rw [hb]; simp [budH, mapNextPhase, tableOf]⟩⟩
     have h := h0.same he
-    exact ⟨hf h0, h.lens, h.clLens, h.clt, h.mapT, h.modes, hsz, h.dMap, h.litBase, h.icBase, h.dBase⟩
+    exact ⟨(hf h0).1, h.lens, h.clLens, h.clt, h.mapT, h.modes, hsz, h.dMap, h.litBase, h.icBase, h.dBase, (hf h0).2⟩
   | false =>
     have hD := hu.cat .D (by decide)
     have h256 : g.m.distance.n ≤ 256 := hD.wf.2.1
@@ -248,7 +250,7 @@ theorem mapFinish_ok {st0 st : Hd} {g : Gh} {p : HPhase} {isL : Bool} {n : UInt6
       · refine ⟨hmx, by show st.d.arena.size = st0.d.arena.size + 0; rw [ha, Nat.add_zero], fun h0 => ?_,
           hcap, rfl, by rw [← hcp]; exact hsmall, by rw [← hmx, ← hres]; exact hcN, hs6, Nat.le_refl _⟩
         have h := h0.same he
-        exact ⟨hfs, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, hsz, h.litBase, h.icBase, h.dBase⟩
+        exact ⟨hfs, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, hsz, h.litBase, h.icBase, h.dBase, (hf h0).2⟩
     · rw [ite_eq_right hc]
       have hlt : st0.d.arenaMax.toNat < resBytes (g.setMap false ntrees cmap) := by
         rw [← hmx, ← hres]
@@ -328,8 +330,8 @@ theorem stepHTrees_ok {isL : Bool} {st : Hd} {g : Gh} {pos : USize} (hrel : HRel
           omega
       exact mapFinish_ok (st0 := st) (st := { st with word := r.word, count := r.count, pos := pos, status := .next }) (p := .trees isL)
         (ntrees := r.a.toNat) (cmap := List.replicate (mapSize g isL) 0) hw2 hi hu hmap rfl hrange.1 hrange.2 rfl hp
-        ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩ (fun h => h.fill) rfl (by show mapIdx isL ≤ 6; unfold mapIdx; split <;> omega)
-        (treesNext_down _ _)
+        ⟨rfl, rfl, rfl, rfl, rfl, rfl, ⟨rfl, rfl, rfl, rfl⟩⟩ (fun h => ⟨h.fill, h.work⟩) rfl
+        (by show mapIdx isL ≤ 6; unfold mapIdx; split <;> omega) (treesNext_down _ _)
         (fun F => by
           have e := hN (chunkBits a pos.toNat stop.toNat ++ F)
           rw [avail_mk, e]
@@ -532,7 +534,7 @@ theorem stepHCodes_ok {k : CK} {done : List PrefixCode} {left : Nat} {st : Hd} {
       refine HStepOk.ofNext (g' := g.setCodes .L done) (p' := .codes .I [] g.m.insertCopy.n) rfl
         ⟨hw, hu.codesDoneL hlen' hpart, ht, rfl, rfl, hn, by show 0 + g.m.insertCopy.n = g.m.insertCopy.n; omega, h256', ?_⟩
         (Nat.le_refl _) hp (fun F => ?_) (fun F => rfl)
-        (hm := ⟨rfl, rfl, fun h => ⟨hfs, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, hfill, h.icBase, h.dBase⟩,
+        (hm := ⟨rfl, rfl, fun h => ⟨hfs, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, hfill, h.icBase, h.dBase, h.work⟩,
           ⟨rfl, by simp only [budH, groupsFrom, tableOf, Gh.setCodes, ckSize]; omega⟩⟩)
       · refine ⟨?_, by simp, fun i hi => absurd hi (by simp)⟩
         show (zeroBytes (4 * st.d.nI.toNat)).size = 4 * g.m.insertCopy.n
@@ -553,7 +555,7 @@ theorem stepHCodes_ok {k : CK} {done : List PrefixCode} {left : Nat} {st : Hd} {
       refine HStepOk.ofNext (g' := g.setCodes .I done) (p' := .codes .D [] g.treesD) rfl
         ⟨hw, hu.codesDoneI hlen' hpart, ht, rfl, rfl, hT, by show 0 + g.treesD = g.treesD; omega, hT2, ?_⟩
         (Nat.le_refl _) hp (fun F => ?_) (fun F => rfl)
-        (hm := ⟨rfl, rfl, fun h => ⟨hfs, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, hfill, h.dBase⟩,
+        (hm := ⟨rfl, rfl, fun h => ⟨hfs, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, hfill, h.dBase, h.work⟩,
           ⟨rfl, by simp only [budH, groupsFrom, tableOf, Gh.setCodes, ckSize]; omega⟩⟩)
       · refine ⟨?_, by simp, fun i hi => absurd hi (by simp)⟩
         show (zeroBytes (4 * st.d.treesD.toNat)).size = 4 * g.treesD
@@ -568,7 +570,7 @@ theorem stepHCodes_ok {k : CK} {done : List PrefixCode} {left : Nat} {st : Hd} {
       rw [e]
       exact ⟨fun e => HStatus.noConfusion e, fun e => HStatus.noConfusion e, fun e => HStatus.noConfusion e, fun e => HStatus.noConfusion e,
         fun _ => ⟨g.setCodes .D done, hu.codesDoneD hlen' hpart, hw, Nat.le_refl _, hp, (fun F => hrest_codes_D K g done _), rfl, rfl, rfl,
-          fun h => ⟨h.fill, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, hfill⟩, fun F => rfl⟩⟩
+          fun h => ⟨h.fill, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, hfill, h.work⟩, fun F => rfl⟩⟩
   · rw [ite_eq_right h0]
     have hl0 : st.left.toNat ≠ 0 := fun e => h0 (UInt64.toNat_inj.mp (by rw [e]; rfl))
     obtain ⟨n, rfl⟩ : ∃ n, left = n + 1 := ⟨left - 1, by omega⟩

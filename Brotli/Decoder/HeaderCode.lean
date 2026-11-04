@@ -365,7 +365,7 @@ theorem stepHCode_ok {o : Owner} {size : Nat} {st : Hd} {g : Gh} {pos : USize} (
             show (writeSimple (zeroBytes st.size.toNat) r).size ≤ _
             rw [writeSimple_size, zeroBytes_size (by omega), hs1]
             exact hs3,
-            h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩) (fun F => by
+            h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase, h.work⟩) (fun F => by
           rw [avail_mk, hspec]
           exact hN _) (fun F => by
           rw [avail_mk]
@@ -381,7 +381,7 @@ theorem stepHCode_ok {o : Owner} {size : Nat} {st : Hd} {g : Gh} {pos : USize} (
       simp only [h1', ↓reduceIte] at hspec
       refine HStepOk.ofNext (g' := g) (p' := .clens o size (codeLengthOrder.drop hskip.toNat) [] 0) rfl
         (hm := ⟨rfl, rfl, fun h => ⟨h.fill, h.lens, by show (zeroBytes 18).size ≤ _; rw [zeroBytes_size (by decide)]; exact Nat.le_refl _,
-          h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩,
+          h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase, h.work⟩,
           ⟨rfl, by simp [budH, tableOf]⟩⟩)
         ⟨hw1, hu, rfl, hs, ho, clStart_rel hhlt rfl rfl rfl rfl rfl⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
       · rw [avail_mk, hspec]

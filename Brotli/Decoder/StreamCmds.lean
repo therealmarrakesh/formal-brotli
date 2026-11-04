@@ -131,7 +131,7 @@ def Cmd.none : Cmd := ⟨0, 0, ByteArray.empty, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 
 /-- A header machine's state with nothing in it. -/
 def Hd.none : Hd := ⟨0, 0, 0, .next, .cat, Done.none, .L, .type, true, .L, 0, 0, 0, 0, 0, ByteArray.empty, ByteArray.empty, 0, 0, 0, 0, 0,
-  ByteArray.empty, 0, 0, 0, 0, Tab.none, Tab.none⟩
+  ByteArray.empty, 0, 0, 0, 0, Tab.none, Tab.none, ByteArray.empty, ByteArray.empty, ByteArray.empty, ByteArray.empty⟩
 
 /-- Empties a stream state's command loop state, so that its window is held once. -/
 @[noinline] def clearCmd (D : Dec) : Dec := { D with cmd := Cmd.none }

@@ -16,7 +16,7 @@ open Brotli.Spec Brotli.Properties
 
 /-- What a state holds besides its window and the groups' tables: the arena's reservation for the categories' codes, the
 bounds `HSize` and `HSmall` give, 768 bytes of block type flags, 38 bytes of a dictionary word, and its fields. -/
-def fixedCost : Nat := 77008
+def fixedCost : Nat := 94160
 
 /-- What a state's fields cost. -/
 def fieldBytes : Nat := 1024
@@ -239,7 +239,8 @@ theorem demand_ceiling : DemandCeiling demand (fixedCost + 16 + resMax) := by
 def Done.holds (d : Done) : Nat := d.arenaCap.toNat + d.modes.size + d.lMap.size + d.dMap.size + d.litBase.size + d.icBase.size + d.dBase.size
 
 /-- The bytes a header's reading holds. -/
-def Hd.holds (h : Hd) : Nat := h.d.holds + h.fill.size + h.lens.size + h.clLens.size + h.clt.t.size + h.mapT.t.size
+def Hd.holds (h : Hd) : Nat := h.d.holds + h.fill.size + h.lens.size + h.clLens.size + h.clt.t.size + h.mapT.t.size +
+  h.xf.size + h.mtf.size + h.seenR.size + h.seenX.size
 
 /-- The bytes a meta-block's fast header holds: its arena's reservation, and its arrays. -/
 def Hdr.holds (H : Hdr) : Nat := H.arenaCap.toNat + H.litBase.size + H.lMap.size + H.icBase.size + H.dBase.size + H.dMap.size + H.modes.size
@@ -306,6 +307,7 @@ theorem MemD.holds_le {Ws : Option Nat} {X L : Nat} {D : Dec} {B : List Bool} (M
   have a9 := M.hd.litBase
   have a10 := M.hd.icBase
   have a11 := M.hd.dBase
+  have a12 := M.hd.work
   have b1 := M.H.litBase
   have b2 := M.H.lMap
   have b3 := M.H.icBase
@@ -522,6 +524,7 @@ theorem hsize_none : HSize Hd.none where
   litBase := Nat.zero_le _
   icBase := Nat.zero_le _
   dBase := Nat.zero_le _
+  work := ⟨Nat.zero_le _, Nat.zero_le _, Nat.zero_le _, Nat.zero_le _⟩
 
 /-! ### WBITS -/
 
@@ -721,6 +724,7 @@ theorem hsize_start (word count limit : UInt64) : HSize (hdStart word count limi
   litBase := Nat.zero_le _
   icBase := Nat.zero_le _
   dBase := Nat.zero_le _
+  work := ⟨Nat.zero_le _, Nat.zero_le _, Nat.zero_le _, Nat.zero_le _⟩
 
 theorem stepDMeta_facts {w : Nat} {st : StreamState} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize}
     (hrel : DRel D (.mblock w st)) (hpos : pos.toNat ≤ stop.toNat) : MetaFacts a stop D pos (stepDMeta a stop hs D pos) := by

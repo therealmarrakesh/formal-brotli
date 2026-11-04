@@ -495,6 +495,15 @@ theorem psize_le {st : Hd} {g : Gh} {p : HPhase} (h : HRel st g p) : psize p ≤
   | syms o n _ _ => exact h.2.2.2.1.2.2
   | _ => exact Nat.zero_le _
 
+theorem vleft_le {st : Hd} {g : Gh} {p : HPhase} (h : HRel st g p) : vleft p ≤ 16384 := by
+  cases p with
+  | vals isL t r code done left =>
+    obtain ⟨_, hu, _, hi, _, _, _, _, _, _, _, _, _, _, hlen, _⟩ := h
+    have := (mapSizeFast_eq (g := g) hi hu).2
+    show left ≤ 16384
+    omega
+  | _ => exact Nat.zero_le _
+
 /-- A header's step, against the potential: a step that goes on is paid by the header's potential and bits, the header's
 end by what the header holds for it, and a step that runs out of input costs at most 269. -/
 theorem pay_hdr {w : Nat} {st : StreamState} {last : Bool} {mlen : Nat} {g : Gh} {p : HPhase} {a : ByteArray} {stop : USize}
@@ -526,7 +535,7 @@ theorem pay_hdr {w : Nat} {st : StreamState} {last : Bool} {mlen : Nat} {g : Gh}
     refine ⟨fun _ => ⟨.hdr w st last mlen g' p', ⟨rfl, ⟨hall.win, hall.produced, hall.limit⟩, hl, hleft, hm1, hm2, hR', hp0, hmv.bud hb⟩,
       ⟨[], rfl, rfl⟩, h1, h2, fun hi => sinv_of_sreach (sreach_hdr (q := (g, p)) (q' := (g', p')) (Reach.one (h5 []))) hi,
       fun t => ?_⟩, fun e => DStatus.noConfusion e, fun e => by rcases e with e | e <;> exact DStatus.noConfusion e⟩
-    have hpy := hpay hsz (h5 (bits t))
+    have hpy := hpay hsz (vleft_le hR) (h5 (bits t))
     simp only [Dec.bits, Dec.word, Dec.count, dpot, spot, clearHd]
     omega
   case needsInput =>

@@ -17,10 +17,11 @@ open Brotli.Spec Brotli.Properties
 /-! ### Tables -/
 
 /-- A table's work, with its lengths complete: twelve for each symbol and 3735 more, and for a context map's code its
-check and the map's zeros. -/
+check, the map's zeros as read and as transformed, and its three lists of 256 bytes. -/
 theorem tableDoneW_le {st : Hd} {single : Bool} (hn : st.size.toNat ≤ 704) (hlens : st.size.toNat ≤ st.lens.size)
     (hC : single = false → Complete (.canonical (lensOf st.lens st.size.toNat))) :
-    tableDoneW st single ≤ 12 * st.size.toNat + 3735 + (if st.role = .map then 257 + zbW (mapSizeFast st) else 0) := by
+    tableDoneW st single ≤ 12 * st.size.toNat + 3735 +
+      (if st.role = .map then 1028 + zbW (mapSizeFast st) + zbW (mapSizeFast st) else 0) := by
   have hu : st.size.toUSize.toNat = st.size.toNat := word_toUSize (by omega)
   unfold tableDoneW
   dsimp only
@@ -41,6 +42,7 @@ theorem tableDoneW_le {st : Hd} {single : Bool} (hn : st.size.toNat ≤ 704) (hl
   cases hr : st.role with
   | map =>
     simp only [↓reduceIte]
+    have := zbW_le 256
     unfold fitsW
     omega
   | type => simp only [reduceCtorEq, ↓reduceIte]; omega
@@ -67,103 +69,6 @@ theorem clTableW_le {st : Hd} (hC : st.clNz ≠ 1 → Complete (.canonical (lens
       omega
     · rw [dite_eq_right hn]
       omega
-
-/-! ### The inverse move-to-front transform -/
-
-/-- How many values are not 0. -/
-def nzL (l : List Nat) : Nat := l.countP (· != 0)
-
-/-- What the transform's work is bounded by on a context map of `S` values for `ntrees` trees: by the values that are not
-0, or, when all values are the same, by the number of trees. -/
-def imtfB (S ntrees : Nat) (vals : List Nat) : Nat :=
-  if vals = List.replicate vals.length (vals.headD 0) then min (8 * S + 515 * nzL vals + 1) (8 * S + 515 * ntrees + 8)
-  else 8 * S + 515 * nzL vals + 1
-
-theorem imtfB_le (S ntrees : Nat) (vals : List Nat) : imtfB S ntrees vals ≤ 8 * S + 515 * nzL vals + 1 := by
-  unfold imtfB
-  split <;> omega
-
-theorem nzL_le (l : List Nat) : nzL l ≤ l.length := List.countP_le_length
-
-theorem nzL_append (a b : List Nat) : nzL (a ++ b) = nzL a + nzL b := List.countP_append
-
-theorem nzL_replicate (n v : Nat) : nzL (List.replicate n v) ≤ n := by
-  have := nzL_le (List.replicate n v)
-  rwa [List.length_replicate] at this
-
-/-- A map's values, from its bytes. -/
-theorem MapOk.vals_eq {b : ByteArray} {l : List Nat} {S n : Nat} (h : MapOk b l S n) :
-    l = (List.range S).map fun j => (b.data[j]?.getD 0).toNat := by
-  apply List.ext_getElem?
-  intro i
-  by_cases hi : i < S
-  · rw [h.at_ i hi, List.getElem?_map, List.getElem?_range hi]
-    rfl
-  · rw [List.getElem?_eq_none (by rw [h.length]; omega), List.getElem?_eq_none (by simp; omega)]
-
-/-- The transform's work on a context map's bytes. -/
-theorem imtfGoW_map {m fill : ByteArray} {vals : List Nat} {S ntrees : Nat} (h : MapOk fill vals S ntrees) (hS : S ≤ 16384) :
-    imtfGoW m fill 0 (UInt64.ofNat fill.size) ≤ imtfB S ntrees vals := by
-  have hsz : fill.size = S := h.sz
-  have hn : (UInt64.ofNat fill.size).toNat = S := by rw [hsz]; exact u64_lit (by omega)
-  have h0 : (0 : UInt64).toNat = 0 := rfl
-  have hnz : nzC fill 0 S = nzL vals := by
-    rw [h.vals_eq]
-    unfold nzC nzL
-    rw [List.countP_map]
-    apply List.countP_congr
-    intro j _
-    simp only [Function.comp, Nat.zero_add]
-    generalize fill.data[j]?.getD 0 = x
-    have : x.toNat = 0 ↔ x = 0 := ⟨fun e => UInt8.toNat_inj.mp (by rw [e]; rfl), fun e => by rw [e]; rfl⟩
-    simp only [bne_iff_ne, ne_eq, this]
-  have hgen : imtfGoW m fill 0 (UInt64.ofNat fill.size) ≤ 8 * S + 515 * nzL vals + 1 := by
-    have := imtfGoW_le S m fill 0 (UInt64.ofNat fill.size) hn (by rw [h0]; omega) (by rw [h0, hsz]; omega)
-    rw [h0, hnz] at this
-    exact this
-  unfold imtfB
-  split
-  · rename_i hc
-    refine Nat.le_min.mpr ⟨hgen, ?_⟩
-    have hlen : vals.length = S := h.length
-    by_cases hS0 : S = 0
-    · have := nzL_le vals
-      have : nzL vals = 0 := by omega
-      omega
-    generalize hv : vals.headD 0 = v at hc
-    have hmem : v ∈ vals := by
-      rw [hc]
-      exact List.mem_replicate.mpr ⟨by omega, rfl⟩
-    have hvt : v < ntrees := h.lt v hmem
-    have hall : ∀ j, j < S → fill.data[0 + j]?.getD 0 = UInt8.ofNat v := by
-      intro j hj
-      have e := h.at_ j hj
-      rw [hc, List.getElem?_replicate, ite_eq_left (by omega)] at e
-      have e' : (fill.data[j]?.getD 0).toNat = v := (Option.some.inj e).symm
-      rw [Nat.zero_add]
-      apply UInt8.toNat_inj.mp
-      rw [e', UInt8.toNat_ofNat']
-      have := (fill.data[j]?.getD 0).toNat_lt
-      omega
-    have hv8 : (UInt8.ofNat v).toNat = v := by
-      rw [UInt8.toNat_ofNat']
-      have := (fill.data[0]?.getD 0).toNat_lt
-      have e := hall 0 (by omega)
-      have e2 := h.at_ 0 (by omega)
-      rw [hc, List.getElem?_replicate, ite_eq_left (by omega)] at e2
-      have e3 : (fill.data[0]?.getD 0).toNat = v := (Option.some.inj e2).symm
-      omega
-    by_cases hlt : v + 1 < S
-    · have := imtfGoW_const (m := m) (out := fill) (i := 0) (n := UInt64.ofNat fill.size) (v := UInt8.ofNat v) hn
-        (by rw [h0]; omega) (by rw [h0]; exact hall) (by rw [hv8]; exact hlt)
-      rw [hv8] at this
-      omega
-    · have : nzL vals ≤ ntrees := by
-        have := nzL_le vals
-        omega
-      have : 515 * nzL vals ≤ 515 * ntrees := Nat.mul_le_mul_left _ this
-      omega
-  · exact hgen
 
 /-! ### The potential
 
@@ -203,11 +108,12 @@ def mapFin (g : Gh) (isL : Bool) : Nat := if isL then 1 else zb (4 * g.treesL) +
 def mapAfter (g : Gh) (isL : Bool) (t : Nat) : Nat :=
   if isL then afterL g.m.insertCopy.n g.m.distance.n t else afterD g.m.insertCopy.n g.treesL t
 
-/-- From a context map's last bit on, besides the transform. -/
-def imtfTail (g : Gh) (isL : Bool) (t : Nat) : Nat := 1881 + mapSize g isL + mapFin g isL + mapAfter g isL t
+/-- From a context map's last bit on: the check that every tree occurs, and what follows. -/
+def imtfTail (g : Gh) (isL : Bool) (t : Nat) : Nat := t + 12 + mapFin g isL + mapAfter g isL t
 
-/-- From a context map's values on, for whatever its code. -/
-def mapOwner (g : Gh) (isL : Bool) (t : Nat) : Nat := 39 + 9 * mapSize g isL + imtfTail g isL t + 515 * t
+/-- From a context map's values on, for whatever its code: with a code that reads no bits, every value written as read and
+transformed, and flagged. -/
+def mapOwner (g : Gh) (isL : Bool) (t : Nat) : Nat := 2 * mapSize g isL + 2 * t + 31 + imtfTail g isL t
 
 /-- From a group's next code on. -/
 def codesPot (g : Gh) : CK → Nat → Nat
@@ -215,9 +121,10 @@ def codesPot (g : Gh) : CK → Nat → Nat
   | .I, left => 11 * left + zb (4 * g.treesD) + 24 + 11 * g.treesD
   | .D, left => 11 * left + 12
 
-/-- What a code's table's step does for its owner: for a context map, the table's check and the map's zeros. -/
+/-- What a code's table's step does for its owner: for a context map, the table's check, the map's zeros as read and as
+transformed, and its three lists of 256 bytes. -/
 def ownerX (g : Gh) : Owner → Nat
-  | .map isL _ _ => 258 + zb (mapSize g isL)
+  | .map isL _ _ => 1029 + zb (mapSize g isL) + zb (mapSize g isL)
   | _ => 0
 
 /-- From where a code's owner goes on to. -/
@@ -237,13 +144,13 @@ def hpot (g : Gh) : HPhase → Nat
   | .np => beforeMaps g.m.literal.n g.m.insertCopy.n g.m.distance.n
   | .modes _ _ => beforeMaps g.m.literal.n g.m.insertCopy.n g.m.distance.n
   | .trees isL => mapPre (mapSize g isL) + mapFin g isL + mapAfter g isL 0
-  | .rlemax isL t => 258 + zb (mapSize g isL) + mapOwner g isL t
-  | .vals isL t r code done left =>
-    if left = 0 then 11 + imtfTail g isL t + imtfB (mapSize g isL) t done
+  | .rlemax isL t => 1029 + zb (mapSize g isL) + zb (mapSize g isL) + mapOwner g isL t
+  | .vals isL t r code _ left =>
+    if left = 0 then 11 + imtfTail g isL t
     else match runOf r code with
-      | some v => left + 31 + imtfTail g isL t + imtfB (mapSize g isL) t (done ++ List.replicate left v)
-      | none => 12 + imtfTail g isL t + 8 * mapSize g isL + 515 * nzL done
-  | .imtf isL t vals => imtfTail g isL t + imtfB (mapSize g isL) t vals
+      | some _ => 2 * left + 2 * t + 31 + imtfTail g isL t
+      | none => 11 + imtfTail g isL t
+  | .imtf isL t _ => imtfTail g isL t
   | .codes k _ left => codesPot g k left
 
 /-- A bound on a header step's work, with its refill and its round of the stream's loop, by where it goes. -/
@@ -261,12 +168,19 @@ def hcost (g : Gh) : HPhase → HPhase → Nat
   | .trees _, .rlemax .. => 11
   | .trees isL, _ => 11 + zb (mapSize g isL) + mapFin g isL
   | .rlemax .., _ => 11
-  | .vals _ _ r code _ left, _ => if left = 0 then 11 else match runOf r code with | some _ => left + 12 | none => 11
-  | .imtf isL t vals, _ => 1872 + mapSize g isL + mapFin g isL + imtfB (mapSize g isL) t vals
+  | .vals _ t r code _ left, .vals _ _ _ _ _ left' =>
+    match runOf r code with | some _ => 2 * left + 2 * t + 20 | none => left - left' + 276
+  | .vals .., _ => 11
+  | .imtf isL t _, _ => t + 12 + mapFin g isL
   | .codes _ _ (_ + 1), _ => 11
   | .codes .L _ 0, _ => zb (4 * g.m.insertCopy.n) + 12
   | .codes .I _ 0, _ => zb (4 * g.treesD) + 12
   | .codes .D _ 0, _ => 12
+
+/-- A context map's values left, at the places reading them. -/
+def vleft : HPhase → Nat
+  | .vals _ _ _ _ _ left => left
+  | _ => 0
 
 /-- A prefix code's alphabet, at the places reading one. -/
 def psize : HPhase → Nat
@@ -347,15 +261,6 @@ theorem hpot_mapNext (g : Gh) (isL : Bool) (t : Nat) (m : List Nat) :
     omega
   | false => rfl
 
-theorem imtfB_rep (S t n v : Nat) : imtfB S t (List.replicate n v) ≤ 8 * S + 515 * t + 8 := by
-  unfold imtfB
-  have hc : List.replicate n v = List.replicate (List.replicate n v).length ((List.replicate n v).headD 0) := by
-    cases n with
-    | zero => rfl
-    | succ n => rw [List.length_replicate]; rfl
-  rw [ite_eq_left hc]
-  exact Nat.min_le_right _ _
-
 theorem hpot_owner_le (g : Gh) (o : Owner) (c : PrefixCode) : hpot g (ownerPlace g o c) ≤ ownerPot g o := by
   cases o with
   | type i n => exact Nat.le_of_eq (by simp only [ownerPlace, hpot, ownerX, ownerPot, Nat.zero_add])
@@ -364,19 +269,10 @@ theorem hpot_owner_le (g : Gh) (o : Owner) (c : PrefixCode) : hpot g (ownerPlace
   | map isL t r =>
     simp only [ownerPlace, hpot, ownerPot, mapOwner]
     split
-    · have := imtfB_le (mapSize g isL) t []
-      simp only [nzL, List.countP_nil] at this
-      omega
+    · omega
     · cases runOf r c with
-      | some v =>
-        dsimp only
-        have := imtfB_rep (mapSize g isL) t (mapSize g isL) v
-        rw [List.nil_append]
-        omega
-      | none =>
-        dsimp only
-        simp only [nzL, List.countP_nil]
-        omega
+      | some v => dsimp only; omega
+      | none => dsimp only; omega
 
 theorem hcost_code_owner (g : Gh) (o : Owner) (n : Nat) (c : PrefixCode) :
     hcost g (.code o n) (ownerPlace g o c) = 13 * n + 3747 + ownerX g o := by
@@ -401,34 +297,6 @@ theorem applyCodeLength_grow (ls : LengthState) (s e : Nat) :
     rw [List.length_replicate]
     exact grow_aux _ _ _ (by split <;> simp)
 
-/-- A context map's symbol gives a value that is not 0 only on its own. -/
-theorem mapSym_nz {rlemax : Nat} {code : PrefixCode} {bs b : List Bool} {x r : Nat} (h : mapSym rlemax code bs = some ((x, r), b)) :
-    nzL (List.replicate r x) ≤ 1 := by
-  unfold mapSym at h
-  cases hd : decodeSymbol code bs with
-  | none => rw [hd] at h; cases h
-  | some p =>
-    rw [hd] at h
-    dsimp only [bind, Option.bind] at h
-    cases hc : contextMapValue rlemax p.1 with
-    | some v =>
-      rw [hc] at h
-      simp only [Option.some.injEq, Prod.mk.injEq] at h
-      obtain ⟨⟨rfl, rfl⟩, -⟩ := h
-      exact nzL_replicate 1 _
-    | none =>
-      rw [hc] at h
-      dsimp only at h
-      cases hi : readInt p.1 p.2 with
-      | none => rw [hi] at h; cases h
-      | some q =>
-        rw [hi] at h
-        simp only [Option.some.injEq, Prod.mk.injEq] at h
-        obtain ⟨⟨rfl, rfl⟩, -⟩ := h
-        have : nzL (List.replicate ((1 <<< p.1) + q.1) 0) = 0 :=
-          List.countP_eq_zero.mpr fun a ha => by rw [(List.mem_replicate.mp ha).2]; decide
-        omega
-
 theorem hstage_pos (g : Gh) (p : HPhase) : 1 ≤ hstage g p := by
   cases p with
   | modes done n => cases n <;> simp only [hstage] <;> omega
@@ -441,7 +309,7 @@ theorem hstage_pos (g : Gh) (p : HPhase) : 1 ≤ hstage g p := by
   | _ => simp only [hstage] <;> omega
 
 /-- A header step's work, as `hcost` bounds it, is paid for by the potential and the bits the step reads. -/
-theorem hpay {g : Gh} {p : HPhase} {bs c : List Bool} {g' : Gh} {p' : HPhase} (hsz : psize p ≤ 704)
+theorem hpay {g : Gh} {p : HPhase} {bs c : List Bool} {g' : Gh} {p' : HPhase} (hsz : psize p ≤ 704) (hvl : vleft p ≤ 16384)
     (h : hStepP (g, p) bs = .next (g', p') c) :
     hcost g p p' + hpot g' p' + hdrRate * c.length ≤ hpot g p + hdrRate * bs.length := by
   rw [hdrRate_eq]
@@ -601,17 +469,19 @@ theorem hpay {g : Gh} {p : HPhase} {bs c : List Bool} {g' : Gh} {p' : HPhase} (h
       rw [hc, e]
       unfold zb
       omega
-    · show 11 + (258 + zb (mapSize g isL) + (39 + 9 * mapSize g isL + (1881 + mapSize g isL + mapFin g isL + mapAfter g isL v) +
-        515 * v)) + _ ≤ _
+    · show 11 + (1029 + zb (mapSize g isL) + zb (mapSize g isL) +
+        (2 * mapSize g isL + 2 * v + 31 + (v + 12 + mapFin g isL + mapAfter g isL v))) + _ ≤ _
       unfold zb
       omega
   | rlemax isL t =>
     obtain ⟨v, b, e1, e2⟩ := readIn_next' (show hStep g (.rlemax isL t) bs = _ from h)
     have hl := takes_one faith_readRLEMAX rfl e1
     cases e2
-    show 11 + (258 + zb (mapSize g isL) + mapOwner g isL t) + _ ≤ 258 + zb (mapSize g isL) + mapOwner g isL t + _
+    show 11 + (1029 + zb (mapSize g isL) + zb (mapSize g isL) + mapOwner g isL t) + _ ≤
+      1029 + zb (mapSize g isL) + zb (mapSize g isL) + mapOwner g isL t + _
     omega
   | vals isL t r code done left =>
+    have hvl' : left ≤ 16384 := hvl
     rcases hStep_vals_next h with ⟨h0, e, rfl⟩ | ⟨h0, v, hr, e, rfl⟩ | ⟨h0, hr, h'⟩
     · cases e
       simp only [hcost, hpot, h0, ↓reduceIte]
@@ -625,12 +495,10 @@ theorem hpay {g : Gh} {p : HPhase} {bs c : List Bool} {g' : Gh} {p' : HPhase} (h
         have := (mapSym_noRead e1 e).1
         rw [hr] at this
         cases this
-      have hnz := mapSym_nz e1
-      have hnz2 := nzL_append done (List.replicate v.2 v.1)
-      have hb := imtfB_le (mapSize g isL) t (done ++ List.replicate v.2 v.1)
       split at e2
       · cases e2
-      · cases e2
+      · rename_i hle
+        cases e2
         simp only [hcost, hpot, h0, hr, ↓reduceIte]
         split <;> omega
   | imtf isL t vals =>
@@ -640,8 +508,7 @@ theorem hpay {g : Gh} {p : HPhase} {bs c : List Bool} {g' : Gh} {p' : HPhase} (h
     split at e2
     · cases e2
       rw [hpot_mapNext]
-      show 1872 + mapSize g isL + mapFin g isL + imtfB (mapSize g isL) t vals + mapAfter g isL t + _ ≤
-        1881 + mapSize g isL + mapFin g isL + mapAfter g isL t + imtfB (mapSize g isL) t vals + _
+      show t + 12 + mapFin g isL + mapAfter g isL t + _ ≤ t + 12 + mapFin g isL + mapAfter g isL t + _
       omega
     · cases e2
   | codes k done left =>
@@ -703,10 +570,9 @@ theorem hcost_ge (g : Gh) (p p' : HPhase) : 11 ≤ hcost g p p' := by
   | syms o n clc ls => cases p' <;> simp only [hcost] <;> omega
   | trees isL => cases p' <;> simp only [hcost] <;> omega
   | vals isL t r code done left =>
-    simp only [hcost]
-    split
-    · omega
-    · split <;> omega
+    cases p' with
+    | vals => simp only [hcost]; split <;> omega
+    | _ => simp only [hcost]; omega
   | imtf => simp only [hcost]; omega
   | codes k done left =>
     cases left with
@@ -826,19 +692,12 @@ theorem wTrees {st : Hd} {g : Gh} {isL : Bool} {pos : USize} {g' : Gh} {p' : HPh
 theorem wImtf {st : Hd} {g : Gh} {isL : Bool} {t : Nat} {vals : List Nat} {p' : HPhase} (hrel : HRel st g (.imtf isL t vals)) :
     stepHImtfW st + 10 ≤ hcost g (.imtf isL t vals) p' := by
   obtain ⟨hw, hu, ht, hi, hn, h2, h256, hm⟩ := hrel
-  obtain ⟨hmf, hml⟩ := mapSizeFast_eq (g := g) hi hu
   have hfin := mapFin_ge hi hu
-  have hg := imtfGoW_map (m := mtfInitLut) hm hml
-  have hsz : st.fill.size = mapSize g isL := hm.sz
-  have hu1 : (UInt64.ofNat st.fill.size).toNat = mapSize g isL := by rw [hsz]; exact u64_lit (by omega)
-  have hz := zbW_le 256
   unfold stepHImtfW
-  show _ ≤ 1872 + mapSize g isL + mapFin g isL + imtfB (mapSize g isL) t vals
+  show _ ≤ t + 12 + mapFin g isL
   split
-  · dsimp only
-    unfold allOccurW
-    rw [hu1, hn]
-    split <;> omega
+  · rw [hn]
+    omega
   · omega
 
 theorem wCodes {st : Hd} {g : Gh} {k : CK} {done : List PrefixCode} {left : Nat} {p' : HPhase} (hrel : HRel st g (.codes k done left)) :
@@ -885,77 +744,110 @@ theorem wNp {st : Hd} {g : Gh} {p' : HPhase} (hrel : HRel st g .np) : stepHNpW s
   show _ ≤ 1357
   split <;> omega
 
-/-- A context map's values: the run a code gives without reading is written only when the code reads nothing. -/
-theorem valsW_shape (st : Hd) (pos : USize) : stepHValsW st ≤ 1 ∨ ((stepHVals st pos).word = st.word ∧
-    (stepHVals st pos).count = st.count ∧ (stepHVals st pos).pos = pos ∧ stepHValsW st ≤ st.left.toNat + 2 ∧
-    (stepHVals st pos).status = .next) := by
-  unfold stepHValsW stepHVals
-  dsimp only
+/-- A context map's values: a step that does not go on is one round. -/
+theorem valsW_stop (st : Hd) (pos : USize) (h : (stepHVals st pos).status ≠ .next) : stepHValsW st ≤ 1 := by
+  unfold stepHValsW
+  unfold stepHVals at h
+  dsimp only at h ⊢
   by_cases hl : st.left = 0
-  · rw [ite_eq_left hl]
-    exact Or.inl (Nat.le_refl _)
-  · rw [ite_eq_right hl, ite_eq_right hl]
-    generalize mapSymFast st.mapT.t (USize.ofNat 0) st.mapT.fits st.mapT.h32 st.rlemax ⟨st.word, st.count⟩ = r
-    cases r.status with
-    | short => exact Or.inl (Nat.le_refl _)
-    | bad => exact Or.inl (Nat.le_refl _)
-    | ok =>
-      dsimp only
-      by_cases h1 : st.left < r.b
-      · rw [ite_eq_left h1]
-        exact Or.inl (Nat.le_refl _)
-      · rw [ite_eq_right h1, ite_eq_right h1]
-        by_cases h2 : r.count = st.count
-        · rw [ite_eq_left h2, ite_eq_left h2]
-          by_cases h3 : r.a = 0
-          · rw [ite_eq_left h3]
-            exact Or.inl (Nat.le_refl _)
-          · rw [ite_eq_right h3, ite_eq_right h3]
-            exact Or.inr ⟨rfl, rfl, rfl, Nat.le_refl _, rfl⟩
-        · rw [ite_eq_right h2]
-          exact Or.inl (Nat.le_refl _)
+  · rw [ite_eq_left hl] at h
+    exact absurd rfl h
+  rw [ite_eq_right hl] at h ⊢
+  generalize mapSymFast st.mapT.t (USize.ofNat 0) st.mapT.fits st.mapT.h32 st.rlemax ⟨st.word, st.count⟩ = r at h ⊢
+  cases hs : r.status with
+  | short => dsimp only; omega
+  | bad => dsimp only; omega
+  | ok =>
+    rw [hs] at h
+    dsimp only at h ⊢
+    by_cases h1 : st.left < r.b
+    · rw [ite_eq_left h1]
+      omega
+    · rw [ite_eq_right h1] at h
+      exfalso
+      apply h
+      split
+      · rfl
+      · split <;> rfl
 
+/-- A context map's values: a step's work is its run, its value and a few rounds, with a code that reads no bits twice its
+values left and the trees. -/
 theorem wVals {st : Hd} {g : Gh} {isL : Bool} {t r : Nat} {code : PrefixCode} {done : List Nat} {left : Nat} {pos : USize}
     {g' : Gh} {p' : HPhase} {a : ByteArray} {stop : USize} {F : List Bool} (hrel : HRel st g (.vals isL t r code done left))
     (hj : hStepP (g, .vals isL t r code done left) (availBits st.word st.count a pos stop F) =
       .next (g', p') (availBits (stepHVals st pos).word (stepHVals st pos).count a (stepHVals st pos).pos stop F)) :
     stepHValsW st + 10 ≤ hcost g (.vals isL t r code done left) p' := by
-  have hleft : st.left.toNat = left := hrel.2.2.2.2.2.2.2.2.2.2.2.2.2.1
+  obtain ⟨hw, hu, ht, hi, hn, hr, h2, h256, h16, hok, hC, hsy, hidx, hleft, hlen, hsz, hlt, hat, hzero, hx⟩ := hrel
   have hge := hcost_ge g (.vals isL t r code done left) p'
-  rcases valsW_shape st pos with hW | ⟨e1, e2, e3, hW, -⟩
-  · omega
-  · rw [e1, e2, e3] at hj
-    have hc : hcost g (.vals isL t r code done left) p' =
-        if left = 0 then 11 else match runOf r code with | some _ => left + 12 | none => 11 := rfl
-    rw [hc]
-    by_cases h0 : left = 0
-    · rw [ite_eq_left h0] at hc ⊢
-      have := valsW_shape st pos
-      unfold stepHValsW at hW ⊢
-      have hl : st.left = 0 := UInt64.toNat_inj.mp (by rw [hleft, h0]; rfl)
-      rw [ite_eq_left hl]
+  unfold stepHValsW
+  dsimp only
+  by_cases hl : st.left = 0
+  · rw [ite_eq_left hl]
+    omega
+  rw [ite_eq_right hl]
+  have hl0 : left ≠ 0 := by
+    rw [← hleft]
+    exact fun e => hl (UInt64.toNat_inj.mp e)
+  have R := mapSymFast_ok (t := st.mapT.t) (base := USize.ofNat 0) (hfit := st.mapT.fits) (h32 := st.mapT.h32) (rlemax := st.rlemax)
+    hw hok hC (by omega)
+  rw [hr] at R
+  have hval := R.ok
+  generalize mapSymFast st.mapT.t (USize.ofNat 0) st.mapT.fits st.mapT.h32 st.rlemax ⟨st.word, st.count⟩ = rr at hval
+  cases hsr : rr.status with
+  | short => dsimp only; omega
+  | bad => dsimp only; omega
+  | ok =>
+    dsimp only
+    obtain ⟨hv, hr1, hv1, hrlt⟩ := mapSym_bounds (by omega) h16 hsy ((hval hsr).2 [])
+    by_cases hbig : st.left < rr.b
+    · rw [ite_eq_left hbig]
       omega
-    · rw [ite_eq_right h0]
-      cases hr : runOf r code with
-      | some v =>
-        show stepHValsW st + 10 ≤ left + 12
-        omega
-      | none =>
-        exfalso
-        rcases hStep_vals_next hj with ⟨h0', _, _⟩ | ⟨_, v, hv, _, _⟩ | ⟨_, _, h'⟩
-        · exact h0 h0'
-        · rw [hr] at hv; cases hv
-        · obtain ⟨v, b, e4, e5⟩ := readIn_next' h'
-          split at e5
-          · cases e5
-          · cases e5
-            have := (mapSym_noRead e4 rfl).1
-            rw [hr] at this
-            cases this
+    rw [ite_eq_right hbig]
+    have hbig' : rr.b.toNat ≤ left := by
+      rw [← hleft]
+      exact Nat.le_of_not_lt fun e => hbig (UInt64.lt_iff_toNat_lt.mpr e)
+    -- What the spec's step does: where it goes, by whether the code reads.
+    have hk := imtfRunW_le (s := rr.a) (k := st.left) (by omega)
+    have hk2 := imtfRunW_le (s := rr.a) (k := rr.b) (by omega)
+    by_cases hc : rr.count = st.count
+    · rw [ite_eq_left hc, min_run (by omega)]
+      have hro : runOf r code = some rr.a.toNat := by
+        have e := (hval hsr).2 []
+        rw [List.append_nil, List.append_nil] at e
+        refine (mapSym_noRead e ?_).1
+        show rr.buf.held.length = _
+        rw [held_len, held_len]
+        exact congrArg UInt64.toNat hc
+      rcases hStep_vals_next hj with ⟨h0', _, _⟩ | ⟨_, v, hv', e, _⟩ | ⟨_, hno, _⟩
+      · exact absurd h0' hl0
+      · cases e
+        simp only [hcost, hro]
+        split <;> omega
+      · rw [hro] at hno
+        cases hno
+    · rw [ite_eq_right hc]
+      rcases hStep_vals_next hj with ⟨h0', _, _⟩ | ⟨_, v, hv', _, _⟩ | ⟨_, hno, h'⟩
+      · exact absurd h0' hl0
+      · -- A code that reads nothing reads nothing here.
+        have e := (hval hsr).2 []
+        rw [List.append_nil, List.append_nil, mapSym_of_run hv'] at e
+        simp only [Option.some.injEq, Prod.mk.injEq] at e
+        have hlen' := congrArg List.length e.2
+        rw [held_len, held_len] at hlen'
+        exact absurd (UInt64.toNat_inj.mp hlen'.symm) hc
+      · obtain ⟨vv, b, e4, e5⟩ := readIn_next' h'
+        rw [avail_mk, (hval hsr).2] at e4
+        simp only [Option.some.injEq, Prod.mk.injEq] at e4
+        obtain ⟨rfl, -⟩ := e4
+        split at e5
+        · cases e5
+        · cases e5
+          simp only [hcost, hno]
+          split <;> omega
 
 /-- What a table's step does for its owner, against `ownerX`. -/
 theorem ownerX_ge {st : Hd} {g : Gh} {n : Nat} {o : Owner} (ho : OwnerRel st g n o) (hu : Upto st.d g (ownerStage o)) :
-    (if st.role = .map then 257 + zbW (mapSizeFast st) else 0) ≤ ownerX g o := by
+    (if st.role = .map then 1028 + zbW (mapSizeFast st) + zbW (mapSizeFast st) else 0) ≤ ownerX g o := by
   cases o with
   | type i k => rw [ho.1]; simp
   | count i k tc => rw [ho.1]; simp
@@ -1007,7 +899,7 @@ theorem wCode {st : Hd} {g : Gh} {o : Owner} {n : Nat} {pos : USize} {g' : Gh} {
         have hT' : tableDoneW { st with
             word := r.word, count := r.count, pos := pos, status := .next
             lens := writeSimple (zeroBytes st.size.toNat) r } (r.e == 0) ≤
-            12 * st.size.toNat + 3735 + (if st.role = .map then 257 + zbW (mapSizeFast st) else 0) := hT
+            12 * st.size.toNat + 3735 + (if st.role = .map then 1028 + zbW (mapSizeFast st) + zbW (mapSizeFast st) else 0) := hT
         omega
     · rw [ite_eq_right h1] at htag ⊢
       have hc : ptag p' = .clens := htag.symm
@@ -1152,7 +1044,7 @@ theorem wSyms {st : Hd} {g : Gh} {o : Owner} {n : Nat} {clc : PrefixCode} {ls : 
     have hT := tableDoneW_le (st := { st with pos := pos, status := .next }) (single := false) (show st.size.toNat ≤ 704 by omega)
       (show st.size.toNat ≤ st.lens.size by rw [hy.sz, hs1]; exact Nat.le_refl _) (fun _ => hC)
     have hT' : tableDoneW { st with pos := pos, status := .next } false ≤
-        12 * st.size.toNat + 3735 + (if st.role = .map then 257 + zbW (mapSizeFast st) else 0) := hT
+        12 * st.size.toNat + 3735 + (if st.role = .map then 1028 + zbW (mapSizeFast st) + zbW (mapSizeFast st) else 0) := hT
     omega
   · rw [ite_eq_right hsum] at hr hn ⊢
     by_cases hln : st.ln = st.size
@@ -1417,7 +1309,7 @@ theorem symsW_stop {st : Hd} {g : Gh} {o : Owner} {n : Nat} {clc : PrefixCode} {
     have hT := tableDoneW_le (st := { st with pos := pos, status := .next }) (single := false) (show st.size.toNat ≤ 704 by omega)
       (show st.size.toNat ≤ st.lens.size by rw [hy.sz, hs1]; exact Nat.le_refl _) (fun _ => hC)
     have hT' : tableDoneW { st with pos := pos, status := .next } false ≤
-        12 * st.size.toNat + 3735 + (if st.role = .map then 257 + zbW (mapSizeFast st) else 0) := hT
+        12 * st.size.toNat + 3735 + (if st.role = .map then 1028 + zbW (mapSizeFast st) + zbW (mapSizeFast st) else 0) := hT
     omega
   · rw [ite_eq_right hsum] at hn ⊢
     by_cases hln : st.ln = st.size
@@ -1523,7 +1415,7 @@ theorem stepAtHW_stop {st : Hd} {g : Gh} {p : HPhase} {pos : USize} (hrel : HRel
   | rlemax isL t =>
     have e : stepAtHW st pos = 1 := by unfold stepAtHW; rw [htag] <;> rfl
     have : 11 ≤ hpot g (.rlemax isL t) := by
-      show 11 ≤ 258 + _ + _
+      show 11 ≤ 1029 + _ + _ + _
       omega
     omega
   | vals isL t r code done left =>
@@ -1536,14 +1428,13 @@ theorem stepAtHW_stop {st : Hd} {g : Gh} {p : HPhase} {pos : USize} (hrel : HRel
       split
       · omega
       · split <;> omega
-    rcases valsW_shape st pos with hW | ⟨-, -, -, -, hs⟩
-    · omega
-    · exact absurd hs hn
+    have := valsW_stop st pos hn
+    omega
   | imtf isL t vals =>
     have e : stepAtHW st pos = stepHImtfW st := by unfold stepAtHW; rw [htag] <;> rfl
     rw [e]
     have := wImtf (p' := .np) hrel
-    show _ ≤ imtfTail g isL t + imtfB (mapSize g isL) t vals
+    show _ ≤ imtfTail g isL t
     unfold imtfTail
     simp only [hcost] at this
     omega
@@ -1766,10 +1657,8 @@ theorem stepAtHW_short {st : Hd} {pos : USize} (h : (stepAtH st pos).status = .n
       · rw [ite_eq_right ha]
         omega
   case vals =>
-    rcases valsW_shape st pos with hW | ⟨-, -, -, -, hs⟩
-    · omega
-    · rw [hs] at h
-      exact absurd h (fun e => HStatus.noConfusion e)
+    have := valsW_stop st pos (by rw [h]; exact fun e => HStatus.noConfusion e)
+    omega
   case imtf =>
     unfold stepHImtf at h
     unfold stepHImtfW
@@ -1808,8 +1697,7 @@ theorem stepHW_short {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size}
 /-! ### The most a header's place holds
 
 With at most 256 block types in a category, 256 trees in a context map and 16384 values in it, a header's place holds at
-most 8641269: the most is a literal context map's values, 515 for each one not 0, with one value read and the rest to come
-from a code that reads no bits. -/
+most 350321: a code's lengths, with the table's work for its owner and what the owner holds. -/
 
 theorem beforeMaps_le {nL nI nD : Nat} (h1 : nL ≤ 256) (h2 : nI ≤ 256) (h3 : nD ≤ 256) : beforeMaps nL nI nD ≤ 281932 := by
   unfold beforeMaps afterL afterD mapPre zb smallMax catMax treeMax
@@ -1834,15 +1722,15 @@ theorem mapTail_le {g : Gh} {isL : Bool} {t : Nat} (ht : t ≤ 256) (hI : g.m.in
     simp only [↓reduceIte]
     omega
 
-theorem imtfTail_le {g : Gh} {isL : Bool} {t : Nat} (hS : mapSize g isL ≤ 16384) (ht : t ≤ 256) (hI : g.m.insertCopy.n ≤ 256)
-    (hD : g.m.distance.n ≤ 256) (hL : isL = false → g.treesL ≤ 256) : imtfTail g isL t ≤ 56022 := by
+theorem imtfTail_le {g : Gh} {isL : Bool} {t : Nat} (ht : t ≤ 256) (hI : g.m.insertCopy.n ≤ 256)
+    (hD : g.m.distance.n ≤ 256) (hL : isL = false → g.treesL ≤ 256) : imtfTail g isL t ≤ 38025 := by
   have := mapTail_le ht hI hD hL
   unfold imtfTail
   omega
 
 theorem mapOwner_le {g : Gh} {isL : Bool} {t : Nat} (hS : mapSize g isL ≤ 16384) (ht : t ≤ 256) (hI : g.m.insertCopy.n ≤ 256)
-    (hD : g.m.distance.n ≤ 256) (hL : isL = false → g.treesL ≤ 256) : mapOwner g isL t ≤ 335357 := by
-  have := imtfTail_le hS ht hI hD hL
+    (hD : g.m.distance.n ≤ 256) (hL : isL = false → g.treesL ≤ 256) : mapOwner g isL t ≤ 71336 := by
+  have := imtfTail_le ht hI hD hL
   unfold mapOwner
   omega
 
@@ -1850,7 +1738,7 @@ theorem codesPot_le {g : Gh} {k : CK} {left : Nat} (hl : left ≤ 256) (hI : g.m
     codesPot g k left ≤ 10534 := by
   cases k <;> simp only [codesPot, afterD, zb] <;> omega
 
-theorem ownerX_le {g : Gh} (hg : GOk g) (o : Owner) : ownerX g o ≤ 16643 := by
+theorem ownerX_le {g : Gh} (hg : GOk g) (o : Owner) : ownerX g o ≤ 33799 := by
   cases o with
   | map isL t r =>
     have := mapSize_le hg isL
@@ -1861,7 +1749,7 @@ theorem ownerX_le {g : Gh} (hg : GOk g) (o : Owner) : ownerX g o ≤ 16643 := by
 /-- What a code's owner settled: a category's block types before a category's code, the categories before a context map,
 and the maps before the groups of codes. -/
 theorem ownerPot_le {st : Hd} {g : Gh} {n : Nat} {o : Owner} (ho : OwnerRel st g n o) (hu : Upto st.d g (ownerStage o)) (hg : GOk g) :
-    ownerPot g o ≤ 335357 := by
+    ownerPot g o ≤ 281932 := by
   have hI : 1 < ownerStage o → g.m.insertCopy.n ≤ 256 := fun h => (hu.cat .I h).wf.2.1
   cases o with
   | type i k =>
@@ -1884,7 +1772,7 @@ theorem ownerPot_le {st : Hd} {g : Gh} {n : Nat} {o : Owner} (ho : OwnerRel st g
       show 5 ≤ mapIdx isL
       unfold mapIdx
       split <;> omega
-    refine mapOwner_le (mapSize_le hg isL) ht (hI (by omega)) hg.2.1 (fun e => ?_)
+    refine Nat.le_trans (mapOwner_le (mapSize_le hg isL) ht (hI (by omega)) hg.2.1 (fun e => ?_)) (by omega)
     subst e
     exact (hu.lmap (show 5 < 6 by decide)).2.2.1
   | codes k done left =>
@@ -1896,7 +1784,7 @@ theorem ownerPot_le {st : Hd} {g : Gh} {n : Nat} {o : Owner} (ho : OwnerRel st g
     exact Nat.le_trans (codesPot_le (k := k) (left := left) (by omega) (hI (by omega)) (hu.dmap (by omega)).2.2.1) (by omega)
 
 /-- The most a header's place holds. -/
-theorem hpot_le {st : Hd} {g : Gh} {p : HPhase} (hrel : HRel st g p) (hg : GOk g) (hp : HOk p) : hpot g p ≤ 8641269 := by
+theorem hpot_le {st : Hd} {g : Gh} {p : HPhase} (hrel : HRel st g p) (hg : GOk g) (hp : HOk p) : hpot g p ≤ 350321 := by
   obtain ⟨_, hu, hm⟩ := hrel
   have hS := mapSize_le hg
   have hI : 1 < stageOf p → g.m.insertCopy.n ≤ 256 := fun h => (hu.cat .I h).wf.2.1
@@ -1956,45 +1844,26 @@ theorem hpot_le {st : Hd} {g : Gh} {p : HPhase} (hrel : HRel st g p) (hg : GOk g
     obtain ⟨h1, h2⟩ := hmap isL rfl
     have := mapOwner_le (hS isL) hp h2 hg.2.1 h1
     have := hS isL
-    show 258 + zb (mapSize g isL) + mapOwner g isL t ≤ _
+    show 1029 + zb (mapSize g isL) + zb (mapSize g isL) + mapOwner g isL t ≤ _
     unfold zb
     omega
   | vals isL t r code done left =>
     obtain ⟨h1, h2⟩ := hmap isL rfl
-    obtain ⟨_, _, _, _, _, ht, _, _, _, _, _, _, hlen, _⟩ := hm
-    have hT := imtfTail_le (hS isL) ht h2 hg.2.1 h1
-    have hSi := hS isL
+    obtain ⟨_, _, _, _, _, ht, _, _, _, _, _, _, _, _⟩ := hm
+    have hT := imtfTail_le ht h2 hg.2.1 h1
     have hl : left ≤ 16384 := hp
-    show (if left = 0 then 11 + imtfTail g isL t + imtfB (mapSize g isL) t done
+    show (if left = 0 then 11 + imtfTail g isL t
       else match runOf r code with
-        | some v => left + 31 + imtfTail g isL t + imtfB (mapSize g isL) t (done ++ List.replicate left v)
-        | none => 12 + imtfTail g isL t + 8 * mapSize g isL + 515 * nzL done) ≤ _
-    have hd := nzL_le done
+        | some _ => 2 * left + 2 * t + 31 + imtfTail g isL t
+        | none => 11 + imtfTail g isL t) ≤ _
     split
-    · have := imtfB_le (mapSize g isL) t done
-      omega
-    · split
-      · rename_i v _
-        cases done with
-        | nil =>
-          have := imtfB_rep (mapSize g isL) t left v
-          rw [List.nil_append]
-          omega
-        | cons d0 ds =>
-          have := imtfB_le (mapSize g isL) t (d0 :: ds ++ List.replicate left v)
-          have := nzL_le (d0 :: ds ++ List.replicate left v)
-          simp only [List.length_append, List.length_replicate, List.length_cons] at this hlen
-          omega
-      · omega
+    · omega
+    · split <;> omega
   | imtf isL t vals =>
     obtain ⟨h1, h2⟩ := hmap isL rfl
-    obtain ⟨_, _, _, _, ht, hmo⟩ := hm
-    have hT := imtfTail_le (hS isL) ht h2 hg.2.1 h1
-    have hSi := hS isL
-    have := imtfB_le (mapSize g isL) t vals
-    have := nzL_le vals
-    have := hmo.length
-    show imtfTail g isL t + imtfB (mapSize g isL) t vals ≤ _
+    obtain ⟨_, _, _, _, ht, _⟩ := hm
+    have hT := imtfTail_le ht h2 hg.2.1 h1
+    show imtfTail g isL t ≤ _
     omega
   | codes k done left =>
     obtain ⟨_, _, _, _, hl, hc, _⟩ := hm

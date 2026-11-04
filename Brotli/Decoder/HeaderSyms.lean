@@ -228,7 +228,7 @@ theorem stepHSyms_ok {o : Owner} {size : Nat} {clc : PrefixCode} {ls : LengthSta
       omega
     have hdone := tableDone_ok K (st := { st with pos := pos, status := .next }) (c := .canonical (ls.lens ++ List.replicate (size - ls.lens.length) 0))
       (single := false) (sym := 0) hw hu hs ho rfl (fun e => Bool.noConfusion e) (fun _ => by rw [← hfullL]) hy.sz hC hsy
-    exact hdone.toStep rfl hp rfl (fun h => ⟨h.fill, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩)
+    exact hdone.toStep rfl hp rfl (fun h => ⟨h.fill, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase, h.work⟩)
       (fun F => hrest_syms_done K g o size clc ls _ hlenLe hsum) (fun F => hStep_syms_done _ hlenLe hsum)
   rw [ite_eq_right h0]
   have hsumNe : lengthSum ls.lens ≠ 32768 := by
@@ -382,7 +382,7 @@ theorem stepHSyms_ok {o : Owner} {size : Nat} {clc : PrefixCode} {ls : LengthSta
           omega
         refine HStepOk.ofNext (g' := g) (p' := .syms o size clc (applyCodeLength ls r.a.toNat r.b.toNat))
           (hd := Or.inr ⟨rfl, Or.inr ⟨rfl, hgrow⟩⟩)
-          (hm := HMove.ofD rfl (fun h => ⟨h.fill, Nat.le_trans (Nat.le_of_eq hnew.sz) hs3, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩) (Nat.le_refl _)) rfl
+          (hm := HMove.ofD rfl (fun h => ⟨h.fill, Nat.le_trans (Nat.le_of_eq hnew.sz) hs3, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase, h.work⟩) (Nat.le_refl _)) rfl
           ⟨hw2, hu, ht, hs, ho, hnew⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
         · rw [avail_mk, hN]
           simp only [hlt1, hbig2, ↓reduceIte]
@@ -620,7 +620,7 @@ theorem stepHSyms_ok {o : Owner} {size : Nat} {clc : PrefixCode} {ls : LengthSta
           omega
         refine HStepOk.ofNext (g' := g) (p' := .syms o size clc (applyCodeLength ls r.a.toNat r.b.toNat))
           (hd := Or.inr ⟨rfl, Or.inr ⟨rfl, hshorter⟩⟩)
-          (hm := HMove.ofD rfl (fun h => ⟨h.fill, Nat.le_trans (Nat.le_of_eq hnew.sz) hs3, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩) (Nat.le_refl _)) rfl
+          (hm := HMove.ofD rfl (fun h => ⟨h.fill, Nat.le_trans (Nat.le_of_eq hnew.sz) hs3, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase, h.work⟩) (Nat.le_refl _)) rfl
           ⟨hw2, hu, ht, hs, ho, hnew⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
         · rw [avail_mk, hN]
           simp only [hover', hbig', ↓reduceIte]

@@ -172,12 +172,33 @@ theorem growPlanned_eq (st : Hd) (lens : ByteArray) (n : USize) (hn : n.toNat �
 theorem growSingle_eq (st : Hd) (sym : UInt64) :
     growSingle st sym = { st with d := { st.d with arena := buildSingleFast st.d.arena sym } } := rfl
 
-/-- Builds a map's table on its own and goes on to the map's values. -/
+/-- The transform's first list. -/
+def mtfInitLut : ByteArray := ((List.range 256).map Nat.toUInt8).toByteArray
+
+private theorem mtfInit_values : ∀ k, k < 256 → (List.range 256).getD k 0 = (((List.range 256).map Nat.toUInt8)[k]?.getD 0).toNat := by
+  decide +kernel
+
+theorem mtfInit_is : MtfIs mtfInitLut (List.range 256) := by
+  refine ⟨by simp [mtfInitLut, List.size_toByteArray], by simp, fun k hk => ?_⟩
+  rw [mtfInit_values k hk]
+  simp only [mtfInitLut, List.data_toByteArray, List.getElem?_toArray]
+
+theorem SeenIs.zero : SeenIs (zeroBytes 256) [] :=
+  ⟨zeroBytes_size (by decide), fun t ht => by rw [zeroBytes_get (by decide)]; simp⟩
+
+/-- Before a context map's values: zeros, the transform's first list, and no value seen. -/
+theorem XfRel.start {n size : Nat} {m : ByteArray} (hn : n = size) (h : n < 2 ^ 32) (hm : MtfIs m (List.range 256)) :
+    XfRel (zeroBytes n) m (zeroBytes 256) (zeroBytes 256) [] size :=
+  ⟨by rw [zeroBytes_size h, hn], fun i hi => absurd hi (by simp), fun i _ => zeroBytes_get h, hm, SeenIs.zero, SeenIs.zero⟩
+
+/-- Builds a map's table on its own and goes on to the map's values: the values as read and transformed start as zeros,
+with the transform's first list and no value seen. -/
 @[inline] def mapTableDone (st : Hd) (t : ByteArray) : Hd :=
   if h : fitsFast t 0 = true then
     let size := mapSizeFast st
     { st with
-      tag := .vals, idx := 0, left := UInt64.ofNat size, fill := zeroBytes size
+      tag := .vals, idx := 0, left := UInt64.ofNat size, fill := zeroBytes size, xf := zeroBytes size, mtf := mtfInitLut
+      seenR := zeroBytes 256, seenX := zeroBytes 256
       mapT := ⟨t, (fitsFast_iff.mp h).1, by
         have := (fitsFast_iff.mp h).2
         rwa [usize_zero']⟩ }
@@ -249,10 +270,10 @@ theorem installTable_arena (st : Hd) (base : UInt64) : (installTable st base).d.
 theorem installTable_size (st : Hd) (base : UInt64) (h : HSize st) : HSize (installTable st base) := by
   unfold installTable
   split
-  · cases st.cat <;> exact ⟨h.fill, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩
-  · cases st.cat <;> exact ⟨h.fill, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩
+  · cases st.cat <;> exact ⟨h.fill, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase, h.work⟩
+  · cases st.cat <;> exact ⟨h.fill, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase, h.work⟩
   · exact ⟨by show (u32Set st.fill st.idx base).size ≤ _; rw [size_u32Set]; exact h.fill,
-      h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩
+      h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase, h.work⟩
 
 section
 variable {α : Type} (K : HK α)
@@ -432,9 +453,14 @@ theorem tableDone_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {c : PrefixCode
       have hzs : (zeroBytes (mapSizeFast st)).size = mapSize g isL := by
         rw [hmf]
         exact zeroBytes_size (by omega)
+      have hMI := mtfInit_is
+      generalize mtfInitLut = M at hMI ⊢
+      have hm256 : M.size ≤ 256 := Nat.le_of_eq hMI.sz
+      have hz256 : (zeroBytes 256).size ≤ 256 := Nat.le_of_eq SeenIs.zero.sz
       refine ⟨⟨rfl, rfl, rfl⟩, fun _ => ⟨g, .vals isL ntrees rlemax c [] (mapSize g isL), none, ⟨hw, hu, rfl, hi, hn, hr, h2, h256, h16, ?_, hC, ?_,
-        rfl, hleft, by show 0 + _ = _; omega, hzs, by simp, by simp, fun i _ => ?_⟩, (fun bs => rfl), by simp only [rankH, rankO, LexLt]; omega,
-        fun q hq => ⟨rfl, rfl, fun h => ⟨by rw [hzs]; exact hml, h.lens, h.clLens, h.clt, hsize, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩,
+        rfl, hleft, by show 0 + _ = _; omega, hzs, by simp, by simp, fun i _ => ?_, ?_⟩, (fun bs => rfl), by simp only [rankH, rankO, LexLt]; omega,
+        fun q hq => ⟨rfl, rfl, fun h => ⟨by rw [hzs]; exact hml, h.lens, h.clLens, h.clt, hsize, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase,
+            ⟨by rw [hzs]; exact hml, hm256, hz256, hz256⟩⟩,
           ⟨rfl, by rw [hq]; simp [budH, budO, tableOf]⟩⟩, rfl⟩, fun h => absurd hst h⟩
       · rw [usize_zero']
         exact hB.ok
@@ -443,6 +469,7 @@ theorem tableDone_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {c : PrefixCode
       · show (zeroBytes (mapSizeFast st)).data[i]?.getD 0 = 0
         rw [hmf]
         exact zeroBytes_get (by omega)
+      · exact XfRel.start hmf (by omega) hMI
   · have hrole : ∀ a b e, o ≠ .map a b e := by
       intro a b e he
       subst he
@@ -503,7 +530,7 @@ theorem tableDone_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {c : PrefixCode
       · rw [installTable_arena]
         exact hgrow
       · intro h
-        exact installTable_size _ _ ⟨h.fill, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩
+        exact installTable_size _ _ ⟨h.fill, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase, h.work⟩
       · show budH g' p' + tableBytes c ≤ budH g q
         rw [hq]
         omega

@@ -116,7 +116,7 @@ theorem catMoveOn_spec (s : Hd) : (catMoveOn s).word = s.word ∧ (catMoveOn s).
 
 theorem catMoveOn_arr (s : Hd) : Arr (catMoveOn s) s := by
   unfold catMoveOn
-  split <;> exact ⟨SameArrays.rfl', rfl, rfl, rfl, rfl, rfl⟩
+  split <;> exact ⟨SameArrays.rfl', rfl, rfl, rfl, rfl, rfl, ⟨rfl, rfl, rfl, rfl⟩⟩
 
 /-- The fields besides a category's are the same after setting it. -/
 private theorem setN_others (d : Done) (i : Cat) (v : UInt64) : ∀ j, j ≠ i →
@@ -249,7 +249,8 @@ theorem stepHCat_ok {i : Cat} {st : Hd} {g : Gh} {pos : USize} {α : Type} {K : 
         (catMoveOn_arr _).trans ⟨⟨(setCount_arrays _ _ _).arena.trans (setN_arrays _ _ _).arena, (setCount_arrays _ _ _).max.trans (setN_arrays _ _ _).max,
           (setCount_arrays _ _ _).cap.trans (setN_arrays _ _ _).cap, (setCount_arrays _ _ _).modes.trans (setN_arrays _ _ _).modes, (setCount_arrays _ _ _).lMap.trans (setN_arrays _ _ _).lMap,
           (setCount_arrays _ _ _).dMap.trans (setN_arrays _ _ _).dMap, (setCount_arrays _ _ _).litBase.trans (setN_arrays _ _ _).litBase,
-          (setCount_arrays _ _ _).icBase.trans (setN_arrays _ _ _).icBase, (setCount_arrays _ _ _).dBase.trans (setN_arrays _ _ _).dBase⟩, rfl, rfl, rfl, rfl, rfl⟩
+          (setCount_arrays _ _ _).icBase.trans (setN_arrays _ _ _).icBase, (setCount_arrays _ _ _).dBase.trans (setN_arrays _ _ _).dBase⟩, rfl, rfl, rfl, rfl, rfl,
+          ⟨rfl, rfl, rfl, rfl⟩⟩
       generalize catMoveOn { st with
           word := r.word, count := r.count, pos := pos, status := .next
           d := (st.d.setN st.cat r.a).setCount st.cat 16777216 } = r2 at hrel2 b1 b2 b3 b4 ha ⊢
@@ -274,7 +275,7 @@ theorem stepHCat_ok {i : Cat} {st : Hd} {g : Gh} {pos : USize} {α : Type} {K : 
         rw [UInt64.toNat_add, show (2 : UInt64).toNat = 2 from rfl]
         exact Nat.mod_eq_of_lt (by omega)
       refine HStepOk.ofNext (g' := g) (p' := .code (.type st.cat r.a.toNat) (blockTypeAlphabetSize r.a.toNat))
-        (hm := HMove.ofArr ⟨setN_arrays _ _ _, rfl, rfl, rfl, rfl, rfl⟩ (by simp only [budH, budO]; omega)) rfl
+        (hm := HMove.ofArr ⟨setN_arrays _ _ _, rfl, rfl, rfl, rfl, rfl, ⟨rfl, rfl, rfl, rfl⟩⟩ (by simp only [budH, budO]; omega)) rfl
         ⟨hw2, hu.setSame hd.1 hd.2.1 hd.2.2 (setN_others st.d st.cat r.a), rfl, ⟨hsz, by unfold blockTypeAlphabetSize; omega, by unfold blockTypeAlphabetSize; omega⟩,
           rfl, rfl, by show ((st.d.setN st.cat r.a).nOf st.cat).toNat = _; rw [setN_nOf], by omega, hrange.2, rfl⟩
         (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)

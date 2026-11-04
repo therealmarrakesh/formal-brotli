@@ -200,12 +200,24 @@ structure Hd where
   clSym : UInt64
   clt : Tab
   mapT : Tab
+  /-- A context map's values with the inverse move-to-front transform applied, as they are read. -/
+  xf : ByteArray
+  /-- The transform's move-to-front list. -/
+  mtf : ByteArray
+  /-- The values a context map has so far, as read. -/
+  seenR : ByteArray
+  /-- The values a context map has so far, transformed. -/
+  seenX : ByteArray
 
 /-- A state as a step leaves it. -/
 @[inline] def markH (st : Hd) (pos : USize) (s : HStatus) : Hd := { st with pos := pos, status := s }
 
 /-- A state's position and status don't matter to what it holds. -/
 @[noinline] def clearFill (st : Hd) : Hd := { st with fill := ByteArray.empty }
+
+/-- Empties a state's context map arrays, so that each is held once while a step writes it. -/
+@[noinline] def clearMap (st : Hd) : Hd :=
+  { st with fill := ByteArray.empty, xf := ByteArray.empty, mtf := ByteArray.empty, seenR := ByteArray.empty, seenX := ByteArray.empty }
 
 /-- Empties a state's code lengths, as `clearRing` does its window. -/
 @[noinline] def clearLens (st : Hd) : Hd := { st with lens := ByteArray.empty }
@@ -420,6 +432,32 @@ structure SymRel (st : Hd) (size : Nat) (clc : PrefixCode) (ls : LengthState) : 
   sumOk : st.symSum.toNat = lengthSum ls.lens
   sumLe : lengthSum ls.lens ≤ 32768
 
+/-- The move-to-front list after some indices. -/
+def mtfAfter : List Nat → List Nat → List Nat
+  | L, [] => L
+  | L, idx :: v => mtfAfter (L.getD idx 0 :: L.eraseIdx idx) v
+
+/-- A move-to-front list in an array. -/
+structure MtfIs (m : ByteArray) (L : List Nat) : Prop where
+  sz : m.size = 256
+  length : L.length = 256
+  at_ : ∀ k, k < 256 → L.getD k 0 = (m.data[k]?.getD 0).toNat
+
+/-- Flags for the values below 256 that a list has. -/
+structure SeenIs (flags : ByteArray) (l : List Nat) : Prop where
+  sz : flags.size = 256
+  at_ : ∀ t, t < 256 → (flags.data[t]?.getD 0 ≠ 0 ↔ t ∈ l)
+
+/-- What a context map's values read so far hold for its last bit: the values transformed, with zeros after them, the
+transform's list after them, and which values occur, as read and transformed. -/
+structure XfRel (xf mtf seenR seenX : ByteArray) (done : List Nat) (size : Nat) : Prop where
+  sz : xf.size = size
+  at_ : ∀ i, i < done.length → (inverseMoveToFront done)[i]? = some (xf.data[i]?.getD 0).toNat
+  zero : ∀ i, done.length ≤ i → xf.data[i]?.getD 0 = 0
+  mtf : MtfIs mtf (mtfAfter (List.range 256) done)
+  seenR : SeenIs seenR done
+  seenX : SeenIs seenX (inverseMoveToFront done)
+
 /-- A state stands for a place in a header. -/
 def HRel (st : Hd) (g : Gh) (p : HPhase) : Prop :=
   (BitBuffer.mk st.word st.count).Wf ∧ Upto st.d g (stageOf p) ∧
@@ -443,9 +481,10 @@ def HRel (st : Hd) (g : Gh) (p : HPhase) : Prop :=
       st.idx.toNat = done.length ∧ st.left.toNat = left ∧ done.length + left = mapSize g isL ∧
       st.fill.size = mapSize g isL ∧ (∀ v ∈ done, v < ntrees) ∧
       (∀ i, i < done.length → done[i]? = some (st.fill.data[i]?.getD 0).toNat) ∧
-      ∀ i, done.length ≤ i → st.fill.data[i]?.getD 0 = 0
+      (∀ i, done.length ≤ i → st.fill.data[i]?.getD 0 = 0) ∧ XfRel st.xf st.mtf st.seenR st.seenX done (mapSize g isL)
     | .imtf isL ntrees vals => st.tag = .imtf ∧ st.isL = isL ∧ st.ntrees.toNat = ntrees ∧ 2 ≤ ntrees ∧ ntrees ≤ 256 ∧
-      MapOk st.fill vals (mapSize g isL) ntrees
+      MapOk st.fill vals (mapSize g isL) ntrees ∧ MapOk st.xf (inverseMoveToFront vals) (mapSize g isL) ntrees ∧
+      SeenIs st.seenR vals ∧ SeenIs st.seenX (inverseMoveToFront vals)
     | .codes k done left => st.tag = .codes ∧ st.ck = k ∧ st.idx.toNat = done.length ∧ st.left.toNat = left ∧
       done.length + left = g.ckCount k ∧ g.ckCount k ≤ 256 ∧ CodesPart st.d.arena st.fill done (g.ckCount k) (ckSize k g)
 
@@ -624,6 +663,8 @@ structure HSize (st : Hd) : Prop where
   litBase : st.d.litBase.size ≤ 1024
   icBase : st.d.icBase.size ≤ 1024
   dBase : st.d.dBase.size ≤ 1024
+  /-- A context map's transformed values, the transform's list and the values' flags. -/
+  work : st.xf.size ≤ 16384 ∧ st.mtf.size ≤ 256 ∧ st.seenR.size ≤ 256 ∧ st.seenX.size ≤ 256
 
 /-- The bytes the groups' tables can take from a group on, with `left` of its codes to go. -/
 def groupsFrom (g : Gh) : CK → Nat → Nat
@@ -694,7 +735,7 @@ structure HMove (st r : Hd) (g : Gh) (p : HPhase) (g' : Gh) (p' : HPhase) (oc : 
 
 /-- Settles `HMove` for a move that adds no table and leaves the arrays alone. -/
 macro "hstep_move" : tactic =>
-  `(tactic| exact ⟨rfl, rfl, fun h => ⟨h.fill, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩,
+  `(tactic| exact ⟨rfl, rfl, fun h => ⟨h.fill, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase, h.work⟩,
     ⟨rfl, by simp only [budH, budO, groupsFrom, catN, ckN, tableOf]; omega⟩⟩)
 
 /-- Two settled records with the same arrays. -/
@@ -731,6 +772,7 @@ structure Arr (r st : Hd) : Prop where
   clLens : r.clLens = st.clLens
   clt : r.clt = st.clt
   mapT : r.mapT = st.mapT
+  work : r.xf = st.xf ∧ r.mtf = st.mtf ∧ r.seenR = st.seenR ∧ r.seenX = st.seenX
 
 theorem Arr.trans {a b c : Hd} (h1 : Arr a b) (h2 : Arr b c) : Arr a c where
   d := ⟨h1.d.arena.trans h2.d.arena, h1.d.max.trans h2.d.max, h1.d.cap.trans h2.d.cap, h1.d.modes.trans h2.d.modes, h1.d.lMap.trans h2.d.lMap, h1.d.dMap.trans h2.d.dMap,
@@ -740,6 +782,8 @@ theorem Arr.trans {a b c : Hd} (h1 : Arr a b) (h2 : Arr b c) : Arr a c where
   clLens := h1.clLens.trans h2.clLens
   clt := h1.clt.trans h2.clt
   mapT := h1.mapT.trans h2.mapT
+  work := ⟨h1.work.1.trans h2.work.1, h1.work.2.1.trans h2.work.2.1, h1.work.2.2.1.trans h2.work.2.2.1,
+    h1.work.2.2.2.trans h2.work.2.2.2⟩
 
 /-- A move that adds no table and keeps the arrays. -/
 theorem HMove.ofArr {st r : Hd} {g g' : Gh} {p p' : HPhase} (h : Arr r st) (hc : budH g' p' ≤ budH g p) : HMove st r g p g' p' none where
@@ -756,7 +800,8 @@ theorem HMove.ofArr {st r : Hd} {g g' : Gh} {p p' : HPhase} (h : Arr r st) (hc :
     dMap := by rw [h.d.dMap]; exact hs.dMap
     litBase := by rw [h.d.litBase]; exact hs.litBase
     icBase := by rw [h.d.icBase]; exact hs.icBase
-    dBase := by rw [h.d.dBase]; exact hs.dBase }
+    dBase := by rw [h.d.dBase]; exact hs.dBase
+    work := by rw [h.work.1, h.work.2.1, h.work.2.2.1, h.work.2.2.2]; exact hs.work }
   cap := ⟨h.d.cap, by simpa [tableOf] using hc⟩
 
 /-- A move that adds no table and leaves the settled part alone. -/
@@ -860,6 +905,7 @@ structure SameHeld (st1 st : Hd) : Prop where
   clLens : st1.clLens = st.clLens
   clt : st1.clt = st.clt
   mapT : st1.mapT = st.mapT
+  work : st1.xf = st.xf ∧ st1.mtf = st.mtf ∧ st1.seenR = st.seenR ∧ st1.seenX = st.seenX
 
 theorem HSize.same {st1 st : Hd} (h : HSize st) (he : SameHeld st1 st) : HSize st1 where
   fill := by rw [he.fill]; exact h.fill
@@ -873,6 +919,7 @@ theorem HSize.same {st1 st : Hd} (h : HSize st) (he : SameHeld st1 st) : HSize s
   litBase := by rw [he.d]; exact h.litBase
   icBase := by rw [he.d]; exact h.icBase
   dBase := by rw [he.d]; exact h.dBase
+  work := by rw [he.work.1, he.work.2.1, he.work.2.2.1, he.work.2.2.2]; exact h.work
 
 theorem HMove.same {st1 : Hd} {g1 g2 : Gh} {p1 p2 : HPhase} {oc : Option Hook} (h : HMove st1 r g1 p1 g2 p2 oc) (he : SameHeld st1 st) :
     HMove st r g1 p1 g2 p2 oc where

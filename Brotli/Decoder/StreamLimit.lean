@@ -163,11 +163,11 @@ theorem stepHRlemax_lim : stepHRlemax (hdSet st a) pos = hdSet (stepHRlemax st p
   simp only [stepHRlemax, markH]; lim_tac
 
 theorem stepHVals_lim : stepHVals (hdSet st a) pos = hdSet (stepHVals st pos) a := by
-  simp only [stepHVals, markH, clearFill]; lim_tac
+  simp only [stepHVals, markH, clearMap]; lim_tac
 
 theorem stepHImtf_lim : HLim (stepHImtf (hdSet st a) pos) (stepHImtf st pos) := by
   show HLim (stepHImtf { st with d := { st.d with arenaMax := a } } pos) _
-  simp only [stepHImtf, markH, clearFill]
+  simp only [stepHImtf, markH, clearMap]
   (repeat' split) <;> first | exact mapFinish_lim' _ a (by rfl) _ _ _ (by rfl) | exact HLim.same (a := a) (by rfl) | contradiction | (simp_all [hdSet]; done)
 
 theorem stepHCodes_lim : stepHCodes (hdSet st a) pos = hdSet (stepHCodes st pos) a := by

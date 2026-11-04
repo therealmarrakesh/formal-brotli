@@ -57,7 +57,7 @@ theorem hrest_vals_step (g : Gh) (isL : Bool) (ntrees rlemax : Nat) (code : Pref
 
 end
 
-private theorem mapSym_bounds {rlemax ntrees : Nat} {code : PrefixCode} {bs r : List Bool} {v run : Nat}
+theorem mapSym_bounds {rlemax ntrees : Nat} {code : PrefixCode} {bs r : List Bool} {v run : Nat}
     (hn : 0 < ntrees) (hr : rlemax ≤ 16) (hs : code.Symbols (contextMapAlphabetSize ntrees rlemax))
     (h : mapSym rlemax code bs = some ((v, run), r)) : v < ntrees ∧ 1 ≤ run ∧ (v ≠ 0 → run = 1) ∧ run < 2 ^ 18 := by
   unfold mapSym at h
@@ -108,298 +108,7 @@ private theorem mapSym_bounds {rlemax ntrees : Nat} {code : PrefixCode} {bs r : 
         rw [Nat.shiftLeft_eq, Nat.one_mul]
         refine ⟨hn, by omega, fun e => absurd rfl e, by have : (2 : Nat) ^ 18 = 262144 := rfl; omega⟩
 
-/-- The place reading a context map's values. -/
-def stepHVals (st : Hd) (pos : USize) : Hd :=
-  let left := st.left
-  if left = 0 then { st with pos := pos, status := .next, tag := .imtf }
-  else
-    let r := mapSymFast st.mapT.t (USize.ofNat 0) st.mapT.fits st.mapT.h32 st.rlemax ⟨st.word, st.count⟩
-    match r.status with
-    | .short => markH st pos .needsInput
-    | .bad => markH st pos .bad
-    | .ok =>
-      let v := r.a
-      let run := r.b
-      let idx := st.idx
-      if left < run then markH st pos .bad
-      else if r.count = st.count then
-        -- A code that gives a value without reading gives it for every value left.
-        if v = 0 then { st with pos := pos, status := .next, idx := idx + left, left := 0 }
-        else
-          let fill := st.fill
-          let st0 := clearFill st
-          { st0 with pos := pos, status := .next, idx := idx + left, left := 0, fill := fillLens fill idx left v.toUInt8 }
-      else if v = 0 then { st with word := r.word, count := r.count, pos := pos, status := .next, idx := idx + run, left := left - run }
-      else
-        let fill := st.fill
-        let st0 := clearFill st
-        { st0 with
-          word := r.word, count := r.count, pos := pos, status := .next, idx := idx + run, left := left - run
-          fill := setU fill idx.toUSize v.toUInt8 }
-
-section
-variable {α : Type} {K : HK α} {a : ByteArray} {stop : USize}
-
-theorem stepHVals_ok {isL : Bool} {ntrees rlemax : Nat} {code : PrefixCode} {done : List Nat} {left : Nat} {st : Hd} {g : Gh} {pos : USize}
-    (hrel : HRel st g (.vals isL ntrees rlemax code done left)) (hp : pos.toNat ≤ stop.toNat) (hfull : 56 < st.count.toNat ∨ pos = stop) :
-    HStepOk K a stop g (.vals isL ntrees rlemax code done left) st pos (stepHVals st pos) := by
-  obtain ⟨hw, hu, ht, hi, hn, hr, h2, h256, h16, hok, hC, hsy, hidx, hleft, hlen, hsz, hlt, hat, hzero⟩ := hrel
-  have hrel : HRel st g (.vals isL ntrees rlemax code done left) := ⟨hw, hu, ht, hi, hn, hr, h2, h256, h16, hok, hC, hsy, hidx, hleft, hlen, hsz, hlt, hat, hzero⟩
-  obtain ⟨_, hmle⟩ := mapSizeFast_eq (g := g) hi hu
-  unfold stepHVals
-  dsimp only
-  by_cases h0 : st.left = 0
-  · rw [ite_eq_left h0]
-    have hl0 : left = 0 := by
-      rw [← hleft, h0]
-      rfl
-    subst hl0
-    refine HStepOk.ofNext (g' := g) (p' := .imtf isL ntrees done) rfl ⟨hw, hu, rfl, hi, hn, h2, h256, ⟨hsz, by omega, fun i hi' => hat i (by omega), hlt⟩⟩
-      (Nat.le_refl _) hp (fun F => hrest_vals_zero K g isL ntrees rlemax code done _) (fun F => hStep_vals_zero _)
-  rw [ite_eq_right h0]
-  have hl0 : left ≠ 0 := by
-    rw [← hleft]
-    exact fun e => h0 (UInt64.toNat_inj.mp e)
-  have R := mapSymFast_ok (t := st.mapT.t) (base := USize.ofNat 0) (hfit := st.mapT.fits) (h32 := st.mapT.h32) (rlemax := st.rlemax) hw hok hC (by omega)
-  rw [hr] at R
-  obtain ⟨Rok, Rshort, Rbad⟩ := R.run (X := hrest K g (.vals isL ntrees rlemax code done left)) (N := fun v b =>
-    if left < v.2 then none else hrest K g (.vals isL ntrees rlemax code (done ++ List.replicate v.2 v.1) (left - v.2)) b)
-    (fun bs => hrest_vals_step K g isL ntrees rlemax code done left bs hl0)
-  have hval := R.ok
-  have hsh0 := R.short
-  have hnb : (mapSymFast st.mapT.t (USize.ofNat 0) st.mapT.fits st.mapT.h32 st.rlemax ⟨st.word, st.count⟩).status ≠ .bad := by
-    unfold mapSymFast
-    dsimp only
-    split
-    · split
-      · exact fun e => ReadStatus.noConfusion e
-      · split
-        · split <;> exact fun e => ReadStatus.noConfusion e
-        · exact fun e => ReadStatus.noConfusion e
-    · exact fun e => ReadStatus.noConfusion e
-  generalize mapSymFast st.mapT.t (USize.ofNat 0) st.mapT.fits st.mapT.h32 st.rlemax ⟨st.word, st.count⟩ = r at Rok Rshort Rbad hval hsh0 hnb
-  -- A code that gives a value without reading is the case where the read takes no bits.
-  have hnone : ∀ v, runOf rlemax code = some v → r.status = .ok ∧ r.count = st.count ∧ r.a.toNat = v ∧ r.b.toNat = 1 := by
-    intro v hv
-    have hm := mapSym_of_run hv
-    cases hsr : r.status with
-    | short =>
-      obtain ⟨_, _, _, h5⟩ := hsh0 hsr
-      rw [hm] at h5
-      cases h5
-    | bad => exact absurd hsr hnb
-    | ok =>
-      have e := (hval hsr).2 []
-      rw [List.append_nil, List.append_nil, hm] at e
-      simp only [Option.some.injEq, Prod.mk.injEq] at e
-      obtain ⟨⟨e1, e2⟩, e3⟩ := e
-      have hl := congrArg List.length e3
-      rw [held_len, held_len] at hl
-      exact ⟨rfl, UInt64.toNat_inj.mp hl.symm, e1.symm, e2.symm⟩
-  cases hsr : r.status with
-  | short =>
-    obtain ⟨_, _, h3, h4⟩ := Rshort hsr
-    obtain ⟨_, _, _, h5⟩ := hsh0 hsr
-    have hno : runOf rlemax code = none := by
-      cases e : runOf rlemax code with
-      | none => rfl
-      | some v => exact absurd ((hnone v e).1.symm.trans hsr) (by decide)
-    exact HStepOk.ofShortRead (X := 31) hrel hfull (by omega) h3 h4
-      (by rw [hStep_vals_step _ hl0 hno]; exact readIn_short h5 (by rw [held_len]; exact h3))
-  | bad => exact HStepOk.ofBad rfl (fun F => Rbad hsr _)
-  | ok =>
-    dsimp only
-    obtain ⟨hw2, hN⟩ := Rok hsr
-    obtain ⟨hv, hr1, hv1, hrlt⟩ := mapSym_bounds (by omega) h16 hsy ((hval hsr).2 [])
-    by_cases hbig : st.left < r.b
-    · rw [ite_eq_left hbig]
-      have hbig' : left < r.b.toNat := by
-        rw [← hleft]
-        exact UInt64.lt_iff_toNat_lt.mp hbig
-      refine HStepOk.ofBad rfl (fun F => ?_)
-      rw [avail_mk, hN]
-      simp only [hbig', ↓reduceIte]
-    rw [ite_eq_right hbig]
-    have hbig' : ¬ left < r.b.toNat := by
-      rw [← hleft]
-      exact fun e => hbig (UInt64.lt_iff_toNat_lt.mpr e)
-    by_cases hc : r.count = st.count
-    · rw [ite_eq_left hc]
-      -- The read took no bits: the code gives its value for every value left.
-      have hro : runOf rlemax code = some r.a.toNat := by
-        have e := (hval hsr).2 []
-        rw [List.append_nil, List.append_nil] at e
-        refine (mapSym_noRead e ?_).1
-        show r.buf.held.length = _
-        rw [held_len, held_len]
-        exact congrArg UInt64.toNat hc
-      have hidx3 : (st.idx + st.left).toNat = done.length + left := by
-        rw [UInt64.toNat_add, hidx, hleft]
-        exact Nat.mod_eq_of_lt (by omega)
-      have hlen3 : (done ++ List.replicate left r.a.toNat).length = done.length + left := by simp
-      have hz0 : (0 : UInt64).toNat = 0 := rfl
-      by_cases hz : r.a = 0
-      · rw [ite_eq_left hz]
-        have hz' : r.a.toNat = 0 := by rw [hz]; rfl
-        refine HStepOk.ofNext (g' := g) (p' := .vals isL ntrees rlemax code (done ++ List.replicate left r.a.toNat) 0)
-          (hd := Or.inl (Or.inr ⟨rfl, show 0 < left by omega⟩)) rfl
-          ⟨hw, hu, ht, hi, hn, hr, h2, h256, h16, hok, hC, hsy, ?_, hz0, ?_, hsz, ?_, ?_, ?_⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
-        · show (st.idx + st.left).toNat = _
-          rw [hidx3, hlen3]
-        · rw [hlen3]
-          omega
-        · intro x hx
-          rcases List.mem_append.mp hx with h | h
-          · exact hlt x h
-          · rw [(List.mem_replicate.mp h).2]
-            exact hv
-        · intro i hi'
-          rw [hlen3] at hi'
-          by_cases hA : i < done.length
-          · rw [List.getElem?_append_left hA, hat i hA]
-          · rw [List.getElem?_append_right (by omega), List.getElem?_replicate, ite_eq_left (by omega), hzero i (by omega), hz']
-            rfl
-        · intro i hi'
-          rw [hlen3] at hi'
-          exact hzero i (by omega)
-        · rw [hrest_vals_run K g isL ntrees rlemax code done left hro]
-        · rw [hStep_vals_run _ hl0 hro]
-      · rw [ite_eq_right hz]
-        have hz' : r.a.toNat ≠ 0 := fun e => hz (UInt64.toNat_inj.mp e)
-        have hbyte : r.a.toUInt8.toNat = r.a.toNat := by
-          rw [UInt64.toNat_toUInt8]
-          omega
-        obtain ⟨hfs, hfg⟩ := fillLens_spec r.a.toUInt8 left st.fill st.idx st.left hleft (by rw [hidx]; omega) (by rw [hidx, hsz]; omega)
-        refine HStepOk.ofNext (g' := g) (p' := .vals isL ntrees rlemax code (done ++ List.replicate left r.a.toNat) 0)
-          (hd := Or.inl (Or.inr ⟨rfl, show 0 < left by omega⟩))
-          (hm := ⟨rfl, rfl, fun h => ⟨by show (fillLens st.fill st.idx st.left r.a.toUInt8).size ≤ _; rw [hfs]; exact h.fill,
-            h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩,
-            ⟨rfl, by simp [budH, tableOf]⟩⟩) rfl
-          ⟨hw, hu, ht, hi, hn, hr, h2, h256, h16, hok, hC, hsy, ?_, hz0, ?_, ?_, ?_, ?_, ?_⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
-        · show (st.idx + st.left).toNat = _
-          rw [hidx3, hlen3]
-        · rw [hlen3]
-          omega
-        · show (fillLens st.fill st.idx st.left r.a.toUInt8).size = _
-          rw [hfs]
-          exact hsz
-        · intro x hx
-          rcases List.mem_append.mp hx with h | h
-          · exact hlt x h
-          · rw [(List.mem_replicate.mp h).2]
-            exact hv
-        · intro i hi'
-          rw [hlen3] at hi'
-          show _ = some ((fillLens st.fill st.idx st.left r.a.toUInt8).data[i]?.getD 0).toNat
-          rw [hfg i, hidx]
-          by_cases hA : i < done.length
-          · rw [ite_eq_right (by omega), List.getElem?_append_left hA, hat i hA]
-          · rw [ite_eq_left (by omega), hbyte, List.getElem?_append_right (by omega), List.getElem?_replicate, ite_eq_left (by omega)]
-        · intro i hi'
-          rw [hlen3] at hi'
-          show (fillLens st.fill st.idx st.left r.a.toUInt8).data[i]?.getD 0 = 0
-          rw [hfg i, hidx, ite_eq_right (by omega)]
-          exact hzero i (by omega)
-        · rw [hrest_vals_run K g isL ntrees rlemax code done left hro]
-          rfl
-        · rw [hStep_vals_run _ hl0 hro]
-          rfl
-    rw [ite_eq_right hc]
-    have hno : runOf rlemax code = none := by
-      cases e : runOf rlemax code with
-      | none => rfl
-      | some v => exact absurd (hnone v e).2.1 hc
-    have hidx2 : (st.idx + r.b).toNat = done.length + r.b.toNat := by
-      rw [UInt64.toNat_add, hidx]
-      exact Nat.mod_eq_of_lt (by omega)
-    have hleft2 : (st.left - r.b).toNat = left - r.b.toNat := by
-      rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by rw [hleft]; omega)), hleft]
-    have hlen2 : (done ++ List.replicate r.b.toNat r.a.toNat).length = done.length + r.b.toNat := by simp
-    by_cases hz : r.a = 0
-    · rw [ite_eq_left hz]
-      have hz' : r.a.toNat = 0 := by rw [hz]; rfl
-      refine HStepOk.ofNext (g' := g) (p' := .vals isL ntrees rlemax code (done ++ List.replicate r.b.toNat r.a.toNat) (left - r.b.toNat))
-        (hd := Or.inl (Or.inr ⟨rfl, show left - r.b.toNat < left by omega⟩)) rfl
-        ⟨hw2, hu, ht, hi, hn, hr, h2, h256, h16, hok, hC, hsy, ?_, hleft2, ?_, hsz, ?_, ?_, ?_⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
-      · show (st.idx + r.b).toNat = _
-        rw [hidx2, hlen2]
-      · rw [hlen2]
-        omega
-      · intro x hx
-        rcases List.mem_append.mp hx with h | h
-        · exact hlt x h
-        · rw [(List.mem_replicate.mp h).2]
-          exact hv
-      · intro i hi'
-        rw [hlen2] at hi'
-        by_cases hA : i < done.length
-        · rw [List.getElem?_append_left hA, hat i hA]
-        · rw [List.getElem?_append_right (by omega), List.getElem?_replicate, ite_eq_left (by omega), hzero i (by omega), hz']
-          rfl
-      · intro i hi'
-        rw [hlen2] at hi'
-        exact hzero i (by omega)
-      · rw [avail_mk, hN]
-        simp only [hbig', ↓reduceIte]
-        rfl
-      · rw [avail_mk, hStep_vals_step _ hl0 hno, readIn_some ((hval hsr).2 _)]
-        simp only [hbig', ↓reduceIte]
-        rfl
-    · rw [ite_eq_right hz]
-      have hz' : r.a.toNat ≠ 0 := fun e => hz (UInt64.toNat_inj.mp e)
-      have hrun1 := hv1 hz'
-      have hus : st.idx.toUSize.toNat = done.length := by rw [word_toUSize (by omega), hidx]
-      have hbyte : r.a.toUInt8.toNat = r.a.toNat := by
-        rw [UInt64.toNat_toUInt8]
-        omega
-      refine HStepOk.ofNext (g' := g) (p' := .vals isL ntrees rlemax code (done ++ List.replicate r.b.toNat r.a.toNat) (left - r.b.toNat))
-        (hd := Or.inl (Or.inr ⟨rfl, show left - r.b.toNat < left by omega⟩))
-        (hm := ⟨rfl, rfl, fun h => ⟨by show (setU st.fill st.idx.toUSize r.a.toUInt8).size ≤ _; rw [size_setU]; exact h.fill,
-          h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩,
-          ⟨rfl, by simp [budH, tableOf]⟩⟩) rfl
-        ⟨hw2, hu, ht, hi, hn, hr, h2, h256, h16, hok, hC, hsy, ?_, hleft2, ?_, ?_, ?_, ?_, ?_⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
-      · show (st.idx + r.b).toNat = _
-        rw [hidx2, hlen2]
-      · rw [hlen2]
-        omega
-      · show (setU st.fill st.idx.toUSize r.a.toUInt8).size = _
-        rw [size_setU]
-        exact hsz
-      · intro x hx
-        rcases List.mem_append.mp hx with h | h
-        · exact hlt x h
-        · rw [(List.mem_replicate.mp h).2]
-          exact hv
-      · intro i hi'
-        rw [hlen2, hrun1] at hi'
-        show _ = some ((setU st.fill st.idx.toUSize r.a.toUInt8).data[i]?.getD 0).toNat
-        by_cases hA : i < done.length
-        · rw [List.getElem?_append_left hA, hat i hA, setU_get_ne (by rw [hus]; omega)]
-        · have he : i = done.length := by omega
-          subst he
-          have := setU_get_same (t := st.fill) (i := st.idx.toUSize) (v := r.a.toUInt8) (by rw [hus, hsz]; omega)
-          rw [hus] at this
-          rw [this, hbyte, List.getElem?_append_right (Nat.le_refl _), Nat.sub_self, List.getElem?_replicate, ite_eq_left (by omega)]
-      · intro i hi'
-        rw [hlen2, hrun1] at hi'
-        show (setU st.fill st.idx.toUSize r.a.toUInt8).data[i]?.getD 0 = 0
-        rw [setU_get_ne (by rw [hus]; omega)]
-        exact hzero i (by omega)
-      · rw [avail_mk, hN]
-        simp only [hbig', ↓reduceIte]
-        rfl
-      · rw [avail_mk, hStep_vals_step _ hl0 hno, readIn_some ((hval hsr).2 _)]
-        simp only [hbig', ↓reduceIte]
-        rfl
-
-end
-
 /-! ### The inverse move-to-front transform -/
-
-/-- The move-to-front list after some indices. -/
-def mtfAfter : List Nat → List Nat → List Nat
-  | L, [] => L
-  | L, idx :: v => mtfAfter (L.getD idx 0 :: L.eraseIdx idx) v
 
 theorem imtf_append : ∀ (L vs ws : List Nat),
     inverseMoveToFrontFrom L (vs ++ ws) = inverseMoveToFrontFrom L vs ++ inverseMoveToFrontFrom (mtfAfter L vs) ws
@@ -447,189 +156,6 @@ theorem mtfAfter_rot (L : List Nat) (s : Nat) (hs : s < L.length) : ∀ k, k ≤
 theorem mtfAfter_period (L : List Nat) (s : Nat) (hs : s < L.length) : mtfAfter L (List.replicate (s + 1) s) = L := by
   rw [mtfAfter_rot L s hs (s + 1) (Nat.le_refl _), Nat.sub_self, List.drop_zero, List.take_zero, List.append_nil, List.take_append_drop]
 
-/-- The transform's first list. -/
-def mtfInitLut : ByteArray := ((List.range 256).map Nat.toUInt8).toByteArray
-
-/-- A move-to-front list in an array. -/
-structure MtfIs (m : ByteArray) (L : List Nat) : Prop where
-  sz : m.size = 256
-  length : L.length = 256
-  at_ : ∀ k, k < 256 → L.getD k 0 = (m.data[k]?.getD 0).toNat
-
-private theorem mtfInit_values : ∀ k, k < 256 → (List.range 256).getD k 0 = (((List.range 256).map Nat.toUInt8)[k]?.getD 0).toNat := by
-  decide +kernel
-
-theorem mtfInit_is : MtfIs mtfInitLut (List.range 256) := by
-  refine ⟨by simp [mtfInitLut, List.size_toByteArray], by simp, fun k hk => ?_⟩
-  rw [mtfInit_values k hk]
-  simp only [mtfInitLut, List.data_toByteArray, List.getElem?_toArray]
-
-/-- Moves the first `j` values up one place. -/
-def shiftUp (m : ByteArray) (j : UInt64) : ByteArray :=
-  if _hj : j = 0 then m else shiftUp (setU m j.toUSize (getU m (j - 1).toUSize)) (j - 1)
-termination_by j.toNat
-decreasing_by
-  have hne : j.toNat ≠ 0 := fun e => _hj (UInt64.toNat_inj.mp (by rw [e]; rfl))
-  have h1 : (j - 1).toNat = j.toNat - 1 := UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by
-    rw [show (1 : UInt64).toNat = 1 from rfl]
-    omega))
-  omega
-
-theorem shiftUp_spec : ∀ (N : Nat) (m : ByteArray) (j : UInt64), j.toNat = N → N < 256 → m.size = 256 →
-    (shiftUp m j).size = 256 ∧ ∀ k, k < 256 → (shiftUp m j).data[k]?.getD 0 =
-      if 1 ≤ k ∧ k ≤ N then m.data[k - 1]?.getD 0 else m.data[k]?.getD 0 := by
-  intro N
-  induction N with
-  | zero =>
-    intro m j hj _ hs
-    have hz : j = 0 := UInt64.toNat_inj.mp (by rw [hj]; rfl)
-    rw [shiftUp, dite_eq_left hz]
-    refine ⟨hs, fun k _ => ?_⟩
-    rw [ite_eq_right (by omega)]
-  | succ N ih =>
-    intro m j hj hN hs
-    have hz : j ≠ 0 := fun e => by rw [e] at hj; exact Nat.succ_ne_zero _ hj.symm
-    have h1 : (j - 1).toNat = N := by
-      rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by rw [show (1 : UInt64).toNat = 1 from rfl]; omega)), hj]
-      rfl
-    have hus : j.toUSize.toNat = N + 1 := by rw [word_toUSize (by omega), hj]
-    have hus1 : (j - 1).toUSize.toNat = N := by rw [word_toUSize (by omega), h1]
-    rw [shiftUp, dite_eq_right hz]
-    generalize hv : getU m (j - 1).toUSize = v
-    have hvb : v = m.data[N]?.getD 0 := by
-      apply UInt8.toNat_inj.mp
-      rw [← hv, getU_toNat, hus1]
-    obtain ⟨i1, i2⟩ := ih (setU m j.toUSize v) (j - 1) h1 (by omega) (by rw [size_setU]; exact hs)
-    refine ⟨i1, fun k hk => ?_⟩
-    rw [i2 k hk]
-    by_cases he : k = N + 1
-    · subst he
-      rw [ite_eq_right (by omega), ite_eq_left (by omega)]
-      have := setU_get_same (t := m) (i := j.toUSize) (v := v) (by rw [hus, hs]; omega)
-      rw [hus] at this
-      rw [this, hvb]
-      rfl
-    · by_cases hin : 1 ≤ k ∧ k ≤ N
-      · rw [ite_eq_left hin, ite_eq_left (by omega), setU_get_ne (by rw [hus]; omega)]
-      · rw [ite_eq_right hin, ite_eq_right (by omega), setU_get_ne (by rw [hus]; exact he)]
-
-/-- The transform's loop, one index at a time: each index's value moves to the front. -/
-def imtfPlain (m out : ByteArray) (i n : UInt64) : ByteArray × ByteArray :=
-  if _hn : n = 0 then (m, out)
-  else
-    let index := (getU out i.toUSize).toUInt64
-    let value := getU m index.toUSize
-    imtfPlain (setU (shiftUp m index) (USize.ofNat 0) value) (setU out i.toUSize value) (i + 1) (n - 1)
-termination_by n.toNat
-decreasing_by
-  have hne : n.toNat ≠ 0 := fun e => _hn (UInt64.toNat_inj.mp (by rw [e]; rfl))
-  have h1 : (n - 1).toNat = n.toNat - 1 := UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by
-    rw [show (1 : UInt64).toNat = 1 from rfl]
-    omega))
-  omega
-
-private theorem mtf_step {m : ByteArray} {L : List Nat} (h : MtfIs m L) {index : UInt64} (hi : index.toNat < 256) :
-    MtfIs (setU (shiftUp m index) (USize.ofNat 0) (getU m index.toUSize)) (L.getD index.toNat 0 :: L.eraseIdx index.toNat) ∧
-      (getU m index.toUSize).toNat = L.getD index.toNat 0 := by
-  obtain ⟨s1, s2⟩ := shiftUp_spec _ m index rfl hi h.sz
-  have hus : index.toUSize.toNat = index.toNat := word_toUSize (by omega)
-  have hv : (getU m index.toUSize).toNat = L.getD index.toNat 0 := by
-    rw [getU_toNat, hus, h.at_ _ hi]
-  have hz := usize_zero'
-  refine ⟨⟨by rw [size_setU]; exact s1, ?_, fun k hk => ?_⟩, hv⟩
-  · simp [List.length_eraseIdx, h.length, hi]
-  · cases k with
-    | zero =>
-      have := setU_get_same (t := shiftUp m index) (i := USize.ofNat 0) (v := getU m index.toUSize) (by rw [hz, s1]; omega)
-      rw [hz] at this
-      rw [this, hv]
-      rfl
-    | succ q =>
-      rw [setU_get_ne (by rw [hz]; omega), s2 _ hk]
-      simp only [List.getD_cons_succ]
-      rw [List.getD_eq_getElem?_getD, List.getElem?_eraseIdx]
-      by_cases hq : q < index.toNat
-      · rw [ite_eq_left hq, ite_eq_left (by omega), ← List.getD_eq_getElem?_getD, h.at_ q (by omega)]
-        rfl
-      · rw [ite_eq_right hq, ite_eq_right (by omega), ← List.getD_eq_getElem?_getD, h.at_ (q + 1) hk]
-
-/-- What the one-at-a-time loop does: the values of `N` indices from `i`, the list after them, and the rest of the array as it
-was. -/
-theorem imtfPlain_spec : ∀ (N : Nat) (i n : UInt64) (m out : ByteArray) (L vs pre : List Nat), vs.length = N → n.toNat = N → i.toNat = pre.length →
-    pre.length + N < 2 ^ 32 → pre.length + N ≤ out.size → MtfIs m L → (∀ j, j < pre.length → pre[j]? = some (out.data[j]?.getD 0).toNat) →
-    (∀ j, j < N → vs[j]? = some (out.data[pre.length + j]?.getD 0).toNat) →
-    (imtfPlain m out i n).2.size = out.size ∧ (∀ j, j < pre.length + N →
-      (pre ++ inverseMoveToFrontFrom L vs)[j]? = some ((imtfPlain m out i n).2.data[j]?.getD 0).toNat) ∧
-    (∀ q, pre.length + N ≤ q → (imtfPlain m out i n).2.data[q]? = out.data[q]?) ∧ MtfIs (imtfPlain m out i n).1 (mtfAfter L vs) := by
-  intro N
-  induction N with
-  | zero =>
-    intro i n m out L vs pre hv hn _ _ hs hm hp _
-    have hz : n = 0 := UInt64.toNat_inj.mp (by rw [hn]; rfl)
-    have hnil : vs = [] := List.length_eq_zero_iff.mp hv
-    subst hnil
-    rw [imtfPlain, dite_eq_left hz]
-    refine ⟨rfl, fun j hj => ?_, fun _ _ => rfl, hm⟩
-    simp only [inverseMoveToFrontFrom, List.append_nil]
-    exact hp j (by omega)
-  | succ N ih =>
-    intro i n m out L vs pre hv hn hi h32 hs hm hp hq
-    have hz : n ≠ 0 := fun e => by rw [e] at hn; exact Nat.succ_ne_zero _ hn.symm
-    cases vs with
-    | nil => simp at hv
-    | cons idx rest =>
-      simp only [List.length_cons] at hv
-      have hn1 : (n - 1).toNat = N := by
-        rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by rw [show (1 : UInt64).toNat = 1 from rfl]; omega)), hn]
-        rfl
-      have hi1 : (i + 1).toNat = pre.length + 1 := by
-        rw [UInt64.toNat_add, hi, show (1 : UInt64).toNat = 1 from rfl]
-        exact Nat.mod_eq_of_lt (by omega)
-      have hus : i.toUSize.toNat = pre.length := by rw [word_toUSize (by omega), hi]
-      have hidx : (getU out i.toUSize).toUInt64.toNat = idx := by
-        have := hq 0 (by omega)
-        rw [Nat.add_zero] at this
-        simp only [List.getElem?_cons_zero, Option.some.injEq] at this
-        rw [UInt8.toNat_toUInt64, getU_toNat, hus, this]
-      have hidxLt : idx < 256 := by
-        rw [← hidx]
-        exact (getU out i.toUSize).toNat_lt
-      rw [imtfPlain, dite_eq_right hz]
-      dsimp only
-      generalize hindex : (getU out i.toUSize).toUInt64 = index at hidx
-      obtain ⟨ms, mv⟩ := mtf_step hm (index := index) (by omega)
-      rw [hidx] at ms mv
-      generalize hval : getU m index.toUSize = value at ms mv
-      have hbyte : value.toNat = L.getD idx 0 := mv
-      have hsz := size_setU out i.toUSize value
-      have hget : (setU out i.toUSize value).data[pre.length]?.getD 0 = value := by
-        have := setU_get_same (t := out) (i := i.toUSize) (v := value) (by rw [hus]; omega)
-        rwa [hus] at this
-      have hlen' : (pre ++ [L.getD idx 0]).length = pre.length + 1 := by simp
-      obtain ⟨r1, r2, r3, r4⟩ := ih (i + 1) (n - 1) _ (setU out i.toUSize value) _ rest (pre ++ [L.getD idx 0]) (by omega) hn1 (by rw [hi1, hlen']) (by rw [hlen']; omega)
-        (by rw [hsz, hlen']; omega) ms
-        (by
-          intro j hj
-          rw [hlen'] at hj
-          by_cases he : j = pre.length
-          · subst he
-            rw [hget, hbyte]
-            simp
-          · have hlt : j < pre.length := by omega
-            rw [List.getElem?_append_left hlt, hp j hlt, setU_get_ne (by rw [hus]; exact he)])
-        (by
-          intro j hj
-          rw [hlen', setU_get_ne (by rw [hus]; omega)]
-          have := hq (j + 1) (by omega)
-          rw [List.getElem?_cons_succ] at this
-          rwa [show pre.length + (j + 1) = pre.length + 1 + j by omega] at this)
-      rw [hlen'] at r2 r3
-      refine ⟨by rw [r1, hsz], fun j hj => ?_, fun q hq' => ?_, r4⟩
-      · have := r2 j (by omega)
-        rw [List.append_assoc] at this
-        exact this
-      · rw [r3 q (by omega), setU_get_ne (by rw [hus]; omega)]
-
 /-! ### Runs of the same index -/
 
 /-- After the same index again and again, the list depends only on how many times it came, modulo the places it turns
@@ -649,16 +175,6 @@ theorem mtfAfter_mod (L : List Nat) (s : Nat) (hs : s < L.length) :
       congr 2
       exact (Nat.mod_eq_sub_mod (by omega)).symm
 
-theorem take_of_run {vs : List Nat} {r a : Nat} (h : ∀ j, j < r → vs[j]? = some a) :
-    ∀ k, k ≤ r → vs.take k = List.replicate k a := by
-  intro k hk
-  apply List.ext_getElem?
-  intro j
-  rw [List.getElem?_take, List.getElem?_replicate]
-  by_cases hj : j < k
-  · rw [ite_eq_left hj, ite_eq_left hj, h j (by omega)]
-  · rw [ite_eq_right hj, ite_eq_right hj]
-
 theorem imtf_prefix (L vs ws : List Nat) {j : Nat} (hj : j < vs.length) :
     (inverseMoveToFrontFrom L (vs ++ ws))[j]? = (inverseMoveToFrontFrom L vs)[j]? := by
   rw [imtf_append, List.getElem?_append_left (by rw [inverseMoveToFrontFrom_length]; exact hj)]
@@ -676,54 +192,6 @@ theorem imtf_periodic (L : List Nat) (s : Nat) (hs : s < L.length) {k j : Nat} (
   conv => lhs; rw [e1, imtf_append, mtfAfter_period L s hs]
   rw [List.getElem?_append_right (by rw [inverseMoveToFrontFrom_length, List.length_replicate]; omega),
     inverseMoveToFrontFrom_length, List.length_replicate, Nat.add_sub_cancel, e2, imtf_prefix _ _ _ (by rw [List.length_replicate]; omega)]
-
-/-- How many more of the `k` bytes after the first `c` from `i` hold `s`, counted on from `c`. -/
-def runCount (out : ByteArray) (i : UInt64) (s : UInt8) (c k : UInt64) : UInt64 :=
-  if _hk : k = 0 then c
-  else if getU out (i + c).toUSize = s then runCount out i s (c + 1) (k - 1) else c
-termination_by k.toNat
-decreasing_by
-  have hne : k.toNat ≠ 0 := fun e => _hk (UInt64.toNat_inj.mp (by rw [e]; rfl))
-  have h1 : (k - 1).toNat = k.toNat - 1 := UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by
-    rw [show (1 : UInt64).toNat = 1 from rfl]
-    omega))
-  omega
-
-theorem runCount_spec (out : ByteArray) (i : UInt64) (s : UInt8) : ∀ (K : Nat) (c k : UInt64), k.toNat = K → c.toNat + K < 2 ^ 64 →
-    c.toNat ≤ (runCount out i s c k).toNat ∧ (runCount out i s c k).toNat ≤ c.toNat + K ∧
-    (i.toNat + c.toNat + K < 2 ^ 32 → ∀ j, c.toNat ≤ j → j < (runCount out i s c k).toNat → out.data[i.toNat + j]?.getD 0 = s) := by
-  intro K
-  induction K with
-  | zero =>
-    intro c k hk _
-    have hz : k = 0 := UInt64.toNat_inj.mp (by rw [hk]; rfl)
-    rw [runCount, dite_eq_left hz]
-    exact ⟨Nat.le_refl _, by omega, fun _ j h1 h2 => absurd h2 (by omega)⟩
-  | succ K ih =>
-    intro c k hk hc
-    have hz : k ≠ 0 := fun e => by rw [e] at hk; exact Nat.succ_ne_zero _ hk.symm
-    have hk1 : (k - 1).toNat = K := by
-      rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by rw [show (1 : UInt64).toNat = 1 from rfl]; omega)), hk]
-      rfl
-    have hc1 : (c + 1).toNat = c.toNat + 1 := by
-      rw [UInt64.toNat_add, show (1 : UInt64).toNat = 1 from rfl]
-      exact Nat.mod_eq_of_lt (by omega)
-    rw [runCount, dite_eq_right hz]
-    by_cases he : getU out (i + c).toUSize = s
-    · rw [ite_eq_left he]
-      obtain ⟨a1, a2, a3⟩ := ih (c + 1) (k - 1) hk1 (by omega)
-      refine ⟨by omega, by omega, fun h32 j h1 h2 => ?_⟩
-      by_cases hj : j = c.toNat
-      · subst hj
-        have hic : (i + c).toNat = i.toNat + c.toNat := by
-          rw [UInt64.toNat_add]
-          exact Nat.mod_eq_of_lt (by omega)
-        have := getU_toNat out (i + c).toUSize
-        rw [he, word_toUSize (by omega), hic] at this
-        exact (UInt8.toNat_inj.mp this).symm
-      · exact a3 (by omega) j (by omega) h2
-    · rw [ite_eq_right he]
-      exact ⟨Nat.le_refl _, by omega, fun _ j h1 h2 => absurd h2 (by omega)⟩
 
 /-- The value at the turning point of a list whose first `s + 1` places are turned round `k` places. -/
 theorem rot_getD (P C : List Nat) {s k : Nat} (hP : P.length = s + 1) (hk : k ≤ s) :
@@ -925,240 +393,246 @@ theorem copyPeriod_spec (p : UInt64) (hp : 1 ≤ p.toNat) : ∀ (K : Nat) (j k :
         rw [this, hvb]
       · exact b4 q (by omega) (by omega)
 
-/-- The transform's loop: each index's value moves to the front. A run of the same index longer than the places it turns
-round gives that round's values, the list's first places backwards, and the rest of its values repeat them; the list is
-then those places turned round as far as the run's length goes past whole rounds, rewritten from the values. -/
-def imtfGo (m out : ByteArray) (i n : UInt64) : ByteArray × ByteArray :=
-  if _hn : n = 0 then (m, out)
-  else
-    let index := (getU out i.toUSize).toUInt64
-    let r := runCount out i (getU out i.toUSize) 1 (n - 1)
-    if _hr : r ≤ index + 1 then
-      match imtfPlain m out i 1 with
-      | (m1, out1) => imtfGo m1 out1 (i + 1) (n - 1)
-    else
-      let p := index + 1
-      let out2 := copyPeriod (revOut m out i index 0 p) (i + p) (r - p) p
-      let k := (r - p) % p
-      imtfGo (rotFrom out2 (rotFrom out2 m i 0 (k - 1) k) i k index (p - k)) out2 (i + r) (n - r)
+/-- Moves `n` places of the list up `k` places, from place `x` down: each takes the value `k` places before it. -/
+def shiftBy (m : ByteArray) (x k n : UInt64) : ByteArray :=
+  if _hn : n = 0 then m else shiftBy (setU m x.toUSize (getU m (x - k).toUSize)) (x - 1) k (n - 1)
 termination_by n.toNat
 decreasing_by
-  · have hne : n.toNat ≠ 0 := fun e => _hn (UInt64.toNat_inj.mp (by rw [e]; rfl))
-    have h1 : (n - 1).toNat = n.toNat - 1 := UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by
-      rw [show (1 : UInt64).toNat = 1 from rfl]
-      omega))
-    omega
-  · have hne : n.toNat ≠ 0 := fun e => _hn (UInt64.toNat_inj.mp (by rw [e]; rfl))
-    have h1 : (n - 1).toNat = n.toNat - 1 := UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by
-      rw [show (1 : UInt64).toNat = 1 from rfl]
-      omega))
-    have hn64 : n.toNat < 2 ^ 64 := n.toNat_lt
-    obtain ⟨c1, c2, _⟩ := runCount_spec out i (getU out i.toUSize) _ 1 (n - 1) rfl
-      (by rw [h1, show (1 : UInt64).toNat = 1 from rfl]; omega)
-    rw [show (1 : UInt64).toNat = 1 from rfl] at c1 c2
-    rw [h1] at c2
-    rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by omega))]
-    omega
+  have hne : n.toNat ≠ 0 := fun e => _hn (UInt64.toNat_inj.mp (by rw [e]; rfl))
+  have h1 : (n - 1).toNat = n.toNat - 1 := UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by
+    rw [show (1 : UInt64).toNat = 1 from rfl]
+    omega))
+  omega
 
-/-- What the loop does, as the one-at-a-time loop does it: the values of `N` indices from `i`, the list after them, and the
-rest of the array as it was. -/
-theorem imtfGo_spec : ∀ (N : Nat) (i n : UInt64) (m out : ByteArray) (L vs pre : List Nat), vs.length = N → n.toNat = N → i.toNat = pre.length →
-    pre.length + N < 2 ^ 32 → pre.length + N ≤ out.size → MtfIs m L → (∀ j, j < pre.length → pre[j]? = some (out.data[j]?.getD 0).toNat) →
-    (∀ j, j < N → vs[j]? = some (out.data[pre.length + j]?.getD 0).toNat) →
-    (imtfGo m out i n).2.size = out.size ∧ (∀ j, j < pre.length + N →
-      (pre ++ inverseMoveToFrontFrom L vs)[j]? = some ((imtfGo m out i n).2.data[j]?.getD 0).toNat) ∧
-    (∀ q, pre.length + N ≤ q → (imtfGo m out i n).2.data[q]? = out.data[q]?) ∧ MtfIs (imtfGo m out i n).1 (mtfAfter L vs) := by
+theorem shiftBy_spec (k : UInt64) : ∀ (N : Nat) (m : ByteArray) (x n : UInt64), n.toNat = N →
+    (0 < N → k.toNat + N ≤ x.toNat + 1 ∧ x.toNat < 256) → 1 ≤ k.toNat → m.size = 256 →
+    (shiftBy m x k n).size = 256 ∧ ∀ y, y < 256 → (shiftBy m x k n).data[y]?.getD 0 =
+      if x.toNat + 1 - N ≤ y ∧ y ≤ x.toNat then m.data[y - k.toNat]?.getD 0 else m.data[y]?.getD 0 := by
   intro N
-  induction N using Nat.strongRecOn with
-  | _ N ih =>
-  intro i n m out L vs pre hv hn hi h32 hs hm hp hq
-  by_cases hN : N = 0
-  · subst hN
+  induction N with
+  | zero =>
+    intro m x n hn _ _ hs
     have hz : n = 0 := UInt64.toNat_inj.mp (by rw [hn]; rfl)
-    have hnil : vs = [] := List.length_eq_zero_iff.mp hv
-    subst hnil
-    rw [imtfGo, dite_eq_left hz]
-    refine ⟨rfl, fun j hj => ?_, fun _ _ => rfl, hm⟩
-    simp only [inverseMoveToFrontFrom, List.append_nil]
-    exact hp j (by omega)
-  have hz : n ≠ 0 := fun e => hN (by rw [← hn, e]; rfl)
-  -- Once the first `k` indices are done, the rest is the loop again.
-  have cont : ∀ (k : Nat) (m2 out2 : ByteArray), 1 ≤ k → k ≤ N → out2.size = out.size →
-      (∀ j, j < pre.length + k → (pre ++ inverseMoveToFrontFrom L (vs.take k))[j]? = some (out2.data[j]?.getD 0).toNat) →
-      (∀ q, pre.length + k ≤ q → out2.data[q]? = out.data[q]?) → MtfIs m2 (mtfAfter L (vs.take k)) →
-      ∀ (i2 n2 : UInt64), i2.toNat = pre.length + k → n2.toNat = N - k →
-      (imtfGo m2 out2 i2 n2).2.size = out.size ∧ (∀ j, j < pre.length + N →
-        (pre ++ inverseMoveToFrontFrom L vs)[j]? = some ((imtfGo m2 out2 i2 n2).2.data[j]?.getD 0).toNat) ∧
-      (∀ q, pre.length + N ≤ q → (imtfGo m2 out2 i2 n2).2.data[q]? = out.data[q]?) ∧ MtfIs (imtfGo m2 out2 i2 n2).1 (mtfAfter L vs) := by
-    intro k m2 out2 hk1 hkN hsz2 hout2 hfr2 hm2 i2 n2 hi2 hn2
-    have lenP : (pre ++ inverseMoveToFrontFrom L (vs.take k)).length = pre.length + k := by
-      rw [List.length_append, inverseMoveToFrontFrom_length, List.length_take]
-      omega
-    obtain ⟨e1, e2, e3, e4⟩ := ih (N - k) (by omega) i2 n2 m2 out2 _ (vs.drop k) (pre ++ inverseMoveToFrontFrom L (vs.take k))
-      (by rw [List.length_drop]; omega) hn2 (by rw [lenP]; exact hi2) (by rw [lenP]; omega) (by rw [lenP, hsz2]; omega) hm2
-      (fun j hj => hout2 j (by rw [lenP] at hj; exact hj))
-      (fun j hj => by
-        rw [lenP, List.getElem?_drop, hfr2 _ (by omega), hq (k + j) (by omega), Nat.add_assoc])
-    rw [lenP] at e2 e3
-    refine ⟨e1.trans hsz2, fun j hj => ?_, fun q hq' => ?_, ?_⟩
-    · rw [← List.take_append_drop k vs, imtf_append, ← List.append_assoc]
-      exact e2 j (by omega)
-    · rw [e3 q (by omega), hfr2 q (by omega)]
-    · rw [← List.take_append_drop k vs, mtfAfter_append]
-      exact e4
-  have hus : i.toUSize.toNat = pre.length := by rw [word_toUSize (by omega), hi]
-  have hbyte : (getU out i.toUSize).toNat = (out.data[pre.length]?.getD 0).toNat := by rw [getU_toNat, hus]
-  have hn1 : (n - 1).toNat = N - 1 := by
-    rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by rw [show (1 : UInt64).toNat = 1 from rfl]; omega)), hn]
-    rfl
-  have hi1 : (i + 1).toNat = pre.length + 1 := by
-    rw [UInt64.toNat_add, hi, show (1 : UInt64).toNat = 1 from rfl]
+    rw [shiftBy, dite_eq_left hz]
+    exact ⟨hs, fun y _ => by rw [ite_eq_right (by omega)]⟩
+  | succ N ih =>
+    intro m x n hn hx hk hs
+    obtain ⟨hx1, hx2⟩ := hx (by omega)
+    have hz : n ≠ 0 := fun e => by rw [e] at hn; exact Nat.succ_ne_zero _ hn.symm
+    have hn1 : (n - 1).toNat = N := by
+      rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by rw [show (1 : UInt64).toNat = 1 from rfl]; omega)), hn]
+      rfl
+    have hus : x.toUSize.toNat = x.toNat := word_toUSize (by omega)
+    have hxk : (x - k).toNat = x.toNat - k.toNat := UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by omega))
+    have husk : (x - k).toUSize.toNat = x.toNat - k.toNat := by rw [word_toUSize (by omega), hxk]
+    have hX : 0 < N → (x - 1).toNat = x.toNat - 1 := fun _ =>
+      UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by rw [show (1 : UInt64).toNat = 1 from rfl]; omega))
+    rw [shiftBy, dite_eq_right hz]
+    generalize hv : getU m (x - k).toUSize = v
+    have hvb : v = m.data[x.toNat - k.toNat]?.getD 0 := by
+      apply UInt8.toNat_inj.mp
+      rw [← hv, getU_toNat, husk]
+    have hs1 : (setU m x.toUSize v).size = 256 := by rw [size_setU]; exact hs
+    obtain ⟨i1, i2⟩ := ih (setU m x.toUSize v) (x - 1) (n - 1) hn1 (fun h => by rw [hX h]; omega) hk hs1
+    refine ⟨i1, fun y hy => ?_⟩
+    rw [i2 y hy]
+    by_cases hyx : y = x.toNat
+    · subst hyx
+      have hc : ¬ ((x - 1).toNat + 1 - N ≤ x.toNat ∧ x.toNat ≤ (x - 1).toNat) := by
+        by_cases hN : 0 < N
+        · rw [hX hN]; omega
+        · omega
+      rw [ite_eq_right hc, ite_eq_left (by omega)]
+      have := setU_get_same (t := m) (i := x.toUSize) (v := v) (by rw [hus, hs]; omega)
+      rw [hus] at this
+      rw [this, hvb]
+    · by_cases hin : x.toNat + 1 - (N + 1) ≤ y ∧ y ≤ x.toNat
+      · have hN : 0 < N := by omega
+        have hc : (x - 1).toNat + 1 - N ≤ y ∧ y ≤ (x - 1).toNat := by rw [hX hN]; omega
+        rw [ite_eq_left hc, ite_eq_left hin, setU_get_ne (by rw [hus]; omega)]
+      · have hc : ¬ ((x - 1).toNat + 1 - N ≤ y ∧ y ≤ (x - 1).toNat) := by
+          by_cases hN : 0 < N
+          · rw [hX hN]; omega
+          · omega
+        rw [ite_eq_right hc, ite_eq_right hin, setU_get_ne (by rw [hus]; exact hyx)]
+
+/-- The transform of a run of `k` copies of index `s`, from the list `m`, into `out` from `i`. The values of a round are
+the list's first places backwards, and after a whole round they repeat; the list's first `s + 1` places turn round, those
+the run took from the values and the rest moved up. -/
+def imtfRun (m out : ByteArray) (i s k : UInt64) : ByteArray × ByteArray :=
+  if k ≤ s then
+    let out1 := revOut m out i s 0 k
+    (rotFrom out1 (shiftBy m s k (s + 1 - k)) i 0 (k - 1) k, out1)
+  else
+    let p := s + 1
+    let out1 := copyPeriod (revOut m out i s 0 p) (i + p) (k - p) p
+    let K := (k - p) % p
+    (rotFrom out1 (rotFrom out1 m i 0 (K - 1) K) i K s (p - K), out1)
+
+/-- What a run does: the transform of its indices, from `i` in the outputs, with the rest of them as they were, and the list
+after them. -/
+theorem imtfRun_spec {m out : ByteArray} {i s k : UInt64} {L : List Nat} (hm : MtfIs m L) (hs : s.toNat < 256) (hk : 1 ≤ k.toNat)
+    (h32 : i.toNat + k.toNat < 2 ^ 32) (hsz : i.toNat + k.toNat ≤ out.size) :
+    (imtfRun m out i s k).2.size = out.size ∧
+    (∀ t, t < k.toNat → (inverseMoveToFrontFrom L (List.replicate k.toNat s.toNat))[t]? =
+      some ((imtfRun m out i s k).2.data[i.toNat + t]?.getD 0).toNat) ∧
+    (∀ q, q < i.toNat ∨ i.toNat + k.toNat ≤ q → (imtfRun m out i s k).2.data[q]? = out.data[q]?) ∧
+    MtfIs (imtfRun m out i s k).1 (mtfAfter L (List.replicate k.toNat s.toNat)) := by
+  have hsL : s.toNat < L.length := by rw [hm.length]; exact hs
+  have hL := hm.length
+  have hz0 : (0 : UInt64).toNat = 0 := rfl
+  have hp1 : (s + 1).toNat = s.toNat + 1 := by
+    rw [UInt64.toNat_add, show (1 : UInt64).toNat = 1 from rfl]
     exact Nat.mod_eq_of_lt (by omega)
-  obtain ⟨c1, c2, c3⟩ := runCount_spec out i (getU out i.toUSize) (N - 1) 1 (n - 1) hn1
-    (by rw [show (1 : UInt64).toNat = 1 from rfl]; omega)
-  rw [show (1 : UInt64).toNat = 1 from rfl] at c1 c2 c3
-  rw [imtfGo, dite_eq_right hz]
-  dsimp only
-  generalize hb : getU out i.toUSize = byte at hbyte c1 c2 c3 ⊢
-  generalize hr : runCount out i byte 1 (n - 1) = r at c1 c2 c3 ⊢
-  have hsb : byte.toNat < 256 := byte.toNat_lt
-  have hb64 : byte.toUInt64.toNat = byte.toNat := UInt8.toNat_toUInt64 byte
-  have hsL : byte.toNat < L.length := by rw [hm.length]; exact hsb
-  have hrun : ∀ j, j < r.toNat → vs[j]? = some byte.toNat := by
-    intro j hj
-    by_cases hj0 : j = 0
-    · subst hj0
-      rw [hq 0 (by omega), Nat.add_zero, hbyte]
-    · rw [hq j (by omega), ← hi, c3 (by omega) j (by omega) hj]
-  have htk := take_of_run hrun
-  have hpre1 : ∀ j, j < 1 → (vs.take 1)[j]? = some (out.data[pre.length + j]?.getD 0).toNat := fun j hj => by
-    rw [List.getElem?_take, ite_eq_left hj]
-    exact hq j (by omega)
-  by_cases hle : r ≤ byte.toUInt64 + 1
-  · rw [dite_eq_left hle]
-    obtain ⟨p1, p2, p3, p4⟩ := imtfPlain_spec 1 i 1 m out L (vs.take 1) pre (by rw [List.length_take]; omega) rfl hi
-      (by omega) (by omega) hm hp hpre1
-    generalize imtfPlain m out i 1 = pl at p1 p2 p3 p4 ⊢
-    obtain ⟨m1, out1⟩ := pl
-    dsimp only at p1 p2 p3 p4 ⊢
-    exact cont 1 m1 out1 (Nat.le_refl _) (by omega) p1 p2 p3 p4 (i + 1) (n - 1) hi1 hn1
-  · rw [dite_eq_right hle]
-    have hp1 : (byte.toUInt64 + 1).toNat = byte.toNat + 1 := by
-      rw [UInt64.toNat_add, hb64, show (1 : UInt64).toNat = 1 from rfl]
-      exact Nat.mod_eq_of_lt (by omega)
-    have hrp : byte.toNat + 1 < r.toNat := Nat.lt_of_not_le fun e => hle (UInt64.le_iff_toNat_le.mpr (by rw [hp1]; exact e))
-    have hz0 : (0 : UInt64).toNat = 0 := rfl
-    obtain ⟨o1, o2, o3, o4⟩ := revOut_spec m i byte.toUInt64 (byte.toNat + 1) 0 (byte.toUInt64 + 1) out hp1
-      (by rw [hz0, hb64]; omega) (by rw [hb64]; exact hsb) (by rw [hz0, hi]; omega) (by rw [hz0, hi]; omega)
-    rw [hz0, Nat.add_zero, hi] at o2 o3
-    rw [hz0, hb64, hi] at o4
-    generalize revOut m out i byte.toUInt64 0 (byte.toUInt64 + 1) = out1 at o1 o2 o3 o4 ⊢
-    have hip : (i + (byte.toUInt64 + 1)).toNat = pre.length + (byte.toNat + 1) := by
-      rw [UInt64.toNat_add, hi, hp1]
-      exact Nat.mod_eq_of_lt (by omega)
-    have hrs : (r - (byte.toUInt64 + 1)).toNat = r.toNat - (byte.toNat + 1) := by
+  -- A round's values are the list's first places backwards.
+  have hround : ∀ t, t ≤ s.toNat → t < k.toNat →
+      (inverseMoveToFrontFrom L (List.replicate k.toNat s.toNat))[t]? = some (L.getD (s.toNat - t) 0) := by
+    intro t ht htk
+    by_cases hkp : k.toNat ≤ s.toNat + 1
+    · have e : List.replicate (s.toNat + 1) s.toNat =
+          List.replicate k.toNat s.toNat ++ List.replicate (s.toNat + 1 - k.toNat) s.toNat := by
+        rw [List.replicate_append_replicate]
+        congr 1
+        omega
+      rw [← imtf_prefix L _ (List.replicate (s.toNat + 1 - k.toNat) s.toNat) (by rw [List.length_replicate]; exact htk), ← e,
+        imtf_rot_get L _ hsL ht]
+    · have e : List.replicate k.toNat s.toNat =
+          List.replicate (s.toNat + 1) s.toNat ++ List.replicate (k.toNat - (s.toNat + 1)) s.toNat := by
+        rw [List.replicate_append_replicate]
+        congr 1
+        omega
+      rw [e, imtf_prefix L _ _ (by rw [List.length_replicate]; omega), imtf_rot_get L _ hsL ht]
+  unfold imtfRun
+  by_cases hks : k ≤ s
+  · rw [ite_eq_left hks]
+    dsimp only
+    have hks' : k.toNat ≤ s.toNat := UInt64.le_iff_toNat_le.mp hks
+    obtain ⟨o1, o2, o3, o4⟩ := revOut_spec m i s k.toNat 0 k out rfl (by rw [hz0]; omega) hs (by rw [hz0]; omega)
+      (by rw [hz0]; omega)
+    rw [hz0, Nat.add_zero] at o2 o3
+    rw [hz0] at o4
+    generalize revOut m out i s 0 k = out1 at o1 o2 o3 o4 ⊢
+    have hsk : (s + 1 - k).toNat = s.toNat + 1 - k.toNat := by
       rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by rw [hp1]; omega)), hp1]
-    obtain ⟨q1, q2, q3, q4⟩ := copyPeriod_spec (byte.toUInt64 + 1) (by rw [hp1]; omega) (r.toNat - (byte.toNat + 1))
-      (i + (byte.toUInt64 + 1)) (r - (byte.toUInt64 + 1)) out1 hrs (by rw [hip, hp1]; omega) (by rw [hip]; omega)
-      (by rw [hip, o1]; omega)
+    obtain ⟨b1, b2⟩ := shiftBy_spec k (s.toNat + 1 - k.toNat) m s (s + 1 - k) hsk (fun _ => ⟨by omega, hs⟩) hk hm.sz
+    have hk1 : (k - 1).toNat = k.toNat - 1 :=
+      UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by rw [show (1 : UInt64).toNat = 1 from rfl]; omega))
+    obtain ⟨c1, c2, c3⟩ := rotFrom_spec out1 i k.toNat 0 (k - 1) k (shiftBy m s k (s + 1 - k)) rfl
+      (fun _ => ⟨by rw [hk1]; omega, by rw [hk1]; omega⟩) (by rw [hz0]; omega) b1
+    rw [hz0] at c2 c3
+    rw [hk1] at c3
+    refine ⟨o1, fun t ht => ?_, fun q hq => ?_, ?_⟩
+    · rw [hround t (by omega) ht, o4 t (Nat.zero_le _) (by omega), hm.at_ _ (by omega)]
+    · rcases hq with hq | hq
+      · exact o2 q hq
+      · exact o3 q hq
+    · rw [mtfAfter_rot L _ hsL k.toNat (by omega)]
+      have hA : ((L.take (s.toNat + 1)).drop (s.toNat + 1 - k.toNat)).length = k.toNat := by
+        rw [List.length_drop, List.length_take]; omega
+      have hB : ((L.take (s.toNat + 1)).take (s.toNat + 1 - k.toNat)).length = s.toNat + 1 - k.toNat := by
+        rw [List.length_take, List.length_take]; omega
+      refine ⟨c1, by simp only [List.length_append, hA, hB, List.length_drop]; omega, fun x hx => ?_⟩
+      rw [List.getD_eq_getElem?_getD, List.append_assoc]
+      by_cases h1 : x < k.toNat
+      · rw [List.getElem?_append_left (by rw [hA]; exact h1), List.getElem?_drop, List.getElem?_take,
+          ite_eq_left (show s.toNat + 1 - k.toNat + x < s.toNat + 1 by omega), ← List.getD_eq_getElem?_getD]
+        have := c3 x h1
+        rw [Nat.zero_add] at this
+        rw [this, show i.toNat + (k.toNat - 1) - x = i.toNat + (k.toNat - 1 - x) by omega, o4 _ (Nat.zero_le _) (by omega),
+          show s.toNat - (k.toNat - 1 - x) = s.toNat + 1 - k.toNat + x by omega, hm.at_ _ (by omega)]
+      · rw [List.getElem?_append_right (by rw [hA]; omega), hA, c2 x (Or.inr (by omega)), b2 x hx]
+        by_cases h2 : x ≤ s.toNat
+        · rw [ite_eq_left (show s.toNat + 1 - (s.toNat + 1 - k.toNat) ≤ x ∧ x ≤ s.toNat by omega),
+            List.getElem?_append_left (by rw [hB]; omega), List.getElem?_take, ite_eq_left (show x - k.toNat < s.toNat + 1 - k.toNat by omega),
+            List.getElem?_take, ite_eq_left (show x - k.toNat < s.toNat + 1 by omega), ← List.getD_eq_getElem?_getD,
+            hm.at_ _ (by omega)]
+        · rw [ite_eq_right (show ¬ (s.toNat + 1 - (s.toNat + 1 - k.toNat) ≤ x ∧ x ≤ s.toNat) by omega),
+            List.getElem?_append_right (by rw [hB]; omega), hB, List.getElem?_drop,
+            show s.toNat + 1 + (x - k.toNat - (s.toNat + 1 - k.toNat)) = x by omega, ← List.getD_eq_getElem?_getD, hm.at_ x hx]
+  · rw [ite_eq_right hks]
+    dsimp only
+    have hrp : s.toNat < k.toNat := Nat.lt_of_not_le fun e => hks (UInt64.le_iff_toNat_le.mpr e)
+    obtain ⟨o1, o2, o3, o4⟩ := revOut_spec m i s (s.toNat + 1) 0 (s + 1) out hp1 (by rw [hz0]; omega) hs
+      (by rw [hz0]; omega) (by rw [hz0]; omega)
+    rw [hz0, Nat.add_zero] at o2 o3
+    rw [hz0] at o4
+    generalize revOut m out i s 0 (s + 1) = out1 at o1 o2 o3 o4 ⊢
+    have hip : (i + (s + 1)).toNat = i.toNat + (s.toNat + 1) := by
+      rw [UInt64.toNat_add, hp1]
+      exact Nat.mod_eq_of_lt (by omega)
+    have hrs : (k - (s + 1)).toNat = k.toNat - (s.toNat + 1) := by
+      rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by rw [hp1]; omega)), hp1]
+    obtain ⟨q1, q2, q3, q4⟩ := copyPeriod_spec (s + 1) (by rw [hp1]; omega) (k.toNat - (s.toNat + 1))
+      (i + (s + 1)) (k - (s + 1)) out1 hrs (by rw [hip, hp1]; omega) (by rw [hip]; omega) (by rw [hip, o1]; omega)
     rw [hip] at q2 q3 q4
     rw [hp1] at q4
-    generalize copyPeriod out1 (i + (byte.toUInt64 + 1)) (r - (byte.toUInt64 + 1)) (byte.toUInt64 + 1) = out2 at q1 q2 q3 q4 ⊢
+    generalize copyPeriod out1 (i + (s + 1)) (k - (s + 1)) (s + 1) = out2 at q1 q2 q3 q4 ⊢
     -- The round's values, in the outputs, are the list's first places backwards.
-    have hfirst : ∀ t, t ≤ byte.toNat → (out2.data[pre.length + t]?.getD 0).toNat = L.getD (byte.toNat - t) 0 := by
+    have hfirst : ∀ t, t ≤ s.toNat → (out2.data[i.toNat + t]?.getD 0).toNat = L.getD (s.toNat - t) 0 := by
       intro t ht
       rw [q2 _ (by omega), o4 t (Nat.zero_le _) (by omega), hm.at_ _ (by omega)]
     -- The list after the run: its first places turned round as far as the run goes past whole rounds.
-    have hK : (r.toNat - (byte.toNat + 1)) % (byte.toNat + 1) < byte.toNat + 1 := Nat.mod_lt _ (by omega)
-    generalize hKd : (r.toNat - (byte.toNat + 1)) % (byte.toNat + 1) = K at hK
-    have hk : ((r - (byte.toUInt64 + 1)) % (byte.toUInt64 + 1)).toNat = K := by rw [UInt64.toNat_mod, hrs, hp1, hKd]
-    generalize (r - (byte.toUInt64 + 1)) % (byte.toUInt64 + 1) = k at hk ⊢
-    have hir32 : i.toNat + byte.toNat < 2 ^ 32 := by rw [hi]; omega
-    obtain ⟨a1, a2, a3⟩ := rotFrom_spec out2 i K 0 (k - 1) k m hk
+    have hK : (k.toNat - (s.toNat + 1)) % (s.toNat + 1) < s.toNat + 1 := Nat.mod_lt _ (by omega)
+    generalize hKd : (k.toNat - (s.toNat + 1)) % (s.toNat + 1) = K at hK
+    have hkK : ((k - (s + 1)) % (s + 1)).toNat = K := by rw [UInt64.toNat_mod, hrs, hp1, hKd]
+    generalize (k - (s + 1)) % (s + 1) = kk at hkK ⊢
+    obtain ⟨a1, a2, a3⟩ := rotFrom_spec out2 i K 0 (kk - 1) kk m hkK
       (fun h => by
-        rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by rw [hk, show (1 : UInt64).toNat = 1 from rfl]; omega)), hk,
+        rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by rw [hkK, show (1 : UInt64).toNat = 1 from rfl]; omega)), hkK,
           show (1 : UInt64).toNat = 1 from rfl]
         omega)
       (by rw [hz0]; omega) hm.sz
-    have hpk : (byte.toUInt64 + 1 - k).toNat = byte.toNat + 1 - K := by
-      rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by rw [hk, hp1]; omega)), hk, hp1]
-    obtain ⟨c1, c2, c3⟩ := rotFrom_spec out2 i (byte.toNat + 1 - K) k byte.toUInt64 (byte.toUInt64 + 1 - k)
-      (rotFrom out2 m i 0 (k - 1) k) hpk (fun _ => by rw [hb64]; omega) (by rw [hk]; omega) a1
+    have hpk : (s + 1 - kk).toNat = s.toNat + 1 - K := by
+      rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by rw [hkK, hp1]; omega)), hkK, hp1]
+    obtain ⟨c1, c2, c3⟩ := rotFrom_spec out2 i (s.toNat + 1 - K) kk s (s + 1 - kk)
+      (rotFrom out2 m i 0 (kk - 1) kk) hpk (fun _ => by omega) (by rw [hkK]; omega) a1
     rw [hz0] at a2 a3
-    rw [hk] at c2 c3
-    rw [hb64] at c3
-    have hms : MtfIs (rotFrom out2 (rotFrom out2 m i 0 (k - 1) k) i k byte.toUInt64 (byte.toUInt64 + 1 - k))
-        (mtfAfter L (List.replicate r.toNat byte.toNat)) := by
+    rw [hkK] at c2 c3
+    have hms : MtfIs (rotFrom out2 (rotFrom out2 m i 0 (kk - 1) kk) i kk s (s + 1 - kk))
+        (mtfAfter L (List.replicate k.toNat s.toNat)) := by
       rw [mtfAfter_mod L _ hsL, Nat.mod_eq_sub_mod (by omega), hKd, mtfAfter_rot L _ hsL K (by omega)]
-      have hP : (L.take (byte.toNat + 1)).length = byte.toNat + 1 := by rw [List.length_take]; omega
-      have hA : ((L.take (byte.toNat + 1)).drop (byte.toNat + 1 - K)).length = K := by rw [List.length_drop]; omega
-      have hB : ((L.take (byte.toNat + 1)).take (byte.toNat + 1 - K)).length = byte.toNat + 1 - K := by
-        rw [List.length_take]; omega
-      have hL := hm.length
+      have hA : ((L.take (s.toNat + 1)).drop (s.toNat + 1 - K)).length = K := by
+        rw [List.length_drop, List.length_take]; omega
+      have hB : ((L.take (s.toNat + 1)).take (s.toNat + 1 - K)).length = s.toNat + 1 - K := by
+        rw [List.length_take, List.length_take]; omega
       refine ⟨c1, by simp only [List.length_append, hA, hB, List.length_drop]; omega, fun x hx => ?_⟩
       rw [List.getD_eq_getElem?_getD, List.append_assoc]
       by_cases h1 : x < K
       · rw [List.getElem?_append_left (by rw [hA]; exact h1), List.getElem?_drop, List.getElem?_take,
-          ite_eq_left (show byte.toNat + 1 - K + x < byte.toNat + 1 by omega), ← List.getD_eq_getElem?_getD,
+          ite_eq_left (show s.toNat + 1 - K + x < s.toNat + 1 by omega), ← List.getD_eq_getElem?_getD,
           c2 x (Or.inl h1)]
         have := a3 x h1
-        have hk1 : (k - 1).toNat = K - 1 := by
-          rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by rw [hk, show (1 : UInt64).toNat = 1 from rfl]; omega)), hk]
+        have hk1 : (kk - 1).toNat = K - 1 := by
+          rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by rw [hkK, show (1 : UInt64).toNat = 1 from rfl]; omega)), hkK]
           rfl
         rw [show 0 + x = x by omega, hk1] at this
-        rw [this, show i.toNat + (K - 1) - x = pre.length + (K - 1 - x) by rw [hi]; omega, hfirst _ (by omega)]
+        rw [this, show i.toNat + (K - 1) - x = i.toNat + (K - 1 - x) by omega, hfirst _ (by omega)]
         congr 1
         omega
       · rw [List.getElem?_append_right (by rw [hA]; omega), hA]
-        by_cases h2 : x ≤ byte.toNat
-        · rw [List.getElem?_append_left (by rw [hB]; omega), List.getElem?_take, ite_eq_left (show x - K < byte.toNat + 1 - K by omega),
-            List.getElem?_take, ite_eq_left (show x - K < byte.toNat + 1 by omega), ← List.getD_eq_getElem?_getD]
+        by_cases h2 : x ≤ s.toNat
+        · rw [List.getElem?_append_left (by rw [hB]; omega), List.getElem?_take, ite_eq_left (show x - K < s.toNat + 1 - K by omega),
+            List.getElem?_take, ite_eq_left (show x - K < s.toNat + 1 by omega), ← List.getD_eq_getElem?_getD]
           have := c3 (x - K) (by omega)
           rw [show K + (x - K) = x by omega] at this
-          rw [this, show i.toNat + byte.toNat - (x - K) = pre.length + (byte.toNat - (x - K)) by rw [hi]; omega,
-            hfirst _ (by omega)]
+          rw [this, show i.toNat + s.toNat - (x - K) = i.toNat + (s.toNat - (x - K)) by omega, hfirst _ (by omega)]
           congr 1
           omega
         · rw [List.getElem?_append_right (by rw [hB]; omega), hB, List.getElem?_drop,
-            show byte.toNat + 1 + (x - K - (byte.toNat + 1 - K)) = x by omega, ← List.getD_eq_getElem?_getD,
+            show s.toNat + 1 + (x - K - (s.toNat + 1 - K)) = x by omega, ← List.getD_eq_getElem?_getD,
             c2 x (Or.inr (by omega)), a2 x (Or.inr (by omega)), hm.at_ x hx]
-    have hsplit : List.replicate r.toNat byte.toNat =
-        List.replicate (byte.toNat + 1) byte.toNat ++ List.replicate (r.toNat - (byte.toNat + 1)) byte.toNat := by
-      rw [List.replicate_append_replicate]
-      congr 1
-      omega
-    have hlen1 : (pre ++ inverseMoveToFrontFrom L (List.replicate (byte.toNat + 1) byte.toNat)).length = pre.length + (byte.toNat + 1) := by
-      rw [List.length_append, inverseMoveToFrontFrom_length, List.length_replicate]
-    have hpre : ∀ j, j < pre.length + (byte.toNat + 1) →
-        (pre ++ inverseMoveToFrontFrom L (List.replicate r.toNat byte.toNat))[j]? =
-          (pre ++ inverseMoveToFrontFrom L (List.replicate (byte.toNat + 1) byte.toNat))[j]? := by
-      intro j hj
-      rw [hsplit, imtf_append, ← List.append_assoc, List.getElem?_append_left (by rw [hlen1]; exact hj)]
-    have hout : ∀ j, j < pre.length + r.toNat →
-        (pre ++ inverseMoveToFrontFrom L (List.replicate r.toNat byte.toNat))[j]? = some (out2.data[j]?.getD 0).toNat := by
-      intro j
-      induction j using Nat.strongRecOn with
-      | _ j ihj =>
-        intro hj
-        by_cases hlo : j < pre.length + (byte.toNat + 1)
-        · rw [hpre j hlo]
-          by_cases hlp : j < pre.length
-          · rw [List.getElem?_append_left hlp, hp j hlp, q2 j hlo, o2 j hlp]
-          · rw [List.getElem?_append_right (by omega), imtf_rot_get L _ hsL (by omega),
-              show j = pre.length + (j - pre.length) by omega, hfirst _ (by omega)]
-            congr 3
-            omega
-        · rw [q4 j (by omega) (by omega), ← ihj (j - (byte.toNat + 1)) (by omega) (by omega),
-            List.getElem?_append_right (by omega), List.getElem?_append_right (by omega),
-            show j - pre.length = j - (byte.toNat + 1) - pre.length + (byte.toNat + 1) by omega,
-            imtf_periodic L _ hsL (by omega), show j - (byte.toNat + 1) - pre.length = j - pre.length - (byte.toNat + 1) by omega]
-    have hir : (i + r).toNat = pre.length + r.toNat := by
-      rw [UInt64.toNat_add, hi]
-      exact Nat.mod_eq_of_lt (by omega)
-    have hnr : (n - r).toNat = N - r.toNat := by
-      rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by omega)), hn]
-    exact cont r.toNat _ out2 (by omega) (by omega) (q1.trans o1) (by rw [htk _ (Nat.le_refl _)]; exact hout)
-      (fun q hq' => by rw [q3 q (by omega), o3 q (by omega)]) (by rw [htk _ (Nat.le_refl _)]; exact hms) (i + r) (n - r) hir hnr
+    refine ⟨q1.trans o1, fun t => ?_, fun q hq => ?_, hms⟩
+    · induction t using Nat.strongRecOn with
+      | _ t iht =>
+        intro ht
+        by_cases hlo : t ≤ s.toNat
+        · rw [hround t hlo ht, hfirst t hlo]
+        · rw [q4 (i.toNat + t) (by omega) (by omega), show i.toNat + t - (s.toNat + 1) = i.toNat + (t - (s.toNat + 1)) by omega,
+            ← iht (t - (s.toNat + 1)) (by omega) (by omega), show t = t - (s.toNat + 1) + (s.toNat + 1) by omega,
+            imtf_periodic L _ hsL (by omega), Nat.add_sub_cancel]
+    · rcases hq with hq | hq
+      · rw [q2 q (by omega), o2 q hq]
+      · rw [q3 q (by omega), o3 q (by omega)]
 
 /-- Marks the values of `n` bytes from `i`. -/
 def markAll (map flags : ByteArray) (i n : UInt64) : ByteArray :=
@@ -1275,48 +749,470 @@ theorem allMarked_iff (flags : ByteArray) : ∀ (N : Nat) (t n : UInt64), n.toNa
       · intro h k h1 h2
         exact h k (by omega) (by omega)
 
-/-- Checks that every value below `n` occurs in a map of `size` bytes. -/
-def allOccur (map : ByteArray) (size n : UInt64) : Bool :=
-  allMarked (markAll map (zeroBytes 256) 0 size) 0 n
-
-theorem allOccur_iff {map : ByteArray} {l : List Nat} {size n : UInt64} (hs : size.toNat < 2 ^ 31) (hn : n.toNat ≤ 256)
-    (hl : l.length = size.toNat) (hat : ∀ i, i < size.toNat → l[i]? = some (map.data[i]?.getD 0).toNat) :
-    allOccur map size n = true ↔ (List.range n.toNat).all l.contains = true := by
+/-- Flags for a list's values say whether every value below `n` occurs. -/
+theorem SeenIs.allMarked {flags : ByteArray} {l : List Nat} (h : SeenIs flags l) {n : UInt64} (hn : n.toNat ≤ 256) :
+    allMarked flags 0 n = true ↔ (List.range n.toNat).all l.contains = true := by
   have hz : (0 : UInt64).toNat = 0 := rfl
-  obtain ⟨_, m2⟩ := markAll_spec map _ (zeroBytes 256) 0 size rfl (by rw [hz]; omega) (zeroBytes_size (by decide))
-  unfold allOccur
-  rw [allMarked_iff _ _ 0 n rfl (by rw [hz]; omega), hz]
-  simp only [List.all_eq_true, List.mem_range, List.contains_iff_mem, Nat.zero_add]
+  rw [allMarked_iff flags n.toNat 0 n rfl (by rw [hz]; omega), hz]
+  simp only [List.all_eq_true, List.mem_range, List.contains_iff_mem]
   constructor
-  · intro h t ht
-    have := (m2 t (by omega)).mp (h t (Nat.zero_le _) ht)
-    rcases this with h1 | ⟨j, _, h3, h4⟩
-    · rw [zeroBytes_get (by decide)] at h1
-      exact absurd rfl h1
-    · have e := hat j (by omega)
-      rw [h4] at e
-      exact List.mem_of_getElem? e
-  · intro h t _ ht
-    refine (m2 t (by omega)).mpr (Or.inr ?_)
-    obtain ⟨j, hj, e⟩ := List.mem_iff_getElem.mp (h t ht)
-    have e2 := hat j (by omega)
-    rw [List.getElem?_eq_getElem hj, e] at e2
-    exact ⟨j, by rw [hz]; omega, by rw [hz]; omega, (Option.some.inj e2).symm⟩
+  · intro h' t ht
+    exact (h.at_ t (by omega)).mp (h' t (Nat.zero_le _) (by omega))
+  · intro h' t _ ht
+    exact (h.at_ t (by omega)).mpr (h' t (by omega))
+
+/-! ### A context map's values -/
+
+/-- A run's values repeat after a round. -/
+theorem imtf_rep_mod (L : List Nat) (s : Nat) (hs : s < L.length) {k : Nat} : ∀ j, j < k →
+    (inverseMoveToFrontFrom L (List.replicate k s))[j]? = (inverseMoveToFrontFrom L (List.replicate k s))[j % (s + 1)]? := by
+  intro j
+  induction j using Nat.strongRecOn with
+  | _ j ih =>
+    intro hj
+    by_cases hlt : j < s + 1
+    · rw [Nat.mod_eq_of_lt hlt]
+    · have e := imtf_periodic L s hs (j := j - (s + 1)) (k := k) (by omega)
+      rw [show j - (s + 1) + (s + 1) = j by omega] at e
+      rw [e, ih (j - (s + 1)) (by omega) (by omega), Nat.mod_eq_sub_mod (show s + 1 ≤ j by omega)]
+
+/-- The value read, flagged. -/
+theorem SeenIs.mark {sr : ByteArray} {l : List Nat} (h : SeenIs sr l) {v : UInt64} (hv : v.toNat < 256) {n : Nat} (hn : 1 ≤ n) :
+    SeenIs (setU sr v.toUSize 1) (l ++ List.replicate n v.toNat) where
+  sz := by rw [size_setU]; exact h.sz
+  at_ t ht := by
+    have hus : v.toUSize.toNat = v.toNat := word_toUSize (by omega)
+    simp only [List.mem_append, List.mem_replicate]
+    by_cases he : t = v.toNat
+    · subst he
+      have := setU_get_same (t := sr) (i := v.toUSize) (v := 1) (by rw [hus, h.sz]; exact hv)
+      rw [hus] at this
+      rw [this]
+      exact ⟨fun _ => Or.inr ⟨by omega, rfl⟩, fun _ => by decide⟩
+    · rw [setU_get_ne (by rw [hus]; exact he), h.at_ t ht]
+      exact ⟨Or.inl, fun h' => h'.elim id (fun h2 => absurd h2.2 he)⟩
+
+/-- A run's transformed values, flagged from its first round, which has all of them. -/
+theorem SeenIs.marks {sx out : ByteArray} {l : List Nat} (h : SeenIs sx l) {L : List Nat} {s : Nat} (hs : s < L.length) {k : Nat}
+    {i c : UInt64} (hc : c.toNat = min k (s + 1)) (h32 : i.toNat + c.toNat < 2 ^ 32)
+    (hout : ∀ t, t < k → (inverseMoveToFrontFrom L (List.replicate k s))[t]? = some (out.data[i.toNat + t]?.getD 0).toNat) :
+    SeenIs (markAll out sx i c) (l ++ inverseMoveToFrontFrom L (List.replicate k s)) := by
+  obtain ⟨m1, m2⟩ := markAll_spec out _ sx i c rfl h32 h.sz
+  refine ⟨m1, fun t ht => ?_⟩
+  rw [m2 t ht, h.at_ t ht, List.mem_append]
+  refine or_congr Iff.rfl ⟨fun ⟨j, h1, h2, h3⟩ => ?_, fun hm => ?_⟩
+  · have e := hout (j - i.toNat) (by omega)
+    rw [show i.toNat + (j - i.toNat) = j by omega, h3] at e
+    exact List.mem_of_getElem? e
+  · obtain ⟨j, e⟩ := List.mem_iff_getElem?.mp hm
+    have hlen : (inverseMoveToFrontFrom L (List.replicate k s)).length = k := by
+      rw [inverseMoveToFrontFrom_length, List.length_replicate]
+    have hjk : j < k := by
+      rw [← hlen]
+      exact (List.getElem?_eq_some_iff.mp e).1
+    have hjm : j % (s + 1) < s + 1 := Nat.mod_lt _ (by omega)
+    have hjl : j % (s + 1) ≤ j := Nat.mod_le _ _
+    rw [imtf_rep_mod L s hs j hjk, hout _ (by omega)] at e
+    exact ⟨i.toNat + j % (s + 1), by omega, by omega, (Option.some.inj e)⟩
+
+/-- A step's values, written as read and transformed, with their flags. -/
+theorem XfRel.step {xf m sr sx : ByteArray} {done : List Nat} {S : Nat} (hx : XfRel xf m sr sx done S) {idx v n c : UInt64}
+    {N : Nat} (hN : n.toNat = N) (hidx : idx.toNat = done.length) (hn1 : 1 ≤ N) (hdn : done.length + N ≤ S) (hS : S < 2 ^ 31)
+    (hv : v.toNat < 256) (hc : c.toNat = min N (v.toNat + 1)) :
+    XfRel (imtfRun m xf idx v n).2 (imtfRun m xf idx v n).1 (setU sr v.toUSize 1) (markAll (imtfRun m xf idx v n).2 sx idx c)
+      (done ++ List.replicate N v.toNat) S := by
+  subst hN
+  have hL : (mtfAfter (List.range 256) done).length = 256 := hx.mtf.length
+  obtain ⟨r1, r2, r3, r4⟩ := imtfRun_spec (i := idx) (s := v) (k := n) (out := xf) hx.mtf hv hn1 (by omega) (by rw [hx.sz]; omega)
+  have happ : inverseMoveToFront (done ++ List.replicate n.toNat v.toNat) =
+      inverseMoveToFront done ++ inverseMoveToFrontFrom (mtfAfter (List.range 256) done) (List.replicate n.toNat v.toNat) :=
+    imtf_append _ _ _
+  have hlenI : (inverseMoveToFront done).length = done.length := inverseMoveToFrontFrom_length _ _
+  refine ⟨by rw [r1, hx.sz], fun j hj => ?_, fun j hj => ?_, ?_, hx.seenR.mark hv hn1, ?_⟩
+  · rw [happ]
+    rw [List.length_append, List.length_replicate] at hj
+    by_cases hA : j < done.length
+    · rw [List.getElem?_append_left (by rw [hlenI]; exact hA), hx.at_ j hA, r3 j (Or.inl (by omega))]
+    · rw [List.getElem?_append_right (by rw [hlenI]; omega), hlenI, r2 (j - done.length) (by omega),
+        show idx.toNat + (j - done.length) = j by omega]
+  · rw [List.length_append, List.length_replicate] at hj
+    rw [r3 j (Or.inr (by omega))]
+    exact hx.zero j (by omega)
+  · rw [mtfAfter_append]
+    exact r4
+  · rw [happ]
+    exact hx.seenX.marks (by omega) hc (by omega) r2
+
+theorem XfRel.work {xf m sr sx : ByteArray} {done : List Nat} {S : Nat} (hx : XfRel xf m sr sx done S) (hS : S ≤ 16384) :
+    xf.size ≤ 16384 ∧ m.size ≤ 256 ∧ sr.size ≤ 256 ∧ sx.size ≤ 256 :=
+  ⟨by rw [hx.sz]; exact hS, Nat.le_of_eq hx.mtf.sz, Nat.le_of_eq hx.seenR.sz, Nat.le_of_eq hx.seenX.sz⟩
+
+/-- Once every value is read, the transformed values are the transform of them. -/
+theorem XfRel.final {xf m sr sx : ByteArray} {done : List Nat} {S n : Nat} (hx : XfRel xf m sr sx done S) (hl : done.length = S)
+    (hlt : ∀ v ∈ done, v < n) : MapOk xf (inverseMoveToFront done) S n :=
+  ⟨hx.sz, by rw [inverseMoveToFront, inverseMoveToFrontFrom_length]; exact hl, fun i hi => hx.at_ i (by omega),
+    inverseMoveToFront_lt hlt⟩
+
+/-- The place reading a context map's values. Each value is written as read and, through the transform, as it is if the
+last bit asks for the transform; the value read is flagged, and so are the step's transformed values from their first
+round. -/
+def stepHVals (st : Hd) (pos : USize) : Hd :=
+  let left := st.left
+  if left = 0 then { st with pos := pos, status := .next, tag := .imtf }
+  else
+    let r := mapSymFast st.mapT.t (USize.ofNat 0) st.mapT.fits st.mapT.h32 st.rlemax ⟨st.word, st.count⟩
+    match r.status with
+    | .short => markH st pos .needsInput
+    | .bad => markH st pos .bad
+    | .ok =>
+      let v := r.a
+      let run := r.b
+      let idx := st.idx
+      if left < run then markH st pos .bad
+      else
+        let fill := st.fill
+        let xf := st.xf
+        let m := st.mtf
+        let sr := st.seenR
+        let sx := st.seenX
+        let st0 := clearMap st
+        if r.count = st.count then
+          -- A code that gives a value without reading gives it for every value left.
+          let q := imtfRun m xf idx v left
+          let c := if left ≤ v then left else v + 1
+          { st0 with
+            pos := pos, status := .next, idx := idx + left, left := 0
+            fill := if v = 0 then fill else fillLens fill idx left v.toUInt8
+            xf := q.2, mtf := q.1, seenR := setU sr v.toUSize 1, seenX := markAll q.2 sx idx c }
+        else if v = 0 then
+          let q := imtfRun m xf idx v run
+          { st0 with
+            word := r.word, count := r.count, pos := pos, status := .next, idx := idx + run, left := left - run
+            fill := fill, xf := q.2, mtf := q.1, seenR := setU sr v.toUSize 1, seenX := markAll q.2 sx idx 1 }
+        else
+          let q := imtfRun m xf idx v run
+          { st0 with
+            word := r.word, count := r.count, pos := pos, status := .next, idx := idx + run, left := left - run
+            fill := setU fill idx.toUSize v.toUInt8, xf := q.2, mtf := q.1, seenR := setU sr v.toUSize 1
+            seenX := markAll q.2 sx idx 1 }
+
+theorem min_run {left v : UInt64} (hv : v.toNat < 256) :
+    (if left ≤ v then left else v + 1).toNat = min left.toNat (v.toNat + 1) := by
+  by_cases h : left ≤ v
+  · rw [ite_eq_left h]
+    have := UInt64.le_iff_toNat_le.mp h
+    omega
+  · rw [ite_eq_right h, UInt64.toNat_add, show (1 : UInt64).toNat = 1 from rfl, Nat.mod_eq_of_lt (by omega)]
+    have := Nat.lt_of_not_le fun e => h (UInt64.le_iff_toNat_le.mpr e)
+    omega
+
+section
+variable {α : Type} {K : HK α} {a : ByteArray} {stop : USize}
+
+theorem stepHVals_ok {isL : Bool} {ntrees rlemax : Nat} {code : PrefixCode} {done : List Nat} {left : Nat} {st : Hd} {g : Gh} {pos : USize}
+    (hrel : HRel st g (.vals isL ntrees rlemax code done left)) (hp : pos.toNat ≤ stop.toNat) (hfull : 56 < st.count.toNat ∨ pos = stop) :
+    HStepOk K a stop g (.vals isL ntrees rlemax code done left) st pos (stepHVals st pos) := by
+  obtain ⟨hw, hu, ht, hi, hn, hr, h2, h256, h16, hok, hC, hsy, hidx, hleft, hlen, hsz, hlt, hat, hzero, hx⟩ := hrel
+  have hrel : HRel st g (.vals isL ntrees rlemax code done left) :=
+    ⟨hw, hu, ht, hi, hn, hr, h2, h256, h16, hok, hC, hsy, hidx, hleft, hlen, hsz, hlt, hat, hzero, hx⟩
+  obtain ⟨_, hmle⟩ := mapSizeFast_eq (g := g) hi hu
+  unfold stepHVals
+  dsimp only
+  by_cases h0 : st.left = 0
+  · rw [ite_eq_left h0]
+    have hl0 : left = 0 := by
+      rw [← hleft, h0]
+      rfl
+    subst hl0
+    refine HStepOk.ofNext (g' := g) (p' := .imtf isL ntrees done) rfl
+      ⟨hw, hu, rfl, hi, hn, h2, h256, ⟨hsz, by omega, fun i hi' => hat i (by omega), hlt⟩, hx.final (by omega) hlt, hx.seenR, hx.seenX⟩
+      (Nat.le_refl _) hp (fun F => hrest_vals_zero K g isL ntrees rlemax code done _) (fun F => hStep_vals_zero _)
+  rw [ite_eq_right h0]
+  have hl0 : left ≠ 0 := by
+    rw [← hleft]
+    exact fun e => h0 (UInt64.toNat_inj.mp e)
+  have R := mapSymFast_ok (t := st.mapT.t) (base := USize.ofNat 0) (hfit := st.mapT.fits) (h32 := st.mapT.h32) (rlemax := st.rlemax) hw hok hC (by omega)
+  rw [hr] at R
+  obtain ⟨Rok, Rshort, Rbad⟩ := R.run (X := hrest K g (.vals isL ntrees rlemax code done left)) (N := fun v b =>
+    if left < v.2 then none else hrest K g (.vals isL ntrees rlemax code (done ++ List.replicate v.2 v.1) (left - v.2)) b)
+    (fun bs => hrest_vals_step K g isL ntrees rlemax code done left bs hl0)
+  have hval := R.ok
+  have hsh0 := R.short
+  have hnb : (mapSymFast st.mapT.t (USize.ofNat 0) st.mapT.fits st.mapT.h32 st.rlemax ⟨st.word, st.count⟩).status ≠ .bad := by
+    unfold mapSymFast
+    dsimp only
+    split
+    · split
+      · exact fun e => ReadStatus.noConfusion e
+      · split
+        · split <;> exact fun e => ReadStatus.noConfusion e
+        · exact fun e => ReadStatus.noConfusion e
+    · exact fun e => ReadStatus.noConfusion e
+  generalize mapSymFast st.mapT.t (USize.ofNat 0) st.mapT.fits st.mapT.h32 st.rlemax ⟨st.word, st.count⟩ = r at Rok Rshort Rbad hval hsh0 hnb
+  -- A code that gives a value without reading is the case where the read takes no bits.
+  have hnone : ∀ v, runOf rlemax code = some v → r.status = .ok ∧ r.count = st.count ∧ r.a.toNat = v ∧ r.b.toNat = 1 := by
+    intro v hv
+    have hm := mapSym_of_run hv
+    cases hsr : r.status with
+    | short =>
+      obtain ⟨_, _, _, h5⟩ := hsh0 hsr
+      rw [hm] at h5
+      cases h5
+    | bad => exact absurd hsr hnb
+    | ok =>
+      have e := (hval hsr).2 []
+      rw [List.append_nil, List.append_nil, hm] at e
+      simp only [Option.some.injEq, Prod.mk.injEq] at e
+      obtain ⟨⟨e1, e2⟩, e3⟩ := e
+      have hl := congrArg List.length e3
+      rw [held_len, held_len] at hl
+      exact ⟨rfl, UInt64.toNat_inj.mp hl.symm, e1.symm, e2.symm⟩
+  cases hsr : r.status with
+  | short =>
+    obtain ⟨_, _, h3, h4⟩ := Rshort hsr
+    obtain ⟨_, _, _, h5⟩ := hsh0 hsr
+    have hno : runOf rlemax code = none := by
+      cases e : runOf rlemax code with
+      | none => rfl
+      | some v => exact absurd ((hnone v e).1.symm.trans hsr) (by decide)
+    exact HStepOk.ofShortRead (X := 31) hrel hfull (by omega) h3 h4
+      (by rw [hStep_vals_step _ hl0 hno]; exact readIn_short h5 (by rw [held_len]; exact h3))
+  | bad => exact HStepOk.ofBad rfl (fun F => Rbad hsr _)
+  | ok =>
+    dsimp only
+    obtain ⟨hw2, hN⟩ := Rok hsr
+    obtain ⟨hv, hr1, hv1, hrlt⟩ := mapSym_bounds (by omega) h16 hsy ((hval hsr).2 [])
+    have hv256 : r.a.toNat < 256 := by omega
+    by_cases hbig : st.left < r.b
+    · rw [ite_eq_left hbig]
+      have hbig' : left < r.b.toNat := by
+        rw [← hleft]
+        exact UInt64.lt_iff_toNat_lt.mp hbig
+      refine HStepOk.ofBad rfl (fun F => ?_)
+      rw [avail_mk, hN]
+      simp only [hbig', ↓reduceIte]
+    rw [ite_eq_right hbig]
+    have hbig' : ¬ left < r.b.toNat := by
+      rw [← hleft]
+      exact fun e => hbig (UInt64.lt_iff_toNat_lt.mpr e)
+    by_cases hc : r.count = st.count
+    · rw [ite_eq_left hc]
+      -- The read took no bits: the code gives its value for every value left.
+      have hro : runOf rlemax code = some r.a.toNat := by
+        have e := (hval hsr).2 []
+        rw [List.append_nil, List.append_nil] at e
+        refine (mapSym_noRead e ?_).1
+        show r.buf.held.length = _
+        rw [held_len, held_len]
+        exact congrArg UInt64.toNat hc
+      have hidx3 : (st.idx + st.left).toNat = done.length + left := by
+        rw [UInt64.toNat_add, hidx, hleft]
+        exact Nat.mod_eq_of_lt (by omega)
+      have hlen3 : (done ++ List.replicate left r.a.toNat).length = done.length + left := by simp
+      have hz0 : (0 : UInt64).toNat = 0 := rfl
+      have hx' := hx.step (n := st.left) (v := r.a) (idx := st.idx) (c := if st.left ≤ r.a then st.left else r.a + 1)
+        hleft hidx (by omega) (by omega) (by omega) hv256 (by rw [min_run hv256, hleft])
+      have hwork := hx'.work hmle
+      by_cases hz : r.a = 0
+      · have hz' : r.a.toNat = 0 := by rw [hz]; rfl
+        have hfsz : (if r.a = 0 then st.fill else fillLens st.fill st.idx st.left r.a.toUInt8).size = st.fill.size := by
+          rw [ite_eq_left hz]
+        refine HStepOk.ofNext (g' := g) (p' := .vals isL ntrees rlemax code (done ++ List.replicate left r.a.toNat) 0)
+          (hd := Or.inl (Or.inr ⟨rfl, show 0 < left by omega⟩))
+          (hm := ⟨rfl, rfl, fun h => ⟨Nat.le_trans (Nat.le_of_eq hfsz) h.fill,
+            h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase, hwork⟩,
+            ⟨rfl, by simp [budH, tableOf]⟩⟩) rfl
+          ⟨hw, hu, ht, hi, hn, hr, h2, h256, h16, hok, hC, hsy, ?_, hz0, ?_, ?_, ?_, ?_, ?_, hx'⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
+        · show (st.idx + st.left).toNat = _
+          rw [hidx3, hlen3]
+        · rw [hlen3]
+          omega
+        · show (if r.a = 0 then st.fill else fillLens st.fill st.idx st.left r.a.toUInt8).size = _
+          rw [ite_eq_left hz]
+          exact hsz
+        · intro x hx
+          rcases List.mem_append.mp hx with h | h
+          · exact hlt x h
+          · rw [(List.mem_replicate.mp h).2]
+            exact hv
+        · intro i hi'
+          rw [hlen3] at hi'
+          show _ = some ((if r.a = 0 then st.fill else fillLens st.fill st.idx st.left r.a.toUInt8).data[i]?.getD 0).toNat
+          rw [ite_eq_left hz]
+          by_cases hA : i < done.length
+          · rw [List.getElem?_append_left hA, hat i hA]
+          · rw [List.getElem?_append_right (by omega), List.getElem?_replicate, ite_eq_left (by omega), hzero i (by omega), hz']
+            rfl
+        · intro i hi'
+          rw [hlen3] at hi'
+          show (if r.a = 0 then st.fill else fillLens st.fill st.idx st.left r.a.toUInt8).data[i]?.getD 0 = 0
+          rw [ite_eq_left hz]
+          exact hzero i (by omega)
+        · rw [hrest_vals_run K g isL ntrees rlemax code done left hro]
+          rfl
+        · rw [hStep_vals_run _ hl0 hro]
+          rfl
+      · have hz' : r.a.toNat ≠ 0 := fun e => hz (UInt64.toNat_inj.mp e)
+        have hbyte : r.a.toUInt8.toNat = r.a.toNat := by
+          rw [UInt64.toNat_toUInt8]
+          omega
+        obtain ⟨hfs, hfg⟩ := fillLens_spec r.a.toUInt8 left st.fill st.idx st.left hleft (by rw [hidx]; omega) (by rw [hidx, hsz]; omega)
+        have hfsz : (if r.a = 0 then st.fill else fillLens st.fill st.idx st.left r.a.toUInt8).size = st.fill.size := by
+          rw [ite_eq_right hz, hfs]
+        refine HStepOk.ofNext (g' := g) (p' := .vals isL ntrees rlemax code (done ++ List.replicate left r.a.toNat) 0)
+          (hd := Or.inl (Or.inr ⟨rfl, show 0 < left by omega⟩))
+          (hm := ⟨rfl, rfl, fun h => ⟨Nat.le_trans (Nat.le_of_eq hfsz) h.fill,
+            h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase, hwork⟩,
+            ⟨rfl, by simp [budH, tableOf]⟩⟩) rfl
+          ⟨hw, hu, ht, hi, hn, hr, h2, h256, h16, hok, hC, hsy, ?_, hz0, ?_, ?_, ?_, ?_, ?_, hx'⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
+        · show (st.idx + st.left).toNat = _
+          rw [hidx3, hlen3]
+        · rw [hlen3]
+          omega
+        · show (if r.a = 0 then st.fill else fillLens st.fill st.idx st.left r.a.toUInt8).size = _
+          rw [ite_eq_right hz, hfs]
+          exact hsz
+        · intro x hx
+          rcases List.mem_append.mp hx with h | h
+          · exact hlt x h
+          · rw [(List.mem_replicate.mp h).2]
+            exact hv
+        · intro i hi'
+          rw [hlen3] at hi'
+          show _ = some ((if r.a = 0 then st.fill else fillLens st.fill st.idx st.left r.a.toUInt8).data[i]?.getD 0).toNat
+          rw [ite_eq_right hz, hfg i, hidx]
+          by_cases hA : i < done.length
+          · rw [ite_eq_right (by omega), List.getElem?_append_left hA, hat i hA]
+          · rw [ite_eq_left (by omega), hbyte, List.getElem?_append_right (by omega), List.getElem?_replicate, ite_eq_left (by omega)]
+        · intro i hi'
+          rw [hlen3] at hi'
+          show (if r.a = 0 then st.fill else fillLens st.fill st.idx st.left r.a.toUInt8).data[i]?.getD 0 = 0
+          rw [ite_eq_right hz, hfg i, hidx, ite_eq_right (by omega)]
+          exact hzero i (by omega)
+        · rw [hrest_vals_run K g isL ntrees rlemax code done left hro]
+          rfl
+        · rw [hStep_vals_run _ hl0 hro]
+          rfl
+    rw [ite_eq_right hc]
+    have hno : runOf rlemax code = none := by
+      cases e : runOf rlemax code with
+      | none => rfl
+      | some v => exact absurd (hnone v e).2.1 hc
+    have hidx2 : (st.idx + r.b).toNat = done.length + r.b.toNat := by
+      rw [UInt64.toNat_add, hidx]
+      exact Nat.mod_eq_of_lt (by omega)
+    have hleft2 : (st.left - r.b).toNat = left - r.b.toNat := by
+      rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by rw [hleft]; omega)), hleft]
+    have hlen2 : (done ++ List.replicate r.b.toNat r.a.toNat).length = done.length + r.b.toNat := by simp
+    have hone : (1 : UInt64).toNat = min r.b.toNat (r.a.toNat + 1) := by
+      rw [show (1 : UInt64).toNat = 1 from rfl]
+      omega
+    by_cases hz : r.a = 0
+    · rw [ite_eq_left hz]
+      have hz' : r.a.toNat = 0 := by rw [hz]; rfl
+      have hx' := hx.step (n := r.b) (v := r.a) (idx := st.idx) (c := 1) rfl hidx hr1 (by omega) (by omega) hv256 hone
+      have hwork := hx'.work hmle
+      refine HStepOk.ofNext (g' := g) (p' := .vals isL ntrees rlemax code (done ++ List.replicate r.b.toNat r.a.toNat) (left - r.b.toNat))
+        (hd := Or.inl (Or.inr ⟨rfl, show left - r.b.toNat < left by omega⟩))
+        (hm := ⟨rfl, rfl, fun h => ⟨h.fill, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase,
+            hwork⟩,
+          ⟨rfl, by simp [budH, tableOf]⟩⟩) rfl
+        ⟨hw2, hu, ht, hi, hn, hr, h2, h256, h16, hok, hC, hsy, ?_, hleft2, ?_, hsz, ?_, ?_, ?_, hx'⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
+      · show (st.idx + r.b).toNat = _
+        rw [hidx2, hlen2]
+      · rw [hlen2]
+        omega
+      · intro x hx
+        rcases List.mem_append.mp hx with h | h
+        · exact hlt x h
+        · rw [(List.mem_replicate.mp h).2]
+          exact hv
+      · intro i hi'
+        rw [hlen2] at hi'
+        by_cases hA : i < done.length
+        · rw [List.getElem?_append_left hA, hat i hA]
+        · rw [List.getElem?_append_right (by omega), List.getElem?_replicate, ite_eq_left (by omega), hzero i (by omega), hz']
+          rfl
+      · intro i hi'
+        rw [hlen2] at hi'
+        exact hzero i (by omega)
+      · rw [avail_mk, hN]
+        simp only [hbig', ↓reduceIte]
+        rfl
+      · rw [avail_mk, hStep_vals_step _ hl0 hno, readIn_some ((hval hsr).2 _)]
+        simp only [hbig', ↓reduceIte]
+        rfl
+    · rw [ite_eq_right hz]
+      have hz' : r.a.toNat ≠ 0 := fun e => hz (UInt64.toNat_inj.mp e)
+      have hrun1 := hv1 hz'
+      have hus : st.idx.toUSize.toNat = done.length := by rw [word_toUSize (by omega), hidx]
+      have hbyte : r.a.toUInt8.toNat = r.a.toNat := by
+        rw [UInt64.toNat_toUInt8]
+        omega
+      have hx' := hx.step (n := r.b) (v := r.a) (idx := st.idx) (c := 1) rfl hidx hr1 (by omega) (by omega) hv256 hone
+      have hwork := hx'.work hmle
+      refine HStepOk.ofNext (g' := g) (p' := .vals isL ntrees rlemax code (done ++ List.replicate r.b.toNat r.a.toNat) (left - r.b.toNat))
+        (hd := Or.inl (Or.inr ⟨rfl, show left - r.b.toNat < left by omega⟩))
+        (hm := ⟨rfl, rfl, fun h => ⟨by show (setU st.fill st.idx.toUSize r.a.toUInt8).size ≤ _; rw [size_setU]; exact h.fill,
+          h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase, hwork⟩,
+          ⟨rfl, by simp [budH, tableOf]⟩⟩) rfl
+        ⟨hw2, hu, ht, hi, hn, hr, h2, h256, h16, hok, hC, hsy, ?_, hleft2, ?_, ?_, ?_, ?_, ?_, hx'⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
+      · show (st.idx + r.b).toNat = _
+        rw [hidx2, hlen2]
+      · rw [hlen2]
+        omega
+      · show (setU st.fill st.idx.toUSize r.a.toUInt8).size = _
+        rw [size_setU]
+        exact hsz
+      · intro x hx
+        rcases List.mem_append.mp hx with h | h
+        · exact hlt x h
+        · rw [(List.mem_replicate.mp h).2]
+          exact hv
+      · intro i hi'
+        rw [hlen2, hrun1] at hi'
+        show _ = some ((setU st.fill st.idx.toUSize r.a.toUInt8).data[i]?.getD 0).toNat
+        by_cases hA : i < done.length
+        · rw [List.getElem?_append_left hA, hat i hA, setU_get_ne (by rw [hus]; omega)]
+        · have he : i = done.length := by omega
+          subst he
+          have := setU_get_same (t := st.fill) (i := st.idx.toUSize) (v := r.a.toUInt8) (by rw [hus, hsz]; omega)
+          rw [hus] at this
+          rw [this, hbyte, List.getElem?_append_right (Nat.le_refl _), Nat.sub_self, List.getElem?_replicate, ite_eq_left (by omega)]
+      · intro i hi'
+        rw [hlen2, hrun1] at hi'
+        show (setU st.fill st.idx.toUSize r.a.toUInt8).data[i]?.getD 0 = 0
+        rw [setU_get_ne (by rw [hus]; omega)]
+        exact hzero i (by omega)
+      · rw [avail_mk, hN]
+        simp only [hbig', ↓reduceIte]
+        rfl
+      · rw [avail_mk, hStep_vals_step _ hl0 hno, readIn_some ((hval hsr).2 _)]
+        simp only [hbig', ↓reduceIte]
+        rfl
+
+end
 
 /-! ### A context map's last bit -/
 
-/-- The place at a context map's last bit. -/
+/-- The place at a context map's last bit: it chooses the values as read or as transformed, and checks that every tree
+occurs from their flags. -/
 def stepHImtf (st : Hd) (pos : USize) : Hd :=
   if 1 ≤ st.count then
     let b : BitBuffer := ⟨st.word, st.count⟩
     let b1 := b.drop 1
     let n := st.ntrees
     let fill := st.fill
-    let size := UInt64.ofNat fill.size
-    let st0 := clearFill st
-    let final := if b.peek 1 = 0 then fill else (imtfGo mtfInitLut fill 0 size).2
-    if allOccur final size n then mapFinish { st0 with word := b1.word, count := b1.count, pos := pos, status := .next } n final
-    else { st0 with pos := pos, status := .bad }
+    let xf := st.xf
+    let sr := st.seenR
+    let sx := st.seenX
+    let st0 := clearMap st
+    if b.peek 1 = 0 then
+      if allMarked sr 0 n then mapFinish { st0 with word := b1.word, count := b1.count, pos := pos, status := .next } n fill
+      else { st0 with pos := pos, status := .bad }
+    else
+      if allMarked sx 0 n then mapFinish { st0 with word := b1.word, count := b1.count, pos := pos, status := .next } n xf
+      else { st0 with pos := pos, status := .bad }
   else markH st pos .needsInput
 
 private theorem not_le_lt3 {a k : UInt64} (h : ¬ k ≤ a) : a.toNat < k.toNat :=
@@ -1355,37 +1251,43 @@ theorem stepHImtf_ok {isL : Bool} {ntrees : Nat} {vals : List Nat} {st : Hd} {g 
       intro f
       show readIn 1 (readInt 1) _ _ = _
       rw [readIn_some (show readInt 1 ((BitBuffer.mk st.word st.count).held ++ f) = _ from hread f)]
-    have hsz : (UInt64.ofNat st.fill.size).toNat = mapSize g isL := by
-      rw [hm.sz]
-      exact u64_lit (by omega)
-    have hfinal : MapOk (if im = 0 then st.fill else (imtfGo mtfInitLut st.fill 0 (UInt64.ofNat st.fill.size)).2)
-        (if im.toNat = 0 then vals else inverseMoveToFront vals) (mapSize g isL) ntrees := by
-      by_cases hz : im = 0
-      · rw [ite_eq_left hz, ite_eq_left (show im.toNat = 0 by rw [hz]; rfl)]
-        exact hm
-      · rw [ite_eq_right hz, ite_eq_right (show ¬ im.toNat = 0 from fun e => hz (UInt64.toNat_inj.mp e))]
-        obtain ⟨r1, r2, _, _⟩ := imtfGo_spec _ 0 (UInt64.ofNat st.fill.size) mtfInitLut st.fill (List.range 256) vals [] hm.length hsz rfl
-          (by simp; omega) (by rw [List.length_nil, Nat.zero_add, hm.sz]; exact Nat.le_refl _) mtfInit_is
-          (fun j hj => absurd hj (by simp)) (fun j hj => by simpa using hm.at_ j hj)
-        simp only [List.length_nil, Nat.zero_add, List.nil_append] at r1 r2
-        exact ⟨r1.trans hm.sz, by rw [inverseMoveToFront, inverseMoveToFrontFrom_length]; exact hm.length, r2, inverseMoveToFront_lt hm.lt⟩
-    generalize (if im = 0 then st.fill else (imtfGo mtfInitLut st.fill 0 (UInt64.ofNat st.fill.size)).2) = final at hfinal ⊢
-    generalize (if im.toNat = 0 then vals else inverseMoveToFront vals) = cmap at hfinal hspec hjspec
-    have hocc := allOccur_iff (map := final) (l := cmap) (size := UInt64.ofNat st.fill.size) (n := st.ntrees)
-      (by rw [hsz]; omega) (by omega) (by rw [hsz]; exact hfinal.length) (by rw [hsz]; exact hfinal.at_)
-    rw [hn] at hocc
-    by_cases hc : allOccur final (UInt64.ofNat st.fill.size) st.ntrees = true
-    · rw [ite_eq_left hc]
-      exact mapFinish_ok (st0 := st) (st := { clearFill st with word := b1.word, count := b1.count, pos := pos, status := .next })
-        (p := .imtf isL ntrees vals) (cmap := cmap) (ntrees := ntrees) (n := st.ntrees) (map := final) hw1 hi hu hfinal hn (by omega) h256
-        rfl hp ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩ (fun _ => Nat.zero_le _) rfl (by show mapIdx isL ≤ 6; unfold mapIdx; split <;> omega)
-        (imtfNext_down _ _ _ _)
-        (fun F => by rw [avail_mk, hspec, ite_eq_left (hocc.mp hc)]; rfl)
-        (fun F => by rw [avail_mk, hjspec, ite_eq_left (hocc.mp hc)]; rfl)
-    · rw [ite_eq_right hc]
-      have hc' : ¬ (List.range ntrees).all cmap.contains = true := fun e => hc (hocc.mpr e)
-      refine HStepOk.ofBad rfl (fun F => ?_)
-      rw [avail_mk, hspec, ite_eq_right hc']
+    obtain ⟨hmR, hmX, hsR, hsX⟩ := hm
+    -- Either way: the values chosen, their flags, and the spec's reading with them.
+    have key : ∀ (final seen : ByteArray) (cmap : List Nat), MapOk final cmap (mapSize g isL) ntrees → SeenIs seen cmap →
+        (∀ f, hrest K g (.imtf isL ntrees vals) ((BitBuffer.mk st.word st.count).held ++ f) =
+          if (List.range ntrees).all cmap.contains then afterMap K g isL ntrees cmap (b1.held ++ f) else none) →
+        (∀ f, hStepP (g, .imtf isL ntrees vals) ((BitBuffer.mk st.word st.count).held ++ f) =
+          if (List.range ntrees).all cmap.contains then
+            .next (g.setMap isL ntrees cmap, mapNextPhase (g.setMap isL ntrees cmap) isL) (b1.held ++ f) else .bad) →
+        HStepOk K a stop g (.imtf isL ntrees vals) st pos
+          (if allMarked seen 0 st.ntrees = true then
+            mapFinish { clearMap st with word := b1.word, count := b1.count, pos := pos, status := .next } st.ntrees final
+          else { clearMap st with pos := pos, status := .bad }) := by
+      intro final seen cmap hfinal hseen hs hj
+      have hocc := hseen.allMarked (n := st.ntrees) (by omega)
+      rw [hn] at hocc
+      by_cases hc : allMarked seen 0 st.ntrees = true
+      · rw [ite_eq_left hc]
+        exact mapFinish_ok (st0 := st) (st := { clearMap st with word := b1.word, count := b1.count, pos := pos, status := .next })
+          (p := .imtf isL ntrees vals) (cmap := cmap) (ntrees := ntrees) (n := st.ntrees) (map := final) hw1 hi hu hfinal hn (by omega) h256
+          rfl hp ⟨rfl, rfl, rfl, rfl, rfl, rfl, ⟨rfl, rfl, rfl, rfl⟩⟩
+          (fun _ => ⟨Nat.zero_le _, Nat.zero_le _, Nat.zero_le _, Nat.zero_le _, Nat.zero_le _⟩) rfl
+          (by show mapIdx isL ≤ 6; unfold mapIdx; split <;> omega) (imtfNext_down _ _ _ _)
+          (fun F => by rw [avail_mk, hs, ite_eq_left (hocc.mp hc)]; rfl)
+          (fun F => by rw [avail_mk, hj, ite_eq_left (hocc.mp hc)]; rfl)
+      · rw [ite_eq_right hc]
+        have hc' : ¬ (List.range ntrees).all cmap.contains = true := fun e => hc (hocc.mpr e)
+        refine HStepOk.ofBad rfl (fun F => ?_)
+        rw [avail_mk, hs, ite_eq_right hc']
+    by_cases hz : im = 0
+    · rw [ite_eq_left hz]
+      have hz' : im.toNat = 0 := by rw [hz]; rfl
+      simp only [hz', ↓reduceIte] at hspec hjspec
+      exact key st.fill st.seenR vals hmR hsR hspec hjspec
+    · rw [ite_eq_right hz]
+      have hz' : ¬ im.toNat = 0 := fun e => hz (UInt64.toNat_inj.mp e)
+      simp only [hz', ↓reduceIte] at hspec hjspec
+      exact key st.xf st.seenX (inverseMoveToFront vals) hmX hsX hspec hjspec
   · rw [ite_eq_right h1]
     have hc : st.count.toNat < 1 := not_le_lt3 h1
     have hnone : hrest K g (.imtf isL ntrees vals) (BitBuffer.mk st.word st.count).held = none := by
