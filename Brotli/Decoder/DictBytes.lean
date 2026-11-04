@@ -476,6 +476,35 @@ private theorem row_byte {id j : Nat} {t : WordTransform} (h : transforms[id]? =
   rw [← this, List.getD_eq_getElem?_getD, List.getElem?_eq_getElem (by omega)]
   rfl
 
+/-- A transform's prefix and suffix are 28 bytes at most together. -/
+theorem affix_le {id : Nat} (hid : id < 121) :
+    (transLut.data[32 * id + 2]?.getD 0).toNat + (transLut.data[32 * id + 3]?.getD 0).toNat ≤ 28 := by
+  have hl := transforms_length
+  obtain ⟨t, ht⟩ : ∃ t, transforms[id]? = some t := ⟨transforms[id]'(by omega), List.getElem?_eq_getElem (by omega)⟩
+  have hsz := transLut_size
+  have hrow := (rows_ok t (List.mem_of_getElem? ht)).1
+  have key : ∀ j, j < 32 → (transLut.data[32 * id + j]?.getD 0).toNat = (rowNat t).getD j 0 := by
+    intro j hj
+    have hu : (USize.ofNat (32 * id + j)).toNat = 32 * id + j := by
+      rw [USize.toNat_ofNat', ← USize.size_eq_two_pow]
+      have := USize.le_size
+      exact Nat.mod_eq_of_lt (by omega)
+    have hb : (USize.ofNat (32 * id + j)).toNat < transLut.size := by rw [hu]; omega
+    have hget : (transLut.uget (USize.ofNat (32 * id + j)) hb).toNat = (transLut.data[(USize.ofNat (32 * id + j)).toNat]?.getD 0).toNat := by
+      generalize transLut = t at hb
+      cases t with
+      | mk bs =>
+        have h' : (USize.ofNat (32 * id + j)).toNat < bs.size := hb
+        show (bs[(USize.ofNat (32 * id + j)).toNat]'h').toNat = (bs[(USize.ofNat (32 * id + j)).toNat]?.getD 0).toNat
+        rw [Array.getElem?_eq_getElem h']
+        rfl
+    have := row_byte ht hj hu hb
+    rw [hget, hu] at this
+    exact this
+  rw [key 2 (by decide), key 3 (by decide)]
+  simp only [rowNat, List.append_assoc, List.cons_append, List.getD_cons_succ, List.getD_cons_zero]
+  exact hrow
+
 /-! ### A word -/
 
 /-- The transform's elementary part, added to a buffer. -/

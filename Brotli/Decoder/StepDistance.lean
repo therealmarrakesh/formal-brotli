@@ -405,7 +405,7 @@ def distanceThrough (H : Hdr) (st : Cmd) (pos : USize) (tree : UInt8) (htree : t
 @[inline] def dMapIndex (cur clen : UInt64) : USize :=
   (cur + cur + cur + cur + distCid clen).toUSize
 
-private theorem dMapIndex_toNat {cur clen : UInt64} (h : cur.toNat < 2 ^ 30) :
+theorem dMapIndex_toNat {cur clen : UInt64} (h : cur.toNat < 2 ^ 30) :
     (dMapIndex cur clen).toNat = 4 * cur.toNat + distanceContextId clen.toNat := by
   have hcid := distanceContextId_lt clen.toNat
   have hv : (cur + cur + cur + cur + distCid clen).toNat = 4 * cur.toNat + distanceContextId clen.toNat := by

@@ -55,16 +55,16 @@ reused here. -/
     written := usmin (size - USize.ofNat 16) (st0.written + used)
     pos := r.pos, status := if r.left = 0 then .next else .needsInput }
 
-private theorem cur_small {H : Hdr} {t : UInt64} (ht : t.toNat < H.nL.toNat) : t.toNat < 2 ^ 26 := by
+theorem cur_small {H : Hdr} {t : UInt64} (ht : t.toNat < H.nL.toNat) : t.toNat < 2 ^ 26 := by
   have h1 := H.lit.map32
   have h2 := H.lMapSize
   omega
 
-private theorem cur_usize {H : Hdr} {t : UInt64} (ht : t.toNat < H.nL.toNat) : t.toUSize.toNat = t.toNat := by
+theorem cur_usize {H : Hdr} {t : UInt64} (ht : t.toNat < H.nL.toNat) : t.toUSize.toNat = t.toNat := by
   have := cur_small ht
   exact word_toUSize (by omega)
 
-private theorem mapBase_toNat {H : Hdr} {t : UInt64} (ht : t.toNat < H.nL.toNat) : (t <<< 6).toUSize.toNat = 64 * t.toNat := by
+theorem mapBase_toNat {H : Hdr} {t : UInt64} (ht : t.toNat < H.nL.toNat) : (t <<< 6).toUSize.toNat = 64 * t.toNat := by
   have hs := cur_small ht
   have hv : (t <<< 6).toNat = 64 * t.toNat := by
     rw [UInt64.toNat_shiftLeft, show (6 : UInt64).toNat % 64 = 6 from rfl, Nat.shiftLeft_eq]
@@ -73,7 +73,7 @@ private theorem mapBase_toNat {H : Hdr} {t : UInt64} (ht : t.toNat < H.nL.toNat)
     exact Nat.mod_eq_of_lt (by omega)
   rw [word_toUSize (by rw [hv]; omega), hv]
 
-private theorem modeOff_toNat {m : UInt8} (h : m.toNat < 4) : (m.toUInt64 <<< 9).toUSize.toNat = 512 * m.toNat := by
+theorem modeOff_toNat {m : UInt8} (h : m.toNat < 4) : (m.toUInt64 <<< 9).toUSize.toNat = 512 * m.toNat := by
   have hv : (m.toUInt64 <<< 9).toNat = 512 * m.toNat := by
     rw [UInt64.toNat_shiftLeft, show (9 : UInt64).toNat % 64 = 9 from rfl, Nat.shiftLeft_eq, UInt8.toNat_toUInt64]
     have : m.toNat * 2 ^ 9 = 512 * m.toNat := by omega
