@@ -166,6 +166,129 @@ theorem call_pays (hin : R.read + c.size ≤ x.length) (hfit : c.pre.length + c.
     rw [hstop] at h2
     exact arith_any (by omega) h2 i
 
+/-- The window a call allocates is the one the stream declares: a call that starts at WBITS and gets past it allocates
+the window its WBITS gives, and any other call allocates none. -/
+theorem callWin_le {limit : Nat} (h : Reaches decoder limit x R) (ha : R.Allowed x c) :
+    callWin R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.space ≤ 5 * (declaredWindow x + 16) := by
+  have hin := ha.inside
+  have hfit := ha.fits
+  obtain ⟨p, hrel, -, hro, hreach, -, -⟩ := (order_inv h).running ha.running
+  have hoff := h.offered_le
+  have hg : c.pre.length + c.size ≤ (R.input x c).size ∧ c.pre.length ≤ c.pre.length + c.size ∧ c.pre.length + c.size < USize.size :=
+    ⟨by rw [input_size hin]; omega, by omega, by omega⟩
+  have hs : (USize.ofNat (c.pre.length + c.size)).toNat ≤ (R.input x c).size := by
+    rw [usize_of hg.2.2]
+    exact hg.1
+  have hstop : (USize.ofNat (c.pre.length + c.size)).toNat = c.pre.length + c.size := usize_of hg.2.2
+  have hpos0 : (atPos R.state.val c.pre.length).pos.toNat = c.pre.length + 0 := usize_of (by omega)
+  have eW : callWin R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.space =
+      winD (atPos R.state.val c.pre.length) (runD (R.input x c) (USize.ofNat (c.pre.length + c.size)) hs
+        (withCap (atPos R.state.val c.pre.length) c.space) ((atPos_inv R.state hg.2.1 hg.2.2).withCap c.space)) := by
+    unfold callWin
+    rw [dite_eq_left hg]
+  rw [eW]
+  unfold winD
+  by_cases hw : (atPos R.state.val c.pre.length).tag = .wbits ∧
+      (runD (R.input x c) (USize.ofNat (c.pre.length + c.size)) hs (withCap (atPos R.state.val c.pre.length) c.space)
+        ((atPos_inv R.state hg.2.1 hg.2.2).withCap c.space)).tag ≠ .wbits
+  · rw [ite_eq_left hw]
+    obtain ⟨hn, hk⟩ := runD_past ⟨withCap (atPos R.state.val c.pre.length) c.space, (atPos_inv R.state hg.2.1 hg.2.2).withCap c.space⟩
+      hw.1 hw.2
+    dsimp only at hn hk
+    rw [hk]
+    have hw0 : R.state.val.tag = .wbits := hw.1
+    have hp : p = .wbits := by
+      cases p <;> first | rfl | exact absurd (hrel.1.symm.trans hw0) (fun e => DTag.noConfusion e)
+    subst hp
+    have hwf : (BitBuffer.mk (withCap (atPos R.state.val c.pre.length) c.space).cmd.word
+        (withCap (atPos R.state.val c.pre.length) c.space).cmd.count).Wf := hrel.2.1
+    have hpp : (withCap (atPos R.state.val c.pre.length) c.space).pos.toNat ≤ (USize.ofNat (c.pre.length + c.size)).toNat := by
+      show (atPos R.state.val c.pre.length).pos.toNat ≤ _
+      rw [hpos0, hstop]
+      omega
+    have hk10 := stepDWbits_k hwf hpp hn
+    obtain ⟨rest, hr⟩ := stepDWbits_reads (hs := hs) hwf hpp hn (bits ((x.drop R.read).drop c.size))
+    have hall : R.state.val.held ++ bits (x.drop R.read) = bits x := by
+      have e1 := (reach_to_wbits (hreach (x.drop R.offered))).2
+      have e2 : (x.take R.offered).drop R.read ++ x.drop R.offered = x.drop R.read := by
+        rw [← List.drop_append_of_le_length (by rw [List.length_take]; omega), List.take_append_drop]
+      rw [e2, List.take_append_drop] at e1
+      exact e1
+    have hb : availBits (withCap (atPos R.state.val c.pre.length) c.space).cmd.word
+        (withCap (atPos R.state.val c.pre.length) c.space).cmd.count (R.input x c) (withCap (atPos R.state.val c.pre.length) c.space).pos
+        (USize.ofNat (c.pre.length + c.size)) (bits ((x.drop R.read).drop c.size)) = bits x := by
+      rw [← Dec.bits_cmd (D := withCap (atPos R.state.val c.pre.length) c.space)
+        (by show R.state.val.tag ≠ .hdr; rw [hw0]; exact fun e => DTag.noConfusion e)]
+      rw [bits_at' hin (withCap (atPos R.state.val c.pre.length) c.space) (pos := (withCap (atPos R.state.val c.pre.length) c.space).pos)
+        hpos0 (Nat.zero_le _) hstop,
+        List.drop_zero, List.take_append_drop]
+      exact hall
+    rw [hb] at hr
+    have hd : declaredWindow x = windowSize (stepDWbits (R.input x c) (USize.ofNat (c.pre.length + c.size)) hs
+        (withCap (atPos R.state.val c.pre.length) c.space) (withCap (atPos R.state.val c.pre.length) c.space).pos).k.toNat := by
+      unfold declaredWindow
+      rw [hr]
+    unfold windowSize at hd
+    rw [Nat.shiftLeft_eq, Nat.one_mul] at hd
+    have h16 : 16 ≤ 2 ^ (stepDWbits (R.input x c) (USize.ofNat (c.pre.length + c.size)) hs
+        (withCap (atPos R.state.val c.pre.length) c.space) (withCap (atPos R.state.val c.pre.length) c.space).pos).k.toNat :=
+      Nat.le_trans (by decide) (Nat.pow_le_pow_right (by decide) hk10)
+    omega
+  · rw [ite_eq_right hw]
+    exact Nat.zero_le _
+
+/-- A call from past WBITS allocates no window. -/
+theorem callWin_zero (hin : R.read + c.size ≤ x.length) (hfit : c.pre.length + c.size + c.post.length < USize.size)
+    (ht : R.state.val.tag ≠ .wbits) : callWin R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.space = 0 := by
+  have hg : c.pre.length + c.size ≤ (R.input x c).size ∧ c.pre.length ≤ c.pre.length + c.size ∧ c.pre.length + c.size < USize.size :=
+    ⟨by rw [input_size hin]; omega, by omega, by omega⟩
+  unfold callWin winD
+  rw [dite_eq_left hg]
+  exact ite_eq_right (fun h => ht h.1)
+
+/-- A call that allocates a window, or starts past WBITS, pauses past WBITS if it pauses. -/
+theorem callWin_tag (hin : R.read + c.size ≤ x.length) (hfit : c.pre.length + c.size + c.post.length < USize.size)
+    (ht : callWin R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.space ≠ 0 ∨ R.state.val.tag ≠ .wbits)
+    (hst : (R.reply decoder x c).status = .needsInput ∨ (R.reply decoder x c).status = .needsOutput) :
+    (R.reply decoder x c).state.val.tag ≠ .wbits := by
+  have hg : c.pre.length + c.size ≤ (R.input x c).size ∧ c.pre.length ≤ c.pre.length + c.size ∧ c.pre.length + c.size < USize.size :=
+    ⟨by rw [input_size hin]; omega, by omega, by omega⟩
+  have hs : (USize.ofNat (c.pre.length + c.size)).toNat ≤ (R.input x c).size := by
+    rw [usize_of hg.2.2]
+    exact hg.1
+  have eW : callWin R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.space =
+      winD (atPos R.state.val c.pre.length) (runD (R.input x c) (USize.ofNat (c.pre.length + c.size)) hs
+        (withCap (atPos R.state.val c.pre.length) c.space) ((atPos_inv R.state hg.2.1 hg.2.2).withCap c.space)) := by
+    unfold callWin
+    rw [dite_eq_left hg]
+  have eSt : (R.reply decoder x c).state.val = (callD (R.input x c) (USize.ofNat (c.pre.length + c.size)) hs c.final
+      (atPos R.state.val c.pre.length) (atPos_inv R.state hg.2.1 hg.2.2) c.buf.toByteArray c.space).D := by
+    unfold Run.reply
+    show (decStep _ _ _ _ _ _ _).state.val = _
+    unfold decStep
+    rw [dite_eq_left hg]
+  have eT : (R.reply decoder x c).status = (callD (R.input x c) (USize.ofNat (c.pre.length + c.size)) hs c.final
+      (atPos R.state.val c.pre.length) (atPos_inv R.state hg.2.1 hg.2.2) c.buf.toByteArray c.space).status := by
+    unfold Run.reply
+    show (decStep _ _ _ _ _ _ _).status = _
+    unfold decStep
+    rw [dite_eq_left hg]
+  rw [eSt]
+  rw [eT] at hst
+  have hr : (runD (R.input x c) (USize.ofNat (c.pre.length + c.size)) hs (withCap (atPos R.state.val c.pre.length) c.space)
+      ((atPos_inv R.state hg.2.1 hg.2.2).withCap c.space)).tag ≠ .wbits := by
+    rcases ht with ht | ht
+    · rw [eW] at ht
+      unfold winD at ht
+      by_cases hw : (atPos R.state.val c.pre.length).tag = .wbits ∧
+          (runD (R.input x c) (USize.ofNat (c.pre.length + c.size)) hs (withCap (atPos R.state.val c.pre.length) c.space)
+            ((atPos_inv R.state hg.2.1 hg.2.2).withCap c.space)).tag ≠ .wbits
+      · exact hw.2
+      · rw [ite_eq_right hw] at ht
+        exact absurd rfl ht
+    · exact (runD_wk ⟨withCap (atPos R.state.val c.pre.length) c.space, (atPos_inv R.state hg.2.1 hg.2.2).withCap c.space⟩ ht).1
+  exact callD_tag c.space _ _ _ hr hst
+
 end
 
 end Brotli.Decoder
