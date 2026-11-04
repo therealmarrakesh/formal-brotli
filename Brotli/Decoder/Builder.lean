@@ -222,15 +222,17 @@ theorem u16At_set_ne {b : ByteArray} {i : USize} {v : UInt64} {j : Nat} (h : i.t
 where a copy of an array onto itself copies all of it. -/
 def zeroBlock : ByteArray := ⟨Array.replicate 65536 0⟩
 
-/-- `t` with `n` zero bytes added at its end, copied from `zeroBlock` at most 65536 at a time. -/
+/-- `t` with `n` zero bytes added at its end, copied from `zeroBlock` at most 65536 at a time. Into an array with room
+for them the copy writes in place; into one without, as for a small table built from an empty array, it makes an array of
+exactly the bytes needed, so that no array has more room than the state counts. -/
 def zeroExtend (t : ByteArray) (n : Nat) : ByteArray :=
-  if _h : n ≤ 65536 then zeroBlock.copySlice 0 t t.size n false
-  else zeroExtend (zeroBlock.copySlice 0 t t.size 65536 false) (n - 65536)
+  if _h : n ≤ 65536 then zeroBlock.copySlice 0 t t.size n true
+  else zeroExtend (zeroBlock.copySlice 0 t t.size 65536 true) (n - 65536)
 termination_by n
 decreasing_by omega
 
 theorem zeroBlock_copy (t : ByteArray) {n : Nat} (h : n ≤ 65536) :
-    (zeroBlock.copySlice 0 t t.size n false).data = t.data ++ Array.replicate n 0 := by
+    (zeroBlock.copySlice 0 t t.size n true).data = t.data ++ Array.replicate n 0 := by
   simp only [ByteArray.copySlice, zeroBlock]
   rw [Array.extract_eq_self_of_le (by simp),
     Array.extract_empty_of_size_le_start (start := t.size + min n ((Array.replicate 65536 (0 : UInt8)).size - 0))
