@@ -1449,4 +1449,43 @@ theorem pay_runD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} : �
         · obtain ⟨L, hL, hb⟩ := s3 h
           exact ⟨L, hL, fun t => by have := hb t; omega⟩
 
+/-- The loop goes on to its end only at the stream's end. -/
+theorem runD_next {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} :
+    ∀ x : RunArg a stop hs, (runD a stop hs x.D x.inv).status = .next → (runD a stop hs x.D x.inv).tag = .ended := by
+  intro x
+  induction x using (runRel_wf a stop hs).induction with
+  | _ x ih =>
+    obtain ⟨D, hinv⟩ := x
+    dsimp only at ih ⊢
+    rw [runD]
+    by_cases he : D.tag = .ended
+    · rw [dite_eq_left he]
+      intro _
+      exact he
+    · rw [dite_eq_right he]
+      dsimp only
+      by_cases hn : (stepD a stop hs D).status = .next
+      · rw [dite_eq_left hn]
+        exact ih ⟨_, hinv.step he hn⟩ ⟨he, hn, rfl⟩
+      · rw [dite_eq_right hn]
+        exact fun h => absurd h hn
+
+/-- A round that pauses for output space with no room left, and hands all its bytes out within its space, hands out a
+whole window. -/
+theorem room_full {k cap pend : USize} {space : Nat} (hk : k.toNat ≤ 24) (hc : cap = capFor space) (hr : room k cap ≤ pend)
+    (hs : pend.toNat ≤ space) : 2 ^ k.toNat ≤ pend.toNat := by
+  have h1 := USize.le_iff_toNat_le.mp hr
+  have hcN : cap.toNat = min space 16777216 + 1 := by
+    rw [hc]
+    unfold capFor
+    exact usize_ofNat' (by omega)
+  have hne : cap ≠ 0 := fun e => by
+    rw [e, show (0 : USize).toNat = 0 from rfl] at hcN
+    omega
+  unfold room at h1
+  rw [usmin_toNat, ringSize_toNat hk, ite_eq_right hne, hcN] at h1
+  have : 2 ^ k.toNat ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
+  have h24 : (2 : Nat) ^ 24 = 16777216 := by decide
+  omega
+
 end Brotli.Decoder
