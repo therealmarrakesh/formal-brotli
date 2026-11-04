@@ -1291,6 +1291,58 @@ theorem stepDWbits_k {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size}
       exact ha1'
     · exact absurd hn (fun e => DStatus.noConfusion e)
 
+/-- Fewer bytes waiting raises no place's potential. -/
+theorem dpot_mono (q : SPhase) {D D' : Dec} (h : D'.cmd.pend.toNat ≤ D.cmd.pend.toNat) : dpot q D' ≤ dpot q D := by
+  unfold dpot
+  cases q with
+  | mblock w st =>
+    dsimp only
+    by_cases h1 : D'.cmd.pend = 0
+    · rw [ite_eq_left h1]
+      omega
+    · have h2 : D.cmd.pend ≠ 0 := by
+        intro e
+        apply h1
+        apply USize.toNat_inj.mp
+        have : D.cmd.pend.toNat = 0 := by rw [e]; rfl
+        show D'.cmd.pend.toNat = (0 : USize).toNat
+        rw [show (0 : USize).toNat = 0 from rfl]
+        omega
+      rw [ite_eq_right h1, ite_eq_right h2]
+      exact Nat.le_refl _
+  | _ => exact Nat.le_refl _
+
+theorem stepDWbits_out {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize} :
+    (stepDWbits a stop hs D pos).status ≠ .needsOutput := by
+  unfold stepDWbits
+  repeat' (first | split_all | exact fun e => DStatus.noConfusion e)
+
+/-- A loop that pauses for output space has a window of at least 2¹⁰ bytes. -/
+theorem runD_k10 {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} (x : RunArg a stop hs) {p : SPhase} (hrel : DRel x.D p)
+    (hk : x.D.tag ≠ .wbits → 10 ≤ x.D.k.toNat) (hn : (runD a stop hs x.D x.inv).status = .needsOutput) :
+    10 ≤ (runD a stop hs x.D x.inv).k.toNat := by
+  obtain ⟨D, hinv⟩ := x
+  dsimp only at hrel hk hn ⊢
+  by_cases hw : D.tag = .wbits
+  · have he : D.tag ≠ .ended := by rw [hw]; exact fun e => DTag.noConfusion e
+    have e : stepD a stop hs D = stepDWbits a stop hs D D.pos := by unfold stepD; rw [hw]
+    rw [runD, dite_eq_right he] at hn ⊢
+    dsimp only at hn ⊢
+    by_cases h1 : (stepD a stop hs D).status = .next
+    · rw [dite_eq_left h1] at hn ⊢
+      have hw' : DRel D .wbits := by cases p <;> first | exact hrel | exact absurd hw (by rw [hrel.1]; exact fun e => DTag.noConfusion e)
+      have ht1 : (stepD a stop hs D).tag ≠ .wbits := by rw [e]; exact stepDWbits_tag (by rw [← e]; exact h1)
+      have hk1 : 10 ≤ (stepD a stop hs D).k.toNat := by
+        rw [e]
+        exact stepDWbits_k hw'.2.1 hinv.2 (by rw [← e]; exact h1)
+      rw [(runD_wk ⟨_, hinv.step he h1⟩ ht1).2]
+      exact hk1
+    · rw [dite_eq_right h1] at hn
+      rw [e] at hn
+      exact absurd hn stepDWbits_out
+  · rw [(runD_wk ⟨D, hinv⟩ hw).2]
+    exact hk hw
+
 /-! ### The decoder's loop -/
 
 /-- The window a run of the loop allocates: WBITS's, when it starts there. -/
