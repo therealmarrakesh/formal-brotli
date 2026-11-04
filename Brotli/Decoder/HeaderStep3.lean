@@ -15,19 +15,125 @@ variable {α : Type} {K : HK α} {a : ByteArray} {stop : USize}
 
 /-! ### A context map settled -/
 
-/-- Moves on from a context map, with `n` trees. -/
+/-- A group of codes' alphabet. -/
+@[inline] def ckSizeFast (d : Done) : CK → UInt64
+  | .L => 256
+  | .I => 704
+  | .D => 16 + d.ndirect + ((48 : UInt64) <<< d.npostfix)
+
+theorem ckSizeFast_eq {d : Done} {g : Gh} {n : Nat} (k : CK) (hu : Upto d g n) (h3 : 3 < n) :
+    (ckSizeFast d k).toNat = ckSize k g ∧ 2 ≤ ckSize k g ∧ ckSize k g ≤ 704 := by
+  cases k with
+  | L => exact ⟨rfl, by show 2 ≤ 256; omega, by show 256 ≤ 704; omega⟩
+  | I => exact ⟨rfl, by show 2 ≤ 704; omega, by show 704 ≤ 704; omega⟩
+  | D =>
+    obtain ⟨h1, h2, h3, h4⟩ := hu.np h3
+    have key : ∀ x, x < 4 → 48 <<< x ≤ 384 := by decide
+    have hk := key _ (show g.m.npostfix < 4 by omega)
+    have hs : ((48 : UInt64) <<< d.npostfix).toNat = 48 <<< g.m.npostfix := by
+      rw [UInt64.toNat_shiftLeft, Nat.mod_eq_of_lt (show d.npostfix.toNat < 64 by omega), h1,
+        show (48 : UInt64).toNat = 48 from rfl]
+      exact Nat.mod_eq_of_lt (by omega)
+    refine ⟨?_, ?_, ?_⟩
+    · show (16 + d.ndirect + ((48 : UInt64) <<< d.npostfix)).toNat = 16 + g.m.ndirect + (48 <<< g.m.npostfix)
+      rw [UInt64.toNat_add, UInt64.toNat_add, h2, hs, show (16 : UInt64).toNat = 16 from rfl, Nat.mod_eq_of_lt (by omega),
+        Nat.mod_eq_of_lt (by omega)]
+    · show 2 ≤ 16 + g.m.ndirect + (48 <<< g.m.npostfix)
+      omega
+    · show 16 + g.m.ndirect + (48 <<< g.m.npostfix) ≤ 704
+      omega
+
+/-- What the decoder reserves for the groups' tables, with the distance context map's `n` trees: `treeMax` of each group's
+alphabet for each of its codes. -/
+@[inline] def resFast (d : Done) (n : UInt64) : UInt64 :=
+  d.treesL * 2528 + d.nI * 4320 + n * (4 * (ckSizeFast d .D + 376))
+
+theorem resFast_eq {d : Done} {g : Gh} {n : UInt64} {ntrees : Nat} {cmap : List Nat} (hu : Upto d g 6) (hn : n.toNat = ntrees)
+    (h2 : ntrees ≤ 256) : (resFast d n).toNat = resBytes (g.setMap false ntrees cmap) := by
+  obtain ⟨hT, _, hT2, _⟩ := hu.lmap (by decide)
+  have hI := hu.cat .I (by decide)
+  have hIn : d.nI.toNat = g.m.insertCopy.n := hI.n
+  have hI2 : g.m.insertCopy.n ≤ 256 := hI.wf.2.1
+  obtain ⟨hs1, _, hs3⟩ := ckSizeFast_eq (g := g) .D hu (by decide)
+  have e1 : (d.treesL * 2528).toNat = g.treesL * 2528 := by
+    rw [UInt64.toNat_mul, hT, show (2528 : UInt64).toNat = 2528 from rfl]
+    exact Nat.mod_eq_of_lt (by omega)
+  have e2 : (d.nI * 4320).toNat = g.m.insertCopy.n * 4320 := by
+    rw [UInt64.toNat_mul, hIn, show (4320 : UInt64).toNat = 4320 from rfl]
+    exact Nat.mod_eq_of_lt (by omega)
+  have i1 : (ckSizeFast d .D + 376).toNat = ckSize .D g + 376 := by
+    rw [UInt64.toNat_add, hs1, show (376 : UInt64).toNat = 376 from rfl]
+    exact Nat.mod_eq_of_lt (by omega)
+  have e3 : (4 * (ckSizeFast d .D + 376)).toNat = 4 * (ckSize .D g + 376) := by
+    rw [UInt64.toNat_mul, i1, show (4 : UInt64).toNat = 4 from rfl]
+    exact Nat.mod_eq_of_lt (by omega)
+  have e4 : (n * (4 * (ckSizeFast d .D + 376))).toNat = ntrees * (4 * (ckSize .D g + 376)) := by
+    rw [UInt64.toNat_mul, hn, e3]
+    exact Nat.mod_eq_of_lt (Nat.lt_of_le_of_lt (Nat.mul_le_mul h2 (Nat.mul_le_mul_left 4 (Nat.add_le_add_right hs3 376))) (by decide))
+  have hb1 : g.treesL * 2528 ≤ 256 * 2528 := Nat.mul_le_mul_right _ hT2
+  have hb2 : g.m.insertCopy.n * 4320 ≤ 256 * 4320 := Nat.mul_le_mul_right _ hI2
+  have hb3 : ntrees * (4 * (ckSize .D g + 376)) ≤ 256 * (4 * (704 + 376)) :=
+    Nat.mul_le_mul h2 (Nat.mul_le_mul_left 4 (Nat.add_le_add_right hs3 376))
+  have s1 : (d.treesL * 2528 + d.nI * 4320).toNat = g.treesL * 2528 + g.m.insertCopy.n * 4320 := by
+    rw [UInt64.toNat_add, e1, e2]
+    exact Nat.mod_eq_of_lt (by omega)
+  have hlt : g.treesL * 2528 + g.m.insertCopy.n * 4320 + ntrees * (4 * (ckSize .D g + 376)) < 2 ^ 64 := by omega
+  unfold resFast
+  rw [UInt64.toNat_add, s1, e4, Nat.mod_eq_of_lt hlt]
+  show _ = g.treesL * (4 * (256 + 376)) + g.m.insertCopy.n * (4 * (704 + 376)) + ntrees * (4 * (ckSize .D g + 376))
+  rfl
+
+/-- What the groups' tables can take is at most `resMax`. -/
+theorem resBytes_le {d : Done} {g : Gh} {ntrees : Nat} {cmap : List Nat} (hu : Upto d g 6) (h2 : ntrees ≤ 256) :
+    resBytes (g.setMap false ntrees cmap) ≤ resMax := by
+  obtain ⟨_, _, hT2, _⟩ := hu.lmap (by decide)
+  have hI2 : g.m.insertCopy.n ≤ 256 := (hu.cat .I (by decide)).wf.2.1
+  obtain ⟨_, _, hnp, hnd⟩ := hu.np (by decide)
+  exact resBytes_bound (g := g.setMap false ntrees cmap) hT2 hI2 h2 hnp hnd
+
+/-- An array holding `t`'s bytes, with room for `cap` bytes in all, so that tables appended within it are written in
+place. -/
+def reserve (t : ByteArray) (cap : Nat) : ByteArray := ByteArray.emptyWithCapacity cap ++ t
+
+theorem reserve_eq (t : ByteArray) (cap : Nat) : reserve t cap = t := by
+  apply ByteArray.ext
+  rw [reserve, ByteArray.data_append]
+  exact Array.empty_append
+
+/-- Moves on from a context map, with `n` trees. After the distance context map, every group's number of codes is known,
+and the arena reserves room for all their tables, unless that would pass its limit. -/
 def mapFinish (st : Hd) (n : UInt64) (map : ByteArray) : Hd :=
   match st.isL with
   | true => { st with tag := .trees, isL := false, d := { st.d with lMap := map, treesL := n } }
   | false =>
-    { st with
-      tag := .codes, ck := .L, idx := 0, left := st.d.treesL, fill := zeroBytes (4 * st.d.treesL.toNat)
-      d := { st.d with dMap := map, treesD := n } }
+    let res := resFast st.d n
+    if res ≤ st.d.arenaMax then
+      let cap := UInt64.ofNat st.d.arena.size + res
+      { st with
+        tag := .codes, ck := .L, idx := 0, left := st.d.treesL, fill := zeroBytes (4 * st.d.treesL.toNat)
+        d := { st.d with dMap := map, treesD := n, arena := reserve st.d.arena cap.toNat, arenaCap := cap } }
+    else { st with status := .memory }
 
 theorem mapFinish_spec (st : Hd) (n : UInt64) (map : ByteArray) : (mapFinish st n map).word = st.word ∧
-    (mapFinish st n map).count = st.count ∧ (mapFinish st n map).pos = st.pos ∧ (mapFinish st n map).status = st.status := by
+    (mapFinish st n map).count = st.count ∧ (mapFinish st n map).pos = st.pos ∧
+    ((mapFinish st n map).status = st.status ∨ (mapFinish st n map).status = .memory) := by
   unfold mapFinish
-  split <;> exact ⟨rfl, rfl, rfl, rfl⟩
+  split
+  · exact ⟨rfl, rfl, rfl, Or.inl rfl⟩
+  · dsimp only
+    split
+    · exact ⟨rfl, rfl, rfl, Or.inl rfl⟩
+    · exact ⟨rfl, rfl, rfl, Or.inr rfl⟩
+
+theorem mapFinish_tag (st : Hd) (n : UInt64) (map : ByteArray) :
+    (mapFinish st n map).tag = .trees ∨ (mapFinish st n map).tag = .codes ∨ (mapFinish st n map).tag = st.tag := by
+  unfold mapFinish
+  split
+  · exact Or.inl rfl
+  · dsimp only
+    split
+    · exact Or.inr (Or.inl rfl)
+    · exact Or.inr (Or.inr rfl)
 
 theorem Upto.lmapDone {d : Done} {g : Gh} (h : Upto d g 5) {b : ByteArray} {n : UInt64} {ntrees : Nat} {cmap : List Nat}
     (hn : n.toNat = ntrees) (h1 : 1 ≤ ntrees) (h2 : ntrees ≤ 256) (hm : MapOk b cmap (literalContextMapSize g.m.literal.n) ntrees) :
@@ -35,6 +141,9 @@ theorem Upto.lmapDone {d : Done} {g : Gh} (h : Upto d g 5) {b : ByteArray} {n : 
   four := h.four
   le := h.le
   max := h.max
+  capLe := h.capLe
+  room := h.room
+  small _ := h.small (by omega)
   cat i hi := by
     have hc := h.cat i (by cases i <;> decide)
     cases i <;> exact ⟨hc.n, hc.count, hc.rel, hc.wf, hc.tc, hc.cc⟩
@@ -44,12 +153,20 @@ theorem Upto.lmapDone {d : Done} {g : Gh} (h : Upto d g 5) {b : ByteArray} {n : 
   dmap h := absurd h (by omega)
   codes _ h := absurd h (by omega)
 
-theorem Upto.dmapDone {d : Done} {g : Gh} (h : Upto d g 6) {b : ByteArray} {n : UInt64} {ntrees : Nat} {cmap : List Nat}
-    (hn : n.toNat = ntrees) (h1 : 1 ≤ ntrees) (h2 : ntrees ≤ 256) (hm : MapOk b cmap (distanceContextMapSize g.m.distance.n) ntrees) :
-    Upto { d with dMap := b, treesD := n } (g.setMap false ntrees cmap) 7 where
+/-- The distance context map settled, with the arena's reservation for the groups' tables made. -/
+theorem Upto.dmapRes {d : Done} {g : Gh} (h : Upto d g 6) {b : ByteArray} {n : UInt64} {ntrees : Nat} {cmap : List Nat}
+    (hn : n.toNat = ntrees) (h1 : 1 ≤ ntrees) (h2 : ntrees ≤ 256) (hm : MapOk b cmap (distanceContextMapSize g.m.distance.n) ntrees)
+    {cap : UInt64} (hc1 : d.arena.size ≤ cap.toNat) (hc2 : cap.toNat ≤ smallMax + d.arenaMax.toNat) :
+    Upto { d with dMap := b, treesD := n, arenaCap := cap } (g.setMap false ntrees cmap) 7 where
   four := h.four
-  le := h.le
-  max := h.max
+  le := hc1
+  max := by
+    have := h.room
+    show cap.toNat + 132096 < 2 ^ 32
+    omega
+  capLe := hc2
+  room := h.room
+  small h := absurd h (by omega)
   cat i hi := by
     have hc := h.cat i (by cases i <;> decide)
     cases i <;> exact ⟨hc.n, hc.count, hc.rel, hc.wf, hc.tc, hc.cc⟩
@@ -59,32 +176,25 @@ theorem Upto.dmapDone {d : Done} {g : Gh} (h : Upto d g 6) {b : ByteArray} {n : 
   dmap _ := ⟨hn, h1, h2, hm⟩
   codes _ h := absurd h (by cases ‹CK› <;> simp only [ckIdx] <;> omega)
 
-theorem mapFinish_rel {st : Hd} {g : Gh} {isL : Bool} {n : UInt64} {ntrees : Nat} {map : ByteArray} {cmap : List Nat}
-    (hw : (BitBuffer.mk st.word st.count).Wf) (hi : st.isL = isL) (hu : Upto st.d g (mapIdx isL))
-    (hm : MapOk map cmap (mapSize g isL) ntrees) (hn : n.toNat = ntrees) (h1 : 1 ≤ ntrees) (h2 : ntrees ≤ 256) :
-    HRel (mapFinish st n map) (g.setMap isL ntrees cmap) (mapNextPhase (g.setMap isL ntrees cmap) isL) := by
-  unfold mapFinish
-  rw [hi]
-  cases isL with
-  | true => exact ⟨hw, hu.lmapDone hn h1 h2 hm, rfl, rfl⟩
-  | false =>
-    have hu7 := hu.dmapDone (b := map) (n := n) hn h1 h2 hm
-    obtain ⟨hT, hT1, hT2, _⟩ := hu.lmap (by decide)
-    refine ⟨hw, hu7, rfl, rfl, rfl, hT, ?_, hT2, ?_⟩
-    · show 0 + g.treesL = g.treesL
-      omega
-    · refine ⟨?_, by simp, fun i hi => absurd hi (by simp)⟩
-      show (zeroBytes (4 * st.d.treesL.toNat)).size = 4 * g.treesL
-      rw [zeroBytes_size (by omega), hT]
-
-/-- What moving on from a context map does to what a state holds. -/
-theorem mapFinish_move {st0 st : Hd} {g : Gh} {p : HPhase} {isL : Bool} {n : UInt64} {ntrees : Nat} {cmap : List Nat} {map : ByteArray} (hi : st.isL = isL)
-    (hu : Upto st.d g (mapIdx isL)) (hms : map.size = mapSize g isL) (he : SameHeld { st with fill := st0.fill } st0) (hf : HSize st0 → st.fill.size ≤ 16384)
-    (hcap : 768 ≤ capH p) : HMove st0 (mapFinish st n map) p (mapNextPhase (g.setMap isL ntrees cmap) isL) none := by
-  unfold mapFinish
-  rw [hi]
-  have hm : st.d.arenaMax = st0.d.arenaMax := congrArg Done.arenaMax he.d
+/-- A step that ends a context map, once what follows it is read: it moves on, and after the distance context map the arena
+reserves the groups' tables, or the limit is reported. -/
+theorem mapFinish_ok {st0 st : Hd} {g : Gh} {p : HPhase} {isL : Bool} {n : UInt64} {ntrees : Nat} {cmap : List Nat}
+    {map : ByteArray} (hw : (BitBuffer.mk st.word st.count).Wf) (hi : st.isL = isL) (hu : Upto st.d g (mapIdx isL))
+    (hm : MapOk map cmap (mapSize g isL) ntrees) (hn : n.toNat = ntrees) (h1 : 1 ≤ ntrees) (h2 : ntrees ≤ 256)
+    (hs : st.status = .next) (hp : st.pos.toNat ≤ stop.toNat) (he : SameHeld { st with fill := st0.fill } st0)
+    (hf : HSize st0 → st.fill.size ≤ 16384) (hb : budH g p = 0) (hs6 : stageOf p ≤ 6)
+    (hd : HDown p (mapNextPhase (g.setMap isL ntrees cmap) isL))
+    (hr : ∀ F, hrest K g p (availBits st0.word st0.count a st.pos stop F) =
+      afterMap K g isL ntrees cmap (availBits st.word st.count a st.pos stop F))
+    (hj : ∀ F, hStepP (g, p) (availBits st0.word st0.count a st.pos stop F) =
+      .next (g.setMap isL ntrees cmap, mapNextPhase (g.setMap isL ntrees cmap) isL) (availBits st.word st.count a st.pos stop F)) :
+    HStepOk K a stop g p st0 st.pos (mapFinish st n map) := by
+  have hmx : st.d.arenaMax = st0.d.arenaMax := congrArg Done.arenaMax he.d
   have ha : st.d.arena = st0.d.arena := congrArg Done.arena he.d
+  have hcp : st.d.arenaCap = st0.d.arenaCap := congrArg Done.arenaCap he.d
+  have hms := hm.sz
+  unfold mapFinish
+  rw [hi]
   cases isL with
   | true =>
     have hL := hu.cat .L (by decide)
@@ -93,11 +203,11 @@ theorem mapFinish_move {st0 st : Hd} {g : Gh} {p : HPhase} {isL : Bool} {n : UIn
       rw [hms]
       show 64 * g.m.literal.n ≤ _
       omega
-    refine ⟨hm, by show st.d.arena.size = _; rw [ha]; rfl, fun h0 => ?_, ?_, Nat.zero_le _⟩
-    · have h := h0.same he
-      exact ⟨hf h0, h.lens, h.clLens, h.clt, h.mapT, h.modes, hsz, h.dMap, h.litBase, h.icBase, h.dBase⟩
-    · show 768 + (if (none : Option PrefixCode).isSome = true then 1 else 0) ≤ _
-      simpa using hcap
+    refine HStepOk.ofNext (g' := g.setMap true ntrees cmap) (p' := mapNextPhase (g.setMap true ntrees cmap) true) hs
+      ⟨hw, hu.lmapDone hn h1 h2 hm, rfl, rfl⟩ (Nat.le_refl _) hp (fun F => by rw [hr, afterMap_eq]; rfl) (fun F => hj F) hd
+      ⟨hmx, by show st.d.arena.size = _; rw [ha]; rfl, fun h0 => ?_, ⟨hcp, by rw [hb]; simp [budH, mapNextPhase, tableOf]⟩⟩
+    have h := h0.same he
+    exact ⟨hf h0, h.lens, h.clLens, h.clt, h.mapT, h.modes, hsz, h.dMap, h.litBase, h.icBase, h.dBase⟩
   | false =>
     have hD := hu.cat .D (by decide)
     have h256 : g.m.distance.n ≤ 256 := hD.wf.2.1
@@ -106,17 +216,46 @@ theorem mapFinish_move {st0 st : Hd} {g : Gh} {p : HPhase} {isL : Bool} {n : UIn
       rw [hms]
       show 4 * g.m.distance.n ≤ _
       omega
-    have hfs : (zeroBytes (4 * st.d.treesL.toNat)).size ≤ 16384 := by
-      rw [zeroBytes_size (by omega)]
-      omega
-    refine ⟨hm, by show st.d.arena.size = _; rw [ha]; rfl, fun h0 => ?_, ?_, Nat.zero_le _⟩
-    · have h := h0.same he
-      exact ⟨hfs, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, hsz, h.litBase, h.icBase, h.dBase⟩
-    · show 256 * ckN .L + (g.setMap false ntrees cmap).treesL + (if (none : Option PrefixCode).isSome = true then 1 else 0) ≤ _
-      have e : (g.setMap false ntrees cmap).treesL = g.treesL := rfl
-      rw [e]
-      simp only [ckN, Option.isSome, Bool.false_eq_true, ↓reduceIte]
-      omega
+    have hres := resFast_eq (cmap := cmap) hu hn h2
+    have hrest' : ∀ F, hrest K g p (availBits st0.word st0.count a st.pos stop F) = K.r (g.setMap false ntrees cmap)
+        (hrest K (g.setMap false ntrees cmap) (mapNextPhase (g.setMap false ntrees cmap) false) (availBits st.word st.count a st.pos stop F)) :=
+      fun F => by rw [hr, afterMap_eq]; rfl
+    dsimp only
+    by_cases hc : resFast st.d n ≤ st.d.arenaMax
+    · rw [ite_eq_left hc, reserve_eq]
+      have hcN := UInt64.le_iff_toNat_le.mp hc
+      have hsmall := hu.small (by decide)
+      have hle := hu.le
+      have hroom := hu.room
+      have hcap : (UInt64.ofNat st.d.arena.size + resFast st.d n).toNat = st.d.arena.size + resBytes (g.setMap false ntrees cmap) := by
+        rw [UInt64.toNat_add, u64_lit (by omega), hres]
+        exact Nat.mod_eq_of_lt (by omega)
+      have hfs : (zeroBytes (4 * st.d.treesL.toNat)).size ≤ 16384 := by
+        rw [zeroBytes_size (by omega)]
+        omega
+      have hu7 := hu.dmapRes (b := map) (n := n) (cap := UInt64.ofNat st.d.arena.size + resFast st.d n) hn h1 h2 hm
+        (by rw [hcap]; omega) (by rw [hcap]; omega)
+      refine ⟨fun _ => ⟨g.setMap false ntrees cmap, mapNextPhase (g.setMap false ntrees cmap) false,
+          some (.res (g.setMap false ntrees cmap)), ?_, Nat.le_refl _, hp, hrest', hd, ?_, fun F => hj F⟩,
+        fun e => HStatus.noConfusion (hs.symm.trans e), fun e => HStatus.noConfusion (hs.symm.trans e),
+        fun e => HStatus.noConfusion (hs.symm.trans e), fun e => HStatus.noConfusion (hs.symm.trans e)⟩
+      · refine ⟨hw, hu7, rfl, rfl, rfl, hT, ?_, hT2, ?_⟩
+        · show 0 + g.treesL = g.treesL
+          omega
+        · refine ⟨?_, by simp, fun i hi => absurd hi (by simp)⟩
+          show (zeroBytes (4 * st.d.treesL.toNat)).size = 4 * g.treesL
+          rw [zeroBytes_size (by omega), hT]
+      · refine ⟨hmx, by show st.d.arena.size = st0.d.arena.size + 0; rw [ha, Nat.add_zero], fun h0 => ?_,
+          hcap, rfl, by rw [← hcp]; exact hsmall, by rw [← hmx, ← hres]; exact hcN, hs6, Nat.le_refl _⟩
+        have h := h0.same he
+        exact ⟨hfs, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, hsz, h.litBase, h.icBase, h.dBase⟩
+    · rw [ite_eq_right hc]
+      have hlt : st0.d.arenaMax.toNat < resBytes (g.setMap false ntrees cmap) := by
+        rw [← hmx, ← hres]
+        exact Nat.lt_of_not_le fun e => hc (UInt64.le_iff_toNat_le.mpr e)
+      exact ⟨fun e => HStatus.noConfusion e, fun e => HStatus.noConfusion e, fun e => HStatus.noConfusion e,
+        fun _ => Or.inr ⟨g.setMap false ntrees cmap, hlt, resBytes_le hu h2, by rw [← hcp]; exact hu.small (by decide),
+          fun F => ⟨_, hrest' F⟩⟩, fun e => HStatus.noConfusion e⟩
 
 /-! ### A context map's number of trees -/
 
@@ -187,27 +326,21 @@ theorem stepHTrees_ok {isL : Bool} {st : Hd} {g : Gh} {pos : USize} (hrel : HRel
           rfl
         · rw [(List.mem_replicate.mp hv).2]
           omega
-      have hrel2 := mapFinish_rel (st := { st with word := r.word, count := r.count, pos := pos, status := .next })
-        hw2 hi hu hmap rfl hrange.1 hrange.2
-      obtain ⟨b1, b2, b3, b4⟩ := mapFinish_spec { st with word := r.word, count := r.count, pos := pos, status := .next } r.a
-        (zeroBytes (mapSizeFast st))
-      have hmv := mapFinish_move (st0 := st) (st := { st with word := r.word, count := r.count, pos := pos, status := .next }) (g := g) (p := .trees isL) (n := r.a) (map := zeroBytes (mapSizeFast st))
-        (ntrees := r.a.toNat) (cmap := List.replicate (mapSize g isL) 0) hi hu hmap.sz ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩ (fun h => h.fill) (Nat.le_refl _)
-      generalize mapFinish { st with word := r.word, count := r.count, pos := pos, status := .next } r.a
-        (zeroBytes (mapSizeFast st)) = r2 at hrel2 b1 b2 b3 b4 hmv ⊢
-      refine HStepOk.ofNext (hd := treesNext_down _ _) (hm := hmv) b4 hrel2 (by rw [b3]; exact Nat.le_refl _) (by rw [b3]; exact hp)
-        (fun F => ?_) (fun F => ?_)
-      · have e := hN (chunkBits a pos.toNat stop.toNat ++ F)
-        rw [avail_mk, e]
-        simp only [h2', ↓reduceIte]
-        rw [afterMap_eq, avail_mk, b1, b2, b3]
-        rfl
-      · rw [avail_mk]
-        show readIn 11 readVarLen _ _ = _
-        rw [readIn_some ((hval hs).2 _)]
-        simp only [h2', ↓reduceIte]
-        rw [avail_mk, b1, b2, b3]
-        rfl
+      exact mapFinish_ok (st0 := st) (st := { st with word := r.word, count := r.count, pos := pos, status := .next }) (p := .trees isL)
+        (ntrees := r.a.toNat) (cmap := List.replicate (mapSize g isL) 0) hw2 hi hu hmap rfl hrange.1 hrange.2 rfl hp
+        ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩ (fun h => h.fill) rfl (by show mapIdx isL ≤ 6; unfold mapIdx; split <;> omega)
+        (treesNext_down _ _)
+        (fun F => by
+          have e := hN (chunkBits a pos.toNat stop.toNat ++ F)
+          rw [avail_mk, e]
+          simp only [h2', ↓reduceIte]
+          rfl)
+        (fun F => by
+          rw [avail_mk]
+          show readIn 11 readVarLen _ _ = _
+          rw [readIn_some ((hval hs).2 _)]
+          simp only [h2', ↓reduceIte]
+          rfl)
     · rw [ite_eq_right h2]
       have h2' : ¬ r.a.toNat < 2 := fun h => h2 (hsh.mpr h)
       refine HStepOk.ofNext (g' := g) (p' := .rlemax isL r.a.toNat) rfl ⟨hw2, hu, rfl, hi, rfl, by omega, hrange.2⟩
@@ -278,12 +411,6 @@ theorem stepHRlemax_ok {isL : Bool} {ntrees : Nat} {st : Hd} {g : Gh} {pos : USi
 
 /-! ### A group of codes -/
 
-/-- A group of codes' alphabet. -/
-@[inline] def ckSizeFast (d : Done) : CK → UInt64
-  | .L => 256
-  | .I => 704
-  | .D => 16 + d.ndirect + ((48 : UInt64) <<< d.npostfix)
-
 /-- Moves on from a group of codes. -/
 def ckFinish (st : Hd) : Hd :=
   let fill := st.fill
@@ -312,6 +439,9 @@ theorem Upto.codesDoneL {d : Done} {g : Gh} (h : Upto d g 7) {b : ByteArray} {cs
   four := h.four
   le := h.le
   max := h.max
+  capLe := h.capLe
+  room := h.room
+  small h := absurd h (by omega)
   cat i hi := by
     have hc := h.cat i (by cases i <;> decide)
     cases i <;> exact ⟨hc.n, hc.count, hc.rel, hc.wf, hc.tc, hc.cc⟩
@@ -330,6 +460,9 @@ theorem Upto.codesDoneI {d : Done} {g : Gh} (h : Upto d g 8) {b : ByteArray} {cs
   four := h.four
   le := h.le
   max := h.max
+  capLe := h.capLe
+  room := h.room
+  small h := absurd h (by omega)
   cat i hi := by
     have hc := h.cat i (by cases i <;> decide)
     cases i <;> exact ⟨hc.n, hc.count, hc.rel, hc.wf, hc.tc, hc.cc⟩
@@ -349,6 +482,9 @@ theorem Upto.codesDoneD {d : Done} {g : Gh} (h : Upto d g 9) {b : ByteArray} {cs
   four := h.four
   le := h.le
   max := h.max
+  capLe := h.capLe
+  room := h.room
+  small h := absurd h (by omega)
   cat i hi := by
     have hc := h.cat i (by cases i <;> decide)
     cases i <;> exact ⟨hc.n, hc.count, hc.rel, hc.wf, hc.tc, hc.cc⟩
@@ -361,28 +497,6 @@ theorem Upto.codesDoneD {d : Done} {g : Gh} (h : Upto d g 9) {b : ByteArray} {cs
     | L => exact h.codes .L (by decide)
     | I => exact h.codes .I (by decide)
     | D => exact ⟨hl.symm, hp⟩
-
-private theorem ckSizeFast_eq {d : Done} {g : Gh} {k : CK} (hu : Upto d g (ckIdx k + 7)) :
-    (ckSizeFast d k).toNat = ckSize k g ∧ 2 ≤ ckSize k g ∧ ckSize k g ≤ 704 := by
-  cases k with
-  | L => exact ⟨rfl, by show 2 ≤ 256; omega, by show 256 ≤ 704; omega⟩
-  | I => exact ⟨rfl, by show 2 ≤ 704; omega, by show 704 ≤ 704; omega⟩
-  | D =>
-    obtain ⟨h1, h2, h3, h4⟩ := hu.np (by simp only [ckIdx]; omega)
-    have key : ∀ x, x < 4 → 48 <<< x ≤ 384 := by decide
-    have hk := key _ (show g.m.npostfix < 4 by omega)
-    have hs : ((48 : UInt64) <<< d.npostfix).toNat = 48 <<< g.m.npostfix := by
-      rw [UInt64.toNat_shiftLeft, Nat.mod_eq_of_lt (show d.npostfix.toNat < 64 by omega), h1,
-        show (48 : UInt64).toNat = 48 from rfl]
-      exact Nat.mod_eq_of_lt (by omega)
-    refine ⟨?_, ?_, ?_⟩
-    · show (16 + d.ndirect + ((48 : UInt64) <<< d.npostfix)).toNat = 16 + g.m.ndirect + (48 <<< g.m.npostfix)
-      rw [UInt64.toNat_add, UInt64.toNat_add, h2, hs, show (16 : UInt64).toNat = 16 from rfl, Nat.mod_eq_of_lt (by omega),
-        Nat.mod_eq_of_lt (by omega)]
-    · show 2 ≤ 16 + g.m.ndirect + (48 <<< g.m.npostfix)
-      omega
-    · show 16 + g.m.ndirect + (48 <<< g.m.npostfix) ≤ 704
-      omega
 
 theorem stepHCodes_ok {k : CK} {done : List PrefixCode} {left : Nat} {st : Hd} {g : Gh} {pos : USize}
     (hrel : HRel st g (.codes k done left)) (hp : pos.toNat ≤ stop.toNat) :
@@ -419,7 +533,7 @@ theorem stepHCodes_ok {k : CK} {done : List PrefixCode} {left : Nat} {st : Hd} {
         ⟨hw, hu.codesDoneL hlen' hpart, ht, rfl, rfl, hn, by show 0 + g.m.insertCopy.n = g.m.insertCopy.n; omega, h256', ?_⟩
         (Nat.le_refl _) hp (fun F => ?_) (fun F => rfl)
         (hm := ⟨rfl, rfl, fun h => ⟨hfs, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, hfill, h.icBase, h.dBase⟩,
-          by simp only [capH, ckN, Option.isSome, Bool.false_eq_true, ↓reduceIte]; omega, Nat.zero_le _⟩)
+          ⟨rfl, by simp only [budH, groupsFrom, tableOf, Gh.setCodes, ckSize]; omega⟩⟩)
       · refine ⟨?_, by simp, fun i hi => absurd hi (by simp)⟩
         show (zeroBytes (4 * st.d.nI.toNat)).size = 4 * g.m.insertCopy.n
         rw [zeroBytes_size (by omega), hn]
@@ -440,7 +554,7 @@ theorem stepHCodes_ok {k : CK} {done : List PrefixCode} {left : Nat} {st : Hd} {
         ⟨hw, hu.codesDoneI hlen' hpart, ht, rfl, rfl, hT, by show 0 + g.treesD = g.treesD; omega, hT2, ?_⟩
         (Nat.le_refl _) hp (fun F => ?_) (fun F => rfl)
         (hm := ⟨rfl, rfl, fun h => ⟨hfs, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, hfill, h.dBase⟩,
-          by simp only [capH, ckN, Option.isSome, Bool.false_eq_true, ↓reduceIte]; omega, Nat.zero_le _⟩)
+          ⟨rfl, by simp only [budH, groupsFrom, tableOf, Gh.setCodes, ckSize]; omega⟩⟩)
       · refine ⟨?_, by simp, fun i hi => absurd hi (by simp)⟩
         show (zeroBytes (4 * st.d.treesD.toNat)).size = 4 * g.treesD
         rw [zeroBytes_size (by omega), hT]
@@ -453,7 +567,7 @@ theorem stepHCodes_ok {k : CK} {done : List PrefixCode} {left : Nat} {st : Hd} {
         rw [hk]
       rw [e]
       exact ⟨fun e => HStatus.noConfusion e, fun e => HStatus.noConfusion e, fun e => HStatus.noConfusion e, fun e => HStatus.noConfusion e,
-        fun _ => ⟨g.setCodes .D done, hu.codesDoneD hlen' hpart, hw, Nat.le_refl _, hp, (fun F => hrest_codes_D K g done _), rfl, rfl,
+        fun _ => ⟨g.setCodes .D done, hu.codesDoneD hlen' hpart, hw, Nat.le_refl _, hp, (fun F => hrest_codes_D K g done _), rfl, rfl, rfl,
           fun h => ⟨h.fill, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, hfill⟩, fun F => rfl⟩⟩
   · rw [ite_eq_right h0]
     have hl0 : st.left.toNat ≠ 0 := fun e => h0 (UInt64.toNat_inj.mp (by rw [e]; rfl))
@@ -461,7 +575,7 @@ theorem stepHCodes_ok {k : CK} {done : List PrefixCode} {left : Nat} {st : Hd} {
     have hl1 : (st.left - 1).toNat = n := by
       rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by rw [show (1 : UInt64).toNat = 1 from rfl]; omega)), hleft]
       rfl
-    obtain ⟨hs1, hs2, hs3⟩ := ckSizeFast_eq hu
+    obtain ⟨hs1, hs2, hs3⟩ := ckSizeFast_eq k hu (by show 3 < ckIdx k + 7; omega)
     subst hk
     refine HStepOk.ofNext (g' := g) (p' := .code (.codes st.ck done n) (ckSize st.ck g))
       (hd := Or.inl (Or.inr ⟨rfl, show 2 * n + 1 < 2 * (n + 1) by omega⟩)) rfl

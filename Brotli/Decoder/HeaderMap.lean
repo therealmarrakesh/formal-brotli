@@ -274,7 +274,7 @@ theorem stepHVals_ok {isL : Bool} {ntrees rlemax : Nat} {code : PrefixCode} {don
           (hd := Or.inl (Or.inr ⟨rfl, show 0 < left by omega⟩))
           (hm := ⟨rfl, rfl, fun h => ⟨by show (fillLens st.fill st.idx st.left r.a.toUInt8).size ≤ _; rw [hfs]; exact h.fill,
             h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩,
-            by simp only [capH, Option.isSome, Bool.false_eq_true, ↓reduceIte]; omega, Nat.zero_le _⟩) rfl
+            ⟨rfl, by simp [budH, tableOf]⟩⟩) rfl
           ⟨hw, hu, ht, hi, hn, hr, h2, h256, h16, hok, hC, hsy, ?_, hz0, ?_, ?_, ?_, ?_, ?_⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
         · show (st.idx + st.left).toNat = _
           rw [hidx3, hlen3]
@@ -356,7 +356,7 @@ theorem stepHVals_ok {isL : Bool} {ntrees rlemax : Nat} {code : PrefixCode} {don
         (hd := Or.inl (Or.inr ⟨rfl, show left - r.b.toNat < left by omega⟩))
         (hm := ⟨rfl, rfl, fun h => ⟨by show (setU st.fill st.idx.toUSize r.a.toUInt8).size ≤ _; rw [size_setU]; exact h.fill,
           h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩,
-          by simp only [capH, Option.isSome, Bool.false_eq_true, ↓reduceIte]; omega, Nat.zero_le _⟩) rfl
+          ⟨rfl, by simp [budH, tableOf]⟩⟩) rfl
         ⟨hw2, hu, ht, hi, hn, hr, h2, h256, h16, hok, hC, hsy, ?_, hleft2, ?_, ?_, ?_, ?_, ?_⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
       · show (st.idx + r.b).toNat = _
         rw [hidx2, hlen2]
@@ -1376,16 +1376,12 @@ theorem stepHImtf_ok {isL : Bool} {ntrees : Nat} {vals : List Nat} {st : Hd} {g 
     rw [hn] at hocc
     by_cases hc : allOccur final (UInt64.ofNat st.fill.size) st.ntrees = true
     · rw [ite_eq_left hc]
-      have hrel2 := mapFinish_rel (st := { clearFill st with word := b1.word, count := b1.count, pos := pos, status := .next })
-        (cmap := cmap) (ntrees := ntrees) (n := st.ntrees) (map := final) hw1 hi hu hfinal hn (by omega) h256
-      obtain ⟨c1, c2, c3, c4⟩ := mapFinish_spec { clearFill st with word := b1.word, count := b1.count, pos := pos, status := .next } st.ntrees final
-      have hmv := mapFinish_move (st0 := st) (st := { clearFill st with word := b1.word, count := b1.count, pos := pos, status := .next }) (g := g) (p := .imtf isL ntrees vals)
-        (n := st.ntrees) (ntrees := ntrees) (cmap := cmap) (map := final) hi hu hfinal.sz ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩ (fun _ => Nat.zero_le _) (Nat.le_refl _)
-      generalize mapFinish { clearFill st with word := b1.word, count := b1.count, pos := pos, status := .next } st.ntrees final = r2 at hrel2 c1 c2 c3 c4 hmv ⊢
-      refine HStepOk.ofNext (hd := imtfNext_down _ _ _ _) (hm := hmv) c4 hrel2 (by rw [c3]; exact Nat.le_refl _) (by rw [c3]; exact hp)
-        (fun F => ?_) (fun F => ?_)
-      · rw [avail_mk, hspec, ite_eq_left (hocc.mp hc), afterMap_eq, avail_mk, c1, c2, c3]
-      · rw [avail_mk, hjspec, ite_eq_left (hocc.mp hc), avail_mk, c1, c2, c3]
+      exact mapFinish_ok (st0 := st) (st := { clearFill st with word := b1.word, count := b1.count, pos := pos, status := .next })
+        (p := .imtf isL ntrees vals) (cmap := cmap) (ntrees := ntrees) (n := st.ntrees) (map := final) hw1 hi hu hfinal hn (by omega) h256
+        rfl hp ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩ (fun _ => Nat.zero_le _) rfl (by show mapIdx isL ≤ 6; unfold mapIdx; split <;> omega)
+        (imtfNext_down _ _ _ _)
+        (fun F => by rw [avail_mk, hspec, ite_eq_left (hocc.mp hc)]; rfl)
+        (fun F => by rw [avail_mk, hjspec, ite_eq_left (hocc.mp hc)]; rfl)
     · rw [ite_eq_right hc]
       have hc' : ¬ (List.range ntrees).all cmap.contains = true := fun e => hc (hocc.mpr e)
       refine HStepOk.ofBad rfl (fun F => ?_)

@@ -16,14 +16,17 @@ open Brotli.Spec Brotli.Properties
 
 /-- A header machine state, with what it has read of its meta-block: the meta-block's start `um` and the header so far `u`,
 before the bits it holds. Whatever bits follow, the start reads as a compressed meta-block's, the header's reading in order
-takes `u` to the state's place, and the header's tables so far are the arena, which may grow to `lim`. -/
+takes `u` to the state's place, and what the header has reserved for its tables so far is within `lim`, and nothing until
+the groups of codes. The arena's tables still to come fit what it reserved. -/
 structure HdLoc (h : Hd) (lim : UInt64) (last : Bool) (mlen : Nat) (g : Gh) (q : HPhase) (um u : List Bool) : Prop where
   rel : HRel h g q
   path : ∀ T, Reach hStepP (Gh.start, .cat .L) (u ++ T) (g, q) T
   start : ∀ F, metaStart (um ++ u ++ (BitBuffer.mk h.word h.count).held ++ F) =
     some (.data last mlen false, u ++ (BitBuffer.mk h.word h.count).held ++ F)
-  tables : ∀ F, (hrest tableK Gh.start (.cat .L) (u ++ (BitBuffer.mk h.word h.count).held ++ F)).getD 0 =
-    h.d.arena.size + (hrest tableK g q ((BitBuffer.mk h.word h.count).held ++ F)).getD 0
+  tables : ∃ S, S ≤ lim.toNat ∧ (S = 0 ∨ 7 ≤ stageOf q) ∧ ∀ F,
+    (hrest tableK Gh.start (.cat .L) (u ++ (BitBuffer.mk h.word h.count).held ++ F)).getD 0 =
+      S + (hrest tableK g q ((BitBuffer.mk h.word h.count).held ++ F)).getD 0
+  bud : h.d.arena.size + budH g q ≤ h.d.arenaCap.toNat
   max : h.d.arenaMax = lim
 
 /-- A meta-block's bits whose header, as far as any of them go, needs tables within `L`. -/
@@ -43,12 +46,12 @@ def HdFrom (a : ByteArray) (stop : USize) (t : List UInt8) (D r : Dec) (pos : US
   (∀ p, DRel D p → ∃ w st last mlen g q um u, HdLoc r.hd r.limit last mlen g q um u ∧
       Reach sStep p (D.bits a D.pos stop (bits t)) (.mblock w st) (um ++ u ++ availBits r.hd.word r.hd.count a pos stop (bits t)))
 
-/-- Where the limit binds on the bits `h` gives: at WBITS, for the window, or in a header, for its next table. -/
+/-- Where the limit binds on the bits `h` gives: at WBITS, for the window, or in a header, for its groups' tables. -/
 def Binds (Ws : Option Nat) (L : Nat) (D : Dec) (h : List UInt8 → List Bool) : Prop :=
   (D.tag = .wbits ∧ ∀ s : List UInt8, ∃ kv rest, readWBITS (h s) = some (kv, rest) ∧ L < 2 ^ kv) ∨
   (D.tag = .hdr ∧ ∃ w, Ws = some w ∧ w + 16 = 2 ^ D.k.toNat ∧ D.limit.toNat + 2 ^ D.k.toNat = L ∧
     ∀ last mlen g q um u, HdLoc D.hd D.limit last mlen g q um u → ∀ s : List UInt8,
-      D.hd.d.arenaMax.toNat < D.hd.d.arena.size + (hrest tableK g q (h s)).getD 0)
+      D.hd.d.arenaMax.toNat < (hrest tableK g q (h s)).getD 0)
 
 /-- What a step does to where a header's meta-block began, and where it found the limit to bind: at its own state, on the
 bits up to the position it reports. -/
@@ -238,9 +241,8 @@ theorem cert_within {h : Hd} {lim : UInt64} {last : Bool} {mlen : Nat} {g : Gh} 
   rw [← List.append_assoc, hr'] at hp
   have hw := tables_within hp hlt
   dsimp only at hw
-  rw [← hr', hL.tables X] at hw
-  have hle := hL.rel.2.1.le
-  rw [hL.max] at hle
+  obtain ⟨S, hS, _, hT⟩ := hL.tables
+  rw [← hr', hT X] at hw
   omega
 
 /-- A finished header's tables, as far as any of its bits go: within the limit of the state that finished it. -/
@@ -256,9 +258,8 @@ theorem cert_ready {h : Hd} {lim : UInt64} {last : Bool} {mlen : Nat} {g : Gh} {
   rw [List.append_nil, List.append_nil] at hu0
   subst hu0
   have hS0 := hS ((BitBuffer.mk h.word h.count).held ++ X)
-  rw [← List.append_assoc, hL.tables X] at hS0
-  have hle := hL.rel.2.1.le
-  rw [hL.max] at hle
+  obtain ⟨S', hS', _, hT'⟩ := hL.tables
+  rw [← List.append_assoc, hT' X] at hS0
   -- the bits cut off lie past the header so far
   rw [List.append_assoc] at hr'
   obtain ⟨Y, hY1, hY2⟩ : ∃ Y, r' = u ++ Y ∧ (BitBuffer.mk h.word h.count).held ++ X = Y ++ R := by
@@ -285,6 +286,41 @@ theorem cert_ready {h : Hd} {lim : UInt64} {last : Bool} {mlen : Nat} {g : Gh} {
 
 /-! ### A header's steps -/
 
+/-- What a move does to what the header has reserved and to what the arena's tables still to come take. -/
+private theorem tables_move {st r : Hd} {g g' : Gh} {q q' : HPhase} {oc : Option Hook} {lim : UInt64} {S : Nat}
+    (hm : HMove st r g q g' q' oc) (hd : HDown q q') (hmax : st.d.arenaMax = lim) (hS : S ≤ lim.toNat)
+    (hS0 : S = 0 ∨ 7 ≤ stageOf q) (hb : st.d.arena.size + budH g q ≤ st.d.arenaCap.toNat) :
+    S + resOf oc ≤ lim.toNat ∧ (S + resOf oc = 0 ∨ 7 ≤ stageOf q') ∧ r.d.arena.size + budH g' q' ≤ r.d.arenaCap.toNat := by
+  have hg := hm.grow
+  have hc := hm.cap
+  match oc with
+  | some (.res g0) =>
+    obtain ⟨c1, c2, _, c4, c5, c6⟩ := hc
+    have e1 : tableOf (some (.res g0)) = 0 := rfl
+    have e2 : resOf (some (.res g0)) = resBytes g0 := rfl
+    rw [e1] at hg
+    rw [e2]
+    rw [hmax] at c4
+    have h0 : S = 0 := by
+      rcases hS0 with h | h
+      · exact h
+      · omega
+    exact ⟨by omega, Or.inr c6, by omega⟩
+  | none =>
+    obtain ⟨c1, c2⟩ := hc
+    have e1 : tableOf none = 0 := rfl
+    have e2 : resOf none = 0 := rfl
+    rw [e1] at hg c2
+    rw [e2, Nat.add_zero, c1]
+    exact ⟨hS, hS0.imp_right (stage_down hd), by omega⟩
+  | some (.table c) =>
+    obtain ⟨c1, c2⟩ := hc
+    have e1 : tableOf (some (.table c)) = tableBytes c := rfl
+    have e2 : resOf (some (.table c)) = 0 := rfl
+    rw [e1] at hg c2
+    rw [e2, Nat.add_zero, c1]
+    exact ⟨hS, hS0.imp_right (stage_down hd), by omega⟩
+
 /-- A header step's state, in a header still: what it has read of its meta-block grows by what the step read. -/
 theorem stepDHdr_x {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {t : List UInt8}
     {D : Dec} (M : MemD Ws X L D (D.bits a D.pos stop (bits t))) (ht : D.tag = .hdr) (hp : D.pos.toNat ≤ stop.toNat) :
@@ -305,7 +341,7 @@ theorem stepDHdr_x {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} 
         HdLoc rh D.limit last' mlen' g' q' um u' ∧
         u ++ availBits D.hd.word D.hd.count a D.pos stop (bits t) = u' ++ availBits rh.word rh.count a rh.pos stop (bits t) := by
       intro last mlen g q um u hL
-      obtain ⟨g', p', oc, hR', hM', h1, h2, hW, hJ1⟩ := hN g q hL.rel hst
+      obtain ⟨g', p', oc, hR', hM', hDn, h1, h2, hW, hJ1⟩ := hN g q hL.rel hst
       have hJ := fun F => Reach.one (step := hStepP) (hJ1 F)
       obtain ⟨v, hv⟩ := reach_suffix (step := hStepP) (fun q => (kfaith_hStep q.1 q.2).nfaith) (hJ [])
       have hv' : (BitBuffer.mk D.hd.word D.hd.count).held ++ chunkBits a D.pos.toNat rh.pos.toNat =
@@ -318,8 +354,10 @@ theorem stepDHdr_x {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} 
         rw [← List.append_assoc, hv', List.append_assoc]
       have hsplit : chunkBits a D.pos.toNat stop.toNat = chunkBits a D.pos.toNat rh.pos.toNat ++ chunkBits a rh.pos.toNat stop.toNat :=
         chunkBits_split a h1 h2
+      obtain ⟨S, hS, hS0, hT⟩ := hL.tables
+      have hk := tables_move hM' hDn hL.max hS hS0 hL.bud
       have hLoc : HdLoc rh D.limit last mlen g' p' um (u ++ v) := by
-        refine ⟨hR', fun T => ?_, fun F => ?_, fun F => ?_, ?_⟩
+        refine ⟨hR', fun T => ?_, fun F => ?_, ⟨S + resOf oc, hk.1, hk.2.1, fun F => ?_⟩, hk.2.2, ?_⟩
         · obtain ⟨u0, hu0, hr0⟩ := reach_retail (hJ [])
           have e0 : u0 = v := by
             have := hu0.symm.trans hv
@@ -332,12 +370,12 @@ theorem stepDHdr_x {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} 
           simp only [List.append_assoc] at e ⊢
           rw [hv2] at e
           exact e
-        · have e1 := hL.tables (chunkBits a D.pos.toNat rh.pos.toNat ++ F)
+        · have e1 := hT (chunkBits a D.pos.toNat rh.pos.toNat ++ F)
           have e2 := congrArg (Option.getD · 0) (hW F)
           rw [avail_mk] at e2
           simp only [wr_tableK] at e2
           simp only [List.append_assoc] at e1 ⊢
-          rw [← hv2, e1, e2, hM'.grow, Nat.add_assoc]
+          rw [← hv2, e1, e2, Nat.add_assoc]
         · rw [hM'.max]
           exact hL.max
       refine ⟨last, mlen, g', p', u ++ v, hLoc, ?_⟩
@@ -361,14 +399,16 @@ theorem stepDHdr_x {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} 
       have hg0 : rh.d.arena.size = D.hd.d.arena.size := by
         rw [hM'.grow]
         rfl
+      obtain ⟨S, hS, hS0, hT⟩ := hL.tables
+      have hcap : rh.d.arenaCap = D.hd.d.arenaCap := hM'.cap.1
       have hLoc : HdLoc rh D.limit last mlen g q um u := by
-        refine ⟨hR', hL.path, fun F => ?_, fun F => ?_, ?_⟩
+        refine ⟨hR', hL.path, fun F => ?_, ⟨S, hS, hS0, fun F => ?_⟩, by rw [hg0, hcap]; exact hL.bud, ?_⟩
         · have e := hL.start (chunkBits a D.pos.toNat stop.toNat ++ F)
           rw [hheld]
           simp only [List.append_assoc] at e ⊢
           exact e
-        · have e := hL.tables (chunkBits a D.pos.toNat stop.toNat ++ F)
-          rw [hheld, hg0]
+        · have e := hT (chunkBits a D.pos.toNat stop.toNat ++ F)
+          rw [hheld]
           simp only [List.append_assoc] at e ⊢
           exact e
         · rw [hM'.max]
@@ -393,12 +433,14 @@ theorem stepDHdr_x {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} 
     · rcases hwin with ⟨e, _⟩ | ⟨_, w, g1, g2, g3⟩
       · exact absurd (ht.symm.trans e) (by decide)
       refine ⟨w, g1, g2, g3, fun last mlen g q um u hL s => ?_⟩
-      obtain ⟨_, _, _, ⟨c, c1, _, _, c4⟩⟩ := hMm g q hL.rel hst
+      rcases (hMm g q hL.rel hst).2.2.2 with ⟨c, c1, c2⟩ | ⟨g', c1, _, _, c4⟩
+      · have := hL.bud
+        omega
       obtain ⟨x, hx⟩ := c4 (bits s)
       rw [avail_mk] at hx
-      show D.hd.d.arenaMax.toNat < D.hd.d.arena.size + (hrest tableK g q (D.held ++ (chunkBits a D.pos.toNat rh.pos.toNat ++ bits s))).getD 0
+      show D.hd.d.arenaMax.toNat < (hrest tableK g q (D.held ++ (chunkBits a D.pos.toNat rh.pos.toNat ++ bits s))).getD 0
       rw [hh0, hx]
-      show _ < _ + (tableBytes c + x.getD 0)
+      show _ < resBytes g' + x.getD 0
       omega
   | ready =>
     dsimp only
@@ -406,7 +448,7 @@ theorem stepDHdr_x {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} 
     · refine ⟨fun _ _ e => DTag.noConfusion e, fun e => DStatus.noConfusion e, fun _ _ _ b hc => Or.inr ?_,
         fun _ _ e => absurd (ht.symm.trans e) (by decide), fun _ _ _ => rfl⟩
       obtain ⟨_, last, mlen, g, q, um, u, hL, hb⟩ := hc
-      obtain ⟨_, _, _, _, _, _, _, _, _, hx⟩ := (hI g q hL.rel).ready hst
+      obtain ⟨_, _, _, _, _, _, _, _, _, _, hx⟩ := (hI g q hL.rel).ready hst
       have hc := cert_ready (X := chunkBits a D.pos.toNat stop.toNat ++ bits t) hL ⟨_, _, hx (bits t)⟩
       rw [List.append_assoc] at hc
       rw [hb]
@@ -440,14 +482,17 @@ theorem stepDMeta_x {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize}
     have hLocOf : r.tag = .hdr → ∃ last mlen um, HdLoc r.hd r.limit last mlen Gh.start (.cat .L) um [] ∧
         D.bits a D.pos stop (bits t) = um ++ availBits r.hd.word r.hd.count a r.pos stop (bits t) := by
       intro hth
-      obtain ⟨_, s2, s3, s4, s5, _⟩ := hF.start hth
+      obtain ⟨_, s2, s3, s4, s4', s5, _⟩ := hF.start hth
       obtain ⟨last, mlen, hm⟩ := s2 t
       obtain ⟨um, hu, hf⟩ := faith_metaStart _ _ _ hm
       rw [Dec.bits_hdr hth] at hu
-      refine ⟨last, mlen, um, ⟨s3, fun T => .refl _ _, fun F => ?_, fun F => ?_, ?_⟩, hu⟩
+      refine ⟨last, mlen, um, ⟨s3, fun T => .refl _ _, fun F => ?_, ⟨0, Nat.zero_le _, Or.inl rfl, fun F => ?_⟩, ?_, ?_⟩, hu⟩
       · rw [List.append_nil, List.nil_append, List.append_assoc]
         exact hf _
-      · rw [List.nil_append, s4, Nat.zero_add]
+      · rw [List.nil_append, Nat.zero_add]
+      · rw [s4, s4']
+        show 0 + catMax * (2 + 1) ≤ 3 * catMax
+        omega
       · rw [s5, hF.limit]
     refine ⟨fun _ _ hth => Or.inr fun p' hp' => ?_, fun e => absurd e hF.status, fun _ _ e => absurd (ht.symm.trans e) (by decide),
       fun h0 h1 _ hne => ?_, fun _ _ _ => hF.limit⟩
@@ -922,17 +967,17 @@ theorem hd_top {limit : Nat} {x : List UInt8} {R : Run DState} (h : Reaches deco
 /-! ### The limit, truthfully -/
 
 /-- The limit, when the window WBITS declares doesn't fit. -/
-private theorem limit_wbits {limit kv X : Nat} (hlim : fixedCost ≤ limit) (h : min (limit - fixedCost) 4294835199 < 2 ^ kv)
+private theorem limit_wbits {limit kv X : Nat} (hlim : fixedCost ≤ limit) (h : min (limit - fixedCost) 4294822767 < 2 ^ kv)
     (hpw : 2 ^ kv ≤ 2 ^ 24) : limit < fixedCost + 2 ^ kv + X := by
   have h224 : (2 : Nat) ^ 24 = 16777216 := rfl
   omega
 
-/-- The limit, when a header's tables don't fit with the window. -/
-private theorem limit_hdr {limit lim K A R H B F kv : Nat} (hlim : fixedCost ≤ limit) (hroom : lim + K = min (limit - fixedCost) 4294835199)
-    (hbind : lim < A + R) (hT : H = A + R) (hht : H ≤ B) (hdr : B ≤ F) (hmax : H ≤ headerTablesMax * tableMax) (hK : 2 ^ kv = K)
+/-- The limit, when a header's groups' tables don't fit with the window. -/
+private theorem limit_hdr {limit lim K A R H B F kv : Nat} (hlim : fixedCost ≤ limit) (hroom : lim + K = min (limit - fixedCost) 4294822767)
+    (hbind : lim < R) (hT : H = A + R) (hht : H ≤ B) (hdr : B ≤ F) (hmax : H ≤ resMax) (hK : 2 ^ kv = K)
     (hpw : 2 ^ kv ≤ 2 ^ 24) : limit < fixedCost + 2 ^ kv + F := by
   have h224 : (2 : Nat) ^ 24 = 16777216 := rfl
-  have hcap : headerTablesMax * tableMax = 102242304 := rfl
+  have hcap : resMax = 2670592 := rfl
   omega
 
 /-- Memory usage correctness, for the input used: when the decoder reports the limit, the bytes it reports as used already
@@ -1001,7 +1046,7 @@ theorem decoder_limitAt {limit : Nat} {x : List UInt8} {R : Run DState} (h : Rea
         rw [← bits_append, List.take_append_drop]
       exact reach_restrict nfaith_sStep hz _ _ _ hxs1 rfl (by rw [bits_length]; omega)
     refine ⟨?_, R0.read + k1, p1, D1.held, by omega, htight, by omega⟩
-    have hroom : roomOf limit = min (limit - fixedCost) 4294835199 := rfl
+    have hroom : roomOf limit = min (limit - fixedCost) 4294822767 := rfl
     rcases hB with ⟨htw, hbw⟩ | ⟨hth, w, g1, g2, g3, g4⟩
     · -- At WBITS: the window the stream declares doesn't fit.
       have hp1w : p1 = .wbits := by
@@ -1039,10 +1084,11 @@ theorem decoder_limitAt {limit : Nat} {x : List UInt8} {R : Run DState} (h : Rea
       have hfirst : (srest demandSem .wbits (bits (x.take (R0.read + kq)))).getD 0 = (demandSem.first (bits (x.take (R0.read + kq)))).getD 0 := rfl
       have hht := headerTables_le w0 st0 (um ++ u ++ (D1.held ++ chunkBits (R0.input x c) pos1.toNat o.pos.toNat))
       have hmax := headerTables_le_max (um ++ u ++ (D1.held ++ chunkBits (R0.input x c) pos1.toNat o.pos.toNat))
+      obtain ⟨S, _, _, hT0⟩ := hL.tables
       have hT : headerTables (um ++ u ++ (D1.held ++ chunkBits (R0.input x c) pos1.toNat o.pos.toNat)) =
-          D1.hd.d.arena.size + (hrest tableK g q (D1.held ++ chunkBits (R0.input x c) pos1.toNat o.pos.toNat)).getD 0 := by
+          S + (hrest tableK g q (D1.held ++ chunkBits (R0.input x c) pos1.toNat o.pos.toNat)).getD 0 := by
         have e := hL.start (chunkBits (R0.input x c) pos1.toNat o.pos.toNat)
-        have e2 := hL.tables (chunkBits (R0.input x c) pos1.toNat o.pos.toNat)
+        have e2 := hT0 (chunkBits (R0.input x c) pos1.toNat o.pos.toNat)
         rw [← Dec.held_hdr hth] at e e2
         unfold headerTables
         rw [show um ++ u ++ (D1.held ++ chunkBits (R0.input x c) pos1.toNat o.pos.toNat) =
@@ -1076,7 +1122,7 @@ theorem decoder_limitAt {limit : Nat} {x : List UInt8} {R : Run DState} (h : Rea
       exact limit_hdr hlim g3 hbind hT hht hdr hmax hK hpw
 
 /-- The demand of bytes before where the limit binds, within the limit. -/
-private theorem limit_tight_arith {limit lim K W T : Nat} (hlim : fixedCost ≤ limit) (hroom : lim + K = min (limit - fixedCost) 4294835199)
+private theorem limit_tight_arith {limit lim K W T : Nat} (hlim : fixedCost ≤ limit) (hroom : lim + K = min (limit - fixedCost) 4294822767)
     (hW : W ≤ K) (hT : T ≤ lim) : fixedCost + W + T ≤ limit := by
   omega
 

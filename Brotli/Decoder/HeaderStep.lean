@@ -57,12 +57,15 @@ theorem CatOk.same {d d' : Done} {i : Cat} {c : BlockCategory} (h : CatOk d i c)
   tc := h.tc
   cc := h.cc
 
-/-- What's settled at a stage among the categories. -/
-theorem Upto.low {d : Done} {g : Gh} {n : Nat} (hn : n ≤ 3) (h1 : d.arena.size % 4 = 0) (h2 : d.arena.size ≤ d.arenaMax.toNat)
-    (h3 : d.arenaMax.toNat + 132096 < 2 ^ 32) (hc : ∀ i, catIdx i < n → CatOk d i (g.catOf i)) : Upto d g n where
-  four := h1
-  le := h2
-  max := h3
+/-- What's settled at a stage among the categories, with the arena as at a stage before it. -/
+theorem Upto.low {d d0 : Done} {g g0 : Gh} {n n0 : Nat} (hn : n ≤ 3) (h0 : Upto d0 g0 n0) (hn0 : n0 ≤ 3) (h1 : d.arena = d0.arena)
+    (hm : d.arenaMax = d0.arenaMax) (hcp : d.arenaCap = d0.arenaCap) (hc : ∀ i, catIdx i < n → CatOk d i (g.catOf i)) : Upto d g n where
+  four := by rw [h1]; exact h0.four
+  le := by rw [h1, hcp]; exact h0.le
+  max := by rw [hcp]; exact h0.max
+  capLe := by rw [hcp, hm]; exact h0.capLe
+  room := by rw [hm]; exact h0.room
+  small _ := by rw [hcp]; exact h0.small (by omega)
   cat := hc
   np h := absurd h (by omega)
   modes h := absurd h (by omega)
@@ -72,9 +75,10 @@ theorem Upto.low {d : Done} {g : Gh} {n : Nat} (hn : n ≤ 3) (h1 : d.arena.size
 
 /-- Setting a category's fields keeps a stage up to it. -/
 theorem Upto.setSame {d d' : Done} {g : Gh} {i : Cat} (h : Upto d g (catIdx i)) (h1 : d'.arena = d.arena) (hm : d'.arenaMax = d.arenaMax)
+    (hcp : d'.arenaCap = d.arenaCap)
     (hs : ∀ j, j ≠ i → d'.nOf j = d.nOf j ∧ d'.countOf j = d.countOf j ∧ d'.baseTOf j = d.baseTOf j ∧ d'.baseCOf j = d.baseCOf j) :
     Upto d' g (catIdx i) := by
-  refine Upto.low (by cases i <;> decide) (by rw [h1]; exact h.four) (by rw [h1, hm]; exact h.le) (by rw [hm]; exact h.max) ?_
+  refine Upto.low (by cases i <;> decide) h (by cases i <;> decide) h1 hm hcp ?_
   intro j hj
   have hne : j ≠ i := fun e => by subst e; omega
   obtain ⟨a, b, c, e⟩ := hs j hne
@@ -82,10 +86,10 @@ theorem Upto.setSame {d d' : Done} {g : Gh} {i : Cat} (h : Upto d g (catIdx i)) 
 
 /-- A category settled moves the stage on. -/
 theorem Upto.catDone {d d' : Done} {g : Gh} {i : Cat} {c : BlockCategory} (h : Upto d g (catIdx i)) (h1 : d'.arena = d.arena)
-    (hm : d'.arenaMax = d.arenaMax)
+    (hm : d'.arenaMax = d.arenaMax) (hcp : d'.arenaCap = d.arenaCap)
     (hs : ∀ j, j ≠ i → d'.nOf j = d.nOf j ∧ d'.countOf j = d.countOf j ∧ d'.baseTOf j = d.baseTOf j ∧ d'.baseCOf j = d.baseCOf j)
     (hc : CatOk d' i c) : Upto d' (g.setCat i c) (stageOf (catNextPhase i)) := by
-  refine Upto.low (by cases i <;> decide) (by rw [h1]; exact h.four) (by rw [h1, hm]; exact h.le) (by rw [hm]; exact h.max) ?_
+  refine Upto.low (by cases i <;> decide) h (by cases i <;> decide) h1 hm hcp ?_
   intro j hj
   by_cases hne : j = i
   · subst hne
@@ -131,12 +135,13 @@ private theorem setN_nOf (d : Done) (i : Cat) (v : UInt64) : (d.setN i v).nOf i 
 
 private theorem setCount_countOf (d : Done) (i : Cat) (v : UInt64) : (d.setCount i v).countOf i = v := by cases i <;> rfl
 
-private theorem setN_arena (d : Done) (i : Cat) (v : UInt64) : (d.setN i v).arena = d.arena ∧ (d.setN i v).arenaMax = d.arenaMax := by
-  cases i <;> exact ⟨rfl, rfl⟩
+private theorem setN_arena (d : Done) (i : Cat) (v : UInt64) :
+    (d.setN i v).arena = d.arena ∧ (d.setN i v).arenaMax = d.arenaMax ∧ (d.setN i v).arenaCap = d.arenaCap := by
+  cases i <;> exact ⟨rfl, rfl, rfl⟩
 
 private theorem setCount_arena (d : Done) (i : Cat) (v : UInt64) :
-    (d.setCount i v).arena = d.arena ∧ (d.setCount i v).arenaMax = d.arenaMax := by
-  cases i <;> exact ⟨rfl, rfl⟩
+    (d.setCount i v).arena = d.arena ∧ (d.setCount i v).arenaMax = d.arenaMax ∧ (d.setCount i v).arenaCap = d.arenaCap := by
+  cases i <;> exact ⟨rfl, rfl, rfl⟩
 
 private theorem setCount_nOf (d : Done) (i j : Cat) (v : UInt64) : (d.setCount i v).nOf j = d.nOf j := by
   cases i <;> cases j <;> rfl
@@ -228,7 +233,7 @@ theorem stepHCat_ok {i : Cat} {st : Hd} {g : Gh} {pos : USize} {α : Type} {K : 
         · exact ⟨hrange.1, hrange.2, fun h => absurd h (by simp only; omega)⟩
       subst hi
       have hup : Upto ((st.d.setN st.cat r.a).setCount st.cat 16777216) (g.setCat st.cat c) (stageOf (catNextPhase st.cat)) :=
-        hu.catDone (hdc.1.trans hd.1) (hdc.2.trans hd.2) (fun j hj => by
+        hu.catDone (hdc.1.trans hd.1) (hdc.2.1.trans hd.2.1) (hdc.2.2.trans hd.2.2) (fun j hj => by
           obtain ⟨e1, e2, e3, e4⟩ := setCount_others (st.d.setN st.cat r.a) st.cat 16777216 j hj
           obtain ⟨f1, f2, f3, f4⟩ := setN_others st.d st.cat r.a j hj
           exact ⟨e1.trans f1, e2.trans f2, e3.trans f3, e4.trans f4⟩) hcat
@@ -242,13 +247,13 @@ theorem stepHCat_ok {i : Cat} {st : Hd} {g : Gh} {pos : USize} {α : Type} {K : 
           word := r.word, count := r.count, pos := pos, status := .next
           d := (st.d.setN st.cat r.a).setCount st.cat 16777216 }) st :=
         (catMoveOn_arr _).trans ⟨⟨(setCount_arrays _ _ _).arena.trans (setN_arrays _ _ _).arena, (setCount_arrays _ _ _).max.trans (setN_arrays _ _ _).max,
-          (setCount_arrays _ _ _).modes.trans (setN_arrays _ _ _).modes, (setCount_arrays _ _ _).lMap.trans (setN_arrays _ _ _).lMap,
+          (setCount_arrays _ _ _).cap.trans (setN_arrays _ _ _).cap, (setCount_arrays _ _ _).modes.trans (setN_arrays _ _ _).modes, (setCount_arrays _ _ _).lMap.trans (setN_arrays _ _ _).lMap,
           (setCount_arrays _ _ _).dMap.trans (setN_arrays _ _ _).dMap, (setCount_arrays _ _ _).litBase.trans (setN_arrays _ _ _).litBase,
           (setCount_arrays _ _ _).icBase.trans (setN_arrays _ _ _).icBase, (setCount_arrays _ _ _).dBase.trans (setN_arrays _ _ _).dBase⟩, rfl, rfl, rfl, rfl, rfl⟩
       generalize catMoveOn { st with
           word := r.word, count := r.count, pos := pos, status := .next
           d := (st.d.setN st.cat r.a).setCount st.cat 16777216 } = r2 at hrel2 b1 b2 b3 b4 ha ⊢
-      refine HStepOk.ofNext (hd := catNext_down _) (hm := HMove.ofArr ha (catNext_cap _)) b4 hrel2 (by rw [b3]; exact Nat.le_refl _) (by rw [b3]; exact hp)
+      refine HStepOk.ofNext (hd := catNext_down _) (hm := HMove.ofArr ha (catNext_bud _ _ _)) b4 hrel2 (by rw [b3]; exact Nat.le_refl _) (by rw [b3]; exact hp)
         (fun F => ?_) (fun F => ?_)
       · have e := hN (chunkBits a pos.toNat stop.toNat ++ F)
         rw [avail_mk, e]
@@ -269,8 +274,8 @@ theorem stepHCat_ok {i : Cat} {st : Hd} {g : Gh} {pos : USize} {α : Type} {K : 
         rw [UInt64.toNat_add, show (2 : UInt64).toNat = 2 from rfl]
         exact Nat.mod_eq_of_lt (by omega)
       refine HStepOk.ofNext (g' := g) (p' := .code (.type st.cat r.a.toNat) (blockTypeAlphabetSize r.a.toNat))
-        (hm := HMove.ofArr ⟨setN_arrays _ _ _, rfl, rfl, rfl, rfl, rfl⟩ (Nat.le_refl _)) rfl
-        ⟨hw2, hu.setSame hd.1 hd.2 (setN_others st.d st.cat r.a), rfl, ⟨hsz, by unfold blockTypeAlphabetSize; omega, by unfold blockTypeAlphabetSize; omega⟩,
+        (hm := HMove.ofArr ⟨setN_arrays _ _ _, rfl, rfl, rfl, rfl, rfl⟩ (by simp only [budH, budO]; omega)) rfl
+        ⟨hw2, hu.setSame hd.1 hd.2.1 hd.2.2 (setN_others st.d st.cat r.a), rfl, ⟨hsz, by unfold blockTypeAlphabetSize; omega, by unfold blockTypeAlphabetSize; omega⟩,
           rfl, rfl, by show ((st.d.setN st.cat r.a).nOf st.cat).toNat = _; rw [setN_nOf], by omega, hrange.2, rfl⟩
         (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
       · have e := hN (chunkBits a pos.toNat stop.toNat ++ F)

@@ -50,8 +50,8 @@ private theorem setCount_baseC' (d : Done) (i j : Cat) (v : UInt64) : (d.setCoun
   cases i <;> cases j <;> rfl
 
 private theorem setCount_arena' (d : Done) (i : Cat) (v : UInt64) :
-    (d.setCount i v).arena = d.arena ∧ (d.setCount i v).arenaMax = d.arenaMax := by
-  cases i <;> exact ⟨rfl, rfl⟩
+    (d.setCount i v).arena = d.arena ∧ (d.setCount i v).arenaMax = d.arenaMax ∧ (d.setCount i v).arenaCap = d.arenaCap := by
+  cases i <;> exact ⟨rfl, rfl, rfl⟩
 
 private theorem setCount_countOf_ne (d : Done) (i j : Cat) (v : UInt64) (hj : j ≠ i) : (d.setCount i v).countOf j = d.countOf j := by
   cases i <;> cases j <;> first | exact absurd rfl hj | rfl
@@ -100,7 +100,7 @@ theorem stepHFirst_ok {i : Cat} {n : Nat} {tc cc : PrefixCode} {st : Hd} {g : Gh
         exact ⟨fun _ => ⟨okT, cT, sT⟩, fun _ => ⟨okC, cC, sC⟩⟩
       · exact ⟨by simp only; omega, h256, fun _ => sT⟩
     have hup : Upto (st.d.setCount st.cat r.a) (g.setCat st.cat c) (stageOf (catNextPhase st.cat)) :=
-      hu.catDone hd.1 hd.2 (fun j hj => ⟨setCount_nOf' _ _ _ _, setCount_countOf_ne _ _ _ _ hj, setCount_baseT' _ _ _ _,
+      hu.catDone hd.1 hd.2.1 hd.2.2 (fun j hj => ⟨setCount_nOf' _ _ _ _, setCount_countOf_ne _ _ _ _ hj, setCount_baseT' _ _ _ _,
         setCount_baseC' _ _ _ _⟩) hcat
     have hrel2 := catMoveOn_rel (st := { st with
         word := r.word, count := r.count, pos := pos, status := .next
@@ -114,7 +114,7 @@ theorem stepHFirst_ok {i : Cat} {n : Nat} {tc cc : PrefixCode} {st : Hd} {g : Gh
     generalize catMoveOn { st with
         word := r.word, count := r.count, pos := pos, status := .next
         d := st.d.setCount st.cat r.a } = r2 at hrel2 b1 b2 b3 b4 ha ⊢
-    refine HStepOk.ofNext (hd := firstNext_down _ _ _ _) (hm := HMove.ofArr ha (firstNext_cap _ _ _ _)) b4 hrel2 (by rw [b3]; exact Nat.le_refl _) (by rw [b3]; exact hp)
+    refine HStepOk.ofNext (hd := firstNext_down _ _ _ _) (hm := HMove.ofArr ha (firstNext_bud _ _ _ _ _ _)) b4 hrel2 (by rw [b3]; exact Nat.le_refl _) (by rw [b3]; exact hp)
       (fun F => ?_) (fun F => ?_)
     · have e := hN (chunkBits a pos.toNat stop.toNat ++ F)
       rw [avail_mk, e, afterCat_eq, avail_mk, b1, b2, b3]
@@ -173,6 +173,9 @@ theorem Upto.npDone {d : Done} {g : Gh} (h : Upto d g 3) {x y : UInt64} {u v : N
   four := h.four
   le := h.le
   max := h.max
+  capLe := h.capLe
+  room := h.room
+  small _ := h.small (by omega)
   cat i hi := by
     have hc := h.cat i (by cases i <;> decide)
     cases i <;> exact ⟨hc.n, hc.count, hc.rel, hc.wf, hc.tc, hc.cc⟩
@@ -257,7 +260,7 @@ theorem stepHNp_ok {st : Hd} {g : Gh} {pos : USize} (hrel : HRel st g .np) (hp :
       omega
     refine HStepOk.ofNext (g' := { g with m := { g.m with npostfix := r.a.toNat, ndirect := r.b.toNat <<< r.a.toNat } })
       (p' := .modes [] g.m.literal.n) (hm := ⟨rfl, rfl, fun h => ⟨hfs, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩,
-        by simp only [capH, Option.isSome, Bool.false_eq_true, ↓reduceIte]; omega, Nat.zero_le _⟩) rfl ⟨hw2, hu.npDone rfl hshift (by omega) hnd, rfl, rfl, hnL, by simp, ?_, by simp, by simp⟩
+        ⟨rfl, by simp [budH, tableOf]⟩⟩) rfl ⟨hw2, hu.npDone rfl hshift (by omega) hnd, rfl, rfl, hnL, by simp, ?_, by simp, by simp⟩
       (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
     · show (zeroBytes st.d.nL.toNat).size = g.m.literal.n
       rw [zeroBytes_size (by omega), hnL]
@@ -294,6 +297,9 @@ theorem Upto.modesDone {d : Done} {g : Gh} (h : Upto d g 4) {b : ByteArray} {l :
   four := h.four
   le := h.le
   max := h.max
+  capLe := h.capLe
+  room := h.room
+  small _ := h.small (by omega)
   cat i hi := by
     have hc := h.cat i (by cases i <;> decide)
     cases i <;> exact ⟨hc.n, hc.count, hc.rel, hc.wf, hc.tc, hc.cc⟩
@@ -321,7 +327,7 @@ theorem stepHModes_ok {done : List Nat} {left : Nat} {st : Hd} {g : Gh} {pos : U
     have hmap : MapOk st.fill done g.m.literal.n 4 := ⟨hsize, by omega, fun i hi => hat i (by omega), hlt⟩
     refine HStepOk.ofNext (g' := { g with m := { g.m with contextModes := done } }) (p' := .trees true)
       (hm := ⟨rfl, rfl, fun h => ⟨h.fill, h.lens, h.clLens, h.clt, h.mapT, by show st.fill.size ≤ 256; rw [hsize]; exact h256, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩,
-        by simp only [capH, Option.isSome, Bool.false_eq_true, ↓reduceIte]; omega, Nat.zero_le _⟩) rfl
+        ⟨rfl, by simp [budH, tableOf]⟩⟩) rfl
       ⟨hw, hu.modesDone hmap, rfl, rfl⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => rfl)
     exact hrest_modes_zero K g done _
   rw [ite_eq_right h0]
@@ -348,7 +354,7 @@ theorem stepHModes_ok {done : List Nat} {left : Nat} {st : Hd} {g : Gh} {pos : U
     have hsz' : (setU st.fill st.idx.toUSize v.toUInt8).size = g.m.literal.n := by rw [size_setU]; exact hsize
     refine HStepOk.ofNext (g' := g) (p' := .modes (done ++ [v.toNat]) n) (hd := Or.inl (Or.inr ⟨rfl, Nat.lt_succ_self n⟩))
       (hm := ⟨rfl, rfl, fun h => ⟨by show (setU st.fill st.idx.toUSize v.toUInt8).size ≤ 16384; rw [hsz']; omega, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩,
-        by simp only [capH, Option.isSome, Bool.false_eq_true, ↓reduceIte]; omega, Nat.zero_le _⟩) rfl
+        ⟨rfl, by simp [budH, tableOf]⟩⟩) rfl
       ⟨hw1, hu, ht, by simpa using hi1, hl1, by simp only [List.length_append, List.length_singleton]; omega, hsz', ?_, ?_⟩
       (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
     · intro x hx

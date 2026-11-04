@@ -32,11 +32,12 @@ inductive CK where
   | D
   deriving DecidableEq
 
-/-- What a header's reading goes on to, and what a table a prefix code needs does to it. For the spec's own reading, the
-second does nothing. For the memory demand, it adds the table's size. -/
+/-- What a header's reading goes on to, and what the groups of codes do to it once both context maps, and so every group's
+number of trees, are read. For the spec's own reading, the second does nothing. For the memory demand, it adds what the
+decoder reserves for the groups' tables. -/
 structure HK (α : Type) where
   k : MetaBlockHeader → List Bool → Option α
-  w : PrefixCode → Option α → Option α
+  r : Gh → Option α → Option α
 
 section
 
@@ -45,19 +46,19 @@ variable {α : Type} (K : HK α)
 /-- A group of `left` codes, then `G` with the group. -/
 def hCodesR (size : Nat) (G : List PrefixCode → List Bool → Option α) : List PrefixCode → Nat → List Bool → Option α
   | done, 0, bs => G done bs
-  | done, n + 1, bs => readPrefixCode size bs >>= fun p => K.w p.1 (hCodesR size G (done ++ [p.1]) n p.2)
+  | done, n + 1, bs => readPrefixCode size bs >>= fun p => hCodesR size G (done ++ [p.1]) n p.2
 
 /-- The distance codes, then what follows the header. -/
 def hCodesD (g : Gh) (done : List PrefixCode) (left : Nat) (bs : List Bool) : Option α :=
-  hCodesR K (distanceAlphabetSize g.m.npostfix g.m.ndirect) (fun cs b => K.k { g.m with distanceCodes := cs } b) done left bs
+  hCodesR (distanceAlphabetSize g.m.npostfix g.m.ndirect) (fun cs b => K.k { g.m with distanceCodes := cs } b) done left bs
 
 /-- The insert-and-copy codes, and on. -/
 def hCodesI (g : Gh) (done : List PrefixCode) (left : Nat) (bs : List Bool) : Option α :=
-  hCodesR K insertCopyAlphabetSize (fun cs b => hCodesD K { g with m := { g.m with insertCopyCodes := cs } } [] g.treesD b) done left bs
+  hCodesR insertCopyAlphabetSize (fun cs b => hCodesD K { g with m := { g.m with insertCopyCodes := cs } } [] g.treesD b) done left bs
 
 /-- The literal codes, and on. -/
 def hCodesL (g : Gh) (done : List PrefixCode) (left : Nat) (bs : List Bool) : Option α :=
-  hCodesR K literalAlphabetSize (fun cs b => hCodesI K { g with m := { g.m with literalCodes := cs } } [] g.m.insertCopy.n b) done left bs
+  hCodesR literalAlphabetSize (fun cs b => hCodesI K { g with m := { g.m with literalCodes := cs } } [] g.m.insertCopy.n b) done left bs
 
 /-- A group of codes, and on. -/
 def hCodes : CK → Gh → List PrefixCode → Nat → List Bool → Option α
@@ -82,8 +83,10 @@ def ckAfter (g : Gh) (k : CK) (cs : List PrefixCode) (bs : List Bool) : Option �
 def afterMap (g : Gh) (isL : Bool) (ntrees : Nat) (cmap : List Nat) (bs : List Bool) : Option α :=
   if isL then
     (readTreesAndMap (distanceContextMapSize g.m.distance.n) bs >>= fun p =>
-      hCodesL K { g with m := { g.m with literalMap := cmap, distanceMap := p.1.2 }, treesL := ntrees, treesD := p.1.1 } [] ntrees p.2)
-  else hCodesL K { g with m := { g.m with distanceMap := cmap }, treesD := ntrees } [] g.treesL bs
+      K.r { g with m := { g.m with literalMap := cmap, distanceMap := p.1.2 }, treesL := ntrees, treesD := p.1.1 }
+        (hCodesL K { g with m := { g.m with literalMap := cmap, distanceMap := p.1.2 }, treesL := ntrees, treesD := p.1.1 } [] ntrees p.2))
+  else K.r { g with m := { g.m with distanceMap := cmap }, treesD := ntrees }
+    (hCodesL K { g with m := { g.m with distanceMap := cmap }, treesD := ntrees } [] g.treesL bs)
 
 /-- A context map's size. -/
 def mapSize (g : Gh) (isL : Bool) : Nat :=
@@ -106,20 +109,20 @@ def hNp (g : Gh) (bs : List Bool) : Option α :=
 def hCatR (N : BlockCategory → List Bool → Option α) (bs : List Bool) : Option α :=
   readVarLen bs >>= fun p =>
     if p.1 < 2 then N ⟨p.1, .single 0, .single 0, 16777216⟩ p.2
-    else readPrefixCode (blockTypeAlphabetSize p.1) p.2 >>= fun q => K.w q.1 (readPrefixCode blockCountAlphabetSize q.2 >>= fun u =>
-      K.w u.1 (readBlockCount u.1 u.2 >>= fun v => N ⟨p.1, q.1, u.1, v.1⟩ v.2))
+    else readPrefixCode (blockTypeAlphabetSize p.1) p.2 >>= fun q => readPrefixCode blockCountAlphabetSize q.2 >>= fun u =>
+      readBlockCount u.1 u.2 >>= fun v => N ⟨p.1, q.1, u.1, v.1⟩ v.2
 
 /-- The categories, and on. -/
 def hCatD (g : Gh) (bs : List Bool) : Option α :=
-  hCatR K (fun c b => hNp K { g with m := { g.m with distance := c } } b) bs
+  hCatR (fun c b => hNp K { g with m := { g.m with distance := c } } b) bs
 
 /-- The categories, and on. -/
 def hCatI (g : Gh) (bs : List Bool) : Option α :=
-  hCatR K (fun c b => hCatD K { g with m := { g.m with insertCopy := c } } b) bs
+  hCatR (fun c b => hCatD K { g with m := { g.m with insertCopy := c } } b) bs
 
 /-- The categories, and on. -/
 def hCatL (g : Gh) (bs : List Bool) : Option α :=
-  hCatR K (fun c b => hCatI K { g with m := { g.m with literal := c } } b) bs
+  hCatR (fun c b => hCatI K { g with m := { g.m with literal := c } } b) bs
 
 /-- From a category, and on. -/
 def hCat : Cat → Gh → List Bool → Option α
@@ -151,19 +154,16 @@ private theorem append_cons' {β : Type} (done : List β) (p : β) (l : List β)
 
 section
 variable {K}
-variable (hw : ∀ c x, K.w c x = x)
-include hw
 
-/-- For the spec's own reading, a group of codes is what `readPrefixCodes` reads. -/
+/-- A group of codes is what `readPrefixCodes` reads. -/
 theorem hCodesR_id (size : Nat) (G : List PrefixCode → List Bool → Option α) : ∀ (left : Nat) (done : List PrefixCode) (bs : List Bool),
-    hCodesR K size G done left bs = readPrefixCodes size left bs >>= fun p => G (done ++ p.1) p.2
+    hCodesR size G done left bs = readPrefixCodes size left bs >>= fun p => G (done ++ p.1) p.2
   | 0, done, bs => by
     show G done bs = G (done ++ []) bs
     rw [List.append_nil]
   | n + 1, done, bs => by
     rw [codes_succ]
-    show (readPrefixCode size bs >>= fun p => K.w p.1 (hCodesR K size G (done ++ [p.1]) n p.2)) = _
-    simp only [hw]
+    show (readPrefixCode size bs >>= fun p => hCodesR size G (done ++ [p.1]) n p.2) = _
     congr 1
     funext p
     rw [hCodesR_id size G n]
@@ -172,9 +172,9 @@ theorem hCodesR_id (size : Nat) (G : List PrefixCode → List Bool → Option α
       rw [append_cons' done p.1 q.1]
     rw [e]
 
-/-- For the spec's own reading, a category is what `readBlockCategory` reads. -/
+/-- A category is what `readBlockCategory` reads. -/
 theorem hCatR_id (N : BlockCategory → List Bool → Option α) (bs : List Bool) :
-    hCatR K N bs = readBlockCategory bs >>= fun p => N p.1 p.2 := by
+    hCatR N bs = readBlockCategory bs >>= fun p => N p.1 p.2 := by
   unfold hCatR readBlockCategory
   cases readVarLen bs with
   | none => rfl
@@ -185,7 +185,6 @@ theorem hCatR_id (N : BlockCategory → List Bool → Option α) (bs : List Bool
     · rw [ite_eq_left hn, ite_eq_left hn]
       rfl
     · rw [ite_eq_right hn, ite_eq_right hn]
-      simp only [hw]
       show (readPrefixCode (blockTypeAlphabetSize n) b1 >>= fun q => readPrefixCode blockCountAlphabetSize q.2 >>= fun u =>
         readBlockCount u.1 u.2 >>= fun v => N ⟨n, q.1, u.1, v.1⟩ v.2) = (readPrefixCode (blockTypeAlphabetSize n) b1 >>= _) >>= _
       cases readPrefixCode (blockTypeAlphabetSize n) b1 with
@@ -206,17 +205,17 @@ theorem hCatR_id (N : BlockCategory → List Bool → Option α) (bs : List Bool
 end
 
 /-- The header, as `readMetaBlockHeader` reads it, is the chain from the first category, from any record to start with. -/
-theorem header_eq (hw : ∀ c x, K.w c x = x) (g : Gh) (bs : List Bool) :
+theorem header_eq (hr : ∀ g x, K.r g x = x) (g : Gh) (bs : List Bool) :
     (readMetaBlockHeader bs >>= fun p => K.k p.1 p.2) = hCatL K g bs := by
   unfold readMetaBlockHeader hCatL
-  rw [hCatR_id hw]
+  rw [hCatR_id]
   cases h1 : readBlockCategory bs with
   | none => rfl
   | some p1 =>
     obtain ⟨c1, b1⟩ := p1
     show (readBlockCategory b1 >>= _) >>= _ = hCatI K _ b1
     unfold hCatI
-    rw [hCatR_id hw]
+    rw [hCatR_id]
     show (readBlockCategory b1 >>= _) >>= _ = readBlockCategory b1 >>= _
     cases h2 : readBlockCategory b1 with
     | none => rfl
@@ -224,7 +223,7 @@ theorem header_eq (hw : ∀ c x, K.w c x = x) (g : Gh) (bs : List Bool) :
       obtain ⟨c2, b2⟩ := p2
       show (readBlockCategory b2 >>= _) >>= _ = hCatD K _ b2
       unfold hCatD
-      rw [hCatR_id hw]
+      rw [hCatR_id]
       show (readBlockCategory b2 >>= _) >>= _ = readBlockCategory b2 >>= _
       cases h3 : readBlockCategory b2 with
       | none => rfl
@@ -263,9 +262,10 @@ theorem header_eq (hw : ∀ c x, K.w c x = x) (g : Gh) (bs : List Bool) :
                 | none => rfl
                 | some p8 =>
                   obtain ⟨⟨td, md⟩, b8⟩ := p8
-                  show (readPrefixCodes literalAlphabetSize tl b8 >>= _) >>= _ = hCodesL K _ [] tl b8
+                  show (readPrefixCodes literalAlphabetSize tl b8 >>= _) >>= _ = K.r _ (hCodesL K _ [] tl b8)
+                  rw [hr]
                   unfold hCodesL
-                  rw [hCodesR_id hw]
+                  rw [hCodesR_id]
                   show (readPrefixCodes literalAlphabetSize tl b8 >>= _) >>= _ =
                     readPrefixCodes literalAlphabetSize tl b8 >>= _
                   cases h9 : readPrefixCodes literalAlphabetSize tl b8 with
@@ -274,7 +274,7 @@ theorem header_eq (hw : ∀ c x, K.w c x = x) (g : Gh) (bs : List Bool) :
                     obtain ⟨cl, b9⟩ := p9
                     show (readPrefixCodes insertCopyAlphabetSize c2.n b9 >>= _) >>= _ = hCodesI K _ [] c2.n b9
                     unfold hCodesI
-                    rw [hCodesR_id hw]
+                    rw [hCodesR_id]
                     show (readPrefixCodes insertCopyAlphabetSize c2.n b9 >>= _) >>= _ =
                       readPrefixCodes insertCopyAlphabetSize c2.n b9 >>= _
                     cases h10 : readPrefixCodes insertCopyAlphabetSize c2.n b9 with
@@ -283,7 +283,7 @@ theorem header_eq (hw : ∀ c x, K.w c x = x) (g : Gh) (bs : List Bool) :
                       obtain ⟨ci, b10⟩ := p10
                       show (readPrefixCodes (distanceAlphabetSize np (nd <<< np)) td b10 >>= _) >>= _ = hCodesD K _ [] td b10
                       unfold hCodesD
-                      rw [hCodesR_id hw]
+                      rw [hCodesR_id]
                       show (readPrefixCodes (distanceAlphabetSize np (nd <<< np)) td b10 >>= _) >>= _ =
                         readPrefixCodes (distanceAlphabetSize np (nd <<< np)) td b10 >>= _
                       cases h11 : readPrefixCodes (distanceAlphabetSize np (nd <<< np)) td b10 with
@@ -298,7 +298,7 @@ theorem hCodes_zero (k : CK) (g : Gh) (done : List PrefixCode) (bs : List Bool) 
 /-- A group of codes when more are left. -/
 theorem hCodes_succ (k : CK) (g : Gh) (done : List PrefixCode) (n : Nat) (bs : List Bool) :
     hCodes K k g done (n + 1) bs =
-      readPrefixCode (ckSize k g) bs >>= fun p => K.w p.1 (hCodes K k g (done ++ [p.1]) n p.2) := by
+      readPrefixCode (ckSize k g) bs >>= fun p => hCodes K k g (done ++ [p.1]) n p.2 := by
   cases k <;> rfl
 
 /-- The context modes when none are left. -/
@@ -610,11 +610,11 @@ def oCount (g : Gh) (i : Cat) (n : Nat) (tc cc : PrefixCode) (bs : List Bool) : 
 
 /-- What follows a prefix code. -/
 def ownerK (g : Gh) : Owner → PrefixCode → List Bool → Option α
-  | .type i n, c, bs => K.w c (readPrefixCode blockCountAlphabetSize bs >>= fun p => K.w p.1 (oCount K g i n c p.1 p.2))
-  | .count i n tc, c, bs => K.w c (oCount K g i n tc c bs)
+  | .type i n, c, bs => readPrefixCode blockCountAlphabetSize bs >>= fun p => oCount K g i n c p.1 p.2
+  | .count i n tc, c, bs => oCount K g i n tc c bs
   | .map isL ntrees rlemax, c, bs =>
     valsFrom rlemax c (mapSize g isL) bs >>= fun q => afterVals K g isL ntrees q.1 q.2
-  | .codes k done left, c, bs => K.w c (hCodes K k g (done ++ [c]) left bs)
+  | .codes k done left, c, bs => hCodes K k g (done ++ [c]) left bs
 
 /-- The places a header can pause. -/
 inductive HPhase where
@@ -680,7 +680,7 @@ theorem hrest_cat (g : Gh) (i : Cat) (bs : List Bool) :
     hrest K g (.cat i) bs = readVarLen bs >>= fun p =>
       if p.1 < 2 then afterCat K g i ⟨p.1, .single 0, .single 0, 16777216⟩ p.2
       else hrest K g (.code (.type i p.1) (blockTypeAlphabetSize p.1)) p.2 := by
-  have key : hCat K i g bs = hCatR K (fun c b => afterCat K g i c b) bs := by cases i <;> rfl
+  have key : hCat K i g bs = hCatR (fun c b => afterCat K g i c b) bs := by cases i <;> rfl
   rw [show hrest K g (.cat i) bs = hCat K i g bs from rfl, key]
   rfl
 
@@ -700,8 +700,14 @@ def Gh.setMap (g : Gh) (isL : Bool) (ntrees : Nat) (cmap : List Nat) : Gh :=
   | true => { g with m := { g.m with literalMap := cmap }, treesL := ntrees }
   | false => { g with m := { g.m with distanceMap := cmap }, treesD := ntrees }
 
+/-- What the end of a context map does to the reading: after the distance context map, the groups' reservation. -/
+def mapR (g : Gh) : Bool → Option α → Option α
+  | true, x => x
+  | false, x => K.r g x
+
 theorem afterMap_eq (g : Gh) (isL : Bool) (ntrees : Nat) (cmap : List Nat) (bs : List Bool) :
-    afterMap K g isL ntrees cmap bs = hrest K (g.setMap isL ntrees cmap) (mapNextPhase (g.setMap isL ntrees cmap) isL) bs := by
+    afterMap K g isL ntrees cmap bs =
+      mapR K (g.setMap isL ntrees cmap) isL (hrest K (g.setMap isL ntrees cmap) (mapNextPhase (g.setMap isL ntrees cmap) isL) bs) := by
   cases isL <;> rfl
 
 /-- A context map's number of trees, then the map if there are two trees or more. -/

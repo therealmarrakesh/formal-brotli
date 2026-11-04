@@ -356,7 +356,8 @@ def mkHdr (d : Done) : Option Hdr :=
   if hs : HdrSizes d then
     if hc : hdrChecks d = true then
       some {
-        arena := d.arena, litBase := d.litBase, lMap := d.lMap, icBase := d.icBase, dBase := d.dBase, dMap := d.dMap, modes := d.modes
+        arena := d.arena, arenaCap := d.arenaCap, litBase := d.litBase, lMap := d.lMap, icBase := d.icBase, dBase := d.dBase
+        dMap := d.dMap, modes := d.modes
         nL := d.nL, nI := d.nI, nD := d.nD, treesL := d.treesL, treesD := d.treesD
         baseTL := d.baseTL, baseCL := d.baseCL, baseTI := d.baseTI, baseCI := d.baseCI, baseTD := d.baseTD, baseCD := d.baseCD
         npostfix := d.npostfix, ndirect := d.ndirect
@@ -382,7 +383,7 @@ def mkHdr (d : Done) : Option Hdr :=
 
 /-- A header that was read passes the checks, and the header they make matches the spec's. -/
 theorem mkHdr_ok {d : Done} {g : Gh} (hu : Upto d g 10) : ∃ H, mkHdr d = some H ∧ HdrRel H g.m ∧ H.arena = d.arena ∧ H.litBase = d.litBase ∧ H.lMap = d.lMap ∧
-    H.icBase = d.icBase ∧ H.dBase = d.dBase ∧ H.dMap = d.dMap ∧ H.modes = d.modes := by
+    H.icBase = d.icBase ∧ H.dBase = d.dBase ∧ H.dMap = d.dMap ∧ H.modes = d.modes ∧ H.arenaCap = d.arenaCap := by
   have hL := hu.cat .L (by decide)
   have hI := hu.cat .I (by decide)
   have hD := hu.cat .D (by decide)
@@ -443,7 +444,7 @@ theorem mkHdr_ok {d : Done} {g : Gh} (hu : Upto d g 10) : ∃ H, mkHdr d = some 
     exact ⟨h4, h3⟩
   unfold mkHdr
   rw [dite_eq_left hsizes, dite_eq_left hchecks]
-  refine ⟨_, rfl, ?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+  refine ⟨_, rfl, ?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
   exact {
     ok := {
       literal := hL.wf

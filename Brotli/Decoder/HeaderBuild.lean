@@ -135,18 +135,19 @@ def installTable (st : Hd) (base : UInt64) : Hd :=
     { st0 with fill := u32Set fill idx base, idx := idx + 1, tag := .codes }
 
 theorem installTable_spec (st : Hd) (base : UInt64) : (installTable st base).word = st.word ∧ (installTable st base).count = st.count ∧
-    (installTable st base).pos = st.pos ∧ (installTable st base).status = st.status ∧ (installTable st base).d.arenaMax = st.d.arenaMax := by
+    (installTable st base).pos = st.pos ∧ (installTable st base).status = st.status ∧ (installTable st base).d.arenaMax = st.d.arenaMax ∧
+    (installTable st base).d.arenaCap = st.d.arenaCap := by
   unfold installTable
   split
-  · cases st.cat <;> exact ⟨rfl, rfl, rfl, rfl, rfl⟩
-  · cases st.cat <;> exact ⟨rfl, rfl, rfl, rfl, rfl⟩
-  · exact ⟨rfl, rfl, rfl, rfl, rfl⟩
+  · cases st.cat <;> exact ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩
+  · cases st.cat <;> exact ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩
+  · exact ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 /-- Empties a settled record's arena, as `clearRing` does a state's window. -/
 @[noinline] def clearArena (d : Done) : Done := { d with arena := ByteArray.empty }
 
 /-- A settled record with nothing in it, to hold a state's place while the real one is written. -/
-def Done.none : Done := ⟨ByteArray.empty, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ByteArray.empty, ByteArray.empty,
+def Done.none : Done := ⟨ByteArray.empty, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ByteArray.empty, ByteArray.empty,
   ByteArray.empty, ByteArray.empty, ByteArray.empty, ByteArray.empty⟩
 
 /-- Appends a canonical table to the arena, having checked its size. -/
@@ -182,7 +183,8 @@ theorem growSingle_eq (st : Hd) (sym : UInt64) :
         rwa [usize_zero']⟩ }
   else { st with status := .bad }
 
-/-- What happens once a prefix code has been read: `single` says that it has one symbol, and otherwise its lengths are in `lens`. -/
+/-- What happens once a prefix code has been read: `single` says that it has one symbol, and otherwise its lengths are in `lens`.
+The arena's reservation always has room for the table (`budH`); the check keeps each write within it. -/
 def tableDone (st : Hd) (single : Bool) (sym : UInt64) : Hd :=
   let n := st.size.toUSize
   let lens := st.lens
@@ -194,11 +196,11 @@ def tableDone (st : Hd) (single : Bool) (sym : UInt64) : Hd :=
       let size := UInt64.ofNat st.d.arena.size
       let base := UInt64.ofNat (st.d.arena.size / 4)
       if single then
-        if size + 1024 ≤ st.d.arenaMax then installTable (growSingle st sym) base
+        if size + 1024 ≤ st.d.arenaCap then installTable (growSingle st sym) base
         else { st with status := .memory }
       else
         let p := planFast lens n hn
-        if size + p.bytes ≤ st.d.arenaMax then installTable (growPlanned st lens n hn p) base
+        if size + p.bytes ≤ st.d.arenaCap then installTable (growPlanned st lens n hn p) base
         else { st with status := .memory }
   else { st with status := .bad }
 
@@ -210,8 +212,8 @@ private theorem setBaseT_nOf (d : Done) (i j : Cat) (v : USize) : (d.setBaseT i 
 private theorem setBaseT_baseTOf (d : Done) (i : Cat) (v : USize) : (d.setBaseT i v).baseTOf i = v := by cases i <;> rfl
 
 private theorem setBaseT_arena (d : Done) (i : Cat) (v : USize) :
-    (d.setBaseT i v).arena = d.arena ∧ (d.setBaseT i v).arenaMax = d.arenaMax := by
-  cases i <;> exact ⟨rfl, rfl⟩
+    (d.setBaseT i v).arena = d.arena ∧ (d.setBaseT i v).arenaMax = d.arenaMax ∧ (d.setBaseT i v).arenaCap = d.arenaCap := by
+  cases i <;> exact ⟨rfl, rfl, rfl⟩
 
 private theorem setBaseT_others (d : Done) (i : Cat) (v : USize) : ∀ j, j ≠ i →
     (d.setBaseT i v).nOf j = d.nOf j ∧ (d.setBaseT i v).countOf j = d.countOf j ∧ (d.setBaseT i v).baseTOf j = d.baseTOf j ∧
@@ -228,8 +230,8 @@ private theorem setBaseC_baseTOf (d : Done) (i j : Cat) (v : USize) : (d.setBase
 private theorem setBaseC_baseCOf (d : Done) (i : Cat) (v : USize) : (d.setBaseC i v).baseCOf i = v := by cases i <;> rfl
 
 private theorem setBaseC_arena (d : Done) (i : Cat) (v : USize) :
-    (d.setBaseC i v).arena = d.arena ∧ (d.setBaseC i v).arenaMax = d.arenaMax := by
-  cases i <;> exact ⟨rfl, rfl⟩
+    (d.setBaseC i v).arena = d.arena ∧ (d.setBaseC i v).arenaMax = d.arenaMax ∧ (d.setBaseC i v).arenaCap = d.arenaCap := by
+  cases i <;> exact ⟨rfl, rfl, rfl⟩
 
 private theorem setBaseC_others (d : Done) (i : Cat) (v : USize) : ∀ j, j ≠ i →
     (d.setBaseC i v).nOf j = d.nOf j ∧ (d.setBaseC i v).countOf j = d.countOf j ∧ (d.setBaseC i v).baseTOf j = d.baseTOf j ∧
@@ -252,28 +254,16 @@ theorem installTable_size (st : Hd) (base : UInt64) (h : HSize st) : HSize (inst
   · exact ⟨by show (u32Set st.fill st.idx base).size ≤ _; rw [size_u32Set]; exact h.fill,
       h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩
 
-/-- An owner always has a table to come. -/
-theorem capO_ne (o : Owner) : capO o ≠ 0 := by
-  cases o <;> simp only [capO] <;> omega
-
 section
 variable {α : Type} (K : HK α)
-
-/-- Any code but a context map's is hooked. -/
-theorem owner_w {o : Owner} (g : Gh) (c : PrefixCode) (bs : List Bool) (hm : ∀ a b e, o ≠ .map a b e) : ∃ x, ownerK K g o c bs = K.w c x := by
-  cases o with
-  | map a b e => exact absurd rfl (hm a b e)
-  | type i n => exact ⟨_, rfl⟩
-  | count i n tc => exact ⟨_, rfl⟩
-  | codes k done left => exact ⟨_, rfl⟩
 
 /-- A table in the arena, for anything but a context map: the state moves to what the code was for. -/
 theorem install_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {c : PrefixCode} {A1 : ByteArray} {base : UInt64}
     (hw : (BitBuffer.mk st.word st.count).Wf) (hu : Upto st.d g (ownerStage o)) (hs : SizeOk st size) (ho : OwnerRel st g size o)
-    (hk : Keep st.d.arena A1) (h4 : A1.size % 4 = 0) (hle : A1.size ≤ st.d.arenaMax.toNat) (htab : TableOk A1 base.toNat c)
+    (hk : Keep st.d.arena A1) (h4 : A1.size % 4 = 0) (hle : A1.size ≤ st.d.arenaCap.toNat) (htab : TableOk A1 base.toNat c)
     (hb : base.toNat = st.d.arena.size / 4) (hC : Complete c) (hsy : c.Symbols size) (hm : ∀ a b e, o ≠ .map a b e) :
-    ∃ g' p', HRel (installTable { st with d := { st.d with arena := A1 } } base) g' p' ∧ (∀ bs, ownerK K g o c bs = K.w c (hrest K g' p' bs)) ∧
-      LexLt (rankH p').1 (rankO o) ∧ capH p' + 1 ≤ capO o ∧ (g', p') = (g, ownerPlace g o c) := by
+    ∃ g' p', HRel (installTable { st with d := { st.d with arena := A1 } } base) g' p' ∧ (∀ bs, ownerK K g o c bs = hrest K g' p' bs) ∧
+      LexLt (rankH p').1 (rankO o) ∧ budH g' p' + treeMax size ≤ budO g o ∧ (g', p') = (g, ownerPlace g o c) := by
   have hup := hu.frame hk h4 hle
   have hsmall : st.d.arena.size < 2 ^ 32 := by
     have := hu.le
@@ -291,9 +281,9 @@ theorem install_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {c : PrefixCode} 
     rw [hrole]
     dsimp only
     refine ⟨g, .code (.count st.cat n c) blockCountAlphabetSize, ⟨hw, ?_, rfl, ⟨rfl, by decide, by decide⟩, rfl, rfl, ?_, h2, h256, rfl, ?_, hC, hsy⟩, (fun bs => rfl),
-      by simp only [rankH, rankO, LexLt]; omega, by simp only [capH, capO]; omega, rfl⟩
+      by simp only [rankH, rankO, LexLt]; omega, by simp only [budH, budO, catMax, treeMax, blockTypeAlphabetSize]; omega, rfl⟩
     · have ha := setBaseT_arena { st.d with arena := A1 } st.cat base.toUSize
-      exact Upto.setSame hup ha.1 ha.2 (setBaseT_others _ _ _)
+      exact Upto.setSame hup ha.1 ha.2.1 ha.2.2 (setBaseT_others _ _ _)
     · show (({ st.d with arena := A1 }.setBaseT st.cat base.toUSize).nOf st.cat).toNat = n
       rw [setBaseT_nOf]
       cases hc : st.cat <;> rw [hc] at hn <;> exact hn
@@ -311,9 +301,9 @@ theorem install_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {c : PrefixCode} 
     dsimp only
     have hT' : TableOk A1 (st.d.baseTOf st.cat).toNat tc := hT.frame hk.four hk.le hk.frame
     refine ⟨g, .first st.cat n tc c, ⟨hw, ?_, rfl, rfl, ?_, h2, h256, ?_, hTc, hTs, ?_, hC, hsy⟩, (fun bs => rfl),
-      by simp only [rankH, rankO, LexLt]; omega, by simp only [capH, capO]; omega, rfl⟩
+      by simp only [rankH, rankO, LexLt]; omega, by simp only [budH, budO, blockCountAlphabetSize]; omega, rfl⟩
     · have ha := setBaseC_arena { st.d with arena := A1 } st.cat base.toUSize
-      exact Upto.setSame hup ha.1 ha.2 (setBaseC_others _ _ _)
+      exact Upto.setSame hup ha.1 ha.2.1 ha.2.2 (setBaseC_others _ _ _)
     · show (({ st.d with arena := A1 }.setBaseC st.cat base.toUSize).nOf st.cat).toNat = n
       rw [setBaseC_nOf]
       cases hc : st.cat <;> rw [hc] at hn <;> exact hn
@@ -339,7 +329,7 @@ theorem install_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {c : PrefixCode} 
       rw [UInt64.toNat_add, hidx, show (1 : UInt64).toNat = 1 from rfl]
       exact Nat.mod_eq_of_lt (by omega)
     refine ⟨g, .codes st.ck (done ++ [c]) left, ⟨hw, hup, rfl, rfl, by simpa using hidx1, hleft, ?_, h256, ?_⟩, (fun bs => rfl),
-      Or.inr ⟨rfl, show 2 * left < 2 * left + 1 by omega⟩, by simp only [capH, capO]; omega, rfl⟩
+      Or.inr ⟨rfl, show 2 * left < 2 * left + 1 by omega⟩, by cases st.ck <;> simp only [budH, budO, groupsFrom, Nat.add_mul, Nat.one_mul] <;> omega, rfl⟩
     · simp only [List.length_append, List.length_singleton]
       omega
     · refine ⟨?_, by simp only [List.length_append, List.length_singleton]; omega, fun i hi => ?_⟩
@@ -363,9 +353,9 @@ theorem install_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {c : PrefixCode} 
 structure TableDone (g : Gh) (o : Owner) (c : PrefixCode) (st r : Hd) : Prop where
   bits : r.word = st.word ∧ r.count = st.count ∧ r.pos = st.pos
   next : r.status = .next → ∃ g' p' oc, HRel r g' p' ∧ (∀ bs, ownerK K g o c bs = Wr K oc (hrest K g' p' bs)) ∧ LexLt (rankH p').1 (rankO o) ∧
-    (∀ q, capH q = capO o → HMove st r q p' oc) ∧ (g', p') = (g, ownerPlace g o c)
-  other : r.status ≠ .next → r.status = .memory ∧ r.d.arenaMax = st.d.arenaMax ∧ st.d.arenaMax.toNat < st.d.arena.size + tableBytes c ∧
-    tableBytes c ≤ 132096 ∧ capO o ≠ 0 ∧ ∀ bs, ∃ x, ownerK K g o c bs = K.w c x
+    (∀ q, budH g q = budO g o → HMove st r g q g' p' oc) ∧ (g', p') = (g, ownerPlace g o c)
+  other : r.status ≠ .next → r.status = .memory ∧ r.d.arenaMax = st.d.arenaMax ∧ st.d.arenaCap.toNat < st.d.arena.size + tableBytes c ∧
+    tableBytes c ≤ budO g o
 
 /-- What `tableDone` does in the spec's terms. -/
 theorem tableDone_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {c : PrefixCode} {single : Bool} {sym : UInt64}
@@ -441,7 +431,7 @@ theorem tableDone_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {c : PrefixCode
       refine ⟨⟨rfl, rfl, rfl⟩, fun _ => ⟨g, .vals isL ntrees rlemax c [] (mapSize g isL), none, ⟨hw, hu, rfl, hi, hn, hr, h2, h256, h16, ?_, hC, ?_,
         rfl, hleft, by show 0 + _ = _; omega, hzs, by simp, by simp, fun i _ => ?_⟩, (fun bs => rfl), by simp only [rankH, rankO, LexLt]; omega,
         fun q hq => ⟨rfl, rfl, fun h => ⟨by rw [hzs]; exact hml, h.lens, h.clLens, h.clt, hsize, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩,
-          by rw [hq]; simp only [capH, capO, Option.isSome, Bool.false_eq_true, ↓reduceIte]; omega, Nat.zero_le _⟩, rfl⟩, fun h => absurd hst h⟩
+          ⟨rfl, by rw [hq]; simp [budH, budO, tableOf]⟩⟩, rfl⟩, fun h => absurd hst h⟩
       · rw [usize_zero']
         exact hB.ok
       · rw [← hsz]
@@ -453,21 +443,40 @@ theorem tableDone_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {c : PrefixCode
       intro a b e he
       subst he
       exact hmap ho.1
+    have htb := tableBytes_le hC hsy
+    have hbo : treeMax size ≤ budO g o := by
+      have ho' := ho
+      cases o with
+      | map a b e => exact absurd rfl (hrole a b e)
+      | type i n =>
+        obtain ⟨_, _, _, _, h256, hsz⟩ := ho'
+        subst hsz
+        simp only [budO, catMax, treeMax, blockTypeAlphabetSize]
+        omega
+      | count i n tc =>
+        obtain ⟨_, _, _, _, _, hsz, _⟩ := ho'
+        subst hsz
+        simp only [budO, treeMax, blockCountAlphabetSize]
+        omega
+      | codes k done left =>
+        obtain ⟨_, _, _, _, hsz, _⟩ := ho'
+        subst hsz
+        cases k <;> simp only [budO, groupsFrom, Nat.add_mul, Nat.one_mul] <;> omega
     have hstart : (match st.role with
         | .map => mapTableDone st (if single then buildSingleFast ByteArray.empty sym else buildFast ByteArray.empty st.lens st.size.toUSize hnle)
         | _ =>
           if single = true then
-            if UInt64.ofNat st.d.arena.size + 1024 ≤ st.d.arenaMax then installTable (growSingle st sym) (UInt64.ofNat (st.d.arena.size / 4))
+            if UInt64.ofNat st.d.arena.size + 1024 ≤ st.d.arenaCap then installTable (growSingle st sym) (UInt64.ofNat (st.d.arena.size / 4))
             else { st with status := .memory }
           else
-            if UInt64.ofNat st.d.arena.size + (planFast st.lens st.size.toUSize hnle).bytes ≤ st.d.arenaMax then
+            if UInt64.ofNat st.d.arena.size + (planFast st.lens st.size.toUSize hnle).bytes ≤ st.d.arenaCap then
               installTable (growPlanned st st.lens st.size.toUSize hnle (planFast st.lens st.size.toUSize hnle)) (UInt64.ofNat (st.d.arena.size / 4))
             else { st with status := .memory }) =
         (if single = true then
-            if UInt64.ofNat st.d.arena.size + 1024 ≤ st.d.arenaMax then installTable (growSingle st sym) (UInt64.ofNat (st.d.arena.size / 4))
+            if UInt64.ofNat st.d.arena.size + 1024 ≤ st.d.arenaCap then installTable (growSingle st sym) (UInt64.ofNat (st.d.arena.size / 4))
             else { st with status := .memory }
           else
-            if UInt64.ofNat st.d.arena.size + (planFast st.lens st.size.toUSize hnle).bytes ≤ st.d.arenaMax then
+            if UInt64.ofNat st.d.arena.size + (planFast st.lens st.size.toUSize hnle).bytes ≤ st.d.arenaCap then
               installTable (growPlanned st st.lens st.size.toUSize hnle (planFast st.lens st.size.toUSize hnle)) (UInt64.ofNat (st.d.arena.size / 4))
             else { st with status := .memory }) := by
       cases hr : st.role with
@@ -478,23 +487,24 @@ theorem tableDone_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {c : PrefixCode
     rw [hstart]
     have hbase : (UInt64.ofNat (st.d.arena.size / 4)).toNat = st.d.arena.size / 4 := u64_lit (by omega)
     have hsizeN : (UInt64.ofNat st.d.arena.size).toNat = st.d.arena.size := u64_lit (by omega)
-    have hfinish : ∀ {A1 : ByteArray}, Built st.d.arena A1 c → A1.size ≤ st.d.arenaMax.toNat → A1.size = st.d.arena.size + tableBytes c → tableBytes c ≤ 132096 →
+    have hfinish : ∀ {A1 : ByteArray}, Built st.d.arena A1 c → A1.size ≤ st.d.arenaCap.toNat → A1.size = st.d.arena.size + tableBytes c →
         TableDone K g o c st (installTable { st with d := { st.d with arena := A1 } } (UInt64.ofNat (st.d.arena.size / 4))) := by
-      intro A1 hB hle hgrow hone
+      intro A1 hB hle hgrow
       have hok : TableOk A1 (UInt64.ofNat (st.d.arena.size / 4)).toNat c := by
         rw [hbase]
         exact hB.ok
       obtain ⟨g', p', h1, h2, h3, h4, h5⟩ := install_ok K hw hu hs ho hB.keep hB.four hle hok hbase hC hsy hrole
-      obtain ⟨b1, b2, b3, b4, b5⟩ := installTable_spec { st with d := { st.d with arena := A1 } } (UInt64.ofNat (st.d.arena.size / 4))
-      refine ⟨⟨b1, b2, b3⟩, fun _ => ⟨g', p', some c, h1, h2, h3, fun q hq => ⟨b5, ?_, ?_, ?_, hone⟩, h5⟩, fun h => absurd (b4.trans hst) h⟩
+      obtain ⟨b1, b2, b3, b4, b5, b6⟩ := installTable_spec { st with d := { st.d with arena := A1 } } (UInt64.ofNat (st.d.arena.size / 4))
+      refine ⟨⟨b1, b2, b3⟩, fun _ => ⟨g', p', some (.table c), h1, h2, h3, fun q hq => ⟨b5, ?_, ?_, ⟨b6, ?_⟩⟩, h5⟩, fun h => absurd (b4.trans hst) h⟩
       · rw [installTable_arena]
         exact hgrow
       · intro h
         exact installTable_size _ _ ⟨h.fill, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩
-      · rw [hq]
-        simpa using h4
-    have hother : st.d.arenaMax.toNat < st.d.arena.size + tableBytes c → tableBytes c ≤ 132096 → TableDone K g o c st { st with status := .memory } :=
-      fun hlt hone => ⟨⟨rfl, rfl, rfl⟩, fun h => HStatus.noConfusion h, fun _ => ⟨rfl, rfl, hlt, hone, capO_ne o, fun bs => owner_w K g c bs hrole⟩⟩
+      · show budH g' p' + tableBytes c ≤ budH g q
+        rw [hq]
+        omega
+    have hother : st.d.arenaCap.toNat < st.d.arena.size + tableBytes c → TableDone K g o c st { st with status := .memory } :=
+      fun hlt => ⟨⟨rfl, rfl, rfl⟩, fun h => HStatus.noConfusion h, fun _ => ⟨rfl, rfl, hlt, by omega⟩⟩
     cases hb : single with
     | true =>
       simp only [↓reduceIte]
@@ -504,14 +514,14 @@ theorem tableDone_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {c : PrefixCode
       have hlt : (UInt64.ofNat st.d.arena.size + 1024).toNat = st.d.arena.size + 1024 := by
         rw [UInt64.toNat_add, hsizeN, show (1024 : UInt64).toNat = 1024 from rfl]
         exact Nat.mod_eq_of_lt (by omega)
-      by_cases hc : UInt64.ofNat st.d.arena.size + 1024 ≤ st.d.arenaMax
+      by_cases hc : UInt64.ofNat st.d.arena.size + 1024 ≤ st.d.arenaCap
       · rw [ite_eq_left hc]
         have hle := UInt64.le_iff_toNat_le.mp hc
         rw [hlt] at hle
         rw [growSingle_eq]
-        exact hfinish h1 (by omega) h2 (show 1024 ≤ 132096 by decide)
+        exact hfinish h1 (by omega) h2
       · rw [ite_eq_right hc]
-        exact hother (Nat.lt_of_not_le fun e => hc (UInt64.le_iff_toNat_le.mpr (by rw [hlt]; exact e))) (show 1024 ≤ 132096 by decide)
+        exact hother (Nat.lt_of_not_le fun e => hc (UInt64.le_iff_toNat_le.mpr (by rw [hlt]; exact e)))
     | false =>
       simp only [Bool.false_eq_true, ↓reduceIte]
       have hc := hcn hb
@@ -528,7 +538,7 @@ theorem tableDone_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {c : PrefixCode
           st.d.arena.size + 4 * (256 + offSum (depths (lensOf st.lens st.size.toUSize.toNat)) 256) := by
         rw [UInt64.toNat_add, hsizeN, p1]
         exact Nat.mod_eq_of_lt (by omega)
-      by_cases hc2 : UInt64.ofNat st.d.arena.size + (planFast st.lens st.size.toUSize hnle).bytes ≤ st.d.arenaMax
+      by_cases hc2 : UInt64.ofNat st.d.arena.size + (planFast st.lens st.size.toUSize hnle).bytes ≤ st.d.arenaCap
       · rw [ite_eq_left hc2]
         have hle := UInt64.le_iff_toNat_le.mp hc2
         rw [hlt] at hle
@@ -536,11 +546,11 @@ theorem tableDone_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {c : PrefixCode
           rw [hc]
           exact h1
         rw [growPlanned_eq]
-        exact hfinish hB (by rw [h2]; exact hle) (by rw [h2, hbytes]) (by rw [hbytes]; omega)
+        exact hfinish hB (by rw [h2]; exact hle) (by rw [h2, hbytes])
       · rw [ite_eq_right hc2]
         exact hother (by
           rw [hbytes]
-          exact Nat.lt_of_not_le fun e => hc2 (UInt64.le_iff_toNat_le.mpr (by rw [hlt]; exact e))) (by rw [hbytes]; omega)
+          exact Nat.lt_of_not_le fun e => hc2 (UInt64.le_iff_toNat_le.mpr (by rw [hlt]; exact e)))
 
 end
 

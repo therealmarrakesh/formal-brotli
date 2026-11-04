@@ -4,7 +4,8 @@ import Brotli.Decoder.StreamCall
 # The limit changes nothing but whether the decoder stops
 
 The decoder reads the memory limit only where it checks it: the room left for the window at WBITS, and the room left for a
-header's tables when one is built. Everywhere else a state's limit, and its header's table room, are carried along unread.
+header's tables when the groups' tables are reserved. Everywhere else a state's limit, and its header's table room, are
+carried along unread.
 So two states that differ only in those two fields step alike, until one of them reports the limit.
 -/
 
@@ -69,9 +70,6 @@ variable (st : Hd) (a : UInt64) (pos : USize)
 theorem catMoveOn_lim : catMoveOn (hdSet st a) = hdSet (catMoveOn st) a := by
   simp only [catMoveOn]; lim_tac
 
-theorem mapFinish_lim (n : UInt64) (map : ByteArray) : mapFinish (hdSet st a) n map = hdSet (mapFinish st n map) a := by
-  simp only [mapFinish]; lim_tac
-
 theorem ckFinish_lim : ckFinish (hdSet st a) = hdSet (ckFinish st) a := by
   simp only [ckFinish]; lim_tac
 
@@ -101,13 +99,25 @@ private theorem check_lim {c1 c2 : Prop} [Decidable c1] [Decidable c2] {x1 x2 y1
   · exact Or.inl hy1
   · exact Or.inl hy1
 
+theorem mapFinish_lim (n : UInt64) (map : ByteArray) : HLim (mapFinish (hdSet st a) n map) (mapFinish st n map) := by
+  unfold mapFinish
+  rw [show (hdSet st a).isL = st.isL from rfl]
+  cases st.isL with
+  | true => exact HLim.same (a := a) rfl
+  | false =>
+    dsimp only
+    exact check_lim a (fun _ _ => rfl) rfl rfl
+
+theorem mapFinish_lim' {L : Hd} (h : L = hdSet st a) (n : UInt64) (map map' : ByteArray) (hm : map = map') :
+    HLim (mapFinish L n map) (mapFinish st n map') := h ▸ hm ▸ mapFinish_lim st a n map
+
 theorem tableDone_lim (single : Bool) (sym : UInt64) : HLim (tableDone (hdSet st a) single sym) (tableDone st single sym) := by
   unfold tableDone
   have er : (hdSet st a).role = st.role := rfl
   have es : (hdSet st a).size = st.size := rfl
   have el : (hdSet st a).lens = st.lens := rfl
   have ea : (hdSet st a).d.arena = st.d.arena := rfl
-  have em : (hdSet st a).d.arenaMax = a := rfl
+  have em : (hdSet st a).d.arenaCap = st.d.arenaCap := rfl
   simp only [er, es, el, ea, em]
   by_cases hn : st.size.toUSize.toNat ≤ st.lens.size
   · rw [dite_eq_left hn, dite_eq_left hn]
@@ -144,8 +154,10 @@ theorem stepHNp_lim : stepHNp (hdSet st a) pos = hdSet (stepHNp st pos) a := by
 theorem stepHModes_lim : stepHModes (hdSet st a) pos = hdSet (stepHModes st pos) a := by
   simp only [stepHModes, markH, clearFill]; lim_tac
 
-theorem stepHTrees_lim : stepHTrees (hdSet st a) pos = hdSet (stepHTrees st pos) a := by
-  simp only [stepHTrees, markH, mapFinish, mapSizeFast]; lim_tac
+theorem stepHTrees_lim : HLim (stepHTrees (hdSet st a) pos) (stepHTrees st pos) := by
+  show HLim (stepHTrees { st with d := { st.d with arenaMax := a } } pos) _
+  simp only [stepHTrees, markH]
+  (repeat' split) <;> first | exact mapFinish_lim' _ a (by rfl) _ _ _ (by rfl) | exact HLim.same (a := a) (by rfl) | contradiction | (simp_all [hdSet]; done)
 
 theorem stepHRlemax_lim : stepHRlemax (hdSet st a) pos = hdSet (stepHRlemax st pos) a := by
   simp only [stepHRlemax, markH]; lim_tac
@@ -153,8 +165,10 @@ theorem stepHRlemax_lim : stepHRlemax (hdSet st a) pos = hdSet (stepHRlemax st p
 theorem stepHVals_lim : stepHVals (hdSet st a) pos = hdSet (stepHVals st pos) a := by
   simp only [stepHVals, markH, clearFill]; lim_tac
 
-theorem stepHImtf_lim : stepHImtf (hdSet st a) pos = hdSet (stepHImtf st pos) a := by
-  simp only [stepHImtf, markH, clearFill, mapFinish]; lim_tac
+theorem stepHImtf_lim : HLim (stepHImtf (hdSet st a) pos) (stepHImtf st pos) := by
+  show HLim (stepHImtf { st with d := { st.d with arenaMax := a } } pos) _
+  simp only [stepHImtf, markH, clearFill]
+  (repeat' split) <;> first | exact mapFinish_lim' _ a (by rfl) _ _ _ (by rfl) | exact HLim.same (a := a) (by rfl) | contradiction | (simp_all [hdSet]; done)
 
 theorem stepHCodes_lim : stepHCodes (hdSet st a) pos = hdSet (stepHCodes st pos) a := by
   simp only [stepHCodes, ckFinish, ckSizeFast]; lim_tac
@@ -200,10 +214,10 @@ theorem stepAtH_lim : HLim (stepAtH (hdSet st a) pos) (stepAtH st pos) := by
   | first => exact HLim.same (stepHFirst_lim st a pos)
   | np => exact HLim.same (stepHNp_lim st a pos)
   | modes => exact HLim.same (stepHModes_lim st a pos)
-  | trees => exact HLim.same (stepHTrees_lim st a pos)
+  | trees => exact stepHTrees_lim st a pos
   | rlemax => exact HLim.same (stepHRlemax_lim st a pos)
   | vals => exact HLim.same (stepHVals_lim st a pos)
-  | imtf => exact HLim.same (stepHImtf_lim st a pos)
+  | imtf => exact stepHImtf_lim st a pos
   | codes => exact HLim.same (stepHCodes_lim st a pos)
   | ready => exact HLim.same (a := a) rfl
 

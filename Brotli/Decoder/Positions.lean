@@ -493,7 +493,7 @@ theorem stepH_bad {g : Gh} {p : HPhase} {st : Hd} {pos : USize} (hrel : HRel st 
 place it started at is worth is what the place it got to is worth, with the table of any code it read. -/
 theorem stepH_next {g : Gh} {p : HPhase} {st : Hd} {pos : USize} (hrel : HRel st g p) (hp : pos.toNat ≤ stop.toNat)
     (hn : (stepH a stop hs st pos).status = .next) :
-    ∃ g' p' oc, HRel (stepH a stop hs st pos) g' p' ∧ HMove st (stepH a stop hs st pos) p p' oc ∧
+    ∃ g' p' oc, HRel (stepH a stop hs st pos) g' p' ∧ HMove st (stepH a stop hs st pos) g p g' p' oc ∧ HDown p p' ∧
       pos.toNat ≤ (stepH a stop hs st pos).pos.toNat ∧ (stepH a stop hs st pos).pos.toNat ≤ stop.toNat ∧
       (∀ F, hrest K g p (availBits st.word st.count a pos (stepH a stop hs st pos).pos F) =
         Wr K oc (hrest K g' p' ((BitBuffer.mk (stepH a stop hs st pos).word (stepH a stop hs st pos).count).held ++ F))) ∧
@@ -508,8 +508,8 @@ theorem stepH_next {g : Gh} {p : HPhase} {st : Hd} {pos : USize} (hrel : HRel st
   have e2 : (stepAtH { st with word := R.word, count := R.count } R.pos).pos = R.pos :=
     (congrArg Hd.pos (stepAtH_pos _ R.pos)).trans rfl
   have hok := stepAtH_ok (K := K) (a := a) (stop := R.pos) (hrel.withBits h1) (Nat.le_refl _) (Or.inr rfl)
-  obtain ⟨g', p', oc, hR, _, _, hW, _, hM, hJ⟩ := hok.next hn
-  refine ⟨g', p', oc, hR, ⟨hM.max, hM.grow, fun hz => hM.size { hz with }, hM.cap, hM.one⟩, by rw [e2]; exact h2,
+  obtain ⟨g', p', oc, hR, _, _, hW, hD, hM, hJ⟩ := hok.next hn
+  refine ⟨g', p', oc, hR, ⟨hM.max, hM.grow, fun hz => hM.size { hz with }, hM.cap.same rfl⟩, hD, by rw [e2]; exact h2,
     by rw [e2]; exact h3, fun F => ?_, fun F => ?_⟩
   · have h := hW F
     rw [avail_mk, chunkBits_self, List.nil_append, avail_mk, e2, chunkBits_self, List.nil_append] at h
@@ -526,8 +526,9 @@ theorem stepH_memory {g : Gh} {p : HPhase} {st : Hd} {pos : USize} (hrel : HRel 
     (hm : (stepH a stop hs st pos).status = .memory) :
     pos.toNat ≤ (stepH a stop hs st pos).pos.toNat ∧ (stepH a stop hs st pos).pos.toNat ≤ stop.toNat ∧
       8 * (stepH a stop hs st pos).pos.toNat + st.count.toNat ≤ 8 * pos.toNat + 64 ∧
-      ∃ c, st.d.arenaMax.toNat < st.d.arena.size + tableBytes c ∧ tableBytes c ≤ 132096 ∧ capH p ≠ 0 ∧
-        ∀ F, ∃ x, hrest K g p (availBits st.word st.count a pos (stepH a stop hs st pos).pos F) = K.w c x := by
+      ((∃ c, st.d.arenaCap.toNat < st.d.arena.size + tableBytes c ∧ tableBytes c ≤ budH g p) ∨
+        ∃ g', st.d.arenaMax.toNat < resBytes g' ∧ resBytes g' ≤ resMax ∧ st.d.arenaCap.toNat = smallMax ∧
+          ∀ F, ∃ x, hrest K g p (availBits st.word st.count a pos (stepH a stop hs st pos).pos F) = K.r g' x) := by
   unfold stepH at hm ⊢
   rw [dite_eq_left (USize.le_iff_toNat_le.mpr hp)] at hm ⊢
   obtain ⟨h1, h2, h3, _, _⟩ := refill_spec hs hp hrel.wf
@@ -539,8 +540,9 @@ theorem stepH_memory {g : Gh} {p : HPhase} {st : Hd} {pos : USize} (hrel : HRel 
   rw [e2]
   refine ⟨h2, h3, l2, ?_⟩
   have hok := stepAtH_ok (K := K) (a := a) (stop := R.pos) (hrel.withBits h1) (Nat.le_refl _) (Or.inr rfl)
-  obtain ⟨c, c1, c2, c3, c4⟩ := hok.memory hm
-  refine ⟨c, c1, c2, c3, fun F => ?_⟩
+  rcases hok.memory hm with ⟨c, c1, c2⟩ | ⟨g', c1, c2, c3, c4⟩
+  · exact Or.inl ⟨c, c1, c2⟩
+  refine Or.inr ⟨g', c1, c2, c3, fun F => ?_⟩
   obtain ⟨x, hx⟩ := c4 F
   rw [avail_mk, chunkBits_self, List.nil_append] at hx
   refine ⟨x, ?_⟩

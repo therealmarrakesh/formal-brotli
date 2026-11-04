@@ -70,7 +70,7 @@ theorem stepDHdr_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {last 
       fun _ => ⟨g1, g2, rfl, hp0, Or.inr ⟨_, _, _, _, _, _, rfl⟩⟩, fun e => DStatus.noConfusion e⟩
   | ready =>
     dsimp only
-    obtain ⟨g', hu, hw, h1, h2, h3, _, _, _, h4⟩ := hstep.ready hst
+    obtain ⟨g', hu, hw, h1, h2, h3, _, _, _, _, h4⟩ := hstep.ready hst
     obtain ⟨H', hmk, hrelH, _⟩ := mkHdr_ok hu
     rw [hmk]
     dsimp only
@@ -209,9 +209,11 @@ theorem metaStart_ok {bs r : List Bool} {v : MetaStart} (h : metaStart bs = some
           trivial
         · exact msBody_ok h
 
-/-- The header machine's state at the start of a header. -/
+/-- The header machine's state at the start of a header: the arena reserves room for the categories' codes. -/
 def hdStart (word count : UInt64) (limit : UInt64) : Hd :=
-  { Hd.none with word := word, count := count, d := { Done.none with arenaMax := limit } }
+  { Hd.none with
+    word := word, count := count
+    d := { Done.none with arena := ByteArray.emptyWithCapacity smallMax, arenaMax := limit, arenaCap := UInt64.ofNat smallMax } }
 
 /-- A meta-block's start, read. -/
 def metaGo (D : Dec) (c : Cmd) (r : Rd) (pos : USize) : Dec :=
@@ -242,10 +244,31 @@ def stepDMeta (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : D
     else { D with pos := pos, status := .bad }
   else { D with pos := pos, status := .needsOutput }
 
-theorem hdStart_rel {word count limit : UInt64} (hw : (BitBuffer.mk word count).Wf) (hl : limit.toNat + 132096 < 2 ^ 32) :
-    HRel (hdStart word count limit) Gh.start (.cat .L) := by
-  refine ⟨hw, Upto.low (by decide) rfl (Nat.zero_le _) hl (fun i hi => ?_), rfl, rfl⟩
-  cases i <;> exact absurd hi (by decide)
+theorem smallMax_eq : smallMax = 12432 := rfl
+
+/-- Nothing is settled at a header's start, and the arena has reserved room for the categories' codes. -/
+theorem Upto.start {d : Done} {g : Gh} (h0 : d.arena.size = 0) (hc : d.arenaCap.toNat = smallMax)
+    (hl : d.arenaMax.toNat + 144528 < 2 ^ 32) : Upto d g 0 where
+  four := by rw [h0]
+  le := by rw [h0]; exact Nat.zero_le _
+  max := by
+    rw [hc, smallMax_eq]
+    omega
+  capLe := by rw [hc]; omega
+  room := by
+    rw [smallMax_eq, Nat.add_assoc]
+    exact hl
+  small _ := hc
+  cat i hi := absurd hi (by cases i <;> decide)
+  np h := absurd h (by decide)
+  modes h := absurd h (by decide)
+  lmap h := absurd h (by decide)
+  dmap h := absurd h (by decide)
+  codes _ h := absurd h (by omega)
+
+theorem hdStart_rel {word count limit : UInt64} (hw : (BitBuffer.mk word count).Wf) (hl : limit.toNat + 144528 < 2 ^ 32) :
+    HRel (hdStart word count limit) Gh.start (.cat .L) :=
+  ⟨hw, Upto.start rfl (u64_lit (by decide)) hl, rfl, rfl⟩
 
 theorem whole_bytes {a : ByteArray} {p stop : Nat} (hs : stop ≤ a.size) (t : List UInt8) : (chunkBits a p stop ++ bits t).length % 8 = 0 := by
   rw [List.length_append, chunkBits_length hs, bits_length]
@@ -583,8 +606,8 @@ theorem stepDWbits_ok {α : Type} {S : Sem α} {a : ByteArray} {stop : USize} {h
       · show WinRel _ r.a.toUSize.toNat _ _ _
         rw [hus]
         exact hwin
-      · show (limit - (1 : UInt64) <<< r.a).toNat + 132096 < 2 ^ 32
-        have hlim' : limit.toNat + 132096 < 2 ^ 32 := hlim
+      · show (limit - (1 : UInt64) <<< r.a).toNat + 144528 < 2 ^ 32
+        have hlim' : limit.toNat + 144528 < 2 ^ 32 := hlim
         rw [UInt64.toNat_sub_of_le _ _ hc, hneed]
         omega
       · rw [hsrc, hN]
@@ -864,7 +887,7 @@ def stepDRaw (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : De
 
 theorem rawFinish_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {last : Bool} {left : Nat} {a : ByteArray} {stop : USize} {cmd : Cmd} {hd : Hd} {H : Hdr} {k : USize}
     {left' limit : UInt64} {pos' pos : USize} {status : DStatus} {n : USize} {moved : List Nat} {r : RawRun}
-    (hw : WinRel w k.toNat cmd st.output st.distances) (hprod : st.produced = st.output.length) (hlim : limit.toNat + 132096 < 2 ^ 32)
+    (hw : WinRel w k.toNat cmd st.output st.distances) (hprod : st.produced = st.output.length) (hlim : limit.toNat + 144528 < 2 ^ 32)
     (hleft : left'.toNat = left) (hl32 : left < 2 ^ 32) (hnl : n.toNat ≤ left) (hn0 : n.toNat ≠ 0) (hnp : cmd.pend.toNat + n.toNat ≤ 2 ^ k.toNat)
     (hm : RawOk a stop k.toNat cmd.word cmd.count pos st.output n.toNat moved r) :
     DStepOk S a stop (.raw w st last left) ⟨.raw, cmd, hd, H, k, last, left', limit, pos', status⟩ pos

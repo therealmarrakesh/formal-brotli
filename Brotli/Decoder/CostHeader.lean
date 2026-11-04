@@ -98,8 +98,9 @@ def clTableW (st : Hd) : Nat :=
 /-- The work of `clFinish`: the code length code's table, its check, and the code's lengths' zeros. -/
 def clFinishW (st : Hd) : Nat := clTableW st + fitsW + zbW st.size.toNat
 
-/-- The work of `mapFinish`: the next group of codes' zeros, after the second map. -/
-def mapFinishW (st : Hd) : Nat := if st.isL then 1 else zbW (4 * st.d.treesL.toNat) + 1
+/-- The work of `mapFinish`: after the second map, the next group of codes' zeros and the arena's tables copied into its
+reservation. -/
+def mapFinishW (st : Hd) : Nat := if st.isL then 1 else zbW (4 * st.d.treesL.toNat) + st.d.arena.size + 1
 
 /-- The work of `ckFinish`: the next group of codes' zeros. -/
 def ckFinishW (st : Hd) : Nat :=

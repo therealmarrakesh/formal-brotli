@@ -4,7 +4,8 @@ import Brotli.Decoder.StreamCall
 # What a state holds
 
 Memory usage correctness's measure and demand, and what each step does to what the state holds. The demand counts the window the stream
-declares, the bytes of the tables its headers' prefix codes need, one meta-block at a time, and a fixed cost for the rest.
+declares, the bytes the decoder reserves for the tables of its headers' groups of prefix codes, one meta-block at a time,
+and a fixed cost for the rest.
 -/
 
 namespace Brotli.Decoder
@@ -13,16 +14,17 @@ open Brotli.Spec Brotli.Properties
 
 /-! ### The demand -/
 
-/-- What a state holds besides its window and its arena: the bounds `HSize` and `HSmall` give, 768 bytes of block type flags,
-38 bytes of a dictionary word, and its fields. -/
-def fixedCost : Nat := 324600
+/-- What a state holds besides its window and the groups' tables: the arena's reservation for the categories' codes, the
+bounds `HSize` and `HSmall` give, 768 bytes of block type flags, 38 bytes of a dictionary word, and its fields. -/
+def fixedCost : Nat := 337032
 
 /-- What a state's fields cost. -/
 def fieldBytes : Nat := 1024
 
-/-- A header's reading, counting the bytes of its tables. A table's bytes are those of the decoder's own table layout, which
-`tableBytes` gives from the code's lengths, not a size RFC 7932 defines. -/
-def tableK : HK Nat := ⟨fun _ _ => some 0, fun c x => some (tableBytes c + x.getD 0)⟩
+/-- A header's reading, counting the bytes the decoder reserves for its groups' tables once both context maps are read:
+`treeMax` of each group's alphabet for each of its codes. These are the decoder's own table layout's bytes, from the
+header's fields, not a size RFC 7932 defines. -/
+def tableK : HK Nat := ⟨fun _ _ => some 0, fun g x => some (resBytes g + x.getD 0)⟩
 
 /-- The bytes of the tables a meta-block's header needs, as far as its bits go. -/
 def headerTables (bs : List Bool) : Nat :=
@@ -96,30 +98,18 @@ theorem leave_le (w : Nat) (st : StreamState) (bs : List Bool) : (sLeave demandS
     show (if p.1.2 = true then 0 else blocksT w p.1.1 p.2) ≤ max (headerTables bs) (if p.1.2 = true then 0 else blocksT w p.1.1 p.2)
     exact Nat.le_max_right _ _
 
-theorem wr_tableK (oc : Option PrefixCode) (x : Option Nat) : (Wr tableK oc x).getD 0 = tableOf oc + x.getD 0 := by
-  cases oc with
-  | none =>
-    show x.getD 0 = 0 + x.getD 0
-    omega
-  | some c => rfl
+/-- What a move's hook adds to the demand: the groups' reservation. -/
+def resOf : Option Hook → Nat
+  | some (.res g) => resBytes g
+  | _ => 0
+
+theorem wr_tableK (oc : Option Hook) (x : Option Nat) : (Wr tableK oc x).getD 0 = resOf oc + x.getD 0 := by
+  match oc with
+  | none => exact (Nat.zero_add _).symm
+  | some (.table _) => exact (Nat.zero_add _).symm
+  | some (.res _) => rfl
 
 /-! ### A ceiling on the demand -/
-
-/-- The most bytes one table takes. -/
-def tableMax : Nat := 132096
-
-/-- The most tables a header's prefix codes need: three block type codes, three block count codes, and at most 256 codes
-in each of the three groups. -/
-def headerTablesMax : Nat := 774
-
-/-- A code a stream gives has a table of at most `tableMax` bytes. -/
-theorem tableBytes_le {c : PrefixCode} (h : c.Fits) : tableBytes c ≤ tableMax := by
-  cases c with
-  | single _ => show 1024 ≤ 132096; omega
-  | canonical l =>
-    have hb := offSum_bound (depths_spec h.1).2.1 256
-    show 4 * (256 + offSum (depths l) 256) ≤ 132096
-    omega
 
 private theorem bind_getD_le {α : Type} {o : Option α} {f : α → Option Nat} {M : Nat} (h : ∀ a, o = some a → (f a).getD 0 ≤ M) :
     (o >>= f).getD 0 ≤ M := by
@@ -127,44 +117,15 @@ private theorem bind_getD_le {α : Type} {o : Option α} {f : α → Option Nat}
   | none => exact Nat.zero_le _
   | some a => exact h a ho
 
-private theorem w_getD (c : PrefixCode) (x : Option Nat) : (tableK.w c x).getD 0 = tableBytes c + x.getD 0 := rfl
-
-private theorem read_w_le {size : Nat} {bs : List Bool} {f : PrefixCode × List Bool → Option Nat} {M : Nat}
-    (h : ∀ q, (f q).getD 0 ≤ M) :
-    (readPrefixCode size bs >>= fun q => tableK.w q.1 (f q)).getD 0 ≤ tableMax + M := by
-  refine bind_getD_le fun q hq => ?_
-  rw [w_getD]
-  have := tableBytes_le (readPrefixCode_fits hq)
-  have := h q
-  omega
-
 private theorem hCodesR_le {size M : Nat} {G : List PrefixCode → List Bool → Option Nat} (hG : ∀ cs b, (G cs b).getD 0 ≤ M) :
-    ∀ (n : Nat) (done : List PrefixCode) (bs : List Bool), (hCodesR tableK size G done n bs).getD 0 ≤ n * tableMax + M
-  | 0, done, bs => by
-    show (G done bs).getD 0 ≤ _
-    have := hG done bs
-    omega
-  | n + 1, done, bs => by
-    show (readPrefixCode size bs >>= fun p => tableK.w p.1 (hCodesR tableK size G (done ++ [p.1]) n p.2)).getD 0 ≤ _
-    have := read_w_le (size := size) (bs := bs) (f := fun q => hCodesR tableK size G (done ++ [q.1]) n q.2)
-      (fun q => hCodesR_le (size := size) hG n (done ++ [q.1]) q.2)
-    rw [Nat.succ_mul]
-    omega
-
-private theorem hCodesD_le (g : Gh) (done : List PrefixCode) (left : Nat) (bs : List Bool) :
-    (hCodesD tableK g done left bs).getD 0 ≤ left * tableMax := by
-  unfold hCodesD
-  refine Nat.le_trans (hCodesR_le (M := 0) ?_ left done bs) (by omega)
-  intro _ _
-  exact Nat.le_refl 0
-
-private theorem hCodesI_le (g : Gh) (done : List PrefixCode) (left : Nat) (bs : List Bool) :
-    (hCodesI tableK g done left bs).getD 0 ≤ left * tableMax + g.treesD * tableMax :=
-  hCodesR_le (size := insertCopyAlphabetSize) (fun _ b => hCodesD_le _ [] g.treesD b) left done bs
+    ∀ (n : Nat) (done : List PrefixCode) (bs : List Bool), (hCodesR size G done n bs).getD 0 ≤ M
+  | 0, done, bs => hG done bs
+  | n + 1, done, _ => bind_getD_le fun q _ => hCodesR_le hG n (done ++ [q.1]) q.2
 
 private theorem hCodesL_le (g : Gh) (done : List PrefixCode) (left : Nat) (bs : List Bool) :
-    (hCodesL tableK g done left bs).getD 0 ≤ left * tableMax + (g.m.insertCopy.n * tableMax + g.treesD * tableMax) :=
-  hCodesR_le (size := literalAlphabetSize) (fun _ b => hCodesI_le _ [] g.m.insertCopy.n b) left done bs
+    (hCodesL tableK g done left bs).getD 0 ≤ 0 :=
+  hCodesR_le (fun _ b => hCodesR_le (fun _ b' => hCodesR_le (fun _ _ => Nat.le_refl 0) g.treesD [] b') g.m.insertCopy.n [] b)
+    left done bs
 
 /-- A context map's number of trees is at most 256. -/
 private theorem readTreesAndMap_trees {size : Nat} {bs r : List Bool} {p : Nat × List Nat} (h : readTreesAndMap size bs = some (p, r)) :
@@ -187,67 +148,63 @@ private theorem readTreesAndMap_trees {size : Nat} {bs r : List Bool} {p : Nat �
         cases h
         exact hn
 
-private theorem hMap_le (g : Gh) (bs : List Bool) :
-    (hMap tableK g true bs).getD 0 ≤ 512 * tableMax + g.m.insertCopy.n * tableMax := by
-  refine bind_getD_le fun p hp => ?_
-  have h1 := readTreesAndMap_trees hp
-  show (readTreesAndMap (distanceContextMapSize g.m.distance.n) p.2 >>= fun q => hCodesL tableK _ [] p.1.1 q.2).getD 0 ≤ _
+private theorem hMap_le (g : Gh) (hI : g.m.insertCopy.n ≤ 256) (hp : g.m.npostfix ≤ 3) (hn : g.m.ndirect ≤ 120) (bs : List Bool) :
+    (hMap tableK g true bs).getD 0 ≤ resMax := by
+  refine bind_getD_le fun p hp1 => ?_
+  have h1 := readTreesAndMap_trees hp1
+  show (readTreesAndMap (distanceContextMapSize g.m.distance.n) p.2 >>= fun q =>
+    tableK.r { g with m := { g.m with literalMap := p.1.2, distanceMap := q.1.2 }, treesL := p.1.1, treesD := q.1.1 }
+      (hCodesL tableK { g with m := { g.m with literalMap := p.1.2, distanceMap := q.1.2 }, treesL := p.1.1, treesD := q.1.1 }
+        [] p.1.1 q.2)).getD 0 ≤ _
   refine bind_getD_le fun q hq => ?_
   have h2 := readTreesAndMap_trees hq
-  refine Nat.le_trans (hCodesL_le _ [] p.1.1 q.2) ?_
-  have e1 : p.1.1 * tableMax ≤ 256 * tableMax := Nat.mul_le_mul_right _ h1
-  have e2 : q.1.1 * tableMax ≤ 256 * tableMax := Nat.mul_le_mul_right _ h2
-  dsimp only
+  have h3 := hCodesL_le { g with m := { g.m with literalMap := p.1.2, distanceMap := q.1.2 }, treesL := p.1.1, treesD := q.1.1 }
+    [] p.1.1 q.2
+  have h4 := resBytes_bound (g := { g with m := { g.m with literalMap := p.1.2, distanceMap := q.1.2 }, treesL := p.1.1, treesD := q.1.1 })
+    h1 hI h2 hp hn
+  show resBytes { g with m := { g.m with literalMap := p.1.2, distanceMap := q.1.2 }, treesL := p.1.1, treesD := q.1.1 } +
+    (hCodesL tableK { g with m := { g.m with literalMap := p.1.2, distanceMap := q.1.2 }, treesL := p.1.1, treesD := q.1.1 }
+      [] p.1.1 q.2).getD 0 ≤ _
   omega
 
-private theorem hModes_le (g : Gh) (done : List Nat) (left : Nat) (bs : List Bool) :
-    (hModes tableK g done left bs).getD 0 ≤ 512 * tableMax + g.m.insertCopy.n * tableMax :=
-  bind_getD_le fun p _ => hMap_le _ p.2
+private theorem hModes_le (g : Gh) (hI : g.m.insertCopy.n ≤ 256) (hp : g.m.npostfix ≤ 3) (hn : g.m.ndirect ≤ 120)
+    (done : List Nat) (left : Nat) (bs : List Bool) : (hModes tableK g done left bs).getD 0 ≤ resMax :=
+  bind_getD_le fun p _ => hMap_le _ hI hp hn p.2
 
-private theorem hNp_le (g : Gh) (bs : List Bool) :
-    (hNp tableK g bs).getD 0 ≤ 512 * tableMax + g.m.insertCopy.n * tableMax :=
-  bind_getD_le fun _ _ => bind_getD_le fun nd _ => hModes_le _ [] g.m.literal.n nd.2
+private theorem hNp_le (g : Gh) (hI : g.m.insertCopy.n ≤ 256) (bs : List Bool) : (hNp tableK g bs).getD 0 ≤ resMax :=
+  bind_getD_le fun np h1 => bind_getD_le fun nd h2 => by
+    have a1 : np.1 < 2 ^ 2 := readInt_lt 2 _ np.1 np.2 h1
+    have a2 : nd.1 < 2 ^ 4 := readInt_lt 4 _ nd.1 nd.2 h2
+    have key : ∀ x, x < 4 → ∀ y, y < 16 → y <<< x ≤ 120 := by decide
+    have hd : nd.1 <<< np.1 ≤ 120 := key _ (by omega) _ (by omega)
+    exact hModes_le { g with m := { g.m with npostfix := np.1, ndirect := nd.1 <<< np.1 } } hI (show np.1 ≤ 3 by omega) hd []
+      g.m.literal.n nd.2
 
 private theorem hCatR_le {N : BlockCategory → List Bool → Option Nat} {M : Nat} (hN : ∀ c b, c.n ≤ 256 → (N c b).getD 0 ≤ M)
-    (bs : List Bool) : (hCatR tableK N bs).getD 0 ≤ 2 * tableMax + M := by
+    (bs : List Bool) : (hCatR N bs).getD 0 ≤ M := by
   refine bind_getD_le fun p hp => ?_
   have hn := (readVarLen_range hp).2
   split
-  · have := hN ⟨p.1, .single 0, .single 0, 16777216⟩ p.2 hn
-    omega
-  · have := read_w_le (size := blockTypeAlphabetSize p.1) (bs := p.2)
-      (f := fun q => readPrefixCode blockCountAlphabetSize q.2 >>= fun u => tableK.w u.1 (readBlockCount u.1 u.2 >>= fun v => N ⟨p.1, q.1, u.1, v.1⟩ v.2))
-      (M := tableMax + M) (fun q => read_w_le fun u => bind_getD_le fun v _ => hN ⟨p.1, q.1, u.1, v.1⟩ v.2 hn)
-    omega
+  · exact hN _ _ hn
+  · exact bind_getD_le fun q _ => bind_getD_le fun u _ => bind_getD_le fun v _ => hN ⟨p.1, q.1, u.1, v.1⟩ v.2 hn
 
-private theorem hCatD_le (g : Gh) (bs : List Bool) :
-    (hCatD tableK g bs).getD 0 ≤ 2 * tableMax + (512 * tableMax + g.m.insertCopy.n * tableMax) := by
-  unfold hCatD
-  exact hCatR_le (fun c b _ => hNp_le { g with m := { g.m with distance := c } } b) bs
+private theorem hCatD_le (g : Gh) (hI : g.m.insertCopy.n ≤ 256) (bs : List Bool) : (hCatD tableK g bs).getD 0 ≤ resMax :=
+  hCatR_le (fun c b _ => hNp_le { g with m := { g.m with distance := c } } hI b) bs
 
-private theorem hCatI_le (g : Gh) (bs : List Bool) : (hCatI tableK g bs).getD 0 ≤ 2 * tableMax + (2 * tableMax + 768 * tableMax) := by
-  unfold hCatI
-  refine hCatR_le (fun c b hc => ?_) bs
-  have h1 := hCatD_le { g with m := { g.m with insertCopy := c } } b
-  dsimp only at h1
-  have e : c.n * tableMax ≤ 256 * tableMax := Nat.mul_le_mul_right _ hc
-  have e2 : 768 * tableMax = 512 * tableMax + 256 * tableMax := by omega
-  exact Nat.le_trans h1 (by omega)
+private theorem hCatI_le (g : Gh) (bs : List Bool) : (hCatI tableK g bs).getD 0 ≤ resMax :=
+  hCatR_le (fun c b hc => hCatD_le { g with m := { g.m with insertCopy := c } } hc b) bs
 
-private theorem hCatL_le (g : Gh) (bs : List Bool) : (hCatL tableK g bs).getD 0 ≤ headerTablesMax * tableMax := by
-  unfold hCatL
-  refine Nat.le_trans (hCatR_le (fun c b _ => hCatI_le { g with m := { g.m with literal := c } } b) bs) ?_
-  unfold headerTablesMax
-  omega
+private theorem hCatL_le (g : Gh) (bs : List Bool) : (hCatL tableK g bs).getD 0 ≤ resMax :=
+  hCatR_le (fun c b _ => hCatI_le { g with m := { g.m with literal := c } } b) bs
 
-/-- A header's tables take at most `headerTablesMax` tables' worth of bytes, whatever its bits. -/
-theorem headerTables_le_max (bs : List Bool) : headerTables bs ≤ headerTablesMax * tableMax := by
+/-- What a header reserves for its tables is at most `resMax`, whatever its bits. -/
+theorem headerTables_le_max (bs : List Bool) : headerTables bs ≤ resMax := by
   unfold headerTables
   split
   · exact hCatL_le _ _
   · exact Nat.zero_le _
 
-theorem blocksT_le_max : ∀ (n w : Nat) (st : StreamState) (bs : List Bool), bs.length = n → blocksT w st bs ≤ headerTablesMax * tableMax := by
+theorem blocksT_le_max : ∀ (n w : Nat) (st : StreamState) (bs : List Bool), bs.length = n → blocksT w st bs ≤ resMax := by
   intro n
   induction n using Nat.strongRecOn with
   | _ n ih =>
@@ -263,11 +220,11 @@ theorem blocksT_le_max : ∀ (n w : Nat) (st : StreamState) (bs : List Bool), bs
       · exact ih _ (by rw [← hn]; exact readMetaBlock_lt h) w p.1.1 p.2 rfl
 
 /-- The demand never exceeds the declared window by more than a constant: the fixed cost, the ring's 16 bytes beyond the
-window, and the most a header's tables can take. -/
-theorem demand_ceiling : DemandCeiling demand (fixedCost + 16 + headerTablesMax * tableMax) := by
+window, and the most a header reserves for its tables. -/
+theorem demand_ceiling : DemandCeiling demand (fixedCost + 16 + resMax) := by
   intro y
   unfold demand declaredWindow windowBytes
-  have ht : (demandSem.first (bits y)).getD 0 ≤ headerTablesMax * tableMax :=
+  have ht : (demandSem.first (bits y)).getD 0 ≤ resMax :=
     bind_getD_le fun p _ => blocksT_le_max _ _ _ _ rfl
   cases h : readWBITS (bits y) with
   | none => simp only; omega
@@ -278,14 +235,14 @@ theorem demand_ceiling : DemandCeiling demand (fixedCost + 16 + headerTablesMax 
 
 /-! ### The measure -/
 
-/-- The bytes a settled record holds. -/
-def Done.holds (d : Done) : Nat := d.arena.size + d.modes.size + d.lMap.size + d.dMap.size + d.litBase.size + d.icBase.size + d.dBase.size
+/-- The bytes a settled record holds: its arena's reservation, and its arrays. -/
+def Done.holds (d : Done) : Nat := d.arenaCap.toNat + d.modes.size + d.lMap.size + d.dMap.size + d.litBase.size + d.icBase.size + d.dBase.size
 
 /-- The bytes a header's reading holds. -/
 def Hd.holds (h : Hd) : Nat := h.d.holds + h.fill.size + h.lens.size + h.clLens.size + h.clt.t.size + h.mapT.t.size
 
-/-- The bytes a meta-block's fast header holds. -/
-def Hdr.holds (H : Hdr) : Nat := H.arena.size + H.litBase.size + H.lMap.size + H.icBase.size + H.dBase.size + H.dMap.size + H.modes.size
+/-- The bytes a meta-block's fast header holds: its arena's reservation, and its arrays. -/
+def Hdr.holds (H : Hdr) : Nat := H.arenaCap.toNat + H.litBase.size + H.lMap.size + H.icBase.size + H.dBase.size + H.dMap.size + H.modes.size
 
 /-- The bytes a state holds, and a constant for its fields. -/
 def Dec.holds (D : Dec) : Nat := D.cmd.ring.size + D.cmd.seen.size + D.cmd.wordBuf.size + D.hd.holds + D.H.holds + fieldBytes
@@ -300,18 +257,19 @@ structure HSmall (H : Hdr) : Prop where
   modes : H.modes.size ≤ 256
 
 /-- Why a stream's memory limit was reached: `L` is below what it needs, and not because it was clipped. -/
-def MemWhy (Ws : Option Nat) (X L : Nat) : Prop := L < Ws.elim 0 (· + 16) + X ∧ L < 4294835199
+def MemWhy (Ws : Option Nat) (X L : Nat) : Prop := L < Ws.elim 0 (· + 16) + X ∧ L < 4294822767
 
 /-- What a state holds, for a stream whose window's worth is `Ws`, whose tables' worth is `X`, and with `L` left for the window and
-the tables. `B` is the bits still to be read. -/
+the tables. `B` is the bits still to be read. In a header, the arena's reservation and what the rest of the header reserves
+are within the categories' reservation and `X`, and the arena's tables still to come fit what it reserved. -/
 structure MemD (Ws : Option Nat) (X L : Nat) (D : Dec) (B : List Bool) : Prop where
   place : ∃ p, DRel D p ∧ (sLeave demandSem p B).getD 0 ≤ X
   block : D.tag = .mblock → headerTables B ≤ X
-  hdr : D.tag = .hdr → ∃ g q, HRel D.hd g q ∧ D.hd.d.arena.size + (hrest tableK g q B).getD 0 ≤ X ∧ D.hd.d.arenaMax = D.limit ∧
-    D.hd.d.arena.size + 132096 * capH q ≤ 132096 * 774
-  cmds : D.tag = .cmds → D.H.arena.size ≤ X ∧ D.H.arena.size ≤ D.limit.toNat
-  hdOut : D.tag ≠ .hdr → D.hd.d.arena.size = 0
-  HOut : D.tag ≠ .cmds → D.H.arena.size = 0
+  hdr : D.tag = .hdr → ∃ g q, HRel D.hd g q ∧ D.hd.d.arenaCap.toNat + (hrest tableK g q B).getD 0 ≤ smallMax + X ∧
+    D.hd.d.arenaMax = D.limit ∧ D.hd.d.arena.size + budH g q ≤ D.hd.d.arenaCap.toNat
+  cmds : D.tag = .cmds → D.H.arenaCap.toNat ≤ smallMax + X ∧ D.H.arenaCap.toNat ≤ smallMax + D.limit.toNat
+  hdOut : D.tag ≠ .hdr → D.hd.d.arenaCap.toNat = 0
+  HOut : D.tag ≠ .cmds → D.H.arenaCap.toNat = 0
   hd : HSize D.hd
   H : HSmall D.H
   win : (D.tag = .wbits ∧ D.cmd.ring.size = 0 ∧ D.cmd.seen.size = 0 ∧ D.cmd.wordBuf.size = 0 ∧ D.limit.toNat = L ∧ winSem.first B = Ws) ∨
@@ -354,6 +312,7 @@ theorem MemD.holds_le {Ws : Option Nat} {X L : Nat} {D : Dec} {B : List Bool} (M
   have b4 := M.H.dBase
   have b5 := M.H.dMap
   have b6 := M.H.modes
+  have hsm : smallMax = 12432 := rfl
   unfold Dec.holds Hd.holds Done.holds Hdr.holds fixedCost fieldBytes
   rcases M.win with ⟨ht, r0, s0, w0, hl, _⟩ | ⟨ht, w, hw, hk, hl⟩
   · have e1 := M.hdOut (by rw [ht]; decide)
@@ -362,11 +321,12 @@ theorem MemD.holds_le {Ws : Option Nat} {X L : Nat} {D : Dec} {B : List Bool} (M
   · obtain ⟨r1, _, s1, w1⟩ := hrel.arrays ht
     have he : (some w : Option Nat).elim 0 (· + 16) = w + 16 := rfl
     rw [hw, he]
-    have hA : D.hd.d.arena.size + D.H.arena.size ≤ X ∧ D.hd.d.arena.size + D.H.arena.size ≤ D.limit.toNat := by
+    have hA : D.hd.d.arenaCap.toNat + D.H.arenaCap.toNat ≤ smallMax + X ∧
+        D.hd.d.arenaCap.toNat + D.H.arenaCap.toNat ≤ smallMax + D.limit.toNat := by
       by_cases t1 : D.tag = .hdr
       · obtain ⟨g, q, hR, h1, h2, _⟩ := M.hdr t1
         have h3 := M.HOut (by rw [t1]; decide)
-        have hle := hR.2.1.le
+        have hle := hR.2.1.capLe
         rw [h2] at hle
         omega
       · have h3 := M.hdOut t1
@@ -472,7 +432,8 @@ theorem MemD.withCap {Ws : Option Nat} {X L : Nat} {D : Dec} {B : List Bool} (M 
 /-- A state past WBITS and outside a header, moved to another such state. -/
 theorem MemD.keep {Ws : Option Nat} {X L : Nat} {D r : Dec} {B B' : List Bool} (M : MemD Ws X L D B) (hne : D.tag ≠ .wbits) (hnh : D.tag ≠ .hdr)
     (ek : r.k = D.k) (el : r.limit = D.limit) (ed : r.hd = D.hd) (hr : r.tag ≠ .wbits) (hrh : r.tag ≠ .hdr) (hH : HSmall r.H)
-    (hc : r.tag = .cmds → r.H.arena.size ≤ X ∧ r.H.arena.size ≤ r.limit.toNat) (hO : r.tag ≠ .cmds → r.H.arena.size = 0)
+    (hc : r.tag = .cmds → r.H.arenaCap.toNat ≤ smallMax + X ∧ r.H.arenaCap.toNat ≤ smallMax + r.limit.toNat)
+    (hO : r.tag ≠ .cmds → r.H.arenaCap.toNat = 0)
     (hp : ∃ p, DRel r p ∧ (sLeave demandSem p B').getD 0 ≤ X) (hb : r.tag = .mblock → headerTables B' ≤ X) : MemD Ws X L r B' := by
   refine ⟨hp, hb, fun e => absurd e hrh, hc, fun _ => by rw [ed]; exact M.hdOut hnh, hO, by rw [ed]; exact M.hd, hH, Or.inr ⟨hr, ?_⟩⟩
   rcases M.win with ⟨ht, _⟩ | ⟨_, w, h1, h2, h3⟩
@@ -664,8 +625,8 @@ theorem wbits_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {
   refine ⟨fun h0 h1 => ?_, fun e => ?_⟩
   · have hpaused : r.status ≠ .next → r.tag = D.tag := fun e => (hF.paused e).1
     obtain ⟨hA, hB⟩ := placed hrel hD hw (fun e => absurd (ht.symm.trans e) (by decide)) h0 h1 hpaused
-    have hHO : D.H.arena.size = 0 := M.HOut (by rw [ht]; decide)
-    have hdO : D.hd.d.arena.size = 0 := M.hdOut (by rw [ht]; decide)
+    have hHO : D.H.arenaCap.toNat = 0 := M.HOut (by rw [ht]; decide)
+    have hdO : D.hd.d.arenaCap.toNat = 0 := M.hdOut (by rw [ht]; decide)
     by_cases hn : r.status = .next
     · obtain ⟨g1, g2⟩ := hF.next hn
       obtain ⟨p', hR, _, _, heq, hdown, _⟩ := hW.next hn
@@ -742,7 +703,8 @@ structure MetaFacts (a : ByteArray) (stop : USize) (D : Dec) (pos : USize) (r : 
   other : r.tag ≠ .hdr → r.hd = D.hd
   tag : r.tag ≠ .wbits ∧ r.tag ≠ .cmds
   start : r.tag = .hdr → r.status = .next ∧ (∀ t : List UInt8, ∃ last mlen, metaStart (D.bits a pos stop (bits t)) = some (.data last mlen false, r.bits a r.pos stop (bits t))) ∧
-    HRel r.hd Gh.start (.cat .L) ∧ r.hd.d.arena.size = 0 ∧ r.hd.d.arenaMax = D.limit ∧ HSize r.hd
+    HRel r.hd Gh.start (.cat .L) ∧ r.hd.d.arena.size = 0 ∧ r.hd.d.arenaCap.toNat = smallMax ∧ r.hd.d.arenaMax = D.limit ∧
+    HSize r.hd
   plain : r.status = .next → r.tag ≠ .hdr → ∀ t : List UInt8, ∃ v rest, metaStart (D.bits a pos stop (bits t)) = some (v, rest) ∧
     ∀ l ml, v ≠ .data l ml false
 
@@ -766,7 +728,7 @@ theorem stepDMeta_facts {w : Nat} {st : StreamState} {a : ByteArray} {stop : USi
   obtain ⟨ht, hw, hall⟩ := hrel
   have ht' : tag = .mblock := ht
   subst ht'
-  have hlim : limit.toNat + 132096 < 2 ^ 32 := hall.limit
+  have hlim : limit.toNat + 144528 < 2 ^ 32 := hall.limit
   have hdec : (DTag.mblock ≠ DTag.wbits) ∧ (DTag.mblock ≠ DTag.cmds) := by decide
   have hnh : DTag.mblock ≠ DTag.hdr := by decide
   unfold stepDMeta
@@ -842,7 +804,8 @@ theorem stepDMeta_facts {w : Nat} {st : StreamState} {a : ByteArray} {stop : USi
         exact ⟨rfl, rfl, rfl, (fun e => DStatus.noConfusion e), fun _ => rfl, fun _ => rfl, hdec, fun e => absurd e hnh, fun e _ => DStatus.noConfusion e⟩
     · rw [ite_eq_right hu]
       have hu' : (r.d != 0) = false := by simpa using hu
-      refine ⟨rfl, rfl, rfl, (fun e => DStatus.noConfusion e), fun e => absurd rfl e, fun e => absurd rfl e, ⟨fun e => DTag.noConfusion e, fun e => DTag.noConfusion e⟩, fun _ => ⟨rfl, fun t => ⟨r.b != 0, r.c.toNat, ?_⟩, hdStart_rel hw2 hlim, rfl, rfl, hsize_start _ _ _⟩,
+      refine ⟨rfl, rfl, rfl, (fun e => DStatus.noConfusion e), fun e => absurd rfl e, fun e => absurd rfl e, ⟨fun e => DTag.noConfusion e, fun e => DTag.noConfusion e⟩, fun _ => ⟨rfl, fun t => ⟨r.b != 0, r.c.toNat, ?_⟩, hdStart_rel hw2 hlim, rfl, u64_lit (by decide), rfl,
+          hsize_start _ _ _⟩,
         fun _ e => absurd rfl e⟩
       show metaStart (availBits cmd.word cmd.count a pos stop (bits t)) = some (.data (r.b != 0) r.c.toNat false, availBits r.word r.count a rf.pos stop (bits t))
       rw [hbits, ← hu', ← hv]
@@ -871,22 +834,22 @@ theorem mblock_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} 
     generalize stepDMeta a stop hs D D.pos = r at hF hD
     refine ⟨fun h0 h1 => ?_, fun e => absurd e hF.status⟩
     obtain ⟨hA, hB⟩ := placed hrel hD hw M.block h0 h1 hF.paused
-    have hHO : D.H.arena.size = 0 := M.HOut (by rw [ht]; decide)
-    have hdO : D.hd.d.arena.size = 0 := M.hdOut (by rw [ht]; decide)
+    have hHO : D.H.arenaCap.toNat = 0 := M.HOut (by rw [ht]; decide)
+    have hdO : D.hd.d.arenaCap.toNat = 0 := M.hdOut (by rw [ht]; decide)
     have hRwin : r.tag ≠ .wbits ∧ _ := hF.tag
     by_cases hth : r.tag = .hdr
-    · obtain ⟨_, s2, s3, s4, s5, s6⟩ := hF.start hth
+    · obtain ⟨_, s2, s3, s4, s4', s5, s6⟩ := hF.start hth
       obtain ⟨last, mlen, hm⟩ := s2 t
       have hTables : headerTables (D.bits a D.pos stop (bits t)) = (hrest tableK Gh.start (.cat .L) (r.bits a r.pos stop (bits t))).getD 0 := by
         unfold headerTables
         rw [hm]
       have hb0 := M.block ht
       rw [hTables] at hb0
-      refine ⟨hA, hB, fun _ => ⟨Gh.start, .cat .L, s3, by rw [s4]; omega, by rw [s5, hF.limit], ?_⟩, fun e => absurd (hth.symm.trans e) (by decide), fun e => absurd hth e,
+      refine ⟨hA, hB, fun _ => ⟨Gh.start, .cat .L, s3, by rw [s4']; omega, by rw [s5, hF.limit], ?_⟩, fun e => absurd (hth.symm.trans e) (by decide), fun e => absurd hth e,
         fun _ => by rw [hF.H]; exact hHO, s6, by rw [hF.H]; exact M.H, Or.inr ⟨hRwin.1, w0, g1, by rw [hF.k]; exact g2, by rw [hF.k, hF.limit]; exact g3⟩⟩
-      rw [s4]
-      show 0 + 132096 * (770 + 2 * 2) ≤ 132096 * 774
-      decide
+      rw [s4, s4']
+      show 0 + catMax * (2 + 1) ≤ 3 * catMax
+      omega
     · refine M.keep (by rw [ht]; decide) (by rw [ht]; decide) hF.k hF.limit (hF.other hth) hRwin.1 hth (by rw [hF.H]; exact M.H) (fun e => absurd e hF.tag.2) (fun _ => by rw [hF.H]; exact hHO) hA hB
 
 /-! ### Metadata, uncompressed bytes and commands -/
@@ -966,17 +929,36 @@ theorem Dec.bits_hdr {D : Dec} (h : D.tag = .hdr) (a : ByteArray) (pos stop : US
   unfold Dec.bits Dec.word Dec.count
   rw [h]
 
-/-- What a move does to the room left for tables. -/
-private theorem cap_step {q q' : HPhase} {oc : Option PrefixCode} (hc : capH q' + (if oc.isSome then 1 else 0) ≤ capH q) (hone : tableOf oc ≤ 132096) :
-    tableOf oc + 132096 * capH q' ≤ 132096 * capH q := by
-  cases oc with
+/-- What a move does to the arena's reservation and what the rest of the header reserves. -/
+private theorem move_mem {st r : Hd} {g g' : Gh} {q q' : HPhase} {oc : Option Hook} {X R R' : Nat} (hm : HMove st r g q g' q' oc)
+    (hR : R = resOf oc + R') (h1 : st.d.arenaCap.toNat + R ≤ smallMax + X) (h3 : st.d.arena.size + budH g q ≤ st.d.arenaCap.toNat)
+    (hle : st.d.arena.size ≤ st.d.arenaCap.toNat) :
+    r.d.arenaCap.toNat + R' ≤ smallMax + X ∧ r.d.arena.size + budH g' q' ≤ r.d.arenaCap.toNat := by
+  have hg := hm.grow
+  have hc := hm.cap
+  match oc with
+  | some (.res g0) =>
+    obtain ⟨c1, c2, c3, _⟩ := hc
+    have e1 : tableOf (some (.res g0)) = 0 := rfl
+    have e2 : resOf (some (.res g0)) = resBytes g0 := rfl
+    rw [e1] at hg
+    rw [e2] at hR
+    omega
   | none =>
-    have h : capH q' ≤ capH q := by simpa using hc
-    exact Nat.zero_add _ ▸ Nat.mul_le_mul_left _ h
-  | some c =>
-    have h : capH q' + 1 ≤ capH q := by simpa using hc
-    have := Nat.mul_le_mul_left 132096 h
-    rw [Nat.mul_add] at this
+    obtain ⟨c1, c2⟩ := hc
+    have e1 : tableOf none = 0 := rfl
+    have e2 : resOf none = 0 := rfl
+    rw [e1] at hg c2
+    rw [e2] at hR
+    rw [c1]
+    omega
+  | some (.table c) =>
+    obtain ⟨c1, c2⟩ := hc
+    have e1 : tableOf (some (.table c)) = tableBytes c := rfl
+    have e2 : resOf (some (.table c)) = 0 := rfl
+    rw [e1] at hg c2
+    rw [e2] at hR
+    rw [c1]
     omega
 
 /-- A header's step. -/
@@ -991,7 +973,7 @@ theorem hdr_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs
     · exact h
   obtain ⟨w0, g1, g2, g3⟩ := hWinr
   obtain ⟨p, hrel, hw⟩ := M.place
-  have hHO : D.H.arena.size = 0 := M.HOut (by rw [ht]; decide)
+  have hHO : D.H.arenaCap.toNat = 0 := M.HOut (by rw [ht]; decide)
   obtain ⟨_, hk24, _, _⟩ := hrel.arrays (by rw [ht]; decide)
   cases p with
   | wbits => exact absurd (hrel.1.symm.trans ht) (by decide)
@@ -1017,50 +999,42 @@ theorem hdr_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs
       have hT := a3 (bits t)
       have hN := congrArg (Option.getD · 0) hT
       simp only [wr_tableK] at hN
-      have hcap := cap_step hm.cap hm.one
-      have hgrow := hm.grow
+      have key := move_mem hm hN h1 h3 hR.2.1.le
       have htag : ({ clearHd D with hd := r, pos := r.pos, status := .next } : Dec).tag = .hdr := ht
       refine ⟨fun _ _ => ?_, fun e => DStatus.noConfusion e⟩
       obtain ⟨hA, hB⟩ := placed hrel hD hw (fun e => absurd (ht.symm.trans e) (by decide)) (fun e => DStatus.noConfusion e) (fun e => DStatus.noConfusion e) (fun e => absurd rfl e)
-      refine ⟨hA, hB, fun _ => ⟨g', q', hR', ?_, ?_, ?_⟩, fun e => absurd (htag.symm.trans e) (by decide), fun e => absurd htag e, fun _ => hHO, hm.size M.hd, M.H,
+      refine ⟨hA, hB, fun _ => ⟨g', q', hR', ?_, ?_, key.2⟩, fun e => absurd (htag.symm.trans e) (by decide), fun e => absurd htag e, fun _ => hHO, hm.size M.hd, M.H,
         Or.inr ⟨by rw [htag]; decide, w0, g1, g2, g3⟩⟩
       · rw [hbitsAt _ htag rfl rfl]
-        show r.d.arena.size + _ ≤ X
-        omega
+        exact key.1
       · show r.d.arenaMax = D.limit
         rw [hm.max, h2]
-      · show r.d.arena.size + 132096 * capH q' ≤ _
-        have hc2 : 132096 * capH q ≤ 132096 * 774 - D.hd.d.arena.size := by omega
-        omega
     | needsInput =>
       rw [hst] at hD
       dsimp only at hD
       obtain ⟨a1, a2, hR', a3, _, hm, _⟩ := hH.needsInput hst
       have hT := a3 (bits t)
-      have hgrow := hm.grow
+      have key := move_mem (R' := (hrest tableK g q (availBits r.word r.count a r.pos stop (bits t))).getD 0) hm
+        (by rw [hT]; exact (Nat.zero_add _).symm) h1 h3 hR.2.1.le
       have htag : ({ clearHd D with hd := r, pos := r.pos, status := .needsInput } : Dec).tag = .hdr := ht
       refine ⟨fun _ _ => ?_, fun e => DStatus.noConfusion e⟩
       obtain ⟨hA, hB⟩ := placed hrel hD hw (fun e => absurd (ht.symm.trans e) (by decide)) (fun e => DStatus.noConfusion e) (fun e => DStatus.noConfusion e) (fun _ => rfl)
-      have hg0 : tableOf (none : Option PrefixCode) = 0 := rfl
-      rw [hg0] at hgrow
-      refine ⟨hA, hB, fun _ => ⟨g, q, hR', ?_, ?_, ?_⟩, fun e => absurd (htag.symm.trans e) (by decide), fun e => absurd htag e, fun _ => hHO, hm.size M.hd, M.H,
+      refine ⟨hA, hB, fun _ => ⟨g, q, hR', ?_, ?_, key.2⟩, fun e => absurd (htag.symm.trans e) (by decide), fun e => absurd htag e, fun _ => hHO, hm.size M.hd, M.H,
         Or.inr ⟨by rw [htag]; decide, w0, g1, g2, g3⟩⟩
-      · rw [hbitsAt _ htag rfl rfl, ← hT]
-        show r.d.arena.size + _ ≤ X
-        omega
+      · rw [hbitsAt _ htag rfl rfl]
+        exact key.1
       · show r.d.arenaMax = D.limit
         rw [hm.max, h2]
-      · show r.d.arena.size + 132096 * capH q ≤ _
-        omega
     | bad => exact ⟨fun _ e => absurd rfl e, fun e => DStatus.noConfusion e⟩
     | memory =>
       refine ⟨fun e => absurd rfl e, fun _ => ?_⟩
-      obtain ⟨c, m1, m2, m3, m4⟩ := hH.memory hst
+      rcases hH.memory hst with ⟨c, m1, m2⟩ | ⟨g', m1, m2, m3, m4⟩
+      · exact absurd h3 (by omega)
       obtain ⟨x, hx⟩ := m4 (bits t)
       rw [hx] at h1
-      have h1' : D.hd.d.arena.size + (tableBytes c + x.getD 0) ≤ X := h1
+      have h1' : D.hd.d.arenaCap.toNat + (resBytes g' + x.getD 0) ≤ smallMax + X := h1
       rw [h2] at m1
-      have hpos : 132096 ≤ 132096 * capH q := Nat.le_mul_of_pos_right _ (Nat.pos_of_ne_zero m3)
+      have hrm : resMax = 2670592 := rfl
       have hpw : 2 ^ D.k.toNat ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk24
       have h224 : (2 : Nat) ^ 24 = 16777216 := rfl
       have he : (some w0 : Option Nat).elim 0 (· + 16) = w0 + 16 := rfl
@@ -1070,22 +1044,25 @@ theorem hdr_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs
     | ready =>
       rw [hst] at hD
       dsimp only at hD
-      obtain ⟨g', hu, _, _, _, a3, hmax, harena, hsz, _⟩ := hH.ready hst
-      obtain ⟨H', hmk, _, e1, e2, e3, e4, e5, e6, e7⟩ := mkHdr_ok hu
+      obtain ⟨g', hu, _, _, _, a3, hmax, _, hcapE, hsz, _⟩ := hH.ready hst
+      obtain ⟨H', hmk, _, _, e2, e3, e4, e5, e6, e7, e8⟩ := mkHdr_ok hu
       rw [hmk] at hD ⊢
       dsimp only at hD ⊢
       refine ⟨fun _ _ => ?_, fun e => DStatus.noConfusion e⟩
       obtain ⟨hA, hB⟩ := placed hrel hD hw (fun e => absurd (ht.symm.trans e) (by decide)) (fun e => DStatus.noConfusion e) (fun e => DStatus.noConfusion e) (fun e => absurd rfl e)
       have hS := hsz M.hd
-      have hle := hu.le
+      have hle := hu.capLe
+      have hT := congrArg (Option.getD · 0) (a3 (bits t))
+      have hk0 : (tableK.k g'.m (availBits r.word r.count a r.pos stop (bits t))).getD 0 = 0 := rfl
+      rw [hk0] at hT
       refine ⟨hA, hB, fun e => DTag.noConfusion e, fun _ => ⟨?_, ?_⟩, fun _ => rfl, fun e => absurd rfl e, hsize_none,
         ⟨by rw [e2]; exact hS.litBase, by rw [e3]; exact hS.lMap, by rw [e4]; exact hS.icBase, by rw [e5]; exact hS.dBase, by rw [e6]; exact hS.dMap, by rw [e7]; exact hS.modes⟩,
         Or.inr ⟨fun e => DTag.noConfusion e, w0, g1, g2, g3⟩⟩
-      · show H'.arena.size ≤ X
-        rw [e1, harena]
+      · show H'.arenaCap.toNat ≤ smallMax + X
+        rw [e8, hcapE]
         omega
-      · show H'.arena.size ≤ D.limit.toNat
-        rw [e1, ← h2, ← hmax]
+      · show H'.arenaCap.toNat ≤ smallMax + D.limit.toNat
+        rw [e8, ← h2, ← hmax]
         exact hle
 
 /-! ### The loop and a call -/

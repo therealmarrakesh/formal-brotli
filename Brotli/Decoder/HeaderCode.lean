@@ -160,7 +160,7 @@ theorem TableDone.toStep {g : Gh} {o : Owner} {c : PrefixCode} {p : HPhase} {st 
     (h : TableDone K g o c st0 r) (h2 : st0.pos = pos) (hp : pos.toNat ≤ stop.toNat) (hd : st0.d = st.d) (hsz : HSize st → HSize st0)
     (heq : ∀ F, hrest K g p (availBits st.word st.count a pos stop F) = ownerK K g o c (availBits st0.word st0.count a pos stop F))
     (hj : ∀ F, hStepP (g, p) (availBits st.word st.count a pos stop F) = .next (g, ownerPlace g o c) (availBits st0.word st0.count a pos stop F))
-    (hrank : (rankH p).1 = rankO o := by rfl) (hcap : capH p = capO o := by rfl) :
+    (hrank : (rankH p).1 = rankO o := by rfl) (hcap : budH g p = budO g o := by rfl) :
     HStepOk K a stop g p st pos r := by
   obtain ⟨⟨b1, b2, b3⟩, hnext, hother⟩ := h
   have hne : ∀ s : HStatus, s ≠ .next → s ≠ .memory → r.status = s → False := by
@@ -171,14 +171,14 @@ theorem TableDone.toStep {g : Gh} {o : Owner} {c : PrefixCode} {p : HPhase} {st 
   · obtain ⟨g', p', oc, h4, h5, h6, h7, h8⟩ := hnext e
     have hmv := h7 p hcap
     refine ⟨g', p', oc, h4, by rw [b3, h2]; exact Nat.le_refl _, by rw [b3, h2]; exact hp, (fun F => ?_), Or.inl (by rw [hrank]; exact h6),
-      ⟨by rw [hmv.max, hd], by rw [hmv.grow, hd], fun hs => hmv.size (hsz hs), hmv.cap, hmv.one⟩, fun F => ?_⟩
+      ⟨by rw [hmv.max, hd], by rw [hmv.grow, hd], fun hs => hmv.size (hsz hs), hmv.cap.same hd⟩, fun F => ?_⟩
     · rw [heq F, avail_mk, h5, avail_mk, b1, b2, b3, h2]
     · rw [h8, hj F, avail_mk, avail_mk, b1, b2, b3, h2]
   · exact (hne _ (fun e => HStatus.noConfusion e) (fun e => HStatus.noConfusion e) e).elim
   · exact (hne _ (fun e => HStatus.noConfusion e) (fun e => HStatus.noConfusion e) e).elim
-  · obtain ⟨_, _, h3, h4, h5, h6⟩ := hother (by rw [e]; exact fun e => HStatus.noConfusion e)
+  · obtain ⟨_, _, h3, h4⟩ := hother (by rw [e]; exact fun e => HStatus.noConfusion e)
     rw [hd] at h3
-    exact ⟨c, h3, h4, by rw [hcap]; exact h5, fun F => by rw [heq F]; exact h6 _⟩
+    exact Or.inl ⟨c, h3, by rw [hcap]; exact h4⟩
   · exact (hne _ (fun e => HStatus.noConfusion e) (fun e => HStatus.noConfusion e) e).elim
 
 /-! ### The place at a prefix code's first bits -/
@@ -356,7 +356,7 @@ theorem stepHCode_ok {o : Owner} {size : Nat} {st : Hd} {g : Gh} {pos : USize} (
       refine HStepOk.ofNext (g' := g) (p' := .clens o size (codeLengthOrder.drop hskip.toNat) [] 0) rfl
         (hm := ⟨rfl, rfl, fun h => ⟨h.fill, h.lens, by show (zeroBytes 18).size ≤ _; rw [zeroBytes_size (by decide)]; exact Nat.le_refl _,
           h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩,
-          by simp only [capH, Option.isSome, Bool.false_eq_true, ↓reduceIte]; omega, Nat.zero_le _⟩)
+          ⟨rfl, by simp [budH, tableOf]⟩⟩)
         ⟨hw1, hu, rfl, hs, ho, clStart_rel hhlt rfl rfl rfl rfl rfl⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
       · rw [avail_mk, hspec]
         rfl

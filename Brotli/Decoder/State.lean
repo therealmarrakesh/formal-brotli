@@ -89,6 +89,8 @@ structure Cmd where
 /-- A meta-block's fast header. -/
 structure Hdr where
   arena : ByteArray
+  /-- What the arena has reserved. -/
+  arenaCap : UInt64
   litBase : ByteArray
   lMap : ByteArray
   icBase : ByteArray

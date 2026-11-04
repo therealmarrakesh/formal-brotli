@@ -16,24 +16,6 @@ open Brotli.Spec Brotli.Properties
 
 /-! ### Tables -/
 
-/-- At most one length for each symbol is longer than eight. -/
-theorem longCount_le (L : List Nat) : longCount L ≤ L.length := by
-  have hs := countP_split (fun l => 9 ≤ l && l < 16) (fun l => l - 9) 7 L (fun a _ h => by
-    simp only [Bool.and_eq_true, decide_eq_true_eq] at h
-    omega)
-  have he : sumR (fun r => L.countP (fun a => (9 ≤ a && a < 16) && (a - 9 == r))) 7 = longCount L := by
-    unfold longCount
-    apply sumR_congr
-    intro r hr
-    unfold blCount
-    rw [ite_eq_right (by omega), ← List.countP_eq_length_filter]
-    apply List.countP_congr
-    intro a _
-    simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq]
-    omega
-  rw [← he, ← hs]
-  exact List.countP_le_length
-
 /-- A table's work, with its lengths complete: thirteen for each symbol and 11000 more, and for a context map's code its
 check and the map's zeros. -/
 theorem tableDoneW_le {st : Hd} {single : Bool} (hn : st.size.toNat ≤ 704) (hlens : st.size.toNat ≤ st.lens.size)
@@ -203,7 +185,7 @@ def mapPre (S : Nat) : Nat := 15 * S + 2244
 def afterD (nI tL tD : Nat) : Nat := 11 * tL + zb (4 * nI) + 12 + 11 * nI + zb (4 * tD) + 12 + 11 * tD + 12
 
 /-- What follows the first context map. -/
-def afterL (nI nD tL : Nat) : Nat := mapPre (4 * nD) + zb (4 * tL) + 1 + afterD nI tL 0
+def afterL (nI nD tL : Nat) : Nat := mapPre (4 * nD) + zb (4 * tL) + smallMax + 1 + afterD nI tL 0
 
 /-- What is still to do from the context modes on, with the numbers of block types known so far. -/
 def beforeMaps (nL nI nD : Nat) : Nat := 11 + mapPre (64 * nL) + 1 + afterL nI nD 0
@@ -214,8 +196,8 @@ def catPot (g : Gh) : Cat → Nat → Nat
   | .I, n => beforeMaps g.m.literal.n n 0
   | .D, n => beforeMaps g.m.literal.n g.m.insertCopy.n n
 
-/-- What a context map's last step does to the next group's array. -/
-def mapFin (g : Gh) (isL : Bool) : Nat := if isL then 1 else zb (4 * g.treesL) + 1
+/-- What a context map's last step does to the next group's array, and to the arena's reservation. -/
+def mapFin (g : Gh) (isL : Bool) : Nat := if isL then 1 else zb (4 * g.treesL) + smallMax + 1
 
 /-- What follows a context map of `t` trees. -/
 def mapAfter (g : Gh) (isL : Bool) (t : Nat) : Nat :=
@@ -773,13 +755,13 @@ theorem tableDone_tag {st : Hd} {s : Bool} {y : UInt64} (h : (tableDone st s y).
       simp only [hr] at h ⊢
       cases s
       · simp only [Bool.false_eq_true, ↓reduceIte] at h ⊢
-        by_cases c : UInt64.ofNat st.d.arena.size + (planFast st.lens st.size.toUSize hn).bytes ≤ st.d.arenaMax
+        by_cases c : UInt64.ofNat st.d.arena.size + (planFast st.lens st.size.toUSize hn).bytes ≤ st.d.arenaCap
         · rw [ite_eq_left c]
           exact key _ _
         · rw [ite_eq_right c] at h
           exact absurd h (fun e => HStatus.noConfusion e)
       · simp only [↓reduceIte] at h ⊢
-        by_cases c : UInt64.ofNat st.d.arena.size + 1024 ≤ st.d.arenaMax
+        by_cases c : UInt64.ofNat st.d.arena.size + 1024 ≤ st.d.arenaCap
         · rw [ite_eq_left c]
           exact key _ _
         · rw [ite_eq_right c] at h
@@ -795,6 +777,8 @@ theorem mapFin_ge {st : Hd} {g : Gh} {isL : Bool} (hi : st.isL = isL) (hu : Upto
   | true => exact Nat.le_refl _
   | false =>
     obtain ⟨hT, _⟩ := hu.lmap (by decide)
+    have hle := hu.le
+    have hsm := hu.small (by decide)
     simp only [Bool.false_eq_true, ↓reduceIte]
     rw [hT]
     have := zbW_le (4 * g.treesL)
@@ -822,8 +806,16 @@ theorem wTrees {st : Hd} {g : Gh} {isL : Bool} {pos : USize} {g' : Gh} {p' : HPh
     · rw [ite_eq_left ha] at htag ⊢
       have hne : ptag p' ≠ .rlemax := by
         rw [← htag]
-        unfold mapFinish
-        split <;> exact fun e => HTag.noConfusion e
+        rcases mapFinish_tag { st with word := r.word, count := r.count, pos := pos, status := .next } r.a
+          (zeroBytes (mapSizeFast st)) with e | e | e
+        · rw [e]
+          exact fun e => HTag.noConfusion e
+        · rw [e]
+          exact fun e => HTag.noConfusion e
+        · rw [e]
+          show st.tag ≠ _
+          rw [ht]
+          exact fun e => HTag.noConfusion e
       rw [hcost_trees, ite_eq_right hne, hmf]
       have := zbW_le (mapSize g isL)
       unfold zb
@@ -1599,7 +1591,7 @@ theorem tableDone_ni {st : Hd} {s : Bool} {y : UInt64} (h : st.status = .next) :
       dsimp only
       cases s
       · simp only [Bool.false_eq_true, ↓reduceIte]
-        by_cases c : UInt64.ofNat st.d.arena.size + (planFast st.lens st.size.toUSize hn).bytes ≤ st.d.arenaMax
+        by_cases c : UInt64.ofNat st.d.arena.size + (planFast st.lens st.size.toUSize hn).bytes ≤ st.d.arenaCap
         · rw [ite_eq_left c, (installTable_spec _ _).2.2.2.1]
           show st.status ≠ _
           rw [h]
@@ -1607,7 +1599,7 @@ theorem tableDone_ni {st : Hd} {s : Bool} {y : UInt64} (h : st.status = .next) :
         · rw [ite_eq_right c]
           exact fun e => HStatus.noConfusion e
       · simp only [↓reduceIte]
-        by_cases c : UInt64.ofNat st.d.arena.size + 1024 ≤ st.d.arenaMax
+        by_cases c : UInt64.ofNat st.d.arena.size + 1024 ≤ st.d.arenaCap
         · rw [ite_eq_left c, (installTable_spec _ _).2.2.2.1]
           show st.status ≠ _
           rw [h]
@@ -1754,8 +1746,8 @@ theorem stepAtHW_short {st : Hd} {pos : USize} (h : (stepAtH st pos).status = .n
       rw [hsr] at h
       dsimp only at h ⊢
       by_cases ha : r.a < 2
-      · rw [ite_eq_left ha, (mapFinish_spec _ _ _).2.2.2] at h
-        exact absurd h (fun e => HStatus.noConfusion e)
+      · rw [ite_eq_left ha] at h
+        rcases (mapFinish_spec _ _ _).2.2.2 with e | e <;> rw [e] at h <;> exact absurd h (fun e => HStatus.noConfusion e)
       · rw [ite_eq_right ha]
         omega
   case vals =>
@@ -1772,7 +1764,7 @@ theorem stepAtHW_short {st : Hd} {pos : USize} (h : (stepAtH st pos).status = .n
       repeat' split at h
       all_goals first
         | exact absurd h (fun e => HStatus.noConfusion e)
-        | (rw [(mapFinish_spec _ _ _).2.2.2] at h; exact absurd h (fun e => HStatus.noConfusion e))
+        | (rcases (mapFinish_spec _ _ _).2.2.2 with e | e <;> rw [e] at h <;> exact absurd h (fun e => HStatus.noConfusion e))
     · rw [ite_eq_right h1]
       omega
   case codes =>
@@ -1803,20 +1795,20 @@ theorem stepHW_short {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size}
 With at most 256 block types in a category, 256 trees in a context map and 16384 values in it, a header's place holds at
 most 8700000: the most is a literal context map's values, 515 for each one not 0. -/
 
-theorem beforeMaps_le {nL nI nD : Nat} (h1 : nL ≤ 256) (h2 : nI ≤ 256) (h3 : nD ≤ 256) : beforeMaps nL nI nD ≤ 280000 := by
-  unfold beforeMaps afterL afterD mapPre zb
+theorem beforeMaps_le {nL nI nD : Nat} (h1 : nL ≤ 256) (h2 : nI ≤ 256) (h3 : nD ≤ 256) : beforeMaps nL nI nD ≤ 293000 := by
+  unfold beforeMaps afterL afterD mapPre zb smallMax catMax treeMax
   omega
 
 theorem catPot_most {g : Gh} {i : Cat} {n : Nat} (h0 : g.m.literal.n ≤ 256) (hI : i = .D → g.m.insertCopy.n ≤ 256) (hn : n ≤ 256) :
-    catPot g i n ≤ 280000 := by
+    catPot g i n ≤ 293000 := by
   cases i with
   | L => exact beforeMaps_le hn (by omega) (by omega)
   | I => exact beforeMaps_le h0 hn (by omega)
   | D => exact beforeMaps_le h0 (hI rfl) hn
 
 theorem mapTail_le {g : Gh} {isL : Bool} {t : Nat} (ht : t ≤ 256) (hI : g.m.insertCopy.n ≤ 256) (hD : g.m.distance.n ≤ 256)
-    (hL : isL = false → g.treesL ≤ 256) : mapFin g isL + mapAfter g isL t ≤ 40000 := by
-  unfold mapFin mapAfter afterL afterD mapPre zb
+    (hL : isL = false → g.treesL ≤ 256) : mapFin g isL + mapAfter g isL t ≤ 53000 := by
+  unfold mapFin mapAfter afterL afterD mapPre zb smallMax catMax treeMax
   cases isL with
   | false =>
     have := hL rfl
@@ -1827,13 +1819,13 @@ theorem mapTail_le {g : Gh} {isL : Bool} {t : Nat} (ht : t ≤ 256) (hI : g.m.in
     omega
 
 theorem imtfTail_le {g : Gh} {isL : Bool} {t : Nat} (hS : mapSize g isL ≤ 16384) (ht : t ≤ 256) (hI : g.m.insertCopy.n ≤ 256)
-    (hD : g.m.distance.n ≤ 256) (hL : isL = false → g.treesL ≤ 256) : imtfTail g isL t ≤ 60000 := by
+    (hD : g.m.distance.n ≤ 256) (hL : isL = false → g.treesL ≤ 256) : imtfTail g isL t ≤ 73000 := by
   have := mapTail_le ht hI hD hL
   unfold imtfTail
   omega
 
 theorem mapOwner_le {g : Gh} {isL : Bool} {t : Nat} (hS : mapSize g isL ≤ 16384) (ht : t ≤ 256) (hI : g.m.insertCopy.n ≤ 256)
-    (hD : g.m.distance.n ≤ 256) (hL : isL = false → g.treesL ≤ 256) : mapOwner g isL t ≤ 340000 := by
+    (hD : g.m.distance.n ≤ 256) (hL : isL = false → g.treesL ≤ 256) : mapOwner g isL t ≤ 353000 := by
   have := imtfTail_le hS ht hI hD hL
   unfold mapOwner
   omega
@@ -1853,7 +1845,7 @@ theorem ownerX_le {g : Gh} (hg : GOk g) (o : Owner) : ownerX g o ≤ 82300 := by
 /-- What a code's owner settled: a category's block types before a category's code, the categories before a context map,
 and the maps before the groups of codes. -/
 theorem ownerPot_le {st : Hd} {g : Gh} {n : Nat} {o : Owner} (ho : OwnerRel st g n o) (hu : Upto st.d g (ownerStage o)) (hg : GOk g) :
-    ownerPot g o ≤ 340000 := by
+    ownerPot g o ≤ 353000 := by
   have hI : 1 < ownerStage o → g.m.insertCopy.n ≤ 256 := fun h => (hu.cat .I h).wf.2.1
   cases o with
   | type i k =>

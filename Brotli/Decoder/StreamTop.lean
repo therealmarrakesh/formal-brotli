@@ -17,11 +17,11 @@ open Brotli.Spec Brotli.Properties
 abbrev DState := { D : Dec // ∃ p, DRel D p }
 
 /-- A state at a stream's start, with what the limit leaves for the window and the tables. -/
-def liveD (limit : Nat) : Dec := { deadD with limit := UInt64.ofNat (min (limit - fixedCost) 4294835199) }
+def liveD (limit : Nat) : Dec := { deadD with limit := UInt64.ofNat (min (limit - fixedCost) 4294822767) }
 
 theorem liveD_rel (limit : Nat) : DRel (liveD limit) .wbits := by
   refine ⟨rfl, deadD_rel.2.1, ?_, rfl⟩
-  show (UInt64.ofNat (min (limit - fixedCost) 4294835199)).toNat + 132096 < 2 ^ 32
+  show (UInt64.ofNat (min (limit - fixedCost) 4294822767)).toNat + 144528 < 2 ^ 32
   rw [u64_ofNat (by omega)]
   omega
 
@@ -803,7 +803,7 @@ theorem decoder_terminates : Terminates decoder := by
 /-! ### Memory usage correctness -/
 
 /-- What the limit leaves for the window and the tables. -/
-def roomOf (limit : Nat) : Nat := min (limit - fixedCost) 4294835199
+def roomOf (limit : Nat) : Nat := min (limit - fixedCost) 4294822767
 
 /-- What every run of the decoder holds, for its stream. -/
 structure MemTop (limit : Nat) (x : List UInt8) (R : Run DState) : Prop where
@@ -814,8 +814,8 @@ structure MemTop (limit : Nat) (x : List UInt8) (R : Run DState) : Prop where
   fine : R.status ≠ .memoryLimit → fixedCost ≤ limit
 
 /-- A state with no window and no tables holds no more than the fixed cost. -/
-private theorem holds_small {D : Dec} (c1 : D.cmd.ring.size = 0) (c2 : D.cmd.seen.size = 0) (c3 : D.cmd.wordBuf.size = 0) (h1 : D.hd.d.arena.size = 0)
-    (h2 : D.H.arena.size = 0) (s : HSize D.hd) (s2 : HSmall D.H) : D.holds ≤ fixedCost := by
+private theorem holds_small {D : Dec} (c1 : D.cmd.ring.size = 0) (c2 : D.cmd.seen.size = 0) (c3 : D.cmd.wordBuf.size = 0)
+    (h1 : D.hd.d.arenaCap.toNat = 0) (h2 : D.H.arenaCap.toNat = 0) (s : HSize D.hd) (s2 : HSmall D.H) : D.holds ≤ fixedCost := by
   obtain ⟨a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11⟩ := s
   obtain ⟨b1, b2, b3, b4, b5, b6⟩ := s2
   unfold Dec.holds Hd.holds Done.holds Hdr.holds fixedCost fieldBytes
@@ -830,7 +830,7 @@ theorem liveD_mem (limit : Nat) (x : List UInt8) :
     MemD (winSem.first (bits x)) ((demandSem.first (bits x)).getD 0) (roomOf limit) (liveD limit) (bits x) := by
   refine ⟨⟨.wbits, liveD_rel limit, Nat.le_refl _⟩, fun e => DTag.noConfusion e, fun e => DTag.noConfusion e, fun e => DTag.noConfusion e, fun _ => rfl, fun _ => rfl,
     hsize_none, hsmall_none, Or.inl ⟨rfl, rfl, rfl, rfl, ?_, rfl⟩⟩
-  show (UInt64.ofNat (min (limit - fixedCost) 4294835199)).toNat = _
+  show (UInt64.ofNat (min (limit - fixedCost) 4294822767)).toNat = _
   rw [u64_ofNat (by omega)]
   rfl
 
@@ -974,8 +974,8 @@ theorem decoder_streams : Streams decoder (fun s => s.val.holds) demand where
   honest_stream h hs := (mem_top h).why hs
 
 /-- What the state holds stays within the window the stream declares plus a constant: the fixed cost, the ring's 16 bytes
-beyond the window, and 774 tables of at most 132096 bytes. -/
-theorem decoder_ceiling : DemandCeiling demand (fixedCost + 16 + headerTablesMax * tableMax) := demand_ceiling
+beyond the window, and the most a header reserves for its groups' tables. -/
+theorem decoder_ceiling : DemandCeiling demand (fixedCost + 16 + resMax) := demand_ceiling
 
 /-! ### The limit changes nothing but whether the decoder stops -/
 
@@ -1013,7 +1013,7 @@ private theorem twin_inv {l1 l2 : Nat} {x : List UInt8} {R1 R2 : Run DState} (h 
     · by_cases h2 : l2 < fixedCost
       · exact Or.inr (Or.inl (by rw [ite_eq_left h2]))
       · rw [ite_eq_right h1, ite_eq_right h2]
-        exact Or.inr (Or.inr ⟨rfl, rfl, rfl, UInt64.ofNat (min (l1 - fixedCost) 4294835199), 0, rfl⟩)
+        exact Or.inr (Or.inr ⟨rfl, rfl, rfl, UInt64.ofNat (min (l1 - fixedCost) 4294822767), 0, rfl⟩)
   | @call R1 R2 c _ ha1 ha2 ih =>
     rcases ih with h | h | ⟨e1, e2, e3, l, a, e4⟩
     · have := ha1.running

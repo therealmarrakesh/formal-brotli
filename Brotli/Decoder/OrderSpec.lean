@@ -415,7 +415,7 @@ theorem agreesW_congr {k : List Bool → ORes (Gh × HPhase) MetaBlockHeader} {f
   obtain ⟨oc, u, e1, hk⟩ := (h bs).1 q c hn
   exact ⟨oc, u, e1, fun t ht => by rw [e]; exact hk t ht⟩
 
-theorem agreesW_next (q : Gh × HPhase) (oc : Option PrefixCode) :
+theorem agreesW_next (q : Gh × HPhase) (oc : Option Hook) :
     AgreesW K (fun bs => .next q bs) (fun bs => Wr K oc (hrest K q.1 q.2 bs)) := fun _ =>
   ⟨(fun _ _ h => by cases h; exact ⟨oc, [], rfl, fun t ht => by cases ht; rfl⟩), (fun _ _ h => by cases h), (fun h => by cases h),
     (fun h => by cases h)⟩
@@ -462,40 +462,25 @@ theorem agreesW_readIn {A : Type} {room : Nat} {rd : List Bool → Option (A × 
     rw [e3]
     exact hk t ht'
 
-/-- The table a prefix code's owner keeps: none for a context map's code, whose table is built apart. -/
-def ownerCredit : Owner → PrefixCode → Option PrefixCode
-  | .map .., _ => none
-  | _, c => some c
+/-- The hook at a context map's end: the groups' reservation, after the distance context map. -/
+def mapHook (g : Gh) : Bool → Option Hook
+  | true => none
+  | false => some (.res g)
 
 variable (K)
 
-/-- What follows a prefix code is the place its owner goes on to, with the code's table. -/
-theorem ownerK_wr (g : Gh) (o : Owner) (c : PrefixCode) (bs : List Bool) :
-    ownerK K g o c bs = Wr K (ownerCredit o c) (hrest K g (ownerPlace g o c) bs) := by
+theorem mapR_eq (g : Gh) (isL : Bool) (x : Option α) : mapR K g isL x = Wr K (mapHook g isL) x := by
+  cases isL <;> rfl
+
+/-- What follows a prefix code is the place its owner goes on to. -/
+theorem ownerK_place (g : Gh) (o : Owner) (c : PrefixCode) (bs : List Bool) : ownerK K g o c bs = hrest K g (ownerPlace g o c) bs := by
   cases o <;> rfl
 
 end
 
 section
-variable {α : Type} (K : HK α) (hw : ∀ c x, K.w c x = x)
+variable {α : Type} (K : HK α) (hw : ∀ g x, K.r g x = x)
 include hw
-
-/-- What follows a prefix code is the place its owner goes on to. -/
-theorem ownerK_place (g : Gh) (o : Owner) (c : PrefixCode) (bs : List Bool) : ownerK K g o c bs = hrest K g (ownerPlace g o c) bs := by
-  cases o with
-  | type i n =>
-    show K.w c _ = _
-    rw [hw]
-    rfl
-  | count i n tc =>
-    show K.w c _ = _
-    rw [hw]
-    rfl
-  | map isL ntrees rlemax => rfl
-  | codes k done left =>
-    show K.w c _ = _
-    rw [hw]
-    rfl
 
 omit hw in
 private theorem hrest_syms_over (g : Gh) (o : Owner) (size : Nat) (clc : PrefixCode) (st : LengthState) (bs : List Bool)
@@ -514,25 +499,25 @@ theorem hAgreeW (g : Gh) : ∀ p, AgreesW K (hStepP (g, p)) (hrest K g p)
       funext p
       rw [afterCat_eq] <;> rfl)
   | .code o size => agreesW_congr (agreesW_readIn (faith_readInt 2) fun _ =>
-      agreesW_ite (agreesW_readIn (faith_simpleChain _ _) fun c => agreesW_next _ (ownerCredit o c))
+      agreesW_ite (agreesW_readIn (faith_simpleChain _ _) fun _ => agreesW_next0 _)
       (agreesW_next0 _)) fun bs => by
       rw [hrest_code]
       congr 1
       funext h
-      simp only [ownerK_wr K]
+      simp only [ownerK_place K]
   | .clens o size [] acc sum => agreesW_ofH g (agrees_congr (agrees_ite (agrees_next _) agrees_bad) fun bs => hrest_clens_nil K g o size acc sum bs)
   | .clens o size (x :: rest) acc sum =>
     agreesW_ofH g (agrees_congr (agrees_readIn fun _ => agrees_ite (agrees_next _) (agrees_ite (agrees_next _) (agrees_ite agrees_bad (agrees_next _))))
       fun bs => hrest_clens_cons K g o size x rest acc sum bs)
   | .syms o size clc st =>
-    agreesW_congr (agreesW_ite agreesW_bad (agreesW_ite (agreesW_next _ (ownerCredit o (.canonical (st.lens ++ List.replicate (size - st.lens.length) 0))))
+    agreesW_congr (agreesW_ite agreesW_bad (agreesW_ite (agreesW_next0 _)
       (agreesW_ite agreesW_bad (agreesW_readIn (faith_lenSym _) fun _ => agreesW_ite agreesW_bad (agreesW_ite agreesW_bad (agreesW_next0 _)))))) fun bs => by
       by_cases h1 : size < st.lens.length
       · rw [ite_eq_left h1]
         exact hrest_syms_over K g o size clc st bs h1
       · rw [ite_eq_right h1]
         by_cases h2 : lengthSum st.lens = 32768
-        · rw [ite_eq_left h2, hrest_syms_done K g o size clc st bs (by omega) h2, ownerK_wr K]
+        · rw [ite_eq_left h2, hrest_syms_done K g o size clc st bs (by omega) h2, ownerK_place K]
         · rw [ite_eq_right h2]
           by_cases h3 : st.lens.length = size
           · rw [ite_eq_left h3, hrest_syms_full K g o size clc st bs h3 h2]
@@ -555,11 +540,12 @@ theorem hAgreeW (g : Gh) : ∀ p, AgreesW K (hStepP (g, p)) (hrest K g p)
         | some q => rfl)
   | .modes done 0 => agreesW_ofH g (agrees_congr (agrees_next _) fun bs => hrest_modes_zero K g done bs)
   | .modes done (n + 1) => agreesW_ofH g (agrees_congr (agrees_readIn fun _ => agrees_next _) fun bs => hrest_modes_succ K g done n bs)
-  | .trees isL => agreesW_ofH g (agrees_congr (agrees_readIn fun _ => agrees_ite (agrees_next _) (agrees_next _)) fun bs => by
+  | .trees isL => agreesW_congr (agreesW_readIn faith_readVarLen fun v =>
+      agreesW_ite (agreesW_next _ (mapHook (g.setMap isL v (List.replicate (mapSize g isL) 0)) isL)) (agreesW_next0 _)) fun bs => by
       rw [hrest_trees]
       congr 1
       funext p
-      rw [afterMap_eq] <;> rfl)
+      rw [afterMap_eq, mapR_eq] <;> rfl
   | .rlemax _ _ => agreesW_ofH g (agrees_congr (agrees_readIn fun _ => agrees_next _) fun _ => rfl)
   | .vals isL ntrees rlemax code done left => by
     cases hr : runOf rlemax code with
@@ -583,12 +569,14 @@ theorem hAgreeW (g : Gh) : ∀ p, AgreesW K (hStepP (g, p)) (hrest K g p)
             · subst h0
               rw [ite_eq_left rfl, hrest_vals_zero]
             · rw [ite_eq_right h0, hrest_vals_step K g isL ntrees rlemax code done left bs h0]))
-  | .imtf isL ntrees vals => agreesW_ofH g (agrees_congr (agrees_readIn fun _ => agrees_ite (agrees_next _) agrees_bad) fun bs => by
+  | .imtf isL ntrees vals => agreesW_congr (agreesW_readIn (faith_readInt 1) fun im =>
+      agreesW_ite (agreesW_next _ (mapHook (g.setMap isL ntrees (if im = 0 then vals else inverseMoveToFront vals)) isL))
+        agreesW_bad) fun bs => by
       show afterVals K g isL ntrees vals bs = _
       unfold afterVals
       congr 1
       funext im
-      rw [afterMap_eq] <;> rfl)
+      rw [afterMap_eq, mapR_eq] <;> rfl
   | .codes k done (n + 1) => agreesW_ofH g (agrees_congr (agrees_next _) fun bs => hrest_codes_succ K k g done n bs)
   | .codes .L done 0 => agreesW_ofH g (agrees_congr (agrees_next _) fun bs => hrest_codes_L K g done bs)
   | .codes .I done 0 => agreesW_ofH g (agrees_congr (agrees_next _) fun bs => hrest_codes_I K g done bs)

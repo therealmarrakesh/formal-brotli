@@ -88,12 +88,6 @@ theorem sumR_shift (f : Nat → Nat) (a : Nat) : ∀ b, sumR f (a + b) = sumR f 
     rw [show a + (b + 1) = (a + b) + 1 by omega, sumR, sumR_shift f a b, sumR, Nat.add_comm b a]
     omega
 
-theorem sumR_congr {f g : Nat → Nat} : ∀ {n : Nat}, (∀ i, i < n → f i = g i) → sumR f n = sumR g n
-  | 0, _ => rfl
-  | n + 1, h => by
-    show sumR f n + f n = sumR g n + g n
-    rw [sumR_congr (fun i hi => h i (by omega)), h n (by omega)]
-
 /-- A symbol's term is the term of its length. -/
 theorem termAt_split {L : List Nat} (hl : ∀ l ∈ L, l ≤ 15) (h : Nat → Nat → Nat → Nat) (s : Nat) :
     termAt L h s = sumR (fun j => if L[s]? = some (j + 1) then h s (j + 1) ((code L s).getD 0) else 0) 15 := by
@@ -123,7 +117,7 @@ theorem termAt_split {L : List Nat} (hl : ∀ l ∈ L, l ≤ 15) (h : Nat → Na
 
 /-- The builder's slot writes, as the spec's code words give them, are at most the table-size bound. -/
 theorem fillSum_le {L : List Nat} (hC : Complete (.canonical L)) :
-    ((List.range L.length).map (termAt L fun _ l c => fillCnt L l (rootOf l c))).sum ≤ longCount L + 1024 := by
+    ((List.range L.length).map (termAt L fun _ l c => fillCnt L l (rootOf l c))).sum ≤ longCount L + 376 := by
   have hl := hC.1
   rw [List.map_congr_left (fun s _ => termAt_split hl _ s), sum_sumR, show (15 : Nat) = 8 + 7 from rfl, sumR_shift]
   have hshort : sumR (fun j => ((List.range L.length).map fun s =>

@@ -3,9 +3,9 @@ import Brotli.Decoder.OrderSpec
 /-!
 # A header's tables, as far as its bits go
 
-The tables a header's first bits need are those its reading in order completes on them: each step of that reading
-completes at most one table, the same one whatever bits follow, and a reading cut short completes no more. So a header's
-tables, as far as some of its bits go, are at most those of more of its bits.
+The tables a header's first bits need are what its reading in order reserves on them: a step of that reading reserves at
+most once, the same whatever bits follow, and a reading cut short reserves no more. So a header's tables, as far as some
+of its bits go, are at most those of more of its bits.
 -/
 
 namespace Brotli.Decoder
@@ -36,7 +36,7 @@ theorem reach_retail {s t : Gh × HPhase} {B c : List Bool} (h : Reach hStepP s 
     rw [List.append_assoc]
     exact .next (hk (u1 ++ T)) (h1 T)
 
-/-- The tables a header's reading completes on its way, whatever bits follow. -/
+/-- The tables a header's reading reserves on its way, whatever bits follow. -/
 theorem chain_tables {s t : Gh × HPhase} {B c : List Bool} (h : Reach hStepP s B t c) :
     ∃ S u, B = u ++ c ∧ ∀ T, (hrest tableK s.1 s.2 (u ++ T)).getD 0 = S + (hrest tableK t.1 t.2 T).getD 0 := by
   induction h with
@@ -46,13 +46,13 @@ theorem chain_tables {s t : Gh × HPhase} {B c : List Bool} (h : Reach hStepP s 
     obtain ⟨u0, hu0, hk⟩ := (ufaith_hStep p0.1 p0.2).1 b0 p1 b1 hst
     obtain ⟨oc, u0', hu0', hw⟩ := (hAgreeW tableK p0.1 p0.2 b0).1 p1 b1 hst
     have e0 : u0' = u0 := List.append_cancel_right (hu0'.symm.trans hu0)
-    refine ⟨tableOf oc + S1, u0 ++ u1, by rw [hu0, hb1, List.append_assoc], fun T => ?_⟩
+    refine ⟨resOf oc + S1, u0 ++ u1, by rw [hu0, hb1, List.append_assoc], fun T => ?_⟩
     have hs1 := hk (u1 ++ T)
     rw [← e0] at hs1
     rw [List.append_assoc, ← e0, hw (u1 ++ T) hs1, wr_tableK, h1 T]
     omega
 
-/-- The tables of a header's first bits, short of a place its reading reaches: at most those completed on the way there. -/
+/-- The tables of a header's first bits, short of a place its reading reaches: at most those reserved on the way there. -/
 theorem tables_within {s t : Gh × HPhase} {P R Y : List Bool} (h : Reach hStepP s (P ++ R) t Y) (hY : Y.length < R.length) :
     (hrest tableK s.1 s.2 P).getD 0 + (hrest tableK t.1 t.2 Y).getD 0 ≤ (hrest tableK s.1 s.2 (P ++ R)).getD 0 := by
   obtain ⟨s', c', h1, h2, h3, h4⟩ := reach_cut (fun p => ufaith_hStep p.1 p.2) h hY
