@@ -933,6 +933,31 @@ theorem stepD_k {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D :
     dsimp only
     repeat' (first | split_all | rfl)
 
+/-- What a step that pauses costs beyond the potential: a meta-block's start that waits for output space the least, any
+other wait for output space at most the command loop's stopping round and its round, and a wait for input at most a
+header's step that runs out of input. -/
+def stopCost (r : Dec) : Nat := if r.status = .needsOutput then (if r.tag = .mblock then 2 else 118) else 269
+
+theorem stopCost_ge (r : Dec) : 2 ≤ stopCost r := by
+  unfold stopCost
+  split
+  · split <;> omega
+  · omega
+
+theorem stepDCmds_out_tag {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize} (ht : D.tag = .cmds) :
+    (stepDCmds a stop hs D pos).status = .needsOutput → (stepDCmds a stop hs D pos).tag = .cmds := by
+  unfold stepDCmds takeCmd clearCmd
+  dsimp only
+  repeat' (first | split_all | (intro h; exact absurd h (fun e => DStatus.noConfusion e)) | (intro _; exact ht))
+
+theorem stopCost_in {r : Dec} (h : r.status = .needsInput) : stopCost r = 269 := by
+  unfold stopCost
+  rw [ite_eq_right (by rw [h]; exact fun e => DStatus.noConfusion e)]
+
+theorem stopCost_out {r : Dec} (h : r.status = .needsOutput) (ht : r.tag ≠ .mblock) : stopCost r = 118 := by
+  unfold stopCost
+  rw [ite_eq_left h, ite_eq_right ht]
+
 /-- No step goes back to WBITS. -/
 theorem stepD_tag {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} (h : D.tag ≠ .wbits) :
     (stepD a stop hs D).tag ≠ .wbits := by
@@ -990,7 +1015,7 @@ theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
     ((stepD a stop hs D).status = .next → Pays a stop p D D.pos (stepD a stop hs D) (stepDW a stop hs D + 1)
       (if D.tag = .wbits then 5 * 2 ^ (stepD a stop hs D).k.toNat else 0)) ∧
     ((stepD a stop hs D).status = .needsInput ∨ (stepD a stop hs D).status = .needsOutput →
-      Pays a stop p D D.pos (stepD a stop hs D) (stepDW a stop hs D + 1) 269) ∧
+      Pays a stop p D D.pos (stepD a stop hs D) (stepDW a stop hs D + 1) (stopCost (stepD a stop hs D))) ∧
     ((stepD a stop hs D).status = .bad ∨ (stepD a stop hs D).status = .memory → ∃ L,
       D.cmd.pend.toNat + L ≤ max D.cmd.pend.toNat (capE D.cmd.cap) ∧ ∀ t : List UInt8,
       stepDW a stop hs D + 1 ≤ dpot p D + hdrRate * (D.bits a D.pos stop (bits t)).length + 282 * L + 23750) := by
@@ -1007,7 +1032,7 @@ theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
     obtain ⟨n1, n2, n3⟩ := pay_wbits (hs := hs) hrel hp
     refine ⟨n1, fun h => ?_, fun h => ?_⟩
     · rcases h with h | h
-      · exact (n2 h).mono (by omega)
+      · exact (n2 h).mono (by rw [stopCost_in h]; omega)
       · obtain ⟨p', _, _, _, _, hne0, hsd, _⟩ := hok.needsOutput h
         cases p' with
         | wbits =>
@@ -1022,10 +1047,19 @@ theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
     have e2 : stepDW a stop hs D = stepDMetaW a stop hs D D.pos := by unfold stepDW; rw [hrel.1]
     rw [e1, e2, ite_eq_right (by rw [hrel.1]; exact fun e => DTag.noConfusion e)]
     obtain ⟨n1, n2, n3, n4⟩ := pay_mblock (hs := hs) hrel hp
+    rw [e1] at hok
     refine ⟨n1, fun h => ?_, fun _ => ⟨0, by omega, fun t => by omega⟩⟩
     rcases h with h | h
-    · exact (n2 h).mono (by omega)
-    · exact (n3 h).mono (by omega)
+    · exact (n2 h).mono (by rw [stopCost_in h]; omega)
+    · have ht : (stepDMeta a stop hs D D.pos).tag = .mblock := by
+        obtain ⟨p', hR', _, _, _, _, hsd, _⟩ := hok.needsOutput h
+        cases p' with
+        | mblock => exact hR'.1
+        | _ => exact absurd hsd id
+      have hsc : stopCost (stepDMeta a stop hs D D.pos) = 2 := by
+        unfold stopCost
+        rw [ite_eq_left h, ite_eq_left ht]
+      exact (n3 h).mono (Nat.le_of_eq hsc.symm)
   | skip w st last n =>
     have e1 : stepD a stop hs D = stepDSkip stop D D.pos := by unfold stepD; rw [hrel.1]
     have e2 : stepDW a stop hs D = 1 := by unfold stepDW; rw [hrel.1]
@@ -1033,18 +1067,23 @@ theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
     obtain ⟨n1, n2, n3⟩ := pay_skip (a := a) (hs := hs) hrel hp
     refine ⟨n1, fun h => ?_, fun _ => ⟨0, by omega, fun t => by omega⟩⟩
     rcases h with h | h
-    · exact (n2 h).mono (by omega)
-    · exact (n3 h).mono (by omega)
+    · exact (n2 h).mono (stopCost_ge _)
+    · exact (n3 h).mono (stopCost_ge _)
   | raw w st last n =>
     have e1 : stepD a stop hs D = stepDRaw a stop hs D D.pos := by unfold stepD; rw [hrel.1]
     have e2 : stepDW a stop hs D = stepDRawW a stop hs D D.pos := by unfold stepDW; rw [hrel.1]
     rw [e1, e2, ite_eq_right (by rw [hrel.1]; exact fun e => DTag.noConfusion e)]
-    rw [e1] at hpl
+    rw [e1] at hpl hok
     obtain ⟨n1, n2, n3, n4⟩ := pay_raw (hs := hs) hrel hp
     refine ⟨n1, fun h => ?_, fun _ => ?_⟩
     · rcases h with h | h
-      · exact (n2 h).mono (by omega)
-      · exact (n3 h).mono (by omega)
+      · exact (n2 h).mono (by rw [stopCost_in h]; omega)
+      · have ht : (stepDRaw a stop hs D D.pos).tag ≠ .mblock := by
+          obtain ⟨p', hR', _, _, _, _, hsd, _⟩ := hok.needsOutput h
+          cases p' with
+          | raw => rw [hR'.1]; exact fun e => DTag.noConfusion e
+          | _ => exact absurd hsd id
+        exact (n3 h).mono (by rw [stopCost_out h ht]; omega)
     · have := hpl.2
       exact ⟨(stepDRaw a stop hs D D.pos).cmd.pend.toNat - D.cmd.pend.toNat, by omega, fun t => by omega⟩
   | hdr w st last mlen g q =>
@@ -1055,7 +1094,7 @@ theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
     obtain ⟨n1, n2, n3⟩ := pay_hdr (hs := hs) hrel hp
     refine ⟨n1, fun h => ?_, fun h => ?_⟩
     · rcases h with h | h
-      · exact n2 h
+      · exact (n2 h).mono (Nat.le_of_eq (stopCost_in h).symm)
       · obtain ⟨p', _, _, _, _, hne0, hsd, _⟩ := hok.needsOutput h
         cases p' with
         | hdr w' st' l' ml' g' q' =>
@@ -1072,7 +1111,13 @@ theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
     have e2 : stepDW a stop hs D = stepDCmdsW a stop hs D D.pos := by unfold stepDW; rw [hrel.1]
     rw [e1, e2, ite_eq_right (by rw [hrel.1]; exact fun e => DTag.noConfusion e)]
     obtain ⟨n1, n2, n3⟩ := pay_cmds (hs := hs) hrel hsi hp
-    refine ⟨n1, fun h => (n2 h).mono (by omega), fun h => ?_⟩
+    refine ⟨n1, fun h => ?_, fun h => ?_⟩
+    · rcases h with h' | h'
+      · exact (n2 (Or.inl h')).mono (by rw [stopCost_in h']; omega)
+      · have ht : (stepDCmds a stop hs D D.pos).tag ≠ .mblock := by
+          rw [stepDCmds_out_tag hrel.1 h']
+          exact fun e => DTag.noConfusion e
+        exact (n2 (Or.inr h')).mono (Nat.le_of_eq (stopCost_out h' ht).symm)
     rcases h with h | h
     · obtain ⟨L, hL, hb⟩ := n3 h
       exact ⟨L, hL, fun t => by have := hb t; omega⟩
@@ -1181,7 +1226,8 @@ theorem pay_runD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} : �
     DRel x.D p → SInv p →
     ((runD a stop hs x.D x.inv).status = .next ∨ (runD a stop hs x.D x.inv).status = .needsInput ∨
         (runD a stop hs x.D x.inv).status = .needsOutput →
-      Pays a stop p x.D x.D.pos (runD a stop hs x.D x.inv) (runDW a stop hs x.D x.inv) (winD x.D (runD a stop hs x.D x.inv) + 270)) ∧
+      Pays a stop p x.D x.D.pos (runD a stop hs x.D x.inv) (runDW a stop hs x.D x.inv)
+        (winD x.D (runD a stop hs x.D x.inv) + stopCost (runD a stop hs x.D x.inv))) ∧
     ((runD a stop hs x.D x.inv).status = .bad ∨ (runD a stop hs x.D x.inv).status = .memory → ∃ L,
       x.D.cmd.pend.toNat + L ≤ max x.D.cmd.pend.toNat (capE x.D.cmd.cap) ∧ ∀ t : List UInt8,
       runDW a stop hs x.D x.inv ≤ dpot p x.D + hdrRate * (x.D.bits a x.D.pos stop (bits t)).length + 282 * L +
@@ -1201,6 +1247,7 @@ theorem pay_runD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} : �
       refine ⟨fun _ => ⟨p, hrel.congr rfl rfl rfl rfl rfl rfl rfl rfl, ⟨[], rfl, rfl⟩, Nat.le_refl _, hinv.2, id, fun t => ?_⟩,
         fun h => ?_⟩
       · rw [e1, e2]
+        have := stopCost_ge { D with status := .next }
         omega
       · rcases h with h | h <;> cases h
     · rw [dite_eq_right he, dite_eq_right he]
@@ -1252,8 +1299,8 @@ theorem pay_runD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} : �
         refine ⟨fun h => ?_, fun h => ?_⟩
         · rcases h with h | h | h
           · exact absurd h hn
-          · exact (s2 (Or.inl h)).mono (by omega)
-          · exact (s2 (Or.inr h)).mono (by omega)
+          · exact (s2 (Or.inl h)).mono (Nat.le_add_left _ _)
+          · exact (s2 (Or.inr h)).mono (Nat.le_add_left _ _)
         · obtain ⟨L, hL, hb⟩ := s3 h
           exact ⟨L, hL, fun t => by have := hb t; omega⟩
 
