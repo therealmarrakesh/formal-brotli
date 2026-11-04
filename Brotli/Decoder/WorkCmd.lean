@@ -616,6 +616,90 @@ theorem stepCmdW_le {H : Hdr} {k : USize} {a : ByteArray} {stop : USize} {hs : s
   dsimp only at h2
   exact Nat.le_trans (Nat.add_le_add_left h2 _) (by omega)
 
+/-! ### Pausing for output
+
+The command loop pauses for output only when its room is used up. -/
+
+/-- A command loop step, once the buffer is refilled, pauses for output only with no room left. -/
+theorem stepAt_full {H : Hdr} {k : USize} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {st : Cmd} {pos : USize} :
+    (stepAt H k a stop hs st pos).status = .needsOutput →
+      room k (stepAt H k a stop hs st pos).cap ≤ (stepAt H k a stop hs st pos).pend := by
+  unfold stepAt
+  cases ht : st.tag <;> dsimp only
+  · unfold stepCommand markStep clearSeen
+    try dsimp only
+    repeat' (first | split_all | (intro h; exact absurd h (fun e => StepStatus.noConfusion e)))
+  · unfold stepInsertCopy insertStep markStep
+    try dsimp only
+    repeat' (first | split_all | (intro h; exact absurd h (fun e => StepStatus.noConfusion e)))
+  · unfold stepCopyLength markStep
+    try dsimp only
+    repeat' (first | split_all | (intro h; exact absurd h (fun e => StepStatus.noConfusion e)))
+  · unfold stepLiterals literalsRun finishLiterals markStep clearSeen clearRing
+    try dsimp only
+    repeat' (first | split_all | (intro h; exact absurd h (fun e => StepStatus.noConfusion e)) | (intro _; assumption))
+  · unfold stepDistance applyDistance applyWord applyBuilt markStep clearSeen
+    try dsimp only
+    repeat' (first | split_all | (intro h; exact absurd h (fun e => StepStatus.noConfusion e)))
+  · unfold stepDistanceSymbol
+    by_cases hd : st.dCur < H.nD
+    · rw [dite_eq_left hd]
+      unfold distanceThrough distanceStep applyDistance applyWord applyBuilt markStep
+      try dsimp only
+      repeat' (first | split_all | (intro h; exact absurd h (fun e => StepStatus.noConfusion e)))
+    · rw [dite_eq_right hd]
+      intro h
+      exact absurd h (fun e => StepStatus.noConfusion e)
+  · unfold stepCopy finishCopy markStep clearRing
+    try dsimp only
+    repeat' (first | split_all | (intro h; exact absurd h (fun e => StepStatus.noConfusion e)) | (intro _; assumption))
+  · unfold stepWord finishWord markStep clearRing
+    try dsimp only
+    repeat' (first | split_all | (intro h; exact absurd h (fun e => StepStatus.noConfusion e)) | (intro _; assumption))
+
+/-- A command loop step pauses for output only with no room left. -/
+theorem stepCmd_full {H : Hdr} {k : USize} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {st : Cmd} {pos : USize}
+    (h : (stepCmd H k a stop hs st pos).status = .needsOutput) :
+    room k (stepCmd H k a stop hs st pos).cap ≤ (stepCmd H k a stop hs st pos).pend := by
+  unfold stepCmd at h ⊢
+  by_cases hp : pos ≤ stop
+  · rw [dite_eq_left hp] at h ⊢
+    exact stepAt_full h
+  · rw [dite_eq_right hp] at h
+    exact absurd h (fun e => StepStatus.noConfusion e)
+
+/-- The command loop pauses for output only with no room left. -/
+theorem runCmd_full {H : Hdr} {k : USize} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} :
+    ∀ (N : Nat) (n : USize) (st : Cmd) (pos : USize), n.toNat = N → (runCmd H k a stop hs n st pos).status = .needsOutput →
+      room k (runCmd H k a stop hs n st pos).cap ≤ (runCmd H k a stop hs n st pos).pend := by
+  intro N
+  induction N with
+  | zero =>
+    intro n st pos hN h
+    have hz : n = 0 := usize_zero hN
+    rw [runCmd, dite_eq_left hz] at h
+    exact absurd h (fun e => StepStatus.noConfusion e)
+  | succ N ih =>
+    intro n st pos hN h
+    have hn : n ≠ 0 := fun e => by rw [e] at hN; exact Nat.succ_ne_zero _ hN.symm
+    have hpred := usize_pred hn
+    have e : runCmd H k a stop hs n st pos = match (stepCmd H k a stop hs st pos).status with
+        | .next => runCmd H k a stop hs (n - USize.ofNat 1) (stepCmd H k a stop hs st pos) (stepCmd H k a stop hs st pos).pos
+        | _ => stepCmd H k a stop hs st pos := by
+      rw [runCmd, dite_eq_right hn]
+      rfl
+    rw [e] at h ⊢
+    cases hst : (stepCmd H k a stop hs st pos).status
+    case next =>
+      rw [hst] at h
+      exact ih _ _ _ (by omega) h
+    case needsOutput => exact stepCmd_full hst
+    all_goals
+      rw [hst] at h
+      have h' : (stepCmd H k a stop hs st pos).status = .needsOutput := h
+      rw [hst] at h'
+      exact absurd h' (fun e => StepStatus.noConfusion e)
+
 /-! ### The potential on the commands' places
 
 A step of the commands read in order reads bits, produces bytes, or goes lower in `crank`, which ranks the places in the
@@ -866,7 +950,7 @@ theorem runCmdW_count {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a :
             cmdEnd (runCmd H k a stop hs n st pos) ∧
         ((runCmd H k a stop hs n st pos).status ≠ .bad → st' = runCmd H k a stop hs n st pos ∧ pos' = (runCmd H k a stop hs n st pos).pos) ∧
         ((runCmd H k a stop hs n st pos).status = .done → ∃ s, q = .command s ∧ s.remaining = 0) ∧
-        ((runCmd H k a stop hs n st pos).status = .next → n ≠ 0 → 1 ≤ c) := by
+        ((runCmd H k a stop hs n st pos).status = .next → n.toNat ≤ c) := by
   intro N
   induction N with
   | zero =>
@@ -875,7 +959,7 @@ theorem runCmdW_count {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a :
     have e : runCmd H k a stop hs n st pos = markStep st pos .next := by rw [runCmd, dite_eq_left hz]
     rw [e]
     refine ⟨0, p, markStep st pos .next, pos, hrel.mark _ _, hci, ⟨[], rfl, rfl⟩, PendLe.keep rfl rfl, Nat.le_refl _, hp, .refl _ _, ?_,
-      fun _ => ⟨rfl, rfl⟩, fun h => StepStatus.noConfusion h, fun _ h => absurd hz h⟩
+      fun _ => ⟨rfl, rfl⟩, fun h => StepStatus.noConfusion h, fun _ => by omega⟩
     rw [runCmdW, dite_eq_left hz]
     show 1 + cpot p + 366 * (stateBits st a pos stop F).length ≤ _ + cmdEnd (markStep st pos .next)
     have : cmdEnd (markStep st pos .next) = 1 := rfl
@@ -911,7 +995,7 @@ theorem runCmdW_count {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a :
         rw [e1, List.length_append]
         omega
       refine ⟨n1 + c2, q, st', pos', hq, hciq, o1.trans o2, (stepCmd_pendLe H k a stop hs st pos).trans l2, by omega, g2,
-        hr1.trans hr2, ?_, g4, g5, fun _ _ => by omega⟩
+        hr1.trans hr2, ?_, g4, g5, fun h => by have := g6 h; omega⟩
       show stepCmdW H k a stop hs st pos + 1 + runCmdW H k a stop hs (n - USize.ofNat 1) (stepCmd H k a stop hs st pos)
         (stepCmd H k a stop hs st pos).pos + cpot q + 366 * (stateBits st' a pos' stop F).length ≤
         _ + cmdEnd (runCmd H k a stop hs (n - USize.ofNat 1) (stepCmd H k a stop hs st pos) (stepCmd H k a stop hs st pos).pos)
