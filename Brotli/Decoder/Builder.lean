@@ -1,4 +1,4 @@
-import Brotli.Decoder.Table
+import Brotli.Decoder.TableDown
 import Brotli.Decoder.Copy
 import Brotli.Decoder.Lookup
 import Brotli.Decoder.Fixed
@@ -6,9 +6,9 @@ import Brotli.Decoder.Fixed
 /-!
 # Building a table in fixed-width values
 
-The table builder that runs. It takes a code's lengths from a byte array and keeps its counters in scratch byte arrays.
-`buildFast_eq` proves it writes exactly the bytes of `buildCanonical`, whose proofs say what a table means, and
-`buildSingleFast_eq` does the same for `buildSingle`.
+The table builder that runs. It walks a code's symbols longest first, from lists of each length's symbols (`ListsIs`),
+and writes each code word's slots in place. `buildFast_eq` proves it writes exactly the bytes of `buildDown`, whose
+proofs say what a table means, and `buildSingleFast_eq` does the same for `buildSingle`.
 -/
 
 namespace Brotli.Decoder
@@ -163,8 +163,16 @@ theorem one_shl {d : UInt64} (hd : d.toNat < 32) : ((1 : UInt64) <<< d).toNat = 
   rw [u64_shl (by omega) (by rw [show (1 : UInt64).toNat = 1 from rfl]; omega)]
   exact Nat.one_mul _
 
+private theorem two_shl {d : UInt64} (hd : d.toNat < 32) : ((2 : UInt64) <<< d).toNat = 2 * 2 ^ d.toNat := by
+  have hp : 2 ^ d.toNat < 2 ^ 32 := Nat.pow_lt_pow_right (by decide) hd
+  rw [u64_shl (by omega) (by rw [show (2 : UInt64).toNat = 2 from rfl]; omega)]
+  rfl
+
 private theorem and255 (v : UInt64) : (v &&& 255).toNat = v.toNat % 256 := by
   rw [UInt64.toNat_and, show (255 : UInt64).toNat = 2 ^ 8 - 1 from rfl, Nat.and_two_pow_sub_one_eq_mod]
+
+private theorem and15 (v : UInt64) : (v &&& 15).toNat = v.toNat % 16 := by
+  rw [UInt64.toNat_and, show (15 : UInt64).toNat = 2 ^ 4 - 1 from rfl, Nat.and_two_pow_sub_one_eq_mod]
 
 private theorem byte_of {v : UInt64} {n : Nat} (h : v.toNat % 256 = n % 256) : v.toUInt8 = n.toUInt8 := by
   apply UInt8.toNat_inj.mp
@@ -278,6 +286,12 @@ theorem zeroExtend_eq (t : ByteArray) (n : Nat) : zeroExtend t n = t ++ ByteArra
   rw [ByteArray.data_append]
   exact zeroExtend_data n t
 
+/-- `zeroExtend` appends `zeros`. -/
+theorem zeroExtend_zeros (t : ByteArray) (n : Nat) : zeroExtend t n = t ++ zeros n := zeroExtend_eq t n
+
+theorem size_zeroExtend (t : ByteArray) (n : Nat) : (zeroExtend t n).size = t.size + n := by
+  rw [zeroExtend_zeros, ByteArray.size_append, size_zeros]
+
 /-- A scratch array of `k` zero bytes, made at its size. -/
 @[inline] def zeroBytes (k : Nat) : ByteArray := zeroExtend (ByteArray.emptyWithCapacity k) k
 
@@ -312,211 +326,6 @@ theorem lensOf_get {lens : ByteArray} {n i : Nat} (hi : i < n) (hn : n ≤ lens.
   unfold lensOf
   rw [List.getElem?_map, List.getElem?_take, ite_eq_left hi, Array.getElem?_toList, e]
   rfl
-
-private theorem lensOf_drop {lens : ByteArray} {n i : Nat} (hi : i < n) (hn : n ≤ lens.size) :
-    (lensOf lens n).drop i = (lens.data[i]?.getD 0).toNat :: (lensOf lens n).drop (i + 1) := by
-  have hl : i < (lensOf lens n).length := by rw [length_lensOf hn]; exact hi
-  rw [List.drop_eq_getElem_cons hl]
-  congr 1
-  have := lensOf_get hi hn
-  rw [List.getElem?_eq_getElem hl] at this
-  exact Option.some.inj this
-
-private theorem lensOf_drop_end {lens : ByteArray} {n i : Nat} (hi : n ≤ i) (hn : n ≤ lens.size) :
-    (lensOf lens n).drop i = [] := by
-  apply List.drop_eq_nil_of_le
-  rw [length_lensOf hn]
-  exact hi
-
-private theorem uget_lens {lens : ByteArray} {n i : USize} (hn : n.toNat ≤ lens.size) (hi : i < n) :
-    i.toNat < lens.size :=
-  Nat.lt_of_lt_of_le (USize.lt_iff_toNat_lt.mp hi) hn
-
-/-! ### Counting the lengths and finding the first codes -/
-
-/-- A 16-entry array of numbers, held as 16-bit values. -/
-def U16Match (a : Array Nat) (b : ByteArray) : Prop :=
-  b.size = 32 ∧ a.size = 16 ∧ ∀ k, k < 16 → a.getD k 0 = u16At b k
-
-theorem U16Match.set {a : Array Nat} {b : ByteArray} (h : U16Match a b) {l : USize} {v : UInt64} (hl : l.toNat < 16)
-    (hv : v.toNat < 65536) : U16Match (a.setIfInBounds l.toNat v.toNat) (u16Set b l v) := by
-  obtain ⟨h1, h2, h3⟩ := h
-  refine ⟨by rw [size_u16Set]; exact h1, by simpa using h2, ?_⟩
-  intro k hk
-  rw [getD_set (by omega)]
-  by_cases he : k = l.toNat
-  · subst he
-    rw [ite_eq_left rfl, u16At_set_same (by omega) (by omega) hv]
-  · rw [ite_eq_right he, u16At_set_ne (by omega) he, h3 k hk]
-
-/-- Counts how many times each length occurs. -/
-def countLens (lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) (i : USize) (cs : ByteArray) : ByteArray :=
-  if hi : i < n then
-    let l := (lens.uget i (uget_lens hn hi)).toUSize
-    countLens lens n hn (i + USize.ofNat 1) (u16Set cs l (u16Get cs l + 1))
-  else cs
-termination_by n.toNat - i.toNat
-decreasing_by
-  have := usize_next hi
-  have := USize.lt_iff_toNat_lt.mp hi
-  omega
-
-private theorem lens_byte {lens : ByteArray} {i : USize} (h : i.toNat < lens.size) :
-    (lens.uget i h).toUSize.toNat = (lens.data[i.toNat]?.getD 0).toNat := by
-  rw [UInt8.toNat_toUSize, uget_toNat]
-
-private theorem lens_small {lens : ByteArray} {n : Nat} (hn : n ≤ lens.size) (hl : ∀ l ∈ lensOf lens n, l ≤ 15) {i : Nat}
-    (hi : i < n) : (lens.data[i]?.getD 0).toNat ≤ 15 :=
-  hl _ (List.mem_of_getElem? (lensOf_get hi hn))
-
-theorem countLens_spec {lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.size} (h64 : n.toNat < 65536)
-    (hl : ∀ l ∈ lensOf lens n.toNat, l ≤ 15) : ∀ (N : Nat) (i : USize) (cs : ByteArray) (a : Array Nat),
-    n.toNat - i.toNat = N → i.toNat ≤ n.toNat → U16Match a cs → (∀ k, k < 16 → a.getD k 0 ≤ i.toNat) →
-    U16Match (((lensOf lens n.toNat).drop i.toNat).foldl (fun cs l => cs.setIfInBounds l (cs.getD l 0 + 1)) a)
-      (countLens lens n hn i cs) := by
-  intro N
-  induction N with
-  | zero =>
-    intro i cs a hN hle hm _
-    have hnot : ¬ i < n := fun h => by have := USize.lt_iff_toNat_lt.mp h; omega
-    rw [countLens, dite_eq_right hnot, lensOf_drop_end (by omega) hn]
-    exact hm
-  | succ N ih =>
-    intro i cs a hN hle hm hb
-    have hi : i < n := USize.lt_iff_toNat_lt.mpr (by omega)
-    have hltn := USize.lt_iff_toNat_lt.mp hi
-    rw [countLens, dite_eq_left hi, lensOf_drop hltn hn, List.foldl_cons]
-    dsimp only
-    have hsmall := lens_small hn hl hltn
-    rw [← lens_byte (uget_lens hn hi)] at hsmall ⊢
-    generalize hl0 : (lens.uget i (uget_lens hn hi)).toUSize = l at hsmall ⊢
-    have hgoal := usize_next hi
-    have hval : (u16Get cs l + 1).toNat = a.getD l.toNat 0 + 1 := by
-      rw [u64_add' (by rw [u16Get_toNat _ (by omega), show (1 : UInt64).toNat = 1 from rfl]; have := u16At_lt cs l.toNat; omega),
-        u16Get_toNat _ (by omega), show (1 : UInt64).toNat = 1 from rfl, hm.2.2 _ (by omega)]
-    have hvb : (u16Get cs l + 1).toNat < 65536 := by
-      rw [hval]
-      have := hb l.toNat (by omega)
-      omega
-    have hm' := hm.set (l := l) (v := u16Get cs l + 1) (by omega) hvb
-    rw [hval] at hm'
-    rw [← hgoal]
-    refine ih _ _ _ (by omega) (by omega) hm' ?_
-    intro k hk
-    rw [getD_set (by rw [hm.2.1]; omega)]
-    have := hb k hk
-    have := hb l.toNat (by omega)
-    split <;> omega
-
-/-- Turns the counts into the first code of each length, in place, with `c` the first code of length `b`. -/
-def firstCodes (cs : ByteArray) (b : USize) (c : UInt64) : ByteArray :=
-  if _hb : b < USize.ofNat 16 then
-    let k := if b = 0 then 0 else u16Get cs b
-    firstCodes (u16Set cs b c) (b + USize.ofNat 1) ((c + k) <<< 1)
-  else cs
-termination_by 16 - b.toNat
-decreasing_by
-  have h1 := usize_next _hb
-  have h2 := USize.lt_iff_toNat_lt.mp _hb
-  rw [usize_lit' (by decide)] at h2
-  omega
-
-private theorem nextCode_le_pow {L : List Nat} (hk : lengthSum L ≤ 32768) {b : Nat} (h : b ≤ 15) :
-    nextCode L b ≤ 32768 := by
-  cases b with
-  | zero => simp [nextCode]
-  | succ b =>
-    have h1 := nextCode_add_le hk (len := b + 1) (by omega) h
-    have h2 : 2 ^ (b + 1) ≤ 2 ^ 15 := Nat.pow_le_pow_right (by decide) h
-    have : (2 : Nat) ^ 15 = 32768 := rfl
-    omega
-
-theorem firstCodes_spec {L : List Nat} (hl : ∀ l ∈ L, l ≤ 15) (hk : lengthSum L ≤ 32768) :
-    ∀ (N : Nat) (b : USize) (cs : ByteArray) (c : UInt64), 16 - b.toNat = N → b.toNat ≤ 16 → cs.size = 32 →
-    (∀ k, k < b.toNat → u16At cs k = nextCode L k) →
-    (∀ k, b.toNat ≤ k → k < 16 → u16At cs k = (lengthCounts L).getD k 0) → c.toNat = nextCode L b.toNat →
-    (firstCodes cs b c).size = 32 ∧ ∀ k, k < 16 → u16At (firstCodes cs b c) k = nextCode L k := by
-  intro N
-  induction N with
-  | zero =>
-    intro b cs c hN hle hs h1 _ _
-    have hnot : ¬ b < USize.ofNat 16 := fun h => by
-      have := USize.lt_iff_toNat_lt.mp h
-      rw [usize_lit' (by decide)] at this
-      omega
-    rw [firstCodes, dite_eq_right hnot]
-    exact ⟨hs, fun k hk => h1 k (by omega)⟩
-  | succ N ih =>
-    intro b cs c hN hle hs h1 h2 hc
-    have hb : b < USize.ofNat 16 := USize.lt_iff_toNat_lt.mpr (by rw [usize_lit' (by decide)]; omega)
-    have hsucc := usize_next hb
-    have hcle : c.toNat ≤ 32768 := by
-      rw [hc]
-      exact nextCode_le_pow hk (by omega)
-    have hcount : (if b = 0 then 0 else u16Get cs b).toNat = blCount L b.toNat := by
-      by_cases hz : b = 0
-      · rw [ite_eq_left hz, hz]
-        simp [blCount]
-      · rw [ite_eq_right hz, u16Get_toNat _ (by omega), h2 _ (Nat.le_refl _) (by omega)]
-        exact lengthCounts_eq hl (usize_ne hz)
-    have hkb : (if b = 0 then 0 else u16Get cs b).toNat < 65536 := by
-      by_cases hz : b = 0
-      · rw [ite_eq_left hz]
-        decide
-      · rw [ite_eq_right hz, u16Get_toNat _ (by omega)]
-        exact u16At_lt _ _
-    rw [firstCodes, dite_eq_left hb]
-    dsimp only
-    generalize (if b = 0 then 0 else u16Get cs b) = k at hcount hkb ⊢
-    refine ih _ _ _ (by omega) (by omega) (by rw [size_u16Set]; exact hs) ?_ ?_ ?_
-    · intro j hj
-      by_cases he : j = b.toNat
-      · rw [he, u16At_set_same (by omega) (by omega) (by omega), hc]
-      · rw [u16At_set_ne (by omega) he]
-        exact h1 j (by omega)
-    · intro j hj hj16
-      rw [u16At_set_ne (by omega) (by omega)]
-      exact h2 j (by omega) hj16
-    · have hsum : (c + k).toNat = c.toNat + k.toNat := u64_add' (by omega)
-      rw [hsucc, u64_shl (by decide) (by rw [hsum, show (1 : UInt64).toNat = 1 from rfl]; omega), hsum, hc, hcount]
-      show _ = (nextCode L b.toNat + blCount L b.toNat) <<< 1
-      rw [Nat.shiftLeft_eq]
-      rfl
-
-/-- The first code of each length, in an array. -/
-def firstCodesOf (lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) : ByteArray :=
-  firstCodes (countLens lens n hn 0 (zeroBytes 32)) 0 0
-
-theorem firstCodesOf_spec {lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.size} (h64 : n.toNat < 65536)
-    (hC : Complete (.canonical (lensOf lens n.toNat))) :
-    U16Match (nextCodes (lensOf lens n.toNat)) (firstCodesOf lens n hn) := by
-  have hs0 : (zeroBytes 32).size = 32 := zeroBytes_size (by decide)
-  have h0 : U16Match (Array.replicate 16 0) (zeroBytes 32) := by
-    refine ⟨hs0, by simp, ?_⟩
-    intro k _
-    unfold u16At
-    rw [zeroBytes_get (by decide), zeroBytes_get (by decide)]
-    simp [Array.getD_eq_getD_getElem?, Array.getElem?_replicate]
-    split <;> rfl
-  have hz : (0 : USize).toNat = 0 := rfl
-  have hc := countLens_spec (hn := hn) h64 hC.1 _ 0 _ _ rfl (by rw [hz]; omega) h0 (by
-    intro k _
-    simp [Array.getD_eq_getD_getElem?, Array.getElem?_replicate]
-    split <;> simp)
-  rw [hz, List.drop_zero] at hc
-  obtain ⟨c1, _, c3⟩ := hc
-  obtain ⟨hsz, hat⟩ := firstCodes_spec hC.1 (Nat.le_of_eq hC.2) _ 0 (countLens lens n hn 0 (zeroBytes 32)) 0 rfl (by rw [hz]; omega) c1
-    (by intro k hk; rw [hz] at hk; omega)
-    (by
-      intro k _ hk
-      rw [← c3 k hk]
-      rfl)
-    (by rw [hz]; rfl)
-  obtain ⟨n1, n2⟩ := nextCodes_spec hC.1
-  refine ⟨hsz, n1, ?_⟩
-  intro k hk
-  rw [n2 k hk]
-  exact (hat k hk).symm
 
 /-! ### Reversing a code -/
 
@@ -584,283 +393,63 @@ theorem revFast_toNat {l c : UInt64} (hl : l.toNat ≤ 15) (hc : c.toNat < 2 ^ l
   rw [e3]
   exact Nat.mul_div_cancel _ (Nat.two_pow_pos _)
 
-/-! ### Walking the code words -/
+/-! ### Slots -/
 
-/-- Visits each symbol that has a code, with its code word from the counters `nc`. -/
-@[specialize] def walkCodes {β : Type} (f : β → UInt64 → UInt64 → UInt64 → β) (lens : ByteArray) (n : USize)
-    (hn : n.toNat ≤ lens.size) (i : USize) (nc : ByteArray) (acc : β) : β :=
-  if hi : i < n then
-    let l := (lens.uget i (uget_lens hn hi)).toUInt64
-    if l = 0 then walkCodes f lens n hn (i + USize.ofNat 1) nc acc
-    else
-      let c := u16Get nc l.toUSize
-      walkCodes f lens n hn (i + USize.ofNat 1) (u16Set nc l.toUSize (c + 1)) (f acc i.toUInt64 l c)
-  else acc
-termination_by n.toNat - i.toNat
-decreasing_by
-  all_goals
-    have := usize_next hi
-    have := USize.lt_iff_toNat_lt.mp hi
+private theorem slot2 {pos : UInt64} {size : Nat} (hs : size < 2 ^ 32) (h : 2 * pos.toNat + 1 < size) {j : UInt64}
+    (hj : j.toNat ≤ 1) : (pos * 2 + j).toUSize.toNat = 2 * pos.toNat + j.toNat := by
+  have h2 : (pos * 2).toNat = 2 * pos.toNat := by
+    rw [UInt64.toNat_mul, show (2 : UInt64).toNat = 2 from rfl, Nat.mod_eq_of_lt (by omega)]
     omega
-
-/-- The walk does what `foldCodes` does, for functions that agree on each symbol that has a code. -/
-theorem walkCodes_rel {β γ : Type} {g : β → Nat → Nat → Nat → β} {f : γ → UInt64 → UInt64 → UInt64 → γ} {lens : ByteArray}
-    {n : USize} {hn : n.toNat ≤ lens.size} (hC : Complete (.canonical (lensOf lens n.toNat))) (R : β → γ → Prop)
-    (hf : ∀ a b (s l c : UInt64), R a b → (lensOf lens n.toNat)[s.toNat]? = some l.toNat → l.toNat ≠ 0 →
-      code (lensOf lens n.toNat) s.toNat = some c.toNat → R (g a s.toNat l.toNat c.toNat) (f b s l c))
-    {nb : ByteArray} (hnb : U16Match (nextCodes (lensOf lens n.toNat)) nb) {a : β} {b : γ} (h0 : R a b) :
-    R (foldCodes g (lensOf lens n.toNat) 0 (nextCodes (lensOf lens n.toNat)) a) (walkCodes f lens n hn 0 nb b) := by
-  generalize hL : lensOf lens n.toNat = L at hC hf hnb ⊢
-  have key : ∀ (N : Nat) (i : USize) (nc : Array Nat) (nb : ByteArray) (a : β) (b : γ), n.toNat - i.toNat = N →
-      i.toNat ≤ n.toNat → U16Match nc nb →
-      (∀ l, l ≠ 0 → l < 16 → nc.getD l 0 = nextCode L l + ((L.take i.toNat).filter (· == l)).length) → R a b →
-      R (foldCodes g (L.drop i.toNat) i.toNat nc a) (walkCodes f lens n hn i nb b) := by
-    intro N
-    induction N with
-    | zero =>
-      intro i nc nb a b hN hle _ _ hr
-      have hnot : ¬ i < n := fun h => by have := USize.lt_iff_toNat_lt.mp h; omega
-      rw [walkCodes, dite_eq_right hnot, ← hL, lensOf_drop_end (by omega) hn]
-      exact hr
-    | succ N ih =>
-      intro i nc nb a b hN hle hm hnc hr
-      have hi : i < n := USize.lt_iff_toNat_lt.mpr (by omega)
-      have hltn := USize.lt_iff_toNat_lt.mp hi
-      have hsucc := usize_next hi
-      have hx : (lens.uget i (uget_lens hn hi)).toUInt64.toNat = (lens.data[i.toNat]?.getD 0).toNat := by
-        rw [UInt8.toNat_toUInt64, uget_toNat]
-      have hget : L[i.toNat]? = some (lens.data[i.toNat]?.getD 0).toNat := by
-        rw [← hL]
-        exact lensOf_get hltn hn
-      have hdrop : L.drop i.toNat = (lens.data[i.toNat]?.getD 0).toNat :: L.drop (i.toNat + 1) := by
-        rw [← hL]
-        exact lensOf_drop hltn hn
-      rw [walkCodes, dite_eq_left hi, hdrop, foldCodes]
-      dsimp only
-      rw [← hx] at hget ⊢
-      generalize (lens.uget i (uget_lens hn hi)).toUInt64 = l at hget ⊢
-      have htake : ∀ k, ((L.take (i.toNat + 1)).filter (· == k)).length =
-          ((L.take i.toNat).filter (· == k)).length + (if l.toNat = k then 1 else 0) := by
-        intro k
-        rw [List.take_add_one, hget, List.filter_append, List.length_append]
-        by_cases hx : l.toNat = k <;> simp [hx]
-      by_cases h0 : l = 0
-      · have hl0 : l.toNat = 0 := by
-          rw [h0]
-          rfl
-        rw [ite_eq_left hl0, ite_eq_left h0, ← hsucc]
-        refine ih _ _ _ _ _ (by omega) (by omega) hm ?_ hr
-        intro k hk0 hk16
-        rw [hsucc, hnc k hk0 hk16, htake k, ite_eq_right (by omega)]
-        rfl
-      · have hl0 : l.toNat ≠ 0 := fun e => h0 (UInt64.toNat_inj.mp (by rw [e]; rfl))
-        have hl15 : l.toNat ≤ 15 := hC.1 _ (List.mem_of_getElem? hget)
-        have hus : l.toUSize.toNat = l.toNat := word_toUSize (by omega)
-        rw [ite_eq_right hl0, ite_eq_right h0]
-        have hval : (u16Get nb l.toUSize).toNat = nc.getD l.toNat 0 := by
-          rw [u16Get_toNat _ (by omega), hus, hm.2.2 _ (by omega)]
-        have hcode : code L i.toNat = some (nc.getD l.toNat 0) := by
-          rw [hnc _ hl0 (by omega)]
-          simp [code, hget, hl0]
-        have hclt : nc.getD l.toNat 0 < 2 ^ l.toNat := code_lt_two_pow (Nat.le_of_eq hC.2) hget hl0 hl15 hcode
-        have hpow : 2 ^ l.toNat ≤ 2 ^ 15 := Nat.pow_le_pow_right (by decide) hl15
-        have hp15 : (2 : Nat) ^ 15 = 32768 := rfl
-        have hc1 : (u16Get nb l.toUSize + 1).toNat = nc.getD l.toNat 0 + 1 := by
-          rw [u64_add' (by rw [hval, show (1 : UInt64).toNat = 1 from rfl]; omega), hval]
-          rfl
-        have hm' := hm.set (l := l.toUSize) (v := u16Get nb l.toUSize + 1) (by omega) (by omega)
-        rw [hus, hc1] at hm'
-        rw [← hsucc]
-        have hs64 : i.toUInt64.toNat = i.toNat := USize.toNat_toUInt64 i
-        have hfin := hf a b i.toUInt64 l (u16Get nb l.toUSize) hr (by rw [hs64]; exact hget) hl0
-          (by rw [hs64, hval]; exact hcode)
-        rw [hs64, hval] at hfin
-        refine ih _ _ _ _ _ (by omega) (by omega) hm' ?_ hfin
-        intro k hk0 hk16
-        rw [getD_set (by rw [hm.2.1]; omega), hsucc, htake k]
-        by_cases he : k = l.toNat
-        · subst he
-          simp [hnc _ hk0 hk16]
-          omega
-        · simp [he, Ne.symm he, hnc _ hk0 hk16]
-  have h := key _ 0 _ nb a b rfl (by show 0 ≤ _; omega) hnb (by
-    intro l _ _
-    simp [(nextCodes_spec hC.1).2 l (by omega)]) h0
-  exact h
-
-/-! ### Depths and offsets -/
-
-/-- 256 numbers, held as bytes. -/
-def ByteMatch (a : Array Nat) (b : ByteArray) : Prop :=
-  b.size = 256 ∧ a.size = 256 ∧ ∀ r, r < 256 → a.getD r 0 = (b.data[r]?.getD 0).toNat
-
-/-- A long code word's sub-table needs at least its bits past the root. -/
-@[inline] def depthStep (D : ByteArray) (_ l c : UInt64) : ByteArray :=
-  if l ≤ 8 then D
-  else
-    let r := (revFast l c &&& 255).toUSize
-    let d := l - 8
-    let old := (getU D r).toUInt64
-    setU D r (if old < d then d else old).toUInt8
-
-theorem rootIdx {l c : UInt64} (hl : l.toNat ≤ 15) (hc : c.toNat < 2 ^ l.toNat) :
-    (revFast l c &&& 255).toUSize.toNat = rootOf l.toNat c.toNat := by
-  rw [word_toUSize (by rw [and255]; omega), and255, revFast_toNat hl hc]
-  rfl
-
-theorem depthStep_rel {A : Array Nat} {D : ByteArray} (hm : ByteMatch A D) {s l c : UInt64} (hl : l.toNat ≤ 15)
-    (hc : c.toNat < 2 ^ l.toNat) :
-    ByteMatch (recordDepth A s.toNat l.toNat c.toNat) (depthStep D s l c) := by
-  unfold recordDepth depthStep
-  by_cases h8 : l.toNat ≤ 8
-  · rw [ite_eq_left h8, ite_eq_left (UInt64.le_iff_toNat_le.mpr h8)]
-    exact hm
-  · have h8' : ¬ l ≤ 8 := fun h => h8 (UInt64.le_iff_toNat_le.mp h)
-    rw [ite_eq_right h8, ite_eq_right h8']
-    dsimp only
-    obtain ⟨h1, h2, h3⟩ := hm
-    have hr := rootIdx hl hc
-    have hrlt := rootOf_lt l.toNat c.toNat
-    rw [← hr] at hrlt ⊢
-    generalize (revFast l c &&& 255).toUSize = r at hrlt ⊢
-    have hold : (getU D r).toUInt64.toNat = A.getD r.toNat 0 := by
-      rw [UInt8.toNat_toUInt64, getU_toNat, h3 _ hrlt]
-    have hd : (l - 8).toNat = l.toNat - 8 := u64_sub' (by rw [show (8 : UInt64).toNat = 8 from rfl]; omega)
-    have holdlt : A.getD r.toNat 0 < 256 := by
-      rw [h3 _ hrlt]
-      exact (D.data[r.toNat]?.getD 0).toNat_lt
-    have hv : (if (getU D r).toUInt64 < l - 8 then l - 8 else (getU D r).toUInt64).toNat = max (A.getD r.toNat 0) (l.toNat - 8) := by
-      by_cases hlt : (getU D r).toUInt64 < l - 8
-      · have := UInt64.lt_iff_toNat_lt.mp hlt
-        rw [ite_eq_left hlt, hd]
-        rw [hold, hd] at this
-        omega
-      · have : ¬ (getU D r).toUInt64.toNat < (l - 8).toNat := fun h => hlt (UInt64.lt_iff_toNat_lt.mpr h)
-        rw [ite_eq_right hlt, hold]
-        rw [hold, hd] at this
-        omega
-    generalize (if (getU D r).toUInt64 < l - 8 then l - 8 else (getU D r).toUInt64) = v at hv
-    refine ⟨by rw [size_setU]; exact h1, by simpa using h2, ?_⟩
-    intro q hq
-    rw [getD_set (by omega), setU_eq]
-    by_cases he : q = r.toNat
-    · subst he
-      rw [ite_eq_left rfl, get_set_same (by omega), UInt64.toNat_toUInt8, hv]
-      omega
-    · rw [ite_eq_right he, get_set_ne he]
-      exact h3 q hq
-
-/-- The offsets, as `offsetsFast` leaves them. -/
-structure OffRun where
-  off : ByteArray
-  next : UInt64
-
-/-- Assigns the sub-tables' offsets from root slot `r`, with `next` where the next sub-table starts. -/
-def offsetsFast (D off : ByteArray) (r : USize) (next : UInt64) : OffRun :=
-  if _hr : r < USize.ofNat 256 then
-    let d := (getU D r).toUInt64
-    offsetsFast D (u16Set off r next) (r + USize.ofNat 1) (if d = 0 then next else next + (1 <<< d))
-  else ⟨off, next⟩
-termination_by 256 - r.toNat
-decreasing_by
-  all_goals
-    have h1 := usize_next _hr
-    have h2 := USize.lt_iff_toNat_lt.mp _hr
-    rw [usize_lit' (by decide)] at h2
-    omega
-
-theorem offsetsFast_spec {A : Array Nat} {D : ByteArray} (hm : ByteMatch A D) (hA : ∀ r, A.getD r 0 ≤ 7) :
-    ∀ (N : Nat) (r : USize) (off : ByteArray) (next : UInt64), 256 - r.toNat = N → r.toNat ≤ 256 → off.size = 512 →
-    (∀ k, k < r.toNat → u16At off k = offSum A k) → next.toNat = offSum A r.toNat →
-    (offsetsFast D off r next).off.size = 512 ∧ (offsetsFast D off r next).next.toNat = offSum A 256 ∧
-      ∀ k, k < 256 → u16At (offsetsFast D off r next).off k = offSum A k := by
-  intro N
-  induction N with
-  | zero =>
-    intro r off next hN hle hs h1 h2
-    have hnot : ¬ r < USize.ofNat 256 := fun h => by
-      have := USize.lt_iff_toNat_lt.mp h
-      rw [usize_lit' (by decide)] at this
-      omega
-    have hr : r.toNat = 256 := by omega
-    rw [offsetsFast, dite_eq_right hnot]
-    rw [hr] at h1 h2
-    exact ⟨hs, h2, h1⟩
-  | succ N ih =>
-    intro r off next hN hle hs h1 h2
-    have hr : r < USize.ofNat 256 := USize.lt_iff_toNat_lt.mpr (by rw [usize_lit' (by decide)]; omega)
-    have hsucc := usize_next hr
-    have hbound := offSum_bound hA r.toNat
-    rw [offsetsFast, dite_eq_left hr]
-    dsimp only
-    have hd : (getU D r).toUInt64.toNat = A.getD r.toNat 0 := by
-      rw [UInt8.toNat_toUInt64, getU_toNat, hm.2.2 _ (by omega)]
-    have hd7 := hA r.toNat
-    have hnv : next.toNat < 65536 := by omega
-    have hnext : (if (getU D r).toUInt64 = 0 then next else next + (1 <<< (getU D r).toUInt64)).toNat =
-        offSum A (r.toNat + 1) := by
-      show _ = offSum A r.toNat + subSize (A.getD r.toNat 0)
-      unfold subSize
-      by_cases hz : (getU D r).toUInt64 = 0
-      · have : A.getD r.toNat 0 = 0 := by
-          rw [← hd, hz]
-          rfl
-        rw [ite_eq_left hz, ite_eq_left this, h2]
-        rfl
-      · have : A.getD r.toNat 0 ≠ 0 := by
-          rw [← hd]
-          exact fun e => hz (UInt64.toNat_inj.mp (by rw [e]; rfl))
-        rw [ite_eq_right hz, ite_eq_right this, ← hd]
-        have hsh := one_shl (d := (getU D r).toUInt64) (by omega)
-        have hp : 2 ^ (getU D r).toUInt64.toNat ≤ 2 ^ 7 := Nat.pow_le_pow_right (by decide) (by omega)
-        have h27 : (2 : Nat) ^ 7 = 128 := rfl
-        rw [u64_add' (by rw [hsh]; omega), hsh, h2]
-    refine ih _ _ _ (by omega) (by omega) (by rw [size_u16Set]; exact hs) ?_ (by rw [hsucc]; exact hnext)
-    intro k hk
-    by_cases he : k = r.toNat
-    · rw [he, u16At_set_same (by omega) (by omega) hnv, h2]
-    · rw [u16At_set_ne (by omega) he]
-      exact h1 k (by omega)
-
-/-! ### Writing the slots -/
-
-private theorem slot_byte {pos : UInt64} {size : Nat} (hs : size < 2 ^ 32) (h : 4 * pos.toNat + 2 < size) {j : UInt64}
-    (hj : j.toNat ≤ 2) : (pos * 4 + j).toUSize.toNat = 4 * pos.toNat + j.toNat := by
-  have h4 : (pos * 4).toNat = 4 * pos.toNat := by
-    rw [UInt64.toNat_mul, show (4 : UInt64).toNat = 4 from rfl]
-    rw [Nat.mod_eq_of_lt (by omega)]
-    omega
-  have e : (pos * 4 + j).toNat = 4 * pos.toNat + j.toNat := by
-    rw [u64_add' (by rw [h4]; omega), h4]
+  have e : (pos * 2 + j).toNat = 2 * pos.toNat + j.toNat := by
+    rw [u64_add' (by rw [h2]; omega), h2]
   rw [word_toUSize (by rw [e]; omega), e]
 
-/-- Writes one slot. -/
-@[inline] def putSlot (t : ByteArray) (pos : UInt64) (b v0 v1 : UInt8) (h : 4 * pos.toNat + 2 < t.size) (h32 : t.size < 2 ^ 32) :
+/-- Writes one slot, its 16-bit number `v`. -/
+@[inline] def putSlot (t : ByteArray) (pos v : UInt64) (h : 2 * pos.toNat + 1 < t.size) (h32 : t.size < 2 ^ 32) :
     ByteArray :=
-  ((t.uset (pos * 4 + 0).toUSize b (by rw [slot_byte h32 h (by decide)]; show 4 * pos.toNat + 0 < _; omega)).uset
-      (pos * 4 + 1).toUSize v0 (by
-        rw [size_uset', slot_byte h32 h (by decide)]
-        show 4 * pos.toNat + 1 < _
-        omega)).uset (pos * 4 + 2).toUSize v1 (by
-    rw [size_uset', size_uset', slot_byte h32 h (by decide)]
-    show 4 * pos.toNat + 2 < _
-    omega)
+  (t.uset (pos * 2 + 0).toUSize v.toUInt8 (by rw [slot2 h32 h (by decide)]; show 2 * pos.toNat + 0 < _; omega)).uset
+    (pos * 2 + 1).toUSize (v >>> 8).toUInt8 (by
+      rw [size_uset', slot2 h32 h (by decide)]
+      show 2 * pos.toNat + 1 < _
+      omega)
 
-theorem size_putSlot (t : ByteArray) (pos : UInt64) (b v0 v1 : UInt8) (h : 4 * pos.toNat + 2 < t.size) (h32 : t.size < 2 ^ 32) :
-    (putSlot t pos b v0 v1 h h32).size = t.size := by
+theorem size_putSlot (t : ByteArray) (pos v : UInt64) (h : 2 * pos.toNat + 1 < t.size) (h32 : t.size < 2 ^ 32) :
+    (putSlot t pos v h h32).size = t.size := by
   simp only [putSlot, size_uset']
 
-theorem putSlot_eq {t : ByteArray} {pos : UInt64} {b v0 v1 : UInt8} {h : 4 * pos.toNat + 2 < t.size} {h32 : t.size < 2 ^ 32}
-    {bits val : Nat} (hb : b = bits.toUInt8) (h0 : v0 = (val % 256).toUInt8) (h1 : v1 = (val / 256).toUInt8) :
-    putSlot t pos b v0 v1 h h32 = writeSlot t pos.toNat bits val := by
+/-- Writing a slot's number is writing its bit count and value. -/
+theorem putSlot_eq {t : ByteArray} {pos v : UInt64} {h : 2 * pos.toNat + 1 < t.size} {h32 : t.size < 2 ^ 32}
+    {bits val : Nat} (hv : v.toNat = bits + 16 * val) : putSlot t pos v h h32 = writeSlot t pos.toNat bits val := by
+  have e0 : v.toUInt8 = ((bits + 16 * val) % 256).toUInt8 := byte_of (by rw [hv]; omega)
+  have e1 : (v >>> 8).toUInt8 = ((bits + 16 * val) / 256).toUInt8 := byte_of (by
+    rw [u64_shr (by decide), hv]
+    show (bits + 16 * val) / 256 % 256 = _
+    omega)
   unfold putSlot writeSlot
-  rw [uset_eq, uset_eq, uset_eq, slot_byte h32 h (j := 0) (by decide), slot_byte h32 h (j := 1) (by decide),
-    slot_byte h32 h (j := 2) (by decide), hb, h0, h1]
+  rw [uset_eq, uset_eq, slot2 h32 h (j := 0) (by decide), slot2 h32 h (j := 1) (by decide), e0, e1]
   rfl
 
-private theorem fill_next {t : ByteArray} {pos step count : UInt64} (h : ∀ k, k < count.toNat → 4 * (pos.toNat + k * step.toNat) + 2 < t.size)
+/-- Reads one slot's 16-bit number. -/
+@[inline] def getSlot (t : ByteArray) (pos : UInt64) (h : 2 * pos.toNat + 1 < t.size) (h32 : t.size < 2 ^ 32) : UInt64 :=
+  (t.uget (pos * 2 + 0).toUSize (by rw [slot2 h32 h (by decide)]; show 2 * pos.toNat + 0 < _; omega)).toUInt64 |||
+    ((t.uget (pos * 2 + 1).toUSize (by rw [slot2 h32 h (by decide)]; show 2 * pos.toNat + 1 < _; omega)).toUInt64 <<< 8)
+
+theorem getSlot_toNat {t : ByteArray} {pos : UInt64} (h : 2 * pos.toNat + 1 < t.size) (h32 : t.size < 2 ^ 32) :
+    (getSlot t pos h h32).toNat = slotNum t pos.toNat := by
+  have h8 : (8 : UInt64).toNat = 8 := rfl
+  have hb : ∀ x : UInt8, x.toUInt64.toNat < 2 ^ 8 := fun x => by
+    have := x.toNat_lt
+    simpa using this
+  unfold getSlot slotNum
+  rw [BitBuffer.add_word (count := 8) (n := 8) (by rw [h8]; omega) (by rw [h8]; omega) (by rw [h8]; exact hb _) (hb _), h8,
+    UInt8.toNat_toUInt64, UInt8.toNat_toUInt64, uget_toNat, uget_toNat, slot2 h32 h (j := 0) (by decide),
+    slot2 h32 h (j := 1) (by decide)]
+  rfl
+
+private theorem fill_next {t : ByteArray} {pos step count : UInt64}
+    (h : ∀ k, k < count.toNat → 2 * (pos.toNat + k * step.toNat) + 1 < t.size)
     (h32 : t.size < 2 ^ 32) {k : Nat} (hk : k < (count - 1).toNat) (hc : count ≠ 0) :
-    4 * ((pos + step).toNat + k * step.toNat) + 2 < t.size := by
+    2 * ((pos + step).toNat + k * step.toNat) + 1 < t.size := by
   have hne : count.toNat ≠ 0 := fun e => hc (UInt64.toNat_inj.mp (by rw [e]; rfl))
   have h1 : (count - 1).toNat = count.toNat - 1 := u64_sub' (by rw [show (1 : UInt64).toNat = 1 from rfl]; omega)
   have := h (k + 1) (by omega)
@@ -869,13 +458,13 @@ private theorem fill_next {t : ByteArray} {pos step count : UInt64} (h : ∀ k, 
   rw [e]
   omega
 
-/-- Writes `count` slots from `pos`, every `step`. The caller has checked that they are all in the array. -/
-def fillRun (b v0 v1 : UInt8) (step : UInt64) (t : ByteArray) (pos count : UInt64) (h32 : t.size < 2 ^ 32)
-    (h : ∀ k, k < count.toNat → 4 * (pos.toNat + k * step.toNat) + 2 < t.size) : ByteArray :=
+/-- Writes `count` slots from `pos`, every `step`, each the number `v`, all in the array. -/
+def fillRun (v step : UInt64) (t : ByteArray) (pos count : UInt64) (h32 : t.size < 2 ^ 32)
+    (h : ∀ k, k < count.toNat → 2 * (pos.toNat + k * step.toNat) + 1 < t.size) : ByteArray :=
   if hc : count = 0 then t
   else
-    fillRun b v0 v1 step
-      (putSlot t pos b v0 v1 (by
+    fillRun v step
+      (putSlot t pos v (by
         have := h 0 (by
           have : count.toNat ≠ 0 := fun e => hc (UInt64.toNat_inj.mp (by rw [e]; rfl))
           omega)
@@ -889,10 +478,10 @@ decreasing_by
   have h1 : (count - 1).toNat = count.toNat - 1 := u64_sub' (by rw [show (1 : UInt64).toNat = 1 from rfl]; omega)
   omega
 
-theorem fillRun_eq {b v0 v1 : UInt8} {bits val : Nat} (hb : b = bits.toUInt8) (h0 : v0 = (val % 256).toUInt8)
-    (h1 : v1 = (val / 256).toUInt8) (step : UInt64) : ∀ (N : Nat) (t : ByteArray) (pos count : UInt64) (h32 : t.size < 2 ^ 32)
-    (h : ∀ k, k < count.toNat → 4 * (pos.toNat + k * step.toNat) + 2 < t.size), count.toNat = N →
-    fillRun b v0 v1 step t pos count h32 h = writeRange bits val step.toNat N t pos.toNat := by
+theorem fillRun_eq {v : UInt64} {bits val : Nat} (hv : v.toNat = bits + 16 * val) (step : UInt64) :
+    ∀ (N : Nat) (t : ByteArray) (pos count : UInt64) (h32 : t.size < 2 ^ 32)
+    (h : ∀ k, k < count.toNat → 2 * (pos.toNat + k * step.toNat) + 1 < t.size), count.toNat = N →
+    fillRun v step t pos count h32 h = writeRange bits val step.toNat N t pos.toNat := by
   intro N
   induction N with
   | zero =>
@@ -907,7 +496,7 @@ theorem fillRun_eq {b v0 v1 : UInt8} {bits val : Nat} (hb : b = bits.toUInt8) (h
     have hk1 : (count - 1).toNat = N := by
       rw [u64_sub' (by rw [show (1 : UInt64).toNat = 1 from rfl]; omega), hc]
       rfl
-    rw [fillRun, dite_eq_right hz, ih _ _ _ _ _ hk1, putSlot_eq hb h0 h1, writeRange]
+    rw [fillRun, dite_eq_right hz, ih _ _ _ _ _ hk1, putSlot_eq hv, writeRange]
     by_cases hN : N = 0
     · subst hN
       rfl
@@ -916,326 +505,913 @@ theorem fillRun_eq {b v0 v1 : UInt8} {bits val : Nat} (hb : b = bits.toUInt8) (h
       have e := u64_add' (a := pos) (b := step) (by omega)
       rw [e]
 
-/-- Writes `count` slots from `pos`, every `step`, after checking once that they are all in the array. -/
-@[inline] def fillFrom (bits val step count : UInt64) (t : ByteArray) (pos : UInt64) : ByteArray :=
-  if h : t.size < 4294967296 ∧ 4 * (pos.toNat + (count.toNat - 1) * step.toNat) + 2 < t.size then
-    fillRun bits.toUInt8 val.toUInt8 (val >>> 8).toUInt8 step t pos count h.1 (fun k hk => by
-      have := Nat.mul_le_mul_right step.toNat (show k ≤ count.toNat - 1 by omega)
-      have := h.2
-      omega)
-  else t
+/-! ### One code word -/
 
-theorem fillFrom_eq {bits val step count : UInt64} {t : ByteArray} {pos : UInt64} (h32 : t.size < 2 ^ 32)
-    (hc : 0 < count.toNat)
-    (h : ∀ k, k < count.toNat → 4 * (pos.toNat + k * step.toNat) + 2 < t.size) :
-    fillFrom bits val step count t pos = writeRange bits.toNat val.toNat step.toNat count.toNat t pos.toNat := by
-  unfold fillFrom
-  rw [dite_eq_left ⟨h32, h _ (by omega)⟩]
-  refine fillRun_eq (byte_of rfl) (byte_of (by omega)) (byte_of ?_) step _ t pos count _ _ rfl
-  rw [u64_shr (by decide)]
+/-- What a step of the builder needs of the array, for a code word of length `l` and code `c`: room for a sub-table,
+the root slots in the array, and, for a long code word whose root slot has a sub-table, that it is at least as deep as
+the code word and in the array. -/
+structure BuildOk (t : ByteArray) (base l c : Nat) : Prop where
+  h32 : t.size + 512 < 2 ^ 32
+  root : 2 * (base + 256) ≤ t.size
+  len : 1 ≤ l ∧ l ≤ 15
+  code : c < 2 ^ l
+  sub : 8 < l → (slotAt t (base + rootOf l c)).1 ≠ 0 →
+    l ≤ (slotAt t (base + rootOf l c)).1 ∧
+      2 * (base + (slotAt t (base + rootOf l c)).2 + 2 ^ ((slotAt t (base + rootOf l c)).1 - 8)) ≤ t.size
+
+/-- A run of slots, one every `2 ^ l` from a start below that, stays below `2 ^ W`. -/
+private theorem run_lt {l W st k : Nat} (hl : l ≤ W) (hst : st < 2 ^ l) (hk : k < 2 ^ (W - l)) :
+    st + k * 2 ^ l < 2 ^ W :=
+  ((range_iff hl hst (st + k * 2 ^ l)).mpr ⟨k, hk, rfl⟩).1
+
+/-- A long code word, with what is known of its root slot's number `e`. -/
+structure LongOk (t : ByteArray) (base l c : Nat) (rv rp e : UInt64) : Prop where
+  ok : BuildOk t base l c
+  long : 8 < l
+  rv : rv.toNat = revBits l c
+  rp : rp.toNat = base + rootOf l c
+  e : e.toNat = slotNum t (base + rootOf l c)
+
+private theorem long_root {t : ByteArray} {base l c : Nat} {rv rp e : UInt64} (h : LongOk t base l c rv rp e) :
+    2 * rp.toNat + 1 < t.size := by
+  have := h.ok.root
+  have := rootOf_lt l c
+  rw [h.rp]
+  omega
+
+private theorem long_rev {t : ByteArray} {base l c : Nat} {rv rp e : UInt64} (h : LongOk t base l c rv rp e) :
+    rv.toNat / 256 < 2 ^ (l - 8) := by
+  rw [h.rv]
+  have hst : revBits l c < 2 ^ l := revBits_lt l c
+  have hp : 2 ^ l = 256 * 2 ^ (l - 8) := by
+    rw [show (256 : Nat) = 2 ^ 8 from rfl, ← Nat.pow_add]
+    congr 1
+    have := h.long
+    omega
+  exact Nat.div_lt_of_lt_mul (by rw [← hp]; exact hst)
+
+private theorem long_l {t : ByteArray} {base l c : Nat} {rv rp e : UInt64} (h : LongOk t base l c rv rp e) {lU : UInt64}
+    (hl : lU.toNat = l) : (lU - 8).toNat = l - 8 := by
+  have := h.long
+  rw [u64_sub' (by rw [hl, show (8 : UInt64).toNat = 8 from rfl]; omega), hl]
   rfl
 
-/-- Writes a code word's slots: those of every bit pattern that begins with it. -/
-@[inline] def writeCodeFast (base : UInt64) (D off t : ByteArray) (s l c : UInt64) : ByteArray :=
-  let rv := revFast l c
-  if l ≤ 8 then fillFrom l s (1 <<< l) (1 <<< (8 - l)) t (base + rv)
-  else
-    let r := (rv &&& 255).toUSize
-    fillFrom l s (1 <<< (l - 8)) (1 <<< ((getU D r).toUInt64 - (l - 8))) t (base + 256 + u16Get off r + (rv >>> (8 : UInt64)))
+/-- The slots of a long code word whose root slot has a sub-table are in the array. -/
+private theorem long_sub {t : ByteArray} {base l c : Nat} {rv rp e : UInt64} (h : LongOk t base l c rv rp e)
+    (hz : ¬ e &&& 15 = 0) {lU baseU : UInt64} (hl : lU.toNat = l) (hb : baseU.toNat = base) :
+    ∀ k, k < (1 <<< ((e &&& 15) - lU)).toNat →
+      2 * ((baseU + (e >>> 4) + (rv >>> 8)).toNat + k * (1 <<< (lU - 8)).toNat) + 1 < t.size := by
+  have h32 := h.ok.h32
+  have he1 : (e &&& 15).toNat = (slotAt t (base + rootOf l c)).1 := by
+    rw [and15, h.e]
+    rfl
+  have he2 : (e >>> 4).toNat = (slotAt t (base + rootOf l c)).2 := by
+    rw [u64_shr (by decide), h.e]
+    rfl
+  have hnz : (slotAt t (base + rootOf l c)).1 ≠ 0 := by
+    rw [← he1]
+    intro e0
+    exact hz (UInt64.toNat_inj.mp (by rw [e0]; rfl))
+  obtain ⟨hge, hin⟩ := h.ok.sub h.long hnz
+  generalize slotAt t (base + rootOf l c) = E at he1 he2 hnz hge hin
+  have hE15 : E.1 < 16 := by
+    rw [← he1, and15]
+    omega
+  have hlen := h.ok.len
+  have hl8 := h.long
+  have hrv := long_rev h
+  have hsub : ((e &&& 15) - lU).toNat = E.1 - l := by
+    rw [u64_sub' (by rw [he1, hl]; exact hge), he1, hl]
+  have hs1 : (1 <<< ((e &&& 15) - lU)).toNat = 2 ^ (E.1 - l) := by
+    rw [one_shl (by rw [hsub]; omega), hsub]
+  have hs2 : (1 <<< (lU - 8)).toNat = 2 ^ (l - 8) := by
+    rw [one_shl (by rw [long_l h hl]; omega), long_l h hl]
+  have hrv8 : (rv >>> 8).toNat = rv.toNat / 256 := by
+    rw [u64_shr (by decide)]
+    rfl
+  have := Nat.two_pow_pos (E.1 - 8)
+  have : 2 ^ (l - 8) ≤ 2 ^ 7 := Nat.pow_le_pow_right (by decide) (by omega)
+  have hpos : (baseU + (e >>> 4) + (rv >>> 8)).toNat = base + E.2 + rv.toNat / 256 := by
+    rw [u64_add' (by rw [u64_add' (by rw [hb, he2]; omega), hb, he2, hrv8]; omega), u64_add' (by rw [hb, he2]; omega), hb, he2,
+      hrv8]
+  intro k hk
+  rw [hs1] at hk
+  rw [hpos, hs2]
+  have := run_lt (l := l - 8) (W := E.1 - 8) (by omega) hrv (k := k) (by rw [show E.1 - 8 - (l - 8) = E.1 - l by omega]; exact hk)
+  omega
 
-theorem writeCodeFast_eq {L : List Nat} (hC : Complete (.canonical L)) {D off t : ByteArray} {O : Array Nat}
-    (hD : ByteMatch (depths L) D) (hO : ∀ i, i < 256 → O.getD i 0 = offSum (depths L) i)
-    (hoff : ∀ i, i < 256 → u16At off i = offSum (depths L) i) {base s l c : UInt64}
-    (hs : L[s.toNat]? = some l.toNat) (h0 : l.toNat ≠ 0) (hc : code L s.toNat = some c.toNat)
-    (hsize : 4 * (base.toNat + 256 + offSum (depths L) 256) ≤ t.size) (h32 : t.size < 2 ^ 32) :
-    writeCodeFast base D off t s l c = writeCode base.toNat (depths L) O t s.toNat l.toNat c.toNat := by
-  have hl15 : l.toNat ≤ 15 := hC.1 _ (List.mem_of_getElem? hs)
-  have hclt : c.toNat < 2 ^ l.toNat := code_lt_two_pow (Nat.le_of_eq hC.2) hs h0 hl15 hc
-  have hrv := revFast_toNat hl15 hclt
-  have hrvlt : revBits l.toNat c.toNat < 2 ^ l.toNat := revBits_lt _ _
-  have hp15 : 2 ^ l.toNat ≤ 2 ^ 15 := Nat.pow_le_pow_right (by decide) hl15
-  have hp : (2 : Nat) ^ 15 = 32768 := rfl
-  have hin := fun k hk => written_in (off := O) hC hO (base := base.toNat) (t := t) hs h0 hc hsize (k := k) hk
-  unfold writeCodeFast writeCode
-  dsimp only
-  by_cases hl : l.toNat ≤ 8
-  · rw [ite_eq_left (UInt64.le_iff_toNat_le.mpr hl), ite_eq_left hl]
-    simp only [hl, ↓reduceIte] at hin
-    have h8 : (8 - l).toNat = 8 - l.toNat := u64_sub' (by rw [show (8 : UInt64).toNat = 8 from rfl]; exact hl)
-    have hs1 := one_shl (d := l) (by omega)
-    have hs2 := one_shl (d := 8 - l) (by omega)
-    have hpos : (base + revFast l c).toNat = base.toNat + revBits l.toNat c.toNat := by
-      have := hin 0 (Nat.two_pow_pos _)
-      rw [u64_add' (by rw [hrv]; omega), hrv]
-    rw [fillFrom_eq h32 (by rw [hs2, h8]; exact Nat.two_pow_pos _) (by
-      intro k hk
-      rw [hs2, h8] at hk
-      rw [hpos, hs1]
-      exact hin k hk), hs1, hs2, h8, hpos]
-  · have h8' : ¬ l ≤ 8 := fun h => hl (UInt64.le_iff_toNat_le.mp h)
-    rw [ite_eq_right h8', ite_eq_right hl]
-    simp only [hl, ↓reduceIte] at hin
-    have hr := rootIdx hl15 hclt
-    have hrlt := rootOf_lt l.toNat c.toNat
-    have hl8 : (l - 8).toNat = l.toNat - 8 := u64_sub' (by rw [show (8 : UInt64).toNat = 8 from rfl]; omega)
-    have hd : (getU D (revFast l c &&& 255).toUSize).toUInt64.toNat = (depths L).getD (rootOf l.toNat c.toNat) 0 := by
-      rw [UInt8.toNat_toUInt64, getU_toNat, hr, hD.2.2 _ hrlt]
-    have hdeep : l.toNat - 8 ≤ (depths L).getD (rootOf l.toNat c.toNat) 0 :=
-      (depths_spec hC.1).2.2.2 s.toNat l.toNat c.toNat ⟨hs, by omega, hc⟩
-    have hd7 := (depths_spec hC.1).2.1 (rootOf l.toNat c.toNat)
-    have hdsub : ((getU D (revFast l c &&& 255).toUSize).toUInt64 - (l - 8)).toNat =
-        (depths L).getD (rootOf l.toNat c.toNat) 0 - (l.toNat - 8) := by
-      rw [u64_sub' (by rw [hd, hl8]; exact hdeep), hd, hl8]
-    have hs1 := one_shl (d := l - 8) (by omega)
-    have hs2 := one_shl (d := (getU D (revFast l c &&& 255).toUSize).toUInt64 - (l - 8)) (by omega)
-    have hoffv : (u16Get off (revFast l c &&& 255).toUSize).toNat = O.getD (rootOf l.toNat c.toNat) 0 := by
-      rw [u16Get_toNat _ (by omega), hr, hoff _ hrlt, hO _ hrlt]
-    have hstart := hin 0 (Nat.two_pow_pos _)
-    have hpos : (base + 256 + u16Get off (revFast l c &&& 255).toUSize + (revFast l c >>> (8 : UInt64))).toNat =
-        base.toNat + 256 + O.getD (rootOf l.toNat c.toNat) 0 + revBits l.toNat c.toNat / 256 := by
-      rw [Nat.zero_mul] at hstart
-      have hsh : (revFast l c >>> (8 : UInt64)).toNat = revBits l.toNat c.toNat / 256 := by
-        rw [u64_shr (by decide), hrv]
+/-- The slot of a long code word that opens its root's sub-table is in the grown array. -/
+private theorem long_open {t : ByteArray} {base l c : Nat} {rv rp e : UInt64} (h : LongOk t base l c rv rp e) {lU : UInt64}
+    (hl : lU.toNat = l) :
+    ∀ k, k < (1 : UInt64).toNat →
+      2 * (((t.size.toUInt64 >>> 1) + (rv >>> 8)).toNat + k * (1 <<< (lU - 8)).toNat) + 1 <
+        (zeroExtend t (2 <<< (lU - 8)).toNat).size := by
+  have h32 := h.ok.h32
+  have hl8 := h.long
+  have hlen := h.ok.len
+  have hrv := long_rev h
+  have hs : (2 <<< (lU - 8)).toNat = 2 * 2 ^ (l - 8) := by
+    rw [two_shl (by rw [long_l h hl]; omega), long_l h hl]
+  have hhalf : (t.size.toUInt64 >>> 1).toNat = t.size / 2 := by
+    rw [u64_shr (by decide), Nat.toUInt64_eq, u64_lit (by omega)]
+    rfl
+  have hrv8 : (rv >>> 8).toNat = rv.toNat / 256 := by
+    rw [u64_shr (by decide)]
+    rfl
+  have : 2 ^ (l - 8) ≤ 2 ^ 7 := Nat.pow_le_pow_right (by decide) (by omega)
+  intro k hk
+  have hk0 : k = 0 := by
+    have : k < 1 := hk
+    omega
+  subst hk0
+  rw [size_zeroExtend, hs, u64_add' (by rw [hhalf, hrv8]; omega), hhalf, hrv8]
+  omega
+
+/-- Opening a sub-table grows the array by at most 256 bytes. -/
+private theorem long_size {t : ByteArray} {base l c : Nat} {rv rp e : UInt64} (h : LongOk t base l c rv rp e)
+    {lU : UInt64} (hl : lU.toNat = l) : (zeroExtend t (2 <<< (lU - 8)).toNat).size < 2 ^ 32 := by
+  have h32 := h.ok.h32
+  have hl8 := h.long
+  have hlen := h.ok.len
+  have : 2 ^ (l - 8) ≤ 2 ^ 7 := Nat.pow_le_pow_right (by decide) (by omega)
+  rw [size_zeroExtend, two_shl (by rw [long_l h hl]; omega), long_l h hl]
+  omega
+
+/-- Writes a long code word's slots, given its root slot's number `e`: opening the root's sub-table at the end of the
+array if it has none. -/
+@[inline] def longFast (baseU : UInt64) (t : ByteArray) (s lU : UInt64) (rv rp e : UInt64) {base l c : Nat}
+    (h : LongOk t base l c rv rp e) (hl : lU.toNat = l) (hb : baseU.toNat = base) : ByteArray :=
+  if hz : e &&& 15 = 0 then
+    let half := t.size.toUInt64 >>> 1
+    let t1 := zeroExtend t (2 <<< (lU - 8)).toNat
+    fillRun (lU + (s <<< 4)) (1 <<< (lU - 8))
+      (putSlot t1 rp (lU + ((half - baseU) <<< 4)) (by
+        rw [size_zeroExtend]
+        have := long_root h
+        omega) (long_size h hl))
+      (half + (rv >>> 8)) 1
+      (by rw [size_putSlot]; exact long_size h hl)
+      (by
+        intro k hk
+        rw [size_putSlot]
+        exact long_open h hl k hk)
+  else
+    fillRun (lU + (s <<< 4)) (1 <<< (lU - 8)) t (baseU + (e >>> 4) + (rv >>> 8)) (1 <<< ((e &&& 15) - lU))
+      (by have := h.ok.h32; omega) (long_sub h hz hl hb)
+
+/-- The slots of a short code word are root slots. -/
+private theorem short_in {t : ByteArray} {base l c : Nat} (h : BuildOk t base l c) (hl8 : l ≤ 8) {lU cU baseU : UInt64}
+    (hl : lU.toNat = l) (hc : cU.toNat = c) (hb : baseU.toNat = base) :
+    ∀ k, k < (1 <<< (8 - lU)).toNat → 2 * ((baseU + revFast lU cU).toNat + k * (1 <<< lU).toNat) + 1 < t.size := by
+  have h32 := h.h32
+  have hroot := h.root
+  have hlen := h.len
+  have hrv : (revFast lU cU).toNat = revBits l c := by
+    rw [revFast_toNat (by omega) (by rw [hl, hc]; exact h.code), hl, hc]
+  have h8 : (8 - lU).toNat = 8 - l := by
+    rw [u64_sub' (by rw [hl, show (8 : UInt64).toNat = 8 from rfl]; omega), hl]
+    rfl
+  have hs1 : (1 <<< (8 - lU)).toNat = 2 ^ (8 - l) := by
+    rw [one_shl (by rw [h8]; omega), h8]
+  have hs2 : (1 <<< lU).toNat = 2 ^ l := by
+    rw [one_shl (by omega), hl]
+  have hst : revBits l c < 2 ^ l := revBits_lt l c
+  intro k hk
+  rw [hs1] at hk
+  rw [u64_add' (by rw [hb, hrv]; have := revBits_lt l c; have : 2 ^ l ≤ 2 ^ 15 := Nat.pow_le_pow_right (by decide) hlen.2; omega),
+    hb, hrv, hs2]
+  have := run_lt (l := l) (W := 8) hl8 hst (k := k) hk
+  omega
+
+/-- Writes a code word's slots, longest code words first. -/
+@[inline] def stepFast (baseU : UInt64) (t : ByteArray) (s lU cU : UInt64) {base l c : Nat} (h : BuildOk t base l c)
+    (hl : lU.toNat = l) (hc : cU.toNat = c) (hb : baseU.toNat = base) : ByteArray :=
+  let rv := revFast lU cU
+  if hl8 : lU ≤ 8 then
+    fillRun (lU + (s <<< 4)) (1 <<< lU) t (baseU + rv) (1 <<< (8 - lU)) (by have := h.h32; omega)
+      (short_in h (by rw [← hl]; exact UInt64.le_iff_toNat_le.mp hl8) hl hc hb)
+  else
+    let rp := baseU + (rv &&& 255)
+    have hlong : LongOk t base l c rv rp (getSlot t rp (by
+        have hrv : rv.toNat = revBits l c := by
+          rw [revFast_toNat (by have := h.len; omega) (by rw [hl, hc]; exact h.code), hl, hc]
+        have hrp : rp.toNat = base + rootOf l c := by
+          show (baseU + (rv &&& 255)).toNat = _
+          rw [u64_add' (by rw [and255, hb]; have := h.h32; have := h.root; omega), and255, hb, hrv]
+          rfl
+        have := h.root
+        have := rootOf_lt l c
+        rw [hrp]
+        omega) (by have := h.h32; omega)) := by
+      have hrv : rv.toNat = revBits l c := by
+        rw [revFast_toNat (by have := h.len; omega) (by rw [hl, hc]; exact h.code), hl, hc]
+      have hrp : rp.toNat = base + rootOf l c := by
+        show (baseU + (rv &&& 255)).toNat = _
+        rw [u64_add' (by rw [and255, hb]; have := h.h32; have := h.root; omega), and255, hb, hrv]
         rfl
-      have h256 : (base + 256).toNat = base.toNat + 256 := u64_add' (by rw [show (256 : UInt64).toNat = 256 from rfl]; omega)
-      have hmid : (base + 256 + u16Get off (revFast l c &&& 255).toUSize).toNat =
-          base.toNat + 256 + O.getD (rootOf l.toNat c.toNat) 0 := by
-        rw [u64_add' (by rw [h256, hoffv]; omega), h256, hoffv]
-      rw [u64_add' (by rw [hmid, hsh]; omega), hmid, hsh]
-    rw [fillFrom_eq h32 (by rw [hs2, hdsub]; exact Nat.two_pow_pos _) (by
-      intro k hk
-      rw [hs2, hdsub] at hk
-      rw [hpos, hs1, hl8]
-      exact hin k hk), hs1, hs2, hdsub, hl8, hpos]
+      refine ⟨h, by rw [← hl]; exact Nat.lt_of_not_le fun e => hl8 (UInt64.le_iff_toNat_le.mpr e), hrv, hrp, ?_⟩
+      rw [getSlot_toNat, hrp]
+    longFast baseU t s lU rv rp _ hlong hl hb
 
-/-- Writes each root slot with a sub-table, from `r`. -/
-def rootsFast (base : UInt64) (D off : ByteArray) (n r : UInt64) (t : ByteArray) : ByteArray :=
-  if _hn : n = 0 then t
-  else
-    let d := (getU D r.toUSize).toUInt64
-    rootsFast base D off (n - 1) (r + 1)
-      (if d = 0 then t else fillFrom (8 + d) (u16Get off r.toUSize) 1 1 t (base + r))
-termination_by n.toNat
-decreasing_by
-  all_goals
-    have hne : n.toNat ≠ 0 := fun e => _hn (UInt64.toNat_inj.mp (by rw [e]; rfl))
-    have h1 : (n - 1).toNat = n.toNat - 1 := u64_sub' (by rw [show (1 : UInt64).toNat = 1 from rfl]; omega)
+private theorem writeRange_congr' {bits val step step' count count' pos pos' : Nat} {t t' : ByteArray}
+    (h1 : step = step') (h2 : count = count') (h3 : t = t') (h4 : pos = pos') :
+    writeRange bits val step count t pos = writeRange bits val step' count' t' pos' := by
+  subst h1 h2 h3 h4
+  rfl
+
+/-- A slot's number for a bit count `l` and symbol `s`. -/
+private theorem slot_num {lU s : UInt64} {l : Nat} (hl : lU.toNat = l) (hl15 : l ≤ 15) (hs : s.toNat < 4096) :
+    (lU + (s <<< 4)).toNat = l + 16 * s.toNat := by
+  have h4 : (s <<< 4).toNat = 16 * s.toNat := by
+    rw [u64_shl (by decide) (by rw [show (4 : UInt64).toNat = 4 from rfl]; omega), show (4 : UInt64).toNat = 4 from rfl]
+    omega
+  rw [u64_add' (by rw [hl, h4]; omega), hl, h4]
+
+/-- `longFast` writes what `downStep` does for a long code word. -/
+theorem longFast_eq {baseU : UInt64} {t : ByteArray} {s lU rv rp e : UInt64} {base l c : Nat}
+    (h : LongOk t base l c rv rp e) (hl : lU.toNat = l) (hb : baseU.toNat = base) (hs : s.toNat < 4096) :
+    longFast baseU t s lU rv rp e h hl hb =
+      if (slotAt t (base + rootOf l c)).1 = 0 then
+        writeRange l s.toNat (2 ^ (l - 8)) 1 (openSub base t (rootOf l c) l) (t.size / 2 + revBits l c / 256)
+      else
+        writeRange l s.toNat (2 ^ (l - 8)) (2 ^ ((slotAt t (base + rootOf l c)).1 - l)) t
+          (base + (slotAt t (base + rootOf l c)).2 + revBits l c / 256) := by
+  have h32 := h.ok.h32
+  have hroot := h.ok.root
+  have hlen := h.ok.len
+  have hl8 := h.long
+  have hv := slot_num hl hlen.2 hs
+  have he1 : (e &&& 15).toNat = (slotAt t (base + rootOf l c)).1 := by
+    rw [and15, h.e]
+    rfl
+  have he2 : (e >>> 4).toNat = (slotAt t (base + rootOf l c)).2 := by
+    rw [u64_shr (by decide), h.e]
+    rfl
+  have hs2 : (1 <<< (lU - 8)).toNat = 2 ^ (l - 8) := by
+    rw [one_shl (by rw [long_l h hl]; omega), long_l h hl]
+  have hrv8 : (rv >>> 8).toNat = revBits l c / 256 := by
+    rw [u64_shr (by decide), h.rv]
+    rfl
+  have hp7 : 2 ^ (l - 8) ≤ 2 ^ 7 := Nat.pow_le_pow_right (by decide) (by omega)
+  have hrlt : revBits l c / 256 < 2 ^ (l - 8) := by
+    have := long_rev h
+    rw [h.rv] at this
+    exact this
+  unfold longFast
+  by_cases hz : e &&& 15 = 0
+  · have hz' : (slotAt t (base + rootOf l c)).1 = 0 := by
+      rw [← he1, hz]
+      rfl
+    rw [dite_eq_left hz, ite_eq_left hz']
+    dsimp only
+    have hhalf : (t.size.toUInt64 >>> 1).toNat = t.size / 2 := by
+      rw [u64_shr (by decide), Nat.toUInt64_eq, u64_lit (by omega)]
+      rfl
+    have hoff : (lU + ((t.size.toUInt64 >>> 1) - baseU) <<< 4).toNat = l + 16 * (t.size / 2 - base) := by
+      have hsub : ((t.size.toUInt64 >>> 1) - baseU).toNat = t.size / 2 - base := by
+        rw [u64_sub' (by rw [hhalf, hb]; omega), hhalf, hb]
+      have h4 : (((t.size.toUInt64 >>> 1) - baseU) <<< 4).toNat = 16 * (t.size / 2 - base) := by
+        rw [u64_shl (by decide) (by rw [hsub, show (4 : UInt64).toNat = 4 from rfl]; omega), hsub,
+          show (4 : UInt64).toNat = 4 from rfl]
+        omega
+      rw [u64_add' (by rw [hl, h4]; omega), hl, h4]
+    rw [fillRun_eq hv _ 1 _ _ _ _ _ rfl, putSlot_eq hoff]
+    unfold openSub
+    refine writeRange_congr' hs2 rfl ?_ ?_
+    · rw [zeroExtend_zeros, two_shl (by rw [long_l h hl]; omega), long_l h hl, h.rp]
+    · rw [u64_add' (by rw [hhalf, hrv8]; omega), hhalf, hrv8]
+  · have hz' : (slotAt t (base + rootOf l c)).1 ≠ 0 := by
+      rw [← he1]
+      intro e0
+      exact hz (UInt64.toNat_inj.mp (by rw [e0]; rfl))
+    rw [dite_eq_right hz, ite_eq_right hz']
+    obtain ⟨hge, hin⟩ := h.ok.sub hl8 hz'
+    have hE15 : (slotAt t (base + rootOf l c)).1 < 16 := by
+      rw [← he1, and15]
+      omega
+    have hsub : ((e &&& 15) - lU).toNat = (slotAt t (base + rootOf l c)).1 - l := by
+      rw [u64_sub' (by rw [he1, hl]; exact hge), he1, hl]
+    have hs1 : (1 <<< ((e &&& 15) - lU)).toNat = 2 ^ ((slotAt t (base + rootOf l c)).1 - l) := by
+      rw [one_shl (by rw [hsub]; omega), hsub]
+    have := Nat.two_pow_pos ((slotAt t (base + rootOf l c)).1 - 8)
+    rw [fillRun_eq hv _ _ _ _ _ _ _ hs1]
+    refine writeRange_congr' hs2 rfl rfl ?_
+    rw [u64_add' (by rw [u64_add' (by rw [hb, he2]; omega), hb, he2, hrv8]; omega), u64_add' (by rw [hb, he2]; omega), hb, he2,
+      hrv8]
+
+/-- `stepFast` writes what `downStep` does. -/
+theorem stepFast_eq {baseU : UInt64} {t : ByteArray} {s lU cU : UInt64} {base l c : Nat} (h : BuildOk t base l c)
+    (hl : lU.toNat = l) (hc : cU.toNat = c) (hb : baseU.toNat = base) (hs : s.toNat < 4096) :
+    stepFast baseU t s lU cU h hl hc hb = downStep base t s.toNat l c := by
+  have hlen := h.len
+  have h32 := h.h32
+  have hroot := h.root
+  have hv := slot_num hl hlen.2 hs
+  have hrv : (revFast lU cU).toNat = revBits l c := by
+    rw [revFast_toNat (by omega) (by rw [hl, hc]; exact h.code), hl, hc]
+  unfold stepFast downStep
+  by_cases hl8 : l ≤ 8
+  · have hl8U : lU ≤ 8 := UInt64.le_iff_toNat_le.mpr (by rw [hl]; exact hl8)
+    rw [dite_eq_left hl8U, ite_eq_left hl8]
+    have h8 : (8 - lU).toNat = 8 - l := by
+      rw [u64_sub' (by rw [hl, show (8 : UInt64).toNat = 8 from rfl]; omega), hl]
+      rfl
+    have hs1 : (1 <<< (8 - lU)).toNat = 2 ^ (8 - l) := by
+      rw [one_shl (by rw [h8]; omega), h8]
+    have hs2 : (1 <<< lU).toNat = 2 ^ l := by
+      rw [one_shl (by omega), hl]
+    have : 2 ^ l ≤ 2 ^ 8 := Nat.pow_le_pow_right (by decide) hl8
+    have := revBits_lt l c
+    rw [fillRun_eq hv _ _ _ _ _ _ _ hs1]
+    refine writeRange_congr' hs2 rfl rfl ?_
+    rw [u64_add' (by rw [hb, hrv]; omega), hb, hrv]
+  · have hl8U : ¬ lU ≤ 8 := fun e => hl8 (by rw [← hl]; exact UInt64.le_iff_toNat_le.mp e)
+    rw [dite_eq_right hl8U, ite_eq_right hl8]
+    dsimp only
+    rw [longFast_eq _ hl hb hs]
+
+/-- A step's needs hold while a table is built: the root slot of a long code word whose sub-table is open has it as
+deep as the code word, in the array. -/
+theorem DownInv.stepOk {lens : List Nat} (hC : Complete (.canonical lens)) {t0 t : ByteArray} {base : Nat}
+    {done ops : List Nat} {o : Nat → Nat} (h : DownInv lens t0 base done t ops o) (hlen : lens.length ≤ 704)
+    (hbase : 2 * base + 4096 < 2 ^ 32) {s l c : Nat} (hs : lens[s]? = some l) (h0 : l ≠ 0) (hc : code lens s = some c) :
+    BuildOk t base l c := by
+  have hl15 : l ≤ 15 := hC.1 l (List.mem_of_getElem? hs)
+  have hsize := h.size
+  have h1 := opSum_le ops (depths lens) 256
+  have h2 := offSum_le hC
+  have h3 := longCount_le lens
+  refine ⟨by omega, by omega, ⟨by omega, hl15⟩, code_lt_two_pow (Nat.le_of_eq hC.2) hs h0 hl15 hc, ?_⟩
+  · intro hl8 hz
+    have hdge := (depths_spec hC.1).2.2.2 s l c ⟨hs, hl8, hc⟩
+    have hm : rootOf l c ∈ ops := Classical.byContradiction fun hn => hz (h.empty _ (rootOf_lt l c) hn (by omega))
+    obtain ⟨_, _, h3', h4⟩ := h.opsOk _ hm
+    rw [h3']
+    dsimp only
+    refine ⟨by omega, ?_⟩
+    rw [show 8 + (depths lens).getD (rootOf l c) 0 - 8 = (depths lens).getD (rootOf l c) 0 by omega]
     omega
 
-theorem rootsFast_eq {A O : Array Nat} {D off : ByteArray} (hD : ByteMatch A D) (hA : ∀ r, A.getD r 0 ≤ 7)
-    (hO : ∀ r, r < 256 → u16At off r = O.getD r 0) {base : UInt64} (hb : base.toNat + 256 < 2 ^ 32) :
-    ∀ (N : Nat) (n r : UInt64) (t : ByteArray), n.toNat = N → r.toNat + N ≤ 256 → 4 * (base.toNat + 256) ≤ t.size →
-    t.size < 2 ^ 32 → rootsFast base D off n r t = writeRoots base.toNat A O N r.toNat t := by
+/-! ### The symbols of each length -/
+
+/-- `next` links `v` to the symbols `ss`: each symbol `s` as `s + 1`, then `next`'s 16-bit value at `s` links the rest,
+and 0 ends them. -/
+def ChainIs (next : ByteArray) : Nat → List Nat → Prop
+  | v, [] => v = 0
+  | v, s :: ss => v = s + 1 ∧ 2 * s + 1 < next.size ∧ ChainIs next (u16At next s) ss
+
+/-- `head`'s 16-bit value at each length from 1 to 15 links that length's symbols, in decreasing order. -/
+def ListsIs (head next : ByteArray) (lens : List Nat) : Prop :=
+  32 ≤ head.size ∧ ∀ l, 1 ≤ l → l ≤ 15 → ChainIs next (u16At head l) (symsOf lens l).reverse
+
+theorem slotNum_eq_u16At (t : ByteArray) (i : Nat) : slotNum t i = u16At t i := rfl
+
+/-- The symbols of a length increase. -/
+theorem symsOf_lt {lens : List Nat} {l i j : Nat} (hij : i < j) (hj : j < (symsOf lens l).length) :
+    (symsOf lens l)[i] < (symsOf lens l)[j] :=
+  List.pairwise_iff_getElem.mp (List.pairwise_lt_range.filter _ : (symsOf lens l).Pairwise (· < ·)) i j
+    (Nat.lt_trans hij hj) hj hij
+
+/-- Where the builder's walk is, for a code with lengths `lens` whose table started from `t0`: at length `l`, with the
+symbols of that length from the `k`th last on still to write, linked from `v`, and `e` the code above the next one's. -/
+structure WalkAt (lens : List Nat) (t0 head next : ByteArray) (base : Nat) (t : ByteArray) (l v e k : Nat) : Prop where
+  complete : Complete (.canonical lens)
+  small : lens.length ≤ 704
+  lists : ListsIs head next lens
+  hsz : head.size < 2 ^ 32
+  nsz : next.size < 2 ^ 32
+  room : 2 * base + 4096 < 2 ^ 32
+  lrange : 1 ≤ l ∧ l ≤ 15
+  kle : k ≤ (symsOf lens l).length
+  chain : ChainIs next v ((symsOf lens l).reverse.drop k)
+  ecode : e = nextCode lens l + ((symsOf lens l).length - k)
+  inv : ∃ done ops o, DownInv lens t0 base done t ops o ∧ (∀ s' l', lens[s']? = some l' → l < l' → s' ∈ done) ∧
+    ∀ i (hi : i < (symsOf lens l).length), (symsOf lens l).length - k ≤ i → (symsOf lens l)[i] ∈ done
+
+/-- The walk's next symbol, when the link isn't 0. -/
+theorem WalkAt.next_sym {lens : List Nat} {t0 head next t : ByteArray} {base l v e k : Nat}
+    (h : WalkAt lens t0 head next base t l v e k) (hv : v ≠ 0) :
+    ∃ (hk : k < (symsOf lens l).length),
+      (symsOf lens l).reverse.drop k = (symsOf lens l)[(symsOf lens l).length - 1 - k] :: (symsOf lens l).reverse.drop (k + 1) ∧
+      v = (symsOf lens l)[(symsOf lens l).length - 1 - k] + 1 ∧
+      2 * (symsOf lens l)[(symsOf lens l).length - 1 - k] + 1 < next.size ∧
+      ChainIs next (u16At next (symsOf lens l)[(symsOf lens l).length - 1 - k]) ((symsOf lens l).reverse.drop (k + 1)) := by
+  have hk : k < (symsOf lens l).length := by
+    refine Nat.lt_of_not_le fun hle => hv ?_
+    have hd : (symsOf lens l).reverse.drop k = [] := List.drop_eq_nil_of_le (by rw [List.length_reverse]; exact hle)
+    have := h.chain
+    rw [hd] at this
+    exact this
+  have hk' : k < (symsOf lens l).reverse.length := by rw [List.length_reverse]; exact hk
+  have hd : (symsOf lens l).reverse.drop k =
+      (symsOf lens l)[(symsOf lens l).length - 1 - k] :: (symsOf lens l).reverse.drop (k + 1) := by
+    rw [List.drop_eq_getElem_cons hk', List.getElem_reverse]
+  have hc := h.chain
+  rw [hd] at hc
+  exact ⟨hk, hd, hc.1, hc.2.1, hc.2.2⟩
+
+/-- A link is a symbol plus one, below 705. -/
+theorem chain_le {next : ByteArray} {lens : List Nat} {l : Nat} (hlen : lens.length ≤ 704) :
+    ∀ (v : Nat) (ss : List Nat), (∀ s ∈ ss, s ∈ symsOf lens l) → ChainIs next v ss → v ≤ 704
+  | v, [], _, hc => by
+    have : v = 0 := hc
+    omega
+  | v, s :: ss, hm, hc => by
+    have hs := (List.getElem?_eq_some_iff.mp (mem_symsOf.mp (hm s List.mem_cons_self))).1
+    have : v = s + 1 := hc.1
+    omega
+
+theorem mem_drop_rev {lens : List Nat} {l k s : Nat} (h : s ∈ (symsOf lens l).reverse.drop k) :
+    s ∈ symsOf lens l :=
+  List.mem_reverse.mp (List.mem_of_mem_drop h)
+
+/-- The walk's next link is below its link. -/
+theorem WalkAt.link_lt {lens : List Nat} {t0 head next t : ByteArray} {base l v e k : Nat}
+    (h : WalkAt lens t0 head next base t l v e k) (hv : v ≠ 0) :
+    ∃ s, v = s + 1 ∧ 2 * s + 1 < next.size ∧ u16At next s < v := by
+  obtain ⟨hk, hd, hvs, hin, hch⟩ := h.next_sym hv
+  refine ⟨_, hvs, hin, ?_⟩
+  by_cases hk1 : k + 1 < (symsOf lens l).length
+  · have hk1' : k + 1 < (symsOf lens l).reverse.length := by rw [List.length_reverse]; exact hk1
+    rw [List.drop_eq_getElem_cons hk1', List.getElem_reverse] at hch
+    have hlt := symsOf_lt (lens := lens) (l := l) (i := (symsOf lens l).length - 1 - (k + 1))
+      (j := (symsOf lens l).length - 1 - k) (by omega) (by omega)
+    rw [hch.1, hvs]
+    omega
+  · have hd1 : (symsOf lens l).reverse.drop (k + 1) = [] :=
+      List.drop_eq_nil_of_le (by rw [List.length_reverse]; omega)
+    rw [hd1] at hch
+    have : u16At next (symsOf lens l)[(symsOf lens l).length - 1 - k] = 0 := hch
+    omega
+
+/-- The walk's step needs hold. -/
+theorem WalkAt.stepOk {lens : List Nat} {t0 head next t : ByteArray} {base l v e k : Nat}
+    (h : WalkAt lens t0 head next base t l v e k) (hv : v ≠ 0) : BuildOk t base l (e - 1) := by
+  obtain ⟨hk, _, _, _, _⟩ := h.next_sym hv
+  obtain ⟨done, ops, o, hinv, _, _⟩ := h.inv
+  obtain ⟨hg, hc⟩ := code_symsOf (lens := lens) (l := l) (k := (symsOf lens l).length - 1 - k) (by omega)
+    (by have := h.lrange; omega)
+  have he : e - 1 = nextCode lens l + ((symsOf lens l).length - 1 - k) := by
+    have := h.ecode
+    omega
+  rw [he]
+  exact hinv.stepOk h.complete h.small h.room hg (by have := h.lrange; omega) hc
+
+/-- A walk step keeps the walk's place. -/
+theorem WalkAt.step {lens : List Nat} {t0 head next t : ByteArray} {base l v e k : Nat}
+    (h : WalkAt lens t0 head next base t l v e k) (hv : v ≠ 0) :
+    WalkAt lens t0 head next base (downStep base t (v - 1) l (e - 1)) l (u16At next (v - 1)) (e - 1) (k + 1) := by
+  obtain ⟨hk, _, hvs, _, hch⟩ := h.next_sym hv
+  obtain ⟨done, ops, o, hinv, hlong, hcov⟩ := h.inv
+  have hl0 : l ≠ 0 := by have := h.lrange; omega
+  obtain ⟨hg, hc⟩ := code_symsOf (lens := lens) (l := l) (k := (symsOf lens l).length - 1 - k) (by omega) hl0
+  have he : e - 1 = nextCode lens l + ((symsOf lens l).length - 1 - k) := by
+    have := h.ecode
+    omega
+  have hs : v - 1 = (symsOf lens l)[(symsOf lens l).length - 1 - k] := by omega
+  obtain ⟨ops', o', hinv'⟩ := hinv.step h.complete h.small hg hl0 hc hlong
+  refine ⟨h.complete, h.small, h.lists, h.hsz, h.nsz, h.room, h.lrange, hk, by rw [hs]; exact hch,
+    by have := h.ecode; omega,
+    ⟨_, ops', o', by rw [hs, he]; exact hinv', fun s' l' hg' hl' => List.mem_cons_of_mem _ (hlong s' l' hg' hl'), ?_⟩⟩
+  intro i hi hle
+  by_cases hei : i = (symsOf lens l).length - 1 - k
+  · subst hei
+    exact List.mem_cons_self
+  · exact List.mem_cons_of_mem _ (hcov i hi (by omega))
+
+/-- At the end of a length's links, the walk goes on to the next shorter length. -/
+theorem WalkAt.down {lens : List Nat} {t0 head next t : ByteArray} {base l v e k : Nat}
+    (h : WalkAt lens t0 head next base t l v e k) (hv : v = 0) (hl : 1 < l) :
+    WalkAt lens t0 head next base t (l - 1) (u16At head (l - 1)) (e / 2) 0 := by
+  have hkk : k = (symsOf lens l).length := by
+    refine Nat.le_antisymm h.kle (Nat.le_of_not_lt fun hlt => ?_)
+    have hk' : k < (symsOf lens l).reverse.length := by rw [List.length_reverse]; exact hlt
+    have := h.chain
+    rw [List.drop_eq_getElem_cons hk'] at this
+    have : v = _ := this.1
+    omega
+  obtain ⟨done, ops, o, hinv, hlong, hcov⟩ := h.inv
+  have hl1 : l - 1 + 1 = l := by omega
+  have hlen := length_symsOf (lens := lens) (l := l) (by omega)
+  have hlen' := length_symsOf (lens := lens) (l := l - 1) (by omega)
+  refine ⟨h.complete, h.small, h.lists, h.hsz, h.nsz, h.room, ⟨by omega, by have := h.lrange; omega⟩, Nat.zero_le _,
+    ?_, ?_, ⟨done, ops, o, hinv, ?_, fun i hi hle => absurd hle (by omega)⟩⟩
+  · rw [List.drop_zero]
+    exact h.lists.2 (l - 1) (by omega) (by have := h.lrange; omega)
+  · have he := h.ecode
+    rw [hkk, Nat.sub_self, Nat.add_zero] at he
+    rw [he, ← hl1, nextCode_half, hl1, Nat.sub_zero, hlen']
+  · intro s' l' hg' hl'
+    by_cases he : l' = l
+    · subst he
+      obtain ⟨i, hi, e'⟩ := List.getElem_of_mem (mem_symsOf.mpr hg')
+      exact e' ▸ hcov i hi (by omega)
+    · exact hlong s' l' hg' (by omega)
+
+/-! ### The walk in fixed-width values -/
+
+section Walk
+
+variable {head next t : ByteArray} {baseU lU v e : UInt64}
+
+private theorem v_ne {v : UInt64} (hv : ¬ v = 0) : v.toNat ≠ 0 := fun e => hv (UInt64.toNat_inj.mp (by rw [e]; rfl))
+
+private theorem sub1 {v : UInt64} (hv : v.toNat ≠ 0) : (v - 1).toNat = v.toNat - 1 :=
+  u64_sub' (by rw [show (1 : UInt64).toNat = 1 from rfl]; omega)
+
+private theorem lU_gt (hl : ¬ lU ≤ 1) : 1 < lU.toNat :=
+  Nat.lt_of_not_le fun e => hl (UInt64.le_iff_toNat_le.mpr e)
+
+theorem walk_hsz (h : ∃ lens t0 k, WalkAt lens t0 head next baseU.toNat t lU.toNat v.toNat e.toNat k) :
+    head.size < 2 ^ 32 := by
+  obtain ⟨_, _, _, hw⟩ := h
+  exact hw.hsz
+
+theorem walk_nsz (h : ∃ lens t0 k, WalkAt lens t0 head next baseU.toNat t lU.toNat v.toNat e.toNat k) :
+    next.size < 2 ^ 32 := by
+  obtain ⟨_, _, _, hw⟩ := h
+  exact hw.nsz
+
+theorem walk_head (h : ∃ lens t0 k, WalkAt lens t0 head next baseU.toNat t lU.toNat v.toNat e.toNat k)
+    (hl : ¬ lU ≤ 1) : 2 * (lU - 1).toNat + 1 < head.size := by
+  obtain ⟨_, _, _, hw⟩ := h
+  have := hw.lrange
+  have := hw.lists.1
+  have := lU_gt hl
+  rw [sub1 (by omega)]
+  omega
+
+theorem walk_link (h : ∃ lens t0 k, WalkAt lens t0 head next baseU.toNat t lU.toNat v.toNat e.toNat k)
+    (hv : ¬ v = 0) : 2 * (v - 1).toNat + 1 < next.size := by
+  obtain ⟨_, _, _, hw⟩ := h
+  obtain ⟨s, hs, hin, _⟩ := hw.link_lt (v_ne hv)
+  rw [sub1 (v_ne hv), hs, Nat.add_sub_cancel]
+  exact hin
+
+theorem walk_ok (h : ∃ lens t0 k, WalkAt lens t0 head next baseU.toNat t lU.toNat v.toNat e.toNat k)
+    (hv : ¬ v = 0) : BuildOk t baseU.toNat lU.toNat (e - 1).toNat := by
+  obtain ⟨_, _, _, hw⟩ := h
+  obtain ⟨hk, _⟩ := hw.next_sym (v_ne hv)
+  have he : e.toNat ≠ 0 := by
+    have := hw.ecode
+    omega
+  rw [sub1 he]
+  exact hw.stepOk (v_ne hv)
+
+theorem walk_down (h : ∃ lens t0 k, WalkAt lens t0 head next baseU.toNat t lU.toNat v.toNat e.toNat k)
+    (hv : v = 0) (hl : ¬ lU ≤ 1) :
+    ∃ lens t0 k, WalkAt lens t0 head next baseU.toNat t (lU - 1).toNat
+      (getSlot head (lU - 1) (walk_head h hl) (walk_hsz h)).toNat (e >>> 1).toNat k := by
+  obtain ⟨lens, t0, k, hw⟩ := h
+  refine ⟨lens, t0, 0, ?_⟩
+  have h1 := lU_gt hl
+  have hd := hw.down (by rw [hv]; rfl) h1
+  rw [getSlot_toNat, slotNum_eq_u16At, sub1 (by omega), u64_shr (by decide)]
+  exact hd
+
+theorem walk_next (h : ∃ lens t0 k, WalkAt lens t0 head next baseU.toNat t lU.toNat v.toNat e.toNat k)
+    (hv : ¬ v = 0) :
+    ∃ lens t0 k, WalkAt lens t0 head next baseU.toNat (stepFast baseU t (v - 1) lU (e - 1) (walk_ok h hv) rfl rfl rfl)
+      lU.toNat (getSlot next (v - 1) (walk_link h hv) (walk_nsz h)).toNat (e - 1).toNat k := by
+  obtain ⟨lens, t0, k, hw⟩ := h
+  refine ⟨lens, t0, k + 1, ?_⟩
+  have hv' := v_ne hv
+  have hle := chain_le hw.small v.toNat _ (fun s hs => mem_drop_rev hs) hw.chain
+  obtain ⟨hk, _⟩ := hw.next_sym hv'
+  have he : e.toNat ≠ 0 := by
+    have := hw.ecode
+    omega
+  rw [stepFast_eq _ rfl rfl rfl (by rw [sub1 hv']; omega), getSlot_toNat, slotNum_eq_u16At, sub1 hv', sub1 he]
+  exact hw.step hv'
+
+theorem walk_dec_down (h : ∃ lens t0 k, WalkAt lens t0 head next baseU.toNat t lU.toNat v.toNat e.toNat k)
+    (hv : v = 0) (hl : ¬ lU ≤ 1) :
+    (lU - 1).toNat * 1024 + (getSlot head (lU - 1) (walk_head h hl) (walk_hsz h)).toNat < lU.toNat * 1024 + v.toNat := by
+  have hd := walk_down h hv hl
+  obtain ⟨lens, _, _, hw⟩ := hd
+  have hle := chain_le hw.small _ _ (fun s hs => mem_drop_rev hs) hw.chain
+  have h1 := lU_gt hl
+  rw [sub1 (by omega)]
+  omega
+
+theorem walk_dec_next (h : ∃ lens t0 k, WalkAt lens t0 head next baseU.toNat t lU.toNat v.toNat e.toNat k)
+    (hv : ¬ v = 0) :
+    lU.toNat * 1024 + (getSlot next (v - 1) (walk_link h hv) (walk_nsz h)).toNat < lU.toNat * 1024 + v.toNat := by
+  obtain ⟨_, _, _, hw⟩ := h
+  obtain ⟨s, hs, _, hlt⟩ := hw.link_lt (v_ne hv)
+  rw [getSlot_toNat, slotNum_eq_u16At, sub1 (v_ne hv), hs, Nat.add_sub_cancel]
+  omega
+
+end Walk
+
+/-- Writes the code words of the symbols linked from `v` at length `lU`, then those of the shorter lengths. -/
+def walkFast (head next : ByteArray) (baseU : UInt64) (t : ByteArray) (lU v e : UInt64)
+    (h : ∃ lens t0 k, WalkAt lens t0 head next baseU.toNat t lU.toNat v.toNat e.toNat k) : ByteArray :=
+  if hv : v = 0 then
+    if hl : lU ≤ 1 then t
+    else
+      walkFast head next baseU t (lU - 1) (getSlot head (lU - 1) (walk_head h hl) (walk_hsz h)) (e >>> 1) (walk_down h hv hl)
+  else
+    walkFast head next baseU (stepFast baseU t (v - 1) lU (e - 1) (walk_ok h hv) rfl rfl rfl) lU
+      (getSlot next (v - 1) (walk_link h hv) (walk_nsz h)) (e - 1) (walk_next h hv)
+termination_by lU.toNat * 1024 + v.toNat
+decreasing_by
+  · exact walk_dec_down h hv hl
+  · exact walk_dec_next h hv
+
+/-- What is left of `walkDown` from a place in it: the symbols `rest` of length `l`, from the code above `e`, then the
+shorter lengths. -/
+def contDown (f : ByteArray → Nat → Nat → Nat → ByteArray) (lens : List Nat) (l : Nat) (rest : List Nat) (e : Nat)
+    (acc : ByteArray) : ByteArray :=
+  let r := walkSyms f l rest e acc
+  walkFrom f lens (l - 1) (r.2 / 2) r.1
+
+/-- The walk writes what is left of `walkDown` from its place. -/
+theorem walkFast_eq (head next : ByteArray) (baseU : UInt64) : ∀ (N : Nat) (t : ByteArray) (lU v e : UInt64)
+    (h : ∃ lens t0 k, WalkAt lens t0 head next baseU.toNat t lU.toNat v.toNat e.toNat k) {lens : List Nat}
+    {t0 : ByteArray} {k : Nat} (_hw : WalkAt lens t0 head next baseU.toNat t lU.toNat v.toNat e.toNat k),
+    lU.toNat * 1024 + v.toNat < N →
+    walkFast head next baseU t lU v e h =
+      contDown (downStep baseU.toNat) lens lU.toNat ((symsOf lens lU.toNat).reverse.drop k) e.toNat t := by
+  intro N
+  induction N with
+  | zero => intro _ _ _ _ _ _ _ _ _ hN; omega
+  | succ N ih =>
+    intro t lU v e h lens t0 k hw hN
+    rw [walkFast]
+    by_cases hv : v = 0
+    · rw [dite_eq_left hv]
+      have hkk : k = (symsOf lens lU.toNat).length := by
+        refine Nat.le_antisymm hw.kle (Nat.le_of_not_lt fun hlt => ?_)
+        have hk' : k < (symsOf lens lU.toNat).reverse.length := by rw [List.length_reverse]; exact hlt
+        have := hw.chain
+        rw [List.drop_eq_getElem_cons hk'] at this
+        have h0 : v.toNat = _ := this.1
+        rw [hv] at h0
+        exact absurd h0 (by simp)
+      have hd : (symsOf lens lU.toNat).reverse.drop k = [] :=
+        List.drop_eq_nil_of_le (by rw [List.length_reverse]; omega)
+      rw [hd]
+      unfold contDown
+      dsimp only [walkSyms]
+      by_cases hl : lU ≤ 1
+      · rw [dite_eq_left hl]
+        have : lU.toNat - 1 = 0 := by
+          have : lU.toNat ≤ 1 := UInt64.le_iff_toNat_le.mp hl
+          omega
+        rw [this]
+        rfl
+      · rw [dite_eq_right hl]
+        have h1 := lU_gt hl
+        have hw' : WalkAt lens t0 head next baseU.toNat t (lU - 1).toNat
+            (getSlot head (lU - 1) (walk_head h hl) (walk_hsz h)).toNat (e >>> 1).toNat 0 := by
+          rw [getSlot_toNat, slotNum_eq_u16At, sub1 (by omega), u64_shr (by decide)]
+          exact hw.down (by rw [hv]; rfl) h1
+        have hdec := walk_dec_down h hv hl
+        have hb := Nat.lt_of_lt_of_le hdec (Nat.le_of_lt_succ hN)
+        have h2 : (e >>> 1).toNat = e.toNat / 2 := by
+          rw [u64_shr (by decide)]
+          rfl
+        rw [ih _ _ _ _ _ hw' hb, List.drop_zero, sub1 (by omega), h2]
+        unfold contDown
+        obtain ⟨m, hm⟩ : ∃ m, lU.toNat - 1 = m + 1 := ⟨lU.toNat - 2, by omega⟩
+        rw [hm]
+        simp only [walkFrom, Nat.add_sub_cancel]
+    · rw [dite_eq_right hv]
+      have hv' := v_ne hv
+      obtain ⟨hk, hdk, hvs, _, _⟩ := hw.next_sym hv'
+      have hle := chain_le hw.small v.toNat _ (fun s hs => mem_drop_rev hs) hw.chain
+      have he : e.toNat ≠ 0 := by
+        have := hw.ecode
+        omega
+      have hw' : WalkAt lens t0 head next baseU.toNat (stepFast baseU t (v - 1) lU (e - 1) (walk_ok h hv) rfl rfl rfl)
+          lU.toNat (getSlot next (v - 1) (walk_link h hv) (walk_nsz h)).toNat (e - 1).toNat (k + 1) := by
+        rw [stepFast_eq _ rfl rfl rfl (by rw [sub1 hv']; omega), getSlot_toNat, slotNum_eq_u16At, sub1 hv', sub1 he]
+        exact hw.step hv'
+      have hdec := walk_dec_next h hv
+      have hb := Nat.lt_of_lt_of_le hdec (Nat.le_of_lt_succ hN)
+      have hs : v.toNat - 1 = (symsOf lens lU.toNat)[(symsOf lens lU.toNat).length - 1 - k] := by omega
+      rw [ih _ _ _ _ _ hw' hb, stepFast_eq _ rfl rfl rfl (by rw [sub1 hv']; omega), hdk]
+      unfold contDown
+      dsimp only [walkSyms]
+      rw [sub1 he, sub1 hv', hs]
+
+/-- What `buildFast` needs: a complete code over at most 704 symbols, given by the lists of its lengths' symbols, and an
+arena of whole slots with room for the table. -/
+def BuildArgs (t head next : ByteArray) (lens : List Nat) : Prop :=
+  Complete (.canonical lens) ∧ lens.length ≤ 704 ∧ ListsIs head next lens ∧ head.size < 2 ^ 32 ∧ next.size < 2 ^ 32 ∧
+    t.size % 2 = 0 ∧ t.size + 4096 < 2 ^ 32
+
+theorem half_toNat {t : ByteArray} (h : t.size + 4096 < 2 ^ 32) : (t.size.toUInt64 >>> 1).toNat = t.size / 2 := by
+  rw [u64_shr (by decide), Nat.toUInt64_eq, u64_lit (by omega)]
+  rfl
+
+theorem build_start {t head next : ByteArray} {lens : List Nat} (h : BuildArgs t head next lens) :
+    WalkAt lens (zeroExtend t 512) head next (t.size.toUInt64 >>> 1).toNat (zeroExtend t 512) 15 (u16At head 15) 32768 0 := by
+  obtain ⟨hC, hlen, hl, hh, hn, h2, h32⟩ := h
+  rw [half_toNat h32]
+  have hlen15 := length_symsOf (lens := lens) (l := 15) (by decide)
+  have htop := top_code hC
+  refine ⟨hC, hlen, hl, hh, hn, by omega, by decide, Nat.zero_le _, by rw [List.drop_zero]; exact hl.2 15 (by decide) (by decide),
+    by rw [Nat.sub_zero, hlen15]; omega, ⟨[], [], fun _ => 0, ?_, fun s' l' hg hl' => ?_, fun i hi hle => absurd hle (by omega)⟩⟩
+  · have hinit := DownInv.init (lens := lens) (t := t) (base := t.size / 2) (by omega)
+    rw [zeroExtend_zeros]
+    refine ⟨hinit.size, fun q hq => ?_, hinit.opsOk, hinit.disj, hinit.empty, hinit.roots, hinit.hits⟩
+    rfl
+  · have := hC.1 l' (List.mem_of_getElem? hg)
+    omega
+
+/-- Appends a canonical code's table to the arena, the code given by the lists of its lengths' symbols. Its slots start
+at `t.size / 2`. -/
+def buildFast (t head next : ByteArray) (h : ∃ lens, BuildArgs t head next lens) : ByteArray :=
+  walkFast head next (t.size.toUInt64 >>> 1) (zeroExtend t 512) 15
+    (getSlot head 15 (by obtain ⟨_, ha⟩ := h; have := ha.2.2.1.1; show 2 * 15 + 1 < _; omega) (by obtain ⟨_, ha⟩ := h; exact ha.2.2.2.1))
+    32768 (by
+      obtain ⟨lens, ha⟩ := h
+      refine ⟨lens, zeroExtend t 512, 0, ?_⟩
+      rw [getSlot_toNat, slotNum_eq_u16At]
+      exact build_start ha)
+
+/-- The running builder writes the bytes of `buildDown`, whose theorem says what they mean. -/
+theorem buildFast_eq {t head next : ByteArray} {lens : List Nat} (ha : BuildArgs t head next lens)
+    (h : ∃ lens, BuildArgs t head next lens) : buildFast t head next h = buildDown t lens := by
+  have hw := build_start ha
+  have h1 : 2 * (15 : UInt64).toNat + 1 < head.size := by
+    have := ha.2.2.1.1
+    show 2 * 15 + 1 < _
+    omega
+  have hw' : WalkAt lens (zeroExtend t 512) head next (t.size.toUInt64 >>> 1).toNat (zeroExtend t 512) (15 : UInt64).toNat
+      (getSlot head 15 h1 ha.2.2.2.1).toNat (32768 : UInt64).toNat 0 := by
+    rw [getSlot_toNat, slotNum_eq_u16At]
+    exact hw
+  have hle := chain_le ha.2.1 _ _ (fun s hs => mem_drop_rev hs) hw.chain
+  have hb : (15 : UInt64).toNat * 1024 + (getSlot head 15 h1 ha.2.2.2.1).toNat < 16384 := by
+    rw [getSlot_toNat, slotNum_eq_u16At]
+    show 15 * 1024 + u16At head 15 < _
+    omega
+  unfold buildFast
+  rw [walkFast_eq _ _ _ _ _ _ _ _ _ hw' hb, half_toNat ha.2.2.2.2.2.2, List.drop_zero, zeroExtend_zeros]
+  rfl
+
+/-! ### The lists from a lengths array -/
+
+/-- A chain stays when `next` changes only at a symbol not in it. -/
+theorem ChainIs.frame {next : ByteArray} {j : USize} {x : UInt64} (hj : j.toNat < 2 ^ 16) :
+    ∀ {v : Nat} {ss : List Nat}, ChainIs next v ss → (∀ s ∈ ss, s ≠ j.toNat) → ChainIs (u16Set next j x) v ss
+  | _, [], h, _ => h
+  | _, s :: ss, ⟨h1, h2, h3⟩, hn => by
+    refine ⟨h1, by rw [size_u16Set]; exact h2, ?_⟩
+    rw [u16At_set_ne hj (hn s List.mem_cons_self)]
+    exact ChainIs.frame hj h3 fun s' hs' => hn s' (List.mem_cons_of_mem _ hs')
+
+/-- Links the symbols from `i` of the `n` code lengths in `lens`, each in front of its length's list. -/
+def listsLoop (lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) (i : USize) (head next : ByteArray) :
+    ByteArray × ByteArray :=
+  if hi : i < n then
+    let l := (lens.uget i (Nat.lt_of_lt_of_le (USize.lt_iff_toNat_lt.mp hi) hn)).toUSize
+    if l = 0 then listsLoop lens n hn (i + USize.ofNat 1) head next
+    else listsLoop lens n hn (i + USize.ofNat 1) (u16Set head l (i.toUInt64 + 1)) (u16Set next i (u16Get head l))
+  else (head, next)
+termination_by n.toNat - i.toNat
+decreasing_by
+  all_goals
+    have h1 := USize.lt_iff_toNat_lt.mp hi
+    have h2 := usize_next hi
+    omega
+
+/-- The lists of each length's symbols of the `n` code lengths in `lens`. -/
+def listsOf (lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) : ByteArray × ByteArray :=
+  listsLoop lens n hn 0 (zeroBytes 32) (zeroBytes (2 * n.toNat))
+
+private theorem lens_byte_toUSize {lens : ByteArray} {i : USize} (h : i.toNat < lens.size) :
+    (lens.uget i h).toUSize.toNat = (lens.data[i.toNat]?.getD 0).toNat := by
+  rw [UInt8.toNat_toUSize, uget_toNat]
+
+theorem listsLoop_spec {lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.size} (h704 : n.toNat ≤ 704)
+    (hl : ∀ l ∈ lensOf lens n.toNat, l ≤ 15) : ∀ (N : Nat) (i : USize) (head next : ByteArray), n.toNat - i.toNat = N →
+    i.toNat ≤ n.toNat → head.size = 32 → next.size = 2 * n.toNat →
+    (∀ l, 1 ≤ l → l ≤ 15 →
+      ChainIs next (u16At head l) ((List.range i.toNat).filter (fun s => (lensOf lens n.toNat)[s]? == some l)).reverse) →
+    (listsLoop lens n hn i head next).1.size = 32 ∧ (listsLoop lens n hn i head next).2.size = 2 * n.toNat ∧
+      ListsIs (listsLoop lens n hn i head next).1 (listsLoop lens n hn i head next).2 (lensOf lens n.toNat) := by
   intro N
   induction N with
   | zero =>
-    intro n r t hn _ _ _
-    have hz : n = 0 := UInt64.toNat_inj.mp (by rw [hn]; rfl)
-    rw [rootsFast, dite_eq_left hz]
-    rfl
-  | succ N ih =>
-    intro n r t hn hr hs h32
-    have hz : n ≠ 0 := fun e => by rw [e] at hn; exact Nat.succ_ne_zero _ hn.symm
-    have hn1 : (n - 1).toNat = N := by
-      rw [u64_sub' (by rw [show (1 : UInt64).toNat = 1 from rfl]; omega), hn]
-      rfl
-    have hr1 : (r + 1).toNat = r.toNat + 1 := u64_add' (by rw [show (1 : UInt64).toNat = 1 from rfl]; omega)
-    have hus : r.toUSize.toNat = r.toNat := word_toUSize (by omega)
-    have hd : (getU D r.toUSize).toUInt64.toNat = A.getD r.toNat 0 := by
-      rw [UInt8.toNat_toUInt64, getU_toNat, hus, hD.2.2 _ (by omega)]
-    have hstep : (if (getU D r.toUSize).toUInt64 = 0 then t
-        else fillFrom (8 + (getU D r.toUSize).toUInt64) (u16Get off r.toUSize) 1 1 t (base + r)) =
-        (if A.getD r.toNat 0 = 0 then t else writeSlot t (base.toNat + r.toNat) (8 + A.getD r.toNat 0) (O.getD r.toNat 0)) := by
-      by_cases h0 : A.getD r.toNat 0 = 0
-      · have : (getU D r.toUSize).toUInt64 = 0 := UInt64.toNat_inj.mp (by rw [hd, h0]; rfl)
-        rw [ite_eq_left this, ite_eq_left h0]
-      · have : (getU D r.toUSize).toUInt64 ≠ 0 := fun e => h0 (by rw [← hd, e]; rfl)
-        rw [ite_eq_right this, ite_eq_right h0]
-        have h7 := hA r.toNat
-        have hbits : (8 + (getU D r.toUSize).toUInt64).toNat = 8 + A.getD r.toNat 0 := by
-          rw [u64_add' (by rw [hd, show (8 : UInt64).toNat = 8 from rfl]; omega), hd]
-          rfl
-        have hval : (u16Get off r.toUSize).toNat = O.getD r.toNat 0 := by
-          rw [u16Get_toNat _ (by omega), hus, hO _ (by omega)]
-        have hpos : (base + r).toNat = base.toNat + r.toNat := u64_add' (by omega)
-        rw [fillFrom_eq h32 (by decide) (by
-          intro k hk
-          have hk0 : k = 0 := by
-            have : k < 1 := hk
-            omega
-          subst hk0
-          rw [hpos]
-          omega), hbits, hval, hpos]
-        rfl
-    rw [rootsFast, dite_eq_right hz, writeRoots]
+    intro i head next hN hi hh hnx hc
+    have hin : ¬ i < n := fun h => by have := USize.lt_iff_toNat_lt.mp h; omega
+    rw [listsLoop, dite_eq_right hin]
     dsimp only
-    rw [hstep, ← hr1]
-    have hsz : (if A.getD r.toNat 0 = 0 then t
-        else writeSlot t (base.toNat + r.toNat) (8 + A.getD r.toNat 0) (O.getD r.toNat 0)).size = t.size := by
-      split
-      · rfl
-      · exact size_writeSlot ..
-    exact ih _ _ _ hn1 (by omega) (by rw [hsz]; exact hs) (by rw [hsz]; exact h32)
+    refine ⟨hh, hnx, by omega, fun l h1 h2 => ?_⟩
+    have := hc l h1 h2
+    rwa [show i.toNat = (lensOf lens n.toNat).length by rw [length_lensOf hn]; omega] at this
+  | succ N ih =>
+    intro i head next hN hi hh hnx hc
+    have hlt : i < n := USize.lt_iff_toNat_lt.mpr (by omega)
+    have hi1 := usize_next hlt
+    have hil : i.toNat < lens.size := by omega
+    have hget := lensOf_get (lens := lens) (n := n.toNat) (i := i.toNat) (by omega) hn
+    have hl15 : (lens.data[i.toNat]?.getD 0).toNat ≤ 15 := hl _ (List.mem_of_getElem? hget)
+    -- The lists below `i + 1`.
+    have hrange : ∀ l, ((List.range (i.toNat + 1)).filter (fun s => (lensOf lens n.toNat)[s]? == some l)) =
+        ((List.range i.toNat).filter (fun s => (lensOf lens n.toNat)[s]? == some l)) ++
+          (if (lens.data[i.toNat]?.getD 0).toNat = l then [i.toNat] else []) := by
+      intro l
+      rw [List.range_succ, List.filter_append]
+      congr 1
+      by_cases he : (lens.data[i.toNat]?.getD 0).toNat = l <;> simp [hget, he]
+    have hmem : ∀ l s, s ∈ (List.range i.toNat).filter (fun s => (lensOf lens n.toNat)[s]? == some l) → s ≠ i.toNat := by
+      intro l s hs
+      have := List.mem_range.mp (List.mem_filter.mp hs).1
+      omega
+    rw [listsLoop, dite_eq_left hlt]
+    dsimp only
+    have hlv := lens_byte_toUSize hil
+    by_cases h0 : (lens.uget i hil).toUSize = 0
+    · rw [ite_eq_left h0]
+      have hz : (lens.data[i.toNat]?.getD 0).toNat = 0 := by rw [← hlv, h0]; rfl
+      refine ih (i + USize.ofNat 1) head next (by omega) (by omega) hh hnx fun l h1 h2 => ?_
+      rw [hi1, hrange l, ite_eq_right (by omega), List.append_nil]
+      exact hc l h1 h2
+    · rw [ite_eq_right h0]
+      have hl0 : (lens.uget i hil).toUSize.toNat ≠ 0 := fun e => h0 (USize.toNat_inj.mp (by rw [e]; rfl))
+      generalize hL : (lens.uget i hil).toUSize = L at h0 hl0 hlv ⊢
+      have hL16 : L.toNat < 16 := by omega
+      have hi16 : i.toNat < 2 ^ 16 := by omega
+      have hL2 : L.toNat < 2 ^ 16 := by omega
+      have hiv : (i.toUInt64 + 1).toNat = i.toNat + 1 := by
+        rw [u64_add' (by rw [USize.toNat_toUInt64, show (1 : UInt64).toNat = 1 from rfl]; omega), USize.toNat_toUInt64]
+        rfl
+      refine ih (i + USize.ofNat 1) _ _ (by omega) (by omega) (by rw [size_u16Set]; exact hh)
+        (by rw [size_u16Set]; exact hnx) ?_
+      intro l h1 h2
+      rw [hi1, hrange l]
+      by_cases he : L.toNat = l
+      · subst he
+        rw [ite_eq_left (by omega), List.reverse_append, List.reverse_singleton, List.singleton_append,
+          u16At_set_same hL2 (by omega) (by omega), hiv]
+        refine ⟨rfl, by rw [size_u16Set]; omega, ?_⟩
+        rw [u16At_set_same hi16 (by omega) (by rw [u16Get_toNat _ hL2]; exact u16At_lt _ _), u16Get_toNat _ hL2]
+        exact ChainIs.frame hi16 (hc _ h1 h2) fun s hs => hmem _ s (List.mem_reverse.mp hs)
+      · rw [ite_eq_right (by omega), List.append_nil, u16At_set_ne hL2 (Ne.symm he)]
+        exact ChainIs.frame hi16 (hc l h1 h2) fun s hs => hmem _ s (List.mem_reverse.mp hs)
 
-/-! ### The builder -/
-
-/-- What a table takes, worked out before the arena grows. -/
-structure Plan where
-  nc : ByteArray
-  D : ByteArray
-  o : OffRun
-
-/-- Works out a table's sub-tables, from the `n` code lengths in `lens`. -/
-def planFast (lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) : Plan :=
-  let nc := firstCodesOf lens n hn
-  let D := walkCodes depthStep lens n hn 0 nc (zeroBytes 256)
-  ⟨nc, D, offsetsFast D (zeroBytes 512) (USize.ofNat 0) 0⟩
-
-/-- The bytes a table adds to the arena. -/
-@[inline] def Plan.bytes (p : Plan) : UInt64 := (256 + p.o.next) * 4
-
-/-- Appends a planned table to the arena. Its slots start at `t.size / 4`. -/
-def fillFast (t lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) (p : Plan) : ByteArray :=
-  let base := UInt64.ofNat (t.size / 4)
-  let t1 := zeroExtend t p.bytes.toNat
-  let t2 := walkCodes (writeCodeFast base p.D p.o.off) lens n hn 0 p.nc t1
-  rootsFast base p.D p.o.off 256 0 t2
-
-/-- Appends a canonical code's table to the arena, with the `n` code lengths in `lens`. Its slots start at
-`t.size / 4`. -/
-def buildFast (t lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) : ByteArray :=
-  fillFast t lens n hn (planFast lens n hn)
-
-/-- A plan's bytes are what the table adds. -/
-theorem planFast_bytes {lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.size} (h64 : n.toNat < 65536)
-    (hC : Complete (.canonical (lensOf lens n.toNat))) :
-    (planFast lens n hn).bytes.toNat = 4 * (256 + offSum (depths (lensOf lens n.toNat)) 256) ∧
-      offSum (depths (lensOf lens n.toNat)) 256 ≤ 32768 := by
-  have hfirst := firstCodesOf_spec (hn := hn) h64 hC
-  unfold planFast Plan.bytes
-  dsimp only
-  generalize firstCodesOf lens n hn = nc at hfirst ⊢
-  have hDm : ByteMatch (depths (lensOf lens n.toNat)) (walkCodes depthStep lens n hn 0 nc (zeroBytes 256)) :=
-    walkCodes_rel (g := recordDepth) hC ByteMatch (by
-      intro a b s l c hr hs h0 hc
-      have hl15 : l.toNat ≤ 15 := hC.1 _ (List.mem_of_getElem? hs)
-      exact depthStep_rel hr hl15 (code_lt_two_pow (Nat.le_of_eq hC.2) hs h0 hl15 hc)) hfirst (by
-      refine ⟨zeroBytes_size (by decide), by simp, ?_⟩
-      intro r _
-      rw [zeroBytes_get (by decide)]
-      simp [Array.getD_eq_getD_getElem?, Array.getElem?_replicate]
-      split <;> rfl)
-  obtain ⟨_, dLe, _, _⟩ := depths_spec hC.1
-  have hoffs := offsetsFast_spec hDm dLe _ (USize.ofNat 0) (zeroBytes 512) 0 rfl
-    (by rw [usize_lit' (by decide)]; omega) (zeroBytes_size (by decide))
-    (by intro k hk; rw [usize_lit' (by decide)] at hk; omega)
-    (by rw [usize_lit' (by decide)]; rfl)
-  have o2 := hoffs.2.1
-  have hbound := offSum_bound dLe 256
-  generalize offsetsFast (walkCodes depthStep lens n hn 0 nc (zeroBytes 256)) (zeroBytes 512) (USize.ofNat 0) 0 = o at o2 ⊢
-  have hnext : (256 + o.next).toNat = 256 + offSum (depths (lensOf lens n.toNat)) 256 := by
-    rw [u64_add' (by rw [show (256 : UInt64).toNat = 256 from rfl, o2]; omega), o2]
-    rfl
-  refine ⟨?_, by omega⟩
-  rw [UInt64.toNat_mul, hnext, show (4 : UInt64).toNat = 4 from rfl, Nat.mod_eq_of_lt (by omega)]
-  omega
-
-/-- The running builder writes the bytes of `buildCanonical`, whose theorem says what they mean. -/
-theorem buildFast_eq {t lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.size} (h64 : n.toNat < 65536)
-    (hC : Complete (.canonical (lensOf lens n.toNat))) (hsize : t.size + 4 * (256 + 32768) < 2 ^ 32) :
-    buildFast t lens n hn = buildCanonical t (lensOf lens n.toNat) := by
-  have hfirst := firstCodesOf_spec (hn := hn) h64 hC
-  unfold buildFast fillFast planFast Plan.bytes buildCanonical
-  dsimp only
-  generalize firstCodesOf lens n hn = nc at hfirst ⊢
-  have hfold : ∀ {β γ : Type} {g : β → Nat → Nat → Nat → β} {f : γ → UInt64 → UInt64 → UInt64 → γ} (R : β → γ → Prop)
-      (_ : ∀ a b (s l c : UInt64), R a b → (lensOf lens n.toNat)[s.toNat]? = some l.toNat → l.toNat ≠ 0 →
-        code (lensOf lens n.toNat) s.toNat = some c.toNat → R (g a s.toNat l.toNat c.toNat) (f b s l c))
-      {a : β} {b : γ}, R a b →
-      R (foldCodes g (lensOf lens n.toNat) 0 (nextCodes (lensOf lens n.toNat)) a) (walkCodes f lens n hn 0 nc b) :=
-    fun R hf _ _ h => walkCodes_rel hC R hf hfirst h
-  generalize lensOf lens n.toNat = L at hC hfold ⊢
-  obtain ⟨_, dLe, _, _⟩ := depths_spec hC.1
-  have hbase : (UInt64.ofNat (t.size / 4)).toNat = t.size / 4 := u64_lit (by omega)
-  have hz256 : ByteMatch (Array.replicate 256 0) (zeroBytes 256) := by
-    refine ⟨zeroBytes_size (by decide), by simp, ?_⟩
-    intro r _
-    rw [zeroBytes_get (by decide)]
-    simp [Array.getD_eq_getD_getElem?, Array.getElem?_replicate]
-    split <;> rfl
-  -- The depths.
-  have hDm : ByteMatch (depths L) (walkCodes depthStep lens n hn 0 nc (zeroBytes 256)) :=
-    hfold (g := recordDepth) ByteMatch (by
-      intro a b s l c hr hs h0 hc
-      have hl15 : l.toNat ≤ 15 := hC.1 _ (List.mem_of_getElem? hs)
-      exact depthStep_rel hr hl15 (code_lt_two_pow (Nat.le_of_eq hC.2) hs h0 hl15 hc)) hz256
-  generalize walkCodes depthStep lens n hn 0 nc (zeroBytes 256) = D at hDm ⊢
-  -- The offsets.
-  have hoffs := offsetsFast_spec hDm dLe _ (USize.ofNat 0) (zeroBytes 512) 0 rfl
-    (by rw [usize_lit' (by decide)]; omega) (zeroBytes_size (by decide))
-    (by intro k hk; rw [usize_lit' (by decide)] at hk; omega)
-    (by rw [usize_lit' (by decide)]; rfl)
-  generalize offsetsFast D (zeroBytes 512) (USize.ofNat 0) 0 = o at hoffs ⊢
-  obtain ⟨_, o2, o3⟩ := hoffs
-  obtain ⟨oTot, oAt⟩ := offsets_spec (depths L)
-  have hbound := offSum_bound dLe 256
-  -- The space.
-  have hnext : (256 + o.next).toNat = 256 + offSum (depths L) 256 := by
-    rw [u64_add' (by rw [show (256 : UInt64).toNat = 256 from rfl, o2]; omega), o2]
-    rfl
-  have hspace : ((256 + o.next) * 4).toNat = 4 * (256 + offSum (depths L) 256) := by
-    rw [UInt64.toNat_mul, hnext, show (4 : UInt64).toNat = 4 from rfl, Nat.mod_eq_of_lt (by omega)]
-    omega
-  rw [zeroExtend_eq, hspace, oTot]
-  generalize ht1 : t ++ ByteArray.mk (Array.replicate (4 * (256 + offSum (depths L) 256)) 0) = t1
-  have hmk : (ByteArray.mk (Array.replicate (4 * (256 + offSum (depths L) 256)) 0)).size =
-      4 * (256 + offSum (depths L) 256) := by
-    show (Array.replicate _ _).size = _
-    simp
-  have hs1 : t1.size = t.size + 4 * (256 + offSum (depths L) 256) := by
-    rw [← ht1, ByteArray.size_append, hmk]
-  -- The code words.
-  obtain ⟨hw1, hw2⟩ := hfold (β := ByteArray) (γ := ByteArray)
-    (g := fun t' s l c => writeCode (t.size / 4) (depths L) (offsets (depths L)).1 t' s l c)
-    (f := writeCodeFast (UInt64.ofNat (t.size / 4)) D o.off) (a := t1) (b := t1)
-    (fun a b => a = b ∧ a.size = t1.size)
-    (by
-      rintro a b s l c ⟨rfl, hsz⟩ hs h0 hc
-      have heq := writeCodeFast_eq (O := (offsets (depths L)).1) hC hDm oAt o3 (base := UInt64.ofNat (t.size / 4)) hs h0 hc
-        (t := a) (by rw [hsz, hs1, hbase]; omega) (by rw [hsz, hs1]; omega)
-      rw [hbase] at heq
-      exact ⟨heq.symm, by rw [size_writeCode', hsz]⟩)
-    ⟨rfl, rfl⟩
-  generalize foldCodes (fun t' s l c => writeCode (t.size / 4) (depths L) (offsets (depths L)).1 t' s l c) L 0
-    (nextCodes L) t1 = t2 at hw1 hw2 ⊢
-  rw [← hw1]
-  have e := rootsFast_eq (O := (offsets (depths L)).1) hDm dLe (fun r hr => by rw [o3 r hr, oAt r hr])
-    (base := UInt64.ofNat (t.size / 4)) (by rw [hbase]; omega) 256 256 0 t2 rfl (by show 0 + 256 ≤ 256; omega)
-    (by rw [hw2, hs1, hbase]; omega) (by rw [hw2, hs1]; omega)
-  rw [hbase] at e
-  exact e
-
-/-- Appends a single-symbol code's table. -/
-def buildSingleFast (t : ByteArray) (sym : UInt64) : ByteArray :=
-  fillFrom 0 sym 1 256 (zeroExtend t 1024) (UInt64.ofNat (t.size / 4))
-
-theorem buildSingleFast_eq {t : ByteArray} {sym : UInt64} (hsize : t.size + 4 * 256 < 2 ^ 32) :
-    buildSingleFast t sym = buildSingle t sym.toNat := by
-  unfold buildSingleFast buildSingle
-  rw [zeroExtend_eq]
-  have hmk : (ByteArray.mk (Array.replicate 1024 0)).size = 1024 := by
-    show (Array.replicate _ _).size = _
-    simp
-  have hs : (t ++ ByteArray.mk (Array.replicate 1024 0)).size = t.size + 1024 := by
-    rw [ByteArray.size_append, hmk]
-  have hbase : (UInt64.ofNat (t.size / 4)).toNat = t.size / 4 := u64_lit (by omega)
-  rw [fillFrom_eq (by rw [hs]; omega) (by decide) (by
-    intro k hk
-    have hk' : k < 256 := hk
-    rw [hs, hbase]
-    show 4 * (t.size / 4 + k * 1) + 2 < _
-    omega), hbase]
+theorem listsOf_spec {lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.size} (h704 : n.toNat ≤ 704)
+    (hl : ∀ l ∈ lensOf lens n.toNat, l ≤ 15) :
+    (listsOf lens n hn).1.size = 32 ∧ (listsOf lens n hn).2.size = 2 * n.toNat ∧
+      ListsIs (listsOf lens n hn).1 (listsOf lens n hn).2 (lensOf lens n.toNat) := by
+  refine listsLoop_spec h704 hl _ 0 _ _ rfl (by simp) (zeroBytes_size (by decide)) (zeroBytes_size (by omega)) ?_
+  intro l _ _
+  show ChainIs _ (u16At (zeroBytes 32) l) []
+  show u16At (zeroBytes 32) l = 0
+  unfold u16At
+  rw [zeroBytes_get (by decide), zeroBytes_get (by decide)]
   rfl
 
+/-- What `buildLens` needs: a complete code over the `n` code lengths in `lens`, at most 704, and an arena of whole
+slots with room for the table. -/
+def LensArgs (t lens : ByteArray) (n : USize) : Prop :=
+  Complete (.canonical (lensOf lens n.toNat)) ∧ n.toNat ≤ 704 ∧ t.size % 2 = 0 ∧ t.size + 4096 < 2 ^ 32
+
+theorem lens_build {t lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.size} (h : LensArgs t lens n) :
+    BuildArgs t (listsOf lens n hn).1 (listsOf lens n hn).2 (lensOf lens n.toNat) := by
+  obtain ⟨hC, h704, h2, h32⟩ := h
+  obtain ⟨s1, s2, hl⟩ := listsOf_spec (hn := hn) h704 hC.1
+  exact ⟨hC, by rw [length_lensOf hn]; exact h704, hl, by omega, by omega, h2, h32⟩
+
+/-- Appends a canonical code's table to the arena, from the `n` code lengths in `lens`. Its slots start at
+`t.size / 2`. -/
+def buildLens (t lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) (h : LensArgs t lens n) : ByteArray :=
+  match hl : listsOf lens n hn with
+  | (head, next) => buildFast t head next ⟨lensOf lens n.toNat, by
+      have := lens_build (hn := hn) h
+      rw [hl] at this
+      exact this⟩
+
+theorem buildLens_eq {t lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.size} (h : LensArgs t lens n) :
+    buildLens t lens n hn h = buildDown t (lensOf lens n.toNat) := by
+  unfold buildLens
+  split
+  rename_i head next hl
+  have := lens_build (hn := hn) h
+  rw [hl] at this
+  exact buildFast_eq this _
+
+/-- Appends a single-symbol code's table. -/
+def buildSingleFast (t : ByteArray) (sym : UInt64) (h : t.size + 4096 < 2 ^ 32 ∧ t.size % 2 = 0) : ByteArray :=
+  fillRun (sym <<< 4) 1 (zeroExtend t 512) (t.size.toUInt64 >>> 1) 256 (by rw [size_zeroExtend]; omega) (by
+    intro k hk
+    have hk' : k < 256 := hk
+    rw [size_zeroExtend, half_toNat h.1]
+    show 2 * (t.size / 2 + k * 1) + 1 < _
+    omega)
+
+theorem buildSingleFast_eq {t : ByteArray} {sym : UInt64} (h : t.size + 4096 < 2 ^ 32 ∧ t.size % 2 = 0)
+    (hsym : sym.toNat < 4096) : buildSingleFast t sym h = buildSingle t sym.toNat := by
+  have hv : (sym <<< 4).toNat = 0 + 16 * sym.toNat := by
+    rw [u64_shl (by decide) (by rw [show (4 : UInt64).toNat = 4 from rfl]; omega), show (4 : UInt64).toNat = 4 from rfl]
+    omega
+  unfold buildSingleFast buildSingle
+  rw [fillRun_eq hv _ 256 _ _ _ _ _ rfl, half_toNat h.1, zeroExtend_zeros]
+  rfl
 
 end Brotli.Decoder

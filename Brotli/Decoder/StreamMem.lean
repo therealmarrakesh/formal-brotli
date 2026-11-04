@@ -314,7 +314,7 @@ theorem MemD.holds_le {Ws : Option Nat} {X L : Nat} {D : Dec} {B : List Bool} (M
   have b4 := M.H.dBase
   have b5 := M.H.dMap
   have b6 := M.H.modes
-  have hsm : smallMax = 12432 := rfl
+  have hsm : smallMax = 6216 := rfl
   unfold Dec.holds Hd.holds Done.holds Hdr.holds fixedCost fieldBytes
   rcases M.win with ⟨ht, r0, s0, w0, hl, _⟩ | ⟨ht, w, hw, hk, hl⟩
   · have e1 := M.hdOut (by rw [ht]; decide)
@@ -511,11 +511,11 @@ theorem hsize_none : HSize Hd.none where
   lens := Nat.zero_le _
   clLens := Nat.zero_le _
   clt := by
-    show (zeroBytes 1024).size ≤ 1576
+    show (zeroBytes 512).size ≤ 788
     rw [zeroBytes_size (by decide)]
     decide
   mapT := by
-    show (zeroBytes 1024).size ≤ 2592
+    show (zeroBytes 512).size ≤ 1296
     rw [zeroBytes_size (by decide)]
     decide
   modes := Nat.zero_le _
@@ -1036,7 +1036,7 @@ theorem hdr_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs
       rw [hx] at h1
       have h1' : D.hd.d.arenaCap.toNat + (resBytes g' + x.getD 0) ≤ smallMax + X := h1
       rw [h2] at m1
-      have hrm : resMax = 2670592 := rfl
+      have hrm : resMax = 1335296 := rfl
       have hpw : 2 ^ D.k.toNat ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk24
       have h224 : (2 : Nat) ^ 24 = 16777216 := rfl
       have he : (some w0 : Option Nat).elim 0 (· + 16) = w0 + 16 := rfl

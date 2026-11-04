@@ -267,6 +267,7 @@ theorem syms_install {st : Hd} (h : ∃ g p, HRel st g p) (ht : st.tag = .syms) 
 def stepHSyms (st : Hd) (pos : USize) (h : ∃ g p, HRel st g p) (ht : st.tag = .syms) : Hd :=
   if h0 : st.symSum = 32768 then
     tableDone { st with pos := pos, status := .next } false 0 (syms_args (st := st) h ht h0) (syms_install (st := st) h ht)
+      (hrel_arena (st := st) h)
   else if st.ln = st.size then markH st pos .bad
   else
     let r := lenSymFast st.clt.t (USize.ofNat 0) st.clt.fits st.clt.h32 ⟨st.word, st.count⟩
@@ -336,7 +337,7 @@ theorem stepHSyms_ok {o : Owner} {size : Nat} {clc : PrefixCode} {ls : LengthSta
       omega
     have hdone := tableDone_ok K (st := { st with pos := pos, status := .next }) (c := .canonical (ls.lens ++ List.replicate (size - ls.lens.length) 0))
       (single := false) (sym := 0) hw hu hs ho (fun e => Bool.noConfusion e) (fun _ => by rw [← hfullL]) hy.sz hC hsy hb
-      (ha := syms_args (st := st) hH hT h0) (hi := syms_install (st := st) hH hT)
+      (ha := syms_args (st := st) hH hT h0) (hi := syms_install (st := st) hH hT) (har := hrel_arena (st := st) hH)
     exact hdone.toStep rfl hp rfl (fun h => ⟨h.fill, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase, h.work⟩)
       (fun F => hrest_syms_done K g o size clc ls _ hlenLe hsum) (fun F => hStep_syms_done _ hlenLe hsum)
   rw [dite_eq_right h0]

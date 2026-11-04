@@ -175,130 +175,390 @@ theorem sum_add {α : Type} (f g : α → Nat) : ∀ (L : List α), (L.map fun a
     simp only [List.map_cons, List.sum_cons, sum_add f g L]
     omega
 
-private theorem u64sub {a b : UInt64} (h : b.toNat ≤ a.toNat) : (a - b).toNat = a.toNat - b.toNat :=
-  UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr h)
-
-/-! ### The table builder -/
-
-/-- The slots the running builder writes for a code word. -/
-def fillCntD (D : ByteArray) (l c : UInt64) : Nat :=
-  if l ≤ 8 then ((1 : UInt64) <<< (8 - l)).toNat
-  else ((1 : UInt64) <<< ((getU D (revFast l c &&& 255).toUSize).toUInt64 - (l - 8))).toNat
-
-theorem fillCntD_eq {L : List Nat} (hC : Complete (.canonical L)) {D : ByteArray} (hD : ByteMatch (depths L) D)
-    {s l c : UInt64} (hs : L[s.toNat]? = some l.toNat) (h0 : l.toNat ≠ 0) (hc : code L s.toNat = some c.toNat) :
-    fillCntD D l c = fillCnt L l.toNat (rootOf l.toNat c.toNat) := by
-  have hl15 : l.toNat ≤ 15 := hC.1 _ (List.mem_of_getElem? hs)
-  have hclt : c.toNat < 2 ^ l.toNat := code_lt_two_pow (Nat.le_of_eq hC.2) hs h0 hl15 hc
-  unfold fillCntD fillCnt
-  by_cases hl : l.toNat ≤ 8
-  · rw [ite_eq_left (UInt64.le_iff_toNat_le.mpr hl), ite_eq_left hl]
-    have h8 : (8 - l).toNat = 8 - l.toNat := u64sub (by rw [show (8 : UInt64).toNat = 8 from rfl]; exact hl)
-    rw [one_shl (by rw [h8]; omega), h8]
-  · have h8' : ¬ l ≤ 8 := fun h => hl (UInt64.le_iff_toNat_le.mp h)
-    rw [ite_eq_right h8', ite_eq_right hl]
-    have hr := rootIdx hl15 hclt
-    have hrlt := rootOf_lt l.toNat c.toNat
-    have hl8 : (l - 8).toNat = l.toNat - 8 := u64sub (by rw [show (8 : UInt64).toNat = 8 from rfl]; omega)
-    have hd : (getU D (revFast l c &&& 255).toUSize).toUInt64.toNat = (depths L).getD (rootOf l.toNat c.toNat) 0 := by
-      rw [UInt8.toNat_toUInt64, getU_toNat, hr, hD.2.2 _ hrlt]
-    have hdeep : l.toNat - 8 ≤ (depths L).getD (rootOf l.toNat c.toNat) 0 :=
-      (depths_spec hC.1).2.2.2 s.toNat l.toNat c.toNat ⟨hs, by omega, hc⟩
-    have hd7 := (depths_spec hC.1).2.1 (rootOf l.toNat c.toNat)
-    have hdsub : ((getU D (revFast l c &&& 255).toUSize).toUInt64 - (l - 8)).toNat =
-        (depths L).getD (rootOf l.toNat c.toNat) 0 - (l.toNat - 8) := by
-      rw [u64sub (by rw [hd, hl8]; exact hdeep), hd, hl8]
-    rw [one_shl (by rw [hdsub]; omega), hdsub]
-
-/-- A walk over a code's lengths that adds `h` for each code word adds up what the spec's code words give. -/
-theorem walk_sum {lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.size} (hC : Complete (.canonical (lensOf lens n.toNat)))
-    {nc : ByteArray} (hnc : U16Match (nextCodes (lensOf lens n.toNat)) nc) (f : UInt64 → UInt64 → Nat) (g : Nat → Nat → Nat)
-    (hfg : ∀ (s l c : UInt64), (lensOf lens n.toNat)[s.toNat]? = some l.toNat → l.toNat ≠ 0 →
-      code (lensOf lens n.toNat) s.toNat = some c.toNat → f l c = g l.toNat c.toNat) :
-    walkCodes (fun acc _ l c => acc + f l c) lens n hn 0 nc 0 =
-      ((List.range (lensOf lens n.toNat).length).map (termAt (lensOf lens n.toNat) fun _ l c => g l c)).sum := by
-  have := walkCodes_rel (g := fun acc _ l c => acc + g l c) (f := fun acc _ l c => acc + f l c) (hn := hn) hC (fun a b => a = b)
-    (by
-      rintro a b s l c rfl hs h0 hc
-      rw [hfg s l c hs h0 hc]) hnc (a := 0) (b := 0) rfl
-  rw [← this, foldCodes_sum hC.1, Nat.zero_add]
-
 theorem lensOf_length {lens : ByteArray} {n : Nat} (hn : n ≤ lens.size) : (lensOf lens n).length = n := by
   unfold lensOf
   rw [List.length_map, List.length_take, ByteArray.size] at *
   simp only [Array.length_toList]
   omega
 
-/-- The work of a walk over a code's lengths that does `w` more for each symbol with a code: a round for each symbol, and
-that. -/
-def walkW (w : UInt64 → UInt64 → Nat) (lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) (nc : ByteArray) : Nat :=
-  n.toNat + 1 + walkCodes (fun acc _ l c => acc + w l c) lens n hn 0 nc 0
+/-! ### The table builder -/
 
-/-- The work of `planFast`: the first codes (32 zeros, a count, 16 rounds), the depths (a walk, 256 zeros), and the
-offsets (256 rounds, 512 zeros). -/
-def planFastW (lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) : Nat :=
-  zbW 32 + (n.toNat + 1) + 17 + walkW (fun _ _ => 1) lens n hn (firstCodesOf lens n hn) + zbW 256 + 257 + zbW 512
+/-- The work of `fillRun`: a round for each slot, and the last test. -/
+def fillRunW (count : Nat) : Nat := count + 1
 
-/-- The work of `fillFast`: the zeros it adds, a walk writing each code word's slots, and 256 root slots. -/
-def fillFastW (lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) (p : Plan) : Nat :=
-  zeroExtendW p.bytes.toNat + walkW (fun l c => fillCntD p.D l c + 3) lens n hn p.nc + 3 * 256 + 1
+/-- The work of a step of the walk, as `stepFast` does it on the table `t` from `base`: a short code word's root slots; a
+long one's root slot read, then its sub-table opened (the zeros it adds, its root slot written and its slot) or its slots
+in the sub-table. -/
+def stepW (base : Nat) (t : ByteArray) (l c : Nat) : Nat :=
+  if l ≤ 8 then fillRunW (2 ^ (8 - l))
+  else if (slotAt t (base + rootOf l c)).1 = 0 then 1 + zeroExtendW (2 * 2 ^ (l - 8)) + 1 + fillRunW 1
+  else 1 + fillRunW (2 ^ ((slotAt t (base + rootOf l c)).1 - l))
 
-/-- The work of `buildFast`. -/
-def buildFastW (lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) : Nat :=
-  planFastW lens n hn + fillFastW lens n hn (planFast lens n hn)
+/-- The work of `walkFast`, round by round, from its length `l`, link `v` and code `e`, on the table it writes, for at most
+`N` rounds. -/
+def walkW (head next : ByteArray) (base : Nat) : Nat → ByteArray → Nat → Nat → Nat → Nat
+  | 0, _, _, _, _ => 0
+  | N + 1, t, l, v, e =>
+    if v = 0 then (if l ≤ 1 then 1 else 1 + walkW head next base N t (l - 1) (u16At head (l - 1)) (e / 2))
+    else
+      stepW base t l (e - 1) + 1 +
+        walkW head next base N (downStep base t (v - 1) l (e - 1)) l (u16At next (v - 1)) (e - 1)
 
-/-- The work of `buildSingleFast`: 1024 zeros pushed, 256 slots written. -/
-def buildSingleW : Nat := 1025 + 258
+/-- The work of `buildFast`: the root's zeros, and the walk. -/
+def buildFastW (t head next : ByteArray) : Nat :=
+  zeroExtendW 512 + walkW head next (t.size / 2) 16384 (t ++ zeros 512) 15 (u16At head 15) 32768
 
-/-- The depths a plan works out, and its first codes. -/
-theorem planFast_parts {lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.size} (h64 : n.toNat < 65536)
-    (hC : Complete (.canonical (lensOf lens n.toNat))) :
-    U16Match (nextCodes (lensOf lens n.toNat)) (planFast lens n hn).nc ∧ ByteMatch (depths (lensOf lens n.toNat)) (planFast lens n hn).D := by
-  have hfirst := firstCodesOf_spec (hn := hn) h64 hC
-  refine ⟨hfirst, ?_⟩
-  show ByteMatch _ (walkCodes depthStep lens n hn 0 (firstCodesOf lens n hn) (zeroBytes 256))
-  exact walkCodes_rel (g := recordDepth) hC ByteMatch (by
-      intro a b s l c hr hs h0 hc
-      have hl15 : l.toNat ≤ 15 := hC.1 _ (List.mem_of_getElem? hs)
-      exact depthStep_rel hr hl15 (code_lt_two_pow (Nat.le_of_eq hC.2) hs h0 hl15 hc)) hfirst (by
-      refine ⟨zeroBytes_size (by decide), by simp, ?_⟩
-      intro r _
-      rw [zeroBytes_get (by decide)]
-      simp [Array.getD_eq_getD_getElem?, Array.getElem?_replicate]
-      split <;> rfl)
+/-- The work of `listsOf`: its two arrays' zeros, and a round for each length. -/
+def listsW (n : Nat) : Nat := zbW 32 + zbW (2 * n) + (n + 1)
 
-/-- The builder's work: seven rounds for each symbol, five for each code word longer than 8 bits, and 3734 more. -/
-theorem buildFastW_le {lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.size} (h64 : n.toNat < 65536)
-    (hC : Complete (.canonical (lensOf lens n.toNat))) :
-    buildFastW lens n hn ≤ 7 * n.toNat + 5 * longCount (lensOf lens n.toNat) + 3734 := by
-  obtain ⟨hnc, hD⟩ := planFast_parts (hn := hn) h64 hC
-  have hfirst := firstCodesOf_spec (hn := hn) h64 hC
-  have hlen := lensOf_length hn
-  have hL := hC.1
-  -- The walk for the depths adds one for each code word.
-  have w1 := walk_sum (hn := hn) hC hfirst (fun _ _ => 1) (fun _ _ => 1) (fun _ _ _ _ _ _ => rfl)
-  have w1le := sum_le_mul (termAt (lensOf lens n.toNat) fun _ _ _ => 1) (k := 1) (termAt_le _ _ (fun _ _ _ => Nat.le_refl _))
-    (List.range (lensOf lens n.toNat).length)
-  -- The walk writing the slots adds each code word's slots, and three.
-  have w2 := walk_sum (hn := hn) hC hnc (fun l c => fillCntD (planFast lens n hn).D l c + 3) (fun l c => fillCnt (lensOf lens n.toNat) l (rootOf l c) + 3)
-    (fun s l c hs h0 hc => by rw [fillCntD_eq hC hD hs h0 hc])
-  rw [List.map_congr_left (fun s _ => termAt_add (lensOf lens n.toNat) (fun _ l c => fillCnt (lensOf lens n.toNat) l (rootOf l c))
-    (fun _ _ _ => 3) s), sum_add] at w2
-  have w2a := fillSum_le hC
-  have w2b := sum_le_mul (termAt (lensOf lens n.toNat) fun _ _ _ => 3) (k := 3) (termAt_le _ _ (fun _ _ _ => Nat.le_refl _))
-    (List.range (lensOf lens n.toNat).length)
-  -- The zeros the table adds.
-  obtain ⟨hb, _⟩ := planFast_bytes (hn := hn) h64 hC
+/-- The work of `buildLens`: the lists, then the builder. -/
+def buildLensW (t lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) : Nat :=
+  listsW n.toNat + buildFastW t (listsOf lens n hn).1 (listsOf lens n hn).2
+
+/-- The work of `buildSingleFast`: 512 zeros, 256 slots written. -/
+def buildSingleW : Nat := zeroExtendW 512 + fillRunW 256
+
+/-! ### What the builder's work adds up to -/
+
+/-- Whether symbol `s` is still to be written at the walk's place: its length is below `l`, or is `l` with `s` in the
+symbols from the `k`th last on. -/
+def pendB (L : List Nat) (l k s : Nat) : Bool :=
+  match L[s]? with
+  | some l' => l' != 0 && (decide (l' < l) || (l' == l && ((symsOf L l).reverse.drop k).contains s))
+  | none => false
+
+/-- A code word's work in the walk, past its root's sub-table: its slots, and three. -/
+def wordW (L : List Nat) : Nat → Nat := termAt L fun _ l c => fillCnt L l (rootOf l c) + 3
+
+/-- The work left for the code words still to write. -/
+def remW (L : List Nat) (l k : Nat) : Nat :=
+  ((List.range L.length).map fun s => if pendB L l k s then wordW L s else 0).sum
+
+private theorem sum_congr_pt {f g : Nat → Nat} : ∀ (L : List Nat), (∀ s ∈ L, f s = g s) → (L.map f).sum = (L.map g).sum
+  | [], _ => rfl
+  | a :: L, h => by
+    simp only [List.map_cons, List.sum_cons]
+    rw [h a List.mem_cons_self, sum_congr_pt L fun s hs => h s (List.mem_cons_of_mem _ hs)]
+
+/-- A sum over symbols below `n`, of those a test picks, gains `f s0` when the test picks `s0` too. -/
+private theorem sum_pick {P P' : Nat → Bool} {f : Nat → Nat} {s0 : Nat} (hP : ∀ s, P s = (P' s || s == s0))
+    (h0 : P' s0 = false) : ∀ n, s0 < n →
+    ((List.range n).map fun s => if P s then f s else 0).sum = ((List.range n).map fun s => if P' s then f s else 0).sum + f s0
+  | 0, h => absurd h (by omega)
+  | n + 1, h => by
+    rw [List.range_succ, List.map_append, List.map_append, List.sum_append, List.sum_append]
+    simp only [List.map_cons, List.map_nil, List.sum_cons, List.sum_nil, Nat.add_zero]
+    by_cases hn : n = s0
+    · subst hn
+      have e : ((List.range n).map fun s => if P s then f s else 0).sum =
+          ((List.range n).map fun s => if P' s then f s else 0).sum := by
+        apply sum_congr_pt
+        intro s hs
+        have := List.mem_range.mp hs
+        rw [hP s, show (s == n) = false by simp; omega, Bool.or_false]
+      rw [e, hP n, h0]
+      simp
+    · rw [sum_pick hP h0 n (by omega), hP n]
+      have : (n == s0) = false := by simp [hn]
+      rw [this, Bool.or_false]
+      omega
+
+private theorem symsOf_len_ne {L : List Nat} {l s : Nat} (hs : s ∈ symsOf L l) : L[s]? = some l := mem_symsOf.mp hs
+
+/-- The symbols from the `k`th last on are below the `k`th last. -/
+private theorem drop_lt {L : List Nat} {l k s : Nat} (hk : k < (symsOf L l).length)
+    (hs : s ∈ (symsOf L l).reverse.drop (k + 1)) : s < (symsOf L l)[(symsOf L l).length - 1 - k] := by
+  obtain ⟨j, hj, e⟩ := List.getElem_of_mem hs
+  have hj' : k + 1 + j < (symsOf L l).reverse.length := by
+    rw [List.length_drop] at hj
+    omega
+  rw [List.getElem_drop, List.getElem_reverse] at e
+  rw [← e]
+  exact symsOf_lt (by rw [List.length_reverse] at hj'; omega) (by omega)
+
+/-- Writing the `k`th last symbol of length `l` takes its work off what is left. -/
+theorem remW_step {L : List Nat} {l k : Nat} (hl : l ≠ 0) (hk : k < (symsOf L l).length) :
+    remW L l k = remW L l (k + 1) + wordW L (symsOf L l)[(symsOf L l).length - 1 - k] := by
+  have hd : (symsOf L l).reverse.drop k =
+      (symsOf L l)[(symsOf L l).length - 1 - k] :: (symsOf L l).reverse.drop (k + 1) := by
+    rw [List.drop_eq_getElem_cons (by rw [List.length_reverse]; exact hk), List.getElem_reverse]
+  generalize hs0 : (symsOf L l)[(symsOf L l).length - 1 - k] = s0 at hd
+  have hmem : s0 ∈ symsOf L l := by rw [← hs0]; exact List.getElem_mem _
+  have hg := symsOf_len_ne hmem
+  have hlt := (List.getElem?_eq_some_iff.mp hg).1
+  unfold remW
+  refine sum_pick (P' := fun s => pendB L l (k + 1) s) (fun s => ?_) ?_ _ hlt
+  · unfold pendB
+    rw [hd]
+    cases e : L[s]? with
+    | none =>
+      have : (s == s0) = false := by
+        simp only [beq_eq_false_iff_ne]
+        intro h
+        rw [h, hg] at e
+        cases e
+      rw [this]
+      rfl
+    | some l' =>
+      simp only [List.contains_cons]
+      by_cases hss : s = s0
+      · subst hss
+        rw [hg] at e
+        cases e
+        simp [hl]
+      · have : (s == s0) = false := by simp [hss]
+        rw [this]
+        simp
+  · unfold pendB
+    rw [hg]
+    have hnot : s0 ∉ (symsOf L l).reverse.drop (k + 1) := by
+      intro hm
+      have := drop_lt hk hm
+      rw [hs0] at this
+      omega
+    simp [hnot]
+
+/-- At the end of a length's symbols, what is left is the shorter lengths'. -/
+theorem remW_down {L : List Nat} {l : Nat} (hl : 1 < l) : remW L l (symsOf L l).length = remW L (l - 1) 0 := by
+  unfold remW
+  apply sum_congr_pt
+  intro s _
+  have e : pendB L l (symsOf L l).length s = pendB L (l - 1) 0 s := by
+    unfold pendB
+    rw [List.drop_eq_nil_of_le (by rw [List.length_reverse]; exact Nat.le_refl _), List.drop_zero]
+    cases h : L[s]? with
+    | none => rfl
+    | some l' =>
+      dsimp only
+      have hc : (symsOf L (l - 1)).reverse.contains s = (l' == l - 1) := by
+        rw [Bool.eq_iff_iff, List.contains_iff_mem, List.mem_reverse, mem_symsOf, h, beq_iff_eq, Option.some.injEq]
+      rw [hc, Bool.eq_iff_iff]
+      simp only [List.contains_nil, Bool.and_false, Bool.or_false, Bool.and_eq_true, Bool.or_eq_true,
+        decide_eq_true_eq, bne_iff_ne, ne_eq, beq_iff_eq]
+      omega
+  rw [e]
+
+/-- After the last length, nothing is left. -/
+theorem remW_end {L : List Nat} : remW L 1 (symsOf L 1).length = 0 := by
+  unfold remW
+  have hp : ∀ s, pendB L 1 (symsOf L 1).length s = false := by
+    intro s
+    unfold pendB
+    rw [List.drop_eq_nil_of_le (by rw [List.length_reverse]; exact Nat.le_refl _)]
+    cases h : L[s]? with
+    | none => rfl
+    | some l' =>
+      dsimp only
+      rw [Bool.eq_false_iff]
+      simp only [ne_eq, Bool.and_eq_true, Bool.or_eq_true, decide_eq_true_eq, bne_iff_ne, beq_iff_eq, List.contains_nil,
+        Bool.false_eq_true, and_false, or_false]
+      omega
+  have : ∀ s ∈ List.range L.length, (if pendB L 1 (symsOf L 1).length s then wordW L s else 0) = 0 := by
+    intro s _
+    rw [hp s]
+    rfl
+  rw [sum_congr_pt _ this, List.map_const', List.sum_replicate_nat, Nat.mul_zero]
+
+/-- At the walk's start, every code word is left. -/
+theorem remW_start {L : List Nat} (hl : ∀ l ∈ L, l ≤ 15) :
+    remW L 15 0 = ((List.range L.length).map (wordW L)).sum := by
+  unfold remW
+  apply sum_congr_pt
+  intro s _
+  unfold pendB wordW termAt
+  cases h : L[s]? with
+  | none => rfl
+  | some l' =>
+    have h15 : l' ≤ 15 := hl l' (List.mem_of_getElem? h)
+    dsimp only
+    by_cases h0 : l' = 0
+    · simp [h0]
+    · rw [List.drop_zero]
+      have hp : (l' != 0 && (decide (l' < 15) || (l' == 15 && (symsOf L 15).reverse.contains s))) = true := by
+        by_cases h15' : l' = 15
+        · subst h15'
+          have : (symsOf L 15).reverse.contains s = true := by
+            rw [List.contains_iff_mem, List.mem_reverse, mem_symsOf]
+            exact h
+          rw [this]
+          rfl
+        · have : l' < 15 := by omega
+          simp [h0, this]
+      rw [ite_eq_left hp]
+
+/-- The work of a step is its code word's work, less three, and three for each slot the table grows by at most. -/
+theorem stepW_pay {L : List Nat} {t0 head next t : ByteArray} {base l v e k : Nat}
+    (h : WalkAt L t0 head next base t l v e k) (hv : v ≠ 0) (F : Nat)
+    (hF : 2 * (base + 256 + offSum (depths L) 256) = F) :
+    stepW base t l (e - 1) + 3 * ((F - (downStep base t (v - 1) l (e - 1)).size) / 2) + 1 ≤
+      wordW L (v - 1) + 3 * ((F - t.size) / 2) := by
+  obtain ⟨hk, _, hvs, _, _⟩ := h.next_sym hv
+  obtain ⟨done, ops, o, hinv, hlong, _⟩ := h.inv
+  have hC := h.complete
+  have hl0 : l ≠ 0 := by have := h.lrange; omega
+  obtain ⟨hg, hc⟩ := code_symsOf (lens := L) (l := l) (k := (symsOf L l).length - 1 - k) (by omega) hl0
+  have he : e - 1 = nextCode L l + ((symsOf L l).length - 1 - k) := by
+    have := h.ecode
+    omega
+  have hs : v - 1 = (symsOf L l)[(symsOf L l).length - 1 - k] := by omega
+  rw [he, hs]
+  generalize (symsOf L l)[(symsOf L l).length - 1 - k] = s at hg hc
+  generalize nextCode L l + ((symsOf L l).length - 1 - k) = c at hc
+  have hl15 : l ≤ 15 := hC.1 l (List.mem_of_getElem? hg)
+  have hw : wordW L s = fillCnt L l (rootOf l c) + 3 := by
+    unfold wordW termAt
+    rw [hg]
+    simp [hl0, hc]
+  rw [hw]
+  have hsize := hinv.size
+  have hop := opSum_le ops (depths L) 256
+  unfold stepW downStep fillCnt fillRunW
+  by_cases hl8 : l ≤ 8
+  · rw [ite_eq_left hl8, ite_eq_left hl8, ite_eq_left hl8, size_writeRange]
+    omega
+  · rw [ite_eq_right hl8, ite_eq_right hl8, ite_eq_right hl8]
+    dsimp only
+    have hdge := (depths_spec hC.1).2.2.2 s l c ⟨hg, by omega, hc⟩
+    by_cases hz : (slotAt t (base + rootOf l c)).1 = 0
+    · rw [ite_eq_left hz, ite_eq_left hz, size_writeRange]
+      obtain ⟨hdeq, hinv'⟩ := hinv.openR hC h.small hg hc (by omega) hlong hz
+      have hsz' := hinv'.size
+      have hop' := opSum_le (rootOf l c :: ops) (depths L) 256
+      have hsz1 : (openSub base t (rootOf l c) l).size = t.size + 2 * 2 ^ (l - 8) := by
+        unfold openSub
+        rw [size_writeSlot, ByteArray.size_append, size_zeros]
+      have hz2 := zeroExtendW_le (2 * 2 ^ (l - 8))
+      have hp1 : 2 ≤ 2 ^ (l - 8) := by
+        have := Nat.pow_le_pow_right (show 0 < 2 by decide) (show 1 ≤ l - 8 by omega)
+        simpa using this
+      have hp7 : 2 ^ (l - 8) ≤ 2 ^ 7 := Nat.pow_le_pow_right (by decide) (by omega)
+      have hdiv : 2 * 2 ^ (l - 8) / 65536 = 0 := Nat.div_eq_of_lt (by omega)
+      rw [hsz1, hdeq, Nat.sub_self, Nat.pow_zero]
+      omega
+    · rw [ite_eq_right hz, ite_eq_right hz, size_writeRange]
+      have hm : rootOf l c ∈ ops := Classical.byContradiction fun hn => hz (hinv.empty _ (rootOf_lt l c) hn (by omega))
+      obtain ⟨_, _, h3, _⟩ := hinv.opsOk _ hm
+      rw [h3]
+      dsimp only
+      rw [show 8 + (depths L).getD (rootOf l c) 0 - l = (depths L).getD (rootOf l c) 0 - (l - 8) by omega]
+      omega
+
+private theorem dec_down {l v N x : Nat} (hl : 1 < l) (hx : x ≤ 704) (hN : l * 1024 + v < N + 1) :
+    (l - 1) * 1024 + x < N := by
+  obtain ⟨m, rfl⟩ : ∃ m, l = m + 1 := ⟨l - 1, by omega⟩
+  rw [Nat.add_sub_cancel]
+  rw [Nat.succ_mul] at hN
+  generalize m * 1024 = A at hN ⊢
+  omega
+
+private theorem dec_next {l v N x : Nat} (hx : x < v) (hN : l * 1024 + v < N + 1) : l * 1024 + x < N := by omega
+
+private theorem pay_down {W R R' P l : Nat} (hl : 1 < l) (hW : W ≤ R' + P + (l - 1)) (hR : R = R') :
+    1 + W ≤ R + P + l := by omega
+
+private theorem pay_next {S W R R1 w P P1 l : Nat} (hW : W ≤ R1 + P1 + l) (hpay : S + P1 + 1 ≤ w + P)
+    (hR : R = R1 + w) : S + 1 + W ≤ R + P + l := by omega
+
+/-- The walk's work, from its place, is at most the work left for its code words, three for each slot the table has still
+to grow by, and a round for each length left. -/
+theorem walkW_le {L : List Nat} {t0 head next : ByteArray} {base : Nat} (F : Nat)
+    (hF : 2 * (base + 256 + offSum (depths L) 256) = F) : ∀ (N : Nat) (t : ByteArray) (l v e k : Nat),
+    WalkAt L t0 head next base t l v e k → l * 1024 + v < N →
+    walkW head next base N t l v e ≤ remW L l k + 3 * ((F - t.size) / 2) + l := by
+  intro N
+  induction N with
+  | zero => intro _ _ _ _ _ _ hN; omega
+  | succ N ih =>
+    intro t l v e k hw hN
+    unfold walkW
+    by_cases hv : v = 0
+    · rw [ite_eq_left hv]
+      have hkk : k = (symsOf L l).length := by
+        refine Nat.le_antisymm hw.kle (Nat.le_of_not_lt fun hlt => ?_)
+        have hk' : k < (symsOf L l).reverse.length := by rw [List.length_reverse]; exact hlt
+        have := hw.chain
+        rw [List.drop_eq_getElem_cons hk'] at this
+        have : v = _ := this.1
+        omega
+      by_cases hl : l ≤ 1
+      · rw [ite_eq_left hl]
+        have := hw.lrange
+        omega
+      · rw [ite_eq_right hl]
+        have hl1 : 1 < l := Nat.lt_of_not_le hl
+        have hd := hw.down hv hl1
+        have hle := chain_le hd.small _ _ (fun s hs => mem_drop_rev hs) hd.chain
+        have hW := ih _ _ _ _ _ hd (dec_down hl1 hle hN)
+        rw [hkk]
+        exact pay_down hl1 hW (remW_down hl1)
+    · rw [ite_eq_right hv]
+      obtain ⟨hk, _, hvs, _, _⟩ := hw.next_sym hv
+      have hs' := hw.step hv
+      obtain ⟨s, hvs', _, hlt⟩ := hw.link_lt hv
+      have hlt' : u16At next (v - 1) < v := by
+        rw [hvs', Nat.add_sub_cancel]
+        rw [hvs'] at hlt
+        exact hlt
+      have hW := ih _ _ _ _ _ hs' (dec_next hlt' hN)
+      have hpay := stepW_pay hw hv F hF
+      have hl0 : l ≠ 0 := by have := hw.lrange; omega
+      have hstep := remW_step (L := L) hl0 hk
+      have hs : v - 1 = (symsOf L l)[(symsOf L l).length - 1 - k] := by
+        rw [hvs, Nat.add_sub_cancel]
+      rw [← hs] at hstep
+      exact pay_next hW hpay hstep
+
+/-- The builder's work: four rounds for each code word longer than 8 bits and three for each symbol, from the code words'
+slots and the sub-tables' zeros, and 1264 more. -/
+theorem buildFastW_le {t head next : ByteArray} {L : List Nat} (ha : BuildArgs t head next L) :
+    buildFastW t head next ≤ 3 * L.length + 4 * longCount L + 1264 := by
+  have hw := build_start ha
+  rw [half_toNat ha.2.2.2.2.2.2] at hw
+  obtain ⟨hC, _, _, _, _, h2, h32⟩ := ha
+  have hle := chain_le hw.small _ _ (fun s hs => mem_drop_rev hs) hw.chain
+  have hwk := walkW_le (L := L) (base := t.size / 2) _ rfl 16384 _ _ _ _ _ hw (by omega)
+  rw [remW_start hC.1, zeroExtend_zeros] at hwk
+  have hsum : ((List.range L.length).map (wordW L)).sum ≤ longCount L + 376 + 3 * L.length := by
+    unfold wordW
+    rw [List.map_congr_left (fun s _ => termAt_add L (fun _ l c => fillCnt L l (rootOf l c)) (fun _ _ _ => 3) s), sum_add]
+    have a := fillSum_le hC
+    have b := sum_le_mul (termAt L fun _ _ _ => 3) (k := 3) (termAt_le _ _ (fun _ _ _ => Nat.le_refl _)) (List.range L.length)
+    rw [List.length_range] at b
+    omega
   have hoff := offSum_le hC
-  have hz := zeroExtendW_le (planFast lens n hn).bytes.toNat
-  rw [hb] at hz
+  have hz := zeroExtendW_le 512
+  rw [ByteArray.size_append, size_zeros] at hwk
+  unfold buildFastW
+  generalize walkW head next (t.size / 2) 16384 (t ++ zeros 512) 15 (u16At head 15) 32768 = W at hwk ⊢
+  generalize ((List.range L.length).map (wordW L)).sum = S at hwk hsum
+  generalize offSum (depths L) 256 = O at hwk hoff
+  generalize longCount L = Lc at hsum hoff ⊢
+  omega
+
+/-- The work of `buildLens`: six rounds for each symbol, four for each code word longer than 8 bits, and 1299 more. -/
+theorem buildLensW_le {t lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.size} (h : LensArgs t lens n) :
+    buildLensW t lens n hn ≤ 6 * n.toNat + 4 * longCount (lensOf lens n.toNat) + 1299 := by
+  have hb : buildFastW t (listsOf lens n hn).1 (listsOf lens n hn).2 ≤
+      3 * (lensOf lens n.toNat).length + 4 * longCount (lensOf lens n.toNat) + 1264 := buildFastW_le (lens_build h)
+  have hlen : (lensOf lens n.toNat).length = n.toNat := length_lensOf hn
   have z1 := zbW_le 32
-  have z2 := zbW_le 256
-  have z3 := zbW_le 512
-  have hLn := longCount_le (lensOf lens n.toNat)
-  rw [List.length_range] at w1le w2b
-  unfold buildFastW planFastW fillFastW walkW
-  rw [w1, w2, hb]
+  have z2 := zbW_le (2 * n.toNat)
+  have h704 : n.toNat ≤ 704 := h.2.1
+  have hd : 2 * n.toNat / 65536 = 0 := Nat.div_eq_of_lt (by omega)
+  show listsW n.toNat + buildFastW t (listsOf lens n hn).1 (listsOf lens n hn).2 ≤ _
+  generalize buildFastW t (listsOf lens n hn).1 (listsOf lens n hn).2 = B at hb ⊢
+  generalize longCount (lensOf lens n.toNat) = Lc at hb ⊢
+  generalize (lensOf lens n.toNat).length = m at hb hlen
+  unfold listsW
+  generalize zbW 32 = a at z1 ⊢
+  generalize zbW (2 * n.toNat) = b at z2 ⊢
+  generalize n.toNat = k at *
+  omega
+
+theorem buildSingleW_le : buildSingleW ≤ 770 := by
+  have := zeroExtendW_le 512
+  unfold buildSingleW fillRunW
+  generalize zeroExtendW 512 = z at this ⊢
   omega
 
 end Brotli.Decoder

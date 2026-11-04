@@ -84,16 +84,17 @@ def tableDoneW (st : Hd) (single : Bool) : Nat :=
   let n := st.size.toUSize
   let lens := st.lens
   if hn : n.toNat ≤ lens.size then
-    (if single then buildSingleW else buildFastW lens n hn) +
-      match st.role with
-      | .map => zbW (mapSizeFast st) + zbW (mapSizeFast st) + 3 * zbW 256
-      | _ => 1
+    match st.role with
+    | .map =>
+      (if single then buildSingleW else buildLensW (ByteArray.emptyWithCapacity soloCap) lens n hn) +
+        zbW (mapSizeFast st) + zbW (mapSizeFast st) + 3 * zbW 256
+    | _ => (if single then buildSingleW else buildLensW st.d.arena lens n hn) + 1
   else 1
 
 /-- The work of `clTable`. -/
 def clTableW (st : Hd) : Nat :=
   if st.clNz = 1 then buildSingleW
-  else if hn : (USize.ofNat 18).toNat ≤ st.clLens.size then buildFastW st.clLens (USize.ofNat 18) hn
+  else if hn : (USize.ofNat 18).toNat ≤ st.clLens.size then buildLensW ByteArray.empty st.clLens (USize.ofNat 18) hn
   else 1
 
 /-- The work of `clFinish`: the code length code's table, with nothing checked, and the code's lengths' zeros. -/

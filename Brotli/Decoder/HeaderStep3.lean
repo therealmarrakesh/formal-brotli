@@ -46,7 +46,7 @@ theorem ckSizeFast_eq {d : Done} {g : Gh} {n : Nat} (k : CK) (hu : Upto d g n) (
 /-- What the decoder reserves for the groups' tables, with the distance context map's `n` trees: `treeMax` of each group's
 alphabet for each of its codes. -/
 @[inline] def resFast (d : Done) (n : UInt64) : UInt64 :=
-  d.treesL * 2528 + d.nI * 4320 + n * (4 * (ckSizeFast d .D + 376))
+  d.treesL * 1264 + d.nI * 2160 + n * (2 * (ckSizeFast d .D + 376))
 
 theorem resFast_eq {d : Done} {g : Gh} {n : UInt64} {ntrees : Nat} {cmap : List Nat} (hu : Upto d g 6) (hn : n.toNat = ntrees)
     (h2 : ntrees ≤ 256) : (resFast d n).toNat = resBytes (g.setMap false ntrees cmap) := by
@@ -55,32 +55,32 @@ theorem resFast_eq {d : Done} {g : Gh} {n : UInt64} {ntrees : Nat} {cmap : List 
   have hIn : d.nI.toNat = g.m.insertCopy.n := hI.n
   have hI2 : g.m.insertCopy.n ≤ 256 := hI.wf.2.1
   obtain ⟨hs1, _, hs3⟩ := ckSizeFast_eq (g := g) .D hu (by decide)
-  have e1 : (d.treesL * 2528).toNat = g.treesL * 2528 := by
-    rw [UInt64.toNat_mul, hT, show (2528 : UInt64).toNat = 2528 from rfl]
+  have e1 : (d.treesL * 1264).toNat = g.treesL * 1264 := by
+    rw [UInt64.toNat_mul, hT, show (1264 : UInt64).toNat = 1264 from rfl]
     exact Nat.mod_eq_of_lt (by omega)
-  have e2 : (d.nI * 4320).toNat = g.m.insertCopy.n * 4320 := by
-    rw [UInt64.toNat_mul, hIn, show (4320 : UInt64).toNat = 4320 from rfl]
+  have e2 : (d.nI * 2160).toNat = g.m.insertCopy.n * 2160 := by
+    rw [UInt64.toNat_mul, hIn, show (2160 : UInt64).toNat = 2160 from rfl]
     exact Nat.mod_eq_of_lt (by omega)
   have i1 : (ckSizeFast d .D + 376).toNat = ckSize .D g + 376 := by
     rw [UInt64.toNat_add, hs1, show (376 : UInt64).toNat = 376 from rfl]
     exact Nat.mod_eq_of_lt (by omega)
-  have e3 : (4 * (ckSizeFast d .D + 376)).toNat = 4 * (ckSize .D g + 376) := by
-    rw [UInt64.toNat_mul, i1, show (4 : UInt64).toNat = 4 from rfl]
+  have e3 : (2 * (ckSizeFast d .D + 376)).toNat = 2 * (ckSize .D g + 376) := by
+    rw [UInt64.toNat_mul, i1, show (2 : UInt64).toNat = 2 from rfl]
     exact Nat.mod_eq_of_lt (by omega)
-  have e4 : (n * (4 * (ckSizeFast d .D + 376))).toNat = ntrees * (4 * (ckSize .D g + 376)) := by
+  have e4 : (n * (2 * (ckSizeFast d .D + 376))).toNat = ntrees * (2 * (ckSize .D g + 376)) := by
     rw [UInt64.toNat_mul, hn, e3]
-    exact Nat.mod_eq_of_lt (Nat.lt_of_le_of_lt (Nat.mul_le_mul h2 (Nat.mul_le_mul_left 4 (Nat.add_le_add_right hs3 376))) (by decide))
-  have hb1 : g.treesL * 2528 ≤ 256 * 2528 := Nat.mul_le_mul_right _ hT2
-  have hb2 : g.m.insertCopy.n * 4320 ≤ 256 * 4320 := Nat.mul_le_mul_right _ hI2
-  have hb3 : ntrees * (4 * (ckSize .D g + 376)) ≤ 256 * (4 * (704 + 376)) :=
-    Nat.mul_le_mul h2 (Nat.mul_le_mul_left 4 (Nat.add_le_add_right hs3 376))
-  have s1 : (d.treesL * 2528 + d.nI * 4320).toNat = g.treesL * 2528 + g.m.insertCopy.n * 4320 := by
+    exact Nat.mod_eq_of_lt (Nat.lt_of_le_of_lt (Nat.mul_le_mul h2 (Nat.mul_le_mul_left 2 (Nat.add_le_add_right hs3 376))) (by decide))
+  have hb1 : g.treesL * 1264 ≤ 256 * 1264 := Nat.mul_le_mul_right _ hT2
+  have hb2 : g.m.insertCopy.n * 2160 ≤ 256 * 2160 := Nat.mul_le_mul_right _ hI2
+  have hb3 : ntrees * (2 * (ckSize .D g + 376)) ≤ 256 * (2 * (704 + 376)) :=
+    Nat.mul_le_mul h2 (Nat.mul_le_mul_left 2 (Nat.add_le_add_right hs3 376))
+  have s1 : (d.treesL * 1264 + d.nI * 2160).toNat = g.treesL * 1264 + g.m.insertCopy.n * 2160 := by
     rw [UInt64.toNat_add, e1, e2]
     exact Nat.mod_eq_of_lt (by omega)
-  have hlt : g.treesL * 2528 + g.m.insertCopy.n * 4320 + ntrees * (4 * (ckSize .D g + 376)) < 2 ^ 64 := by omega
+  have hlt : g.treesL * 1264 + g.m.insertCopy.n * 2160 + ntrees * (2 * (ckSize .D g + 376)) < 2 ^ 64 := by omega
   unfold resFast
   rw [UInt64.toNat_add, s1, e4, Nat.mod_eq_of_lt hlt]
-  show _ = g.treesL * (4 * (256 + 376)) + g.m.insertCopy.n * (4 * (704 + 376)) + ntrees * (4 * (ckSize .D g + 376))
+  show _ = g.treesL * (2 * (256 + 376)) + g.m.insertCopy.n * (2 * (704 + 376)) + ntrees * (2 * (ckSize .D g + 376))
   rfl
 
 /-- What the groups' tables can take is at most `resMax`. -/

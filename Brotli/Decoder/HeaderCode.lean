@@ -204,12 +204,13 @@ theorem TableDone.toStep {g : Gh} {o : Owner} {c : PrefixCode} {p : HPhase} {st 
 theorem simple_done {o : Owner} {size : Nat} {st : Hd} {g : Gh} (pos : USize) {r : Rd} (hrel : HRel st g (.code o size))
     (hw2 : r.buf.Wf) (hwit : readPrefixCode st.size.toNat (BitBuffer.mk st.word st.count).held = some (simpleValue st.size r, r.buf.held))
     (hsmall : SmallVals r) (hb : st.d.arena.size + budO g o ≤ st.d.arenaCap.toNat)
-    {ha : TableArgs st.size (writeSimple (zeroBytes st.size.toNat) r) (r.e == 0) r.a} {hi : InstallOk st.role st.idx st.fill} :
+    {ha : TableArgs st.size (writeSimple (zeroBytes st.size.toNat) r) (r.e == 0) r.a} {hi : InstallOk st.role st.idx st.fill}
+    {har : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 4096 < 2 ^ 32} :
     TableDone K g o (simpleValue st.size r) { st with
         word := r.word, count := r.count, pos := pos, status := .next, lens := writeSimple (zeroBytes st.size.toNat) r }
       (tableDone { st with
         word := r.word, count := r.count, pos := pos, status := .next, lens := writeSimple (zeroBytes st.size.toNat) r }
-        (r.e == 0) r.a ha hi) := by
+        (r.e == 0) r.a ha hi har) := by
   obtain ⟨_, hu, _, hs, ho⟩ := hrel
   obtain ⟨hs1, hs2, hs3⟩ := hs
   have hCc := readPrefixCode_complete hwit
@@ -331,7 +332,7 @@ def stepHCode (st : Hd) (pos : USize) (h : ∃ g p, HRel st g p) (ht : st.tag = 
         tableDone { st with
             word := r.word, count := r.count, pos := pos, status := .next
             lens := writeSimple (zeroBytes st.size.toNat) r }
-          (r.e == 0) r.a (hr hs) (code_install (st := st) h ht)
+          (r.e == 0) r.a (hr hs) (code_install (st := st) h ht) (hrel_arena (st := st) h)
     else
       { st with
         word := b1.word, count := b1.count, pos := pos, status := .next, tag := .clens, clIdx := hskip, clSum := 0, clNz := 0, clSym := 0
@@ -440,6 +441,7 @@ theorem stepHCode_ok {o : Owner} {size : Nat} {st : Hd} {g : Gh} {pos : USize} {
           rw [ite_eq_left rfl, simpleChain_eq, hs1]
           exact hN2
         have hdone := simple_done (K := K) pos hrel hw2 hwit hsmall hb (ha := hr hsr) (hi := code_install hH hT)
+          (har := hrel_arena hH)
         generalize hc : simpleValue st.size r = c at hN hdone
         exact hdone.toStep rfl hp rfl (fun h => ⟨h.fill, by
             show (writeSimple (zeroBytes st.size.toNat) r).size ≤ _

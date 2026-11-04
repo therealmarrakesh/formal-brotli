@@ -114,11 +114,11 @@ theorem installTable_nf (st : Hd) (base : UInt64) (hi : InstallOk st.role st.idx
   · rw [installTable_codes hr, installTable_codes (st := { st with pos := 0 }) hr]; rfl
   · rw [installTable_map hr, installTable_map (st := { st with pos := 0 }) hr]
 
-theorem growPlanned_nf (st : Hd) (lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) (pl : Plan) :
-    growPlanned st lens n hn pl = { growPlanned { st with pos := 0 } lens n hn pl with pos := st.pos } := rfl
+theorem growLens_nf (st : Hd) (lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) (h : LensArgs st.d.arena lens n) :
+    growLens st lens n hn h = { growLens { st with pos := 0 } lens n hn h with pos := st.pos } := rfl
 
-theorem growSingle_nf (st : Hd) (sym : UInt64) :
-    growSingle st sym = { growSingle { st with pos := 0 } sym with pos := st.pos } := rfl
+theorem growSingle_nf (st : Hd) (sym : UInt64) (h : st.d.arena.size + 4096 < 2 ^ 32 ∧ st.d.arena.size % 2 = 0) :
+    growSingle st sym h = { growSingle { st with pos := 0 } sym h with pos := st.pos } := rfl
 
 theorem mapTableDone_nf (st : Hd) (t : ByteArray) (hf : t.size < 2 ^ 32 ∧ TableFits t (USize.ofNat 0).toNat) :
     mapTableDone st t hf = { mapTableDone { st with pos := 0 } t hf with pos := st.pos } := by
@@ -128,8 +128,8 @@ theorem mapTableDone_nf (st : Hd) (t : ByteArray) (hf : t.size < 2 ^ 32 ∧ Tabl
 
 set_option maxRecDepth 8192 in
 theorem tableDone_nf (st : Hd) (single : Bool) (sym : UInt64) (ha : TableArgs st.size st.lens single sym)
-    (hi : InstallOk st.role st.idx st.fill) :
-    tableDone st single sym ha hi = { tableDone { st with pos := 0 } single sym ha hi with pos := st.pos } := by
+    (hi : InstallOk st.role st.idx st.fill) (har : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 4096 < 2 ^ 32) :
+    tableDone st single sym ha hi har = { tableDone { st with pos := 0 } single sym ha hi har with pos := st.pos } := by
   unfold tableDone
   cases st
   try dsimp only
@@ -165,7 +165,7 @@ macro "hd_nf" : tactic => `(tactic| ((try unfold markH) <;> (try dsimp only) <;>
     | split_all
     | exact (installTable_nf _ _ _).trans rfl
     | exact (mapTableDone_nf _ _ _).trans rfl
-    | exact (tableDone_nf _ _ _ _ _).trans rfl
+    | exact (tableDone_nf _ _ _ _ _ _).trans rfl
     | exact (catMoveOn_nf _).trans rfl
     | exact (clFinish_nf _ _).trans rfl
     | exact (mapFinish_nf _ _ _).trans rfl
@@ -195,7 +195,7 @@ theorem stepHSyms_pos (st : Hd) (p : USize) (h : ∃ g p, HRel st g p) (ht : st.
   unfold stepHSyms
   by_cases h0 : st.symSum = 32768
   · rw [dite_eq_left h0, dite_eq_left (show ({ st with pos := 0 } : Hd).symSum = 32768 from h0)]
-    exact (tableDone_nf _ _ _ _ _).trans rfl
+    exact (tableDone_nf _ _ _ _ _ _).trans rfl
   · rw [dite_eq_right h0, dite_eq_right (show ¬ ({ st with pos := 0 } : Hd).symSum = 32768 from h0)]
     cases st
     hd_nf

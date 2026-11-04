@@ -98,14 +98,14 @@ def literalRun {nTrees : Nat} {arena litBase lMap : ByteArray} (C : LitChecked a
       rw [treeBase_toNat]
       exact C.fits _ htree
     let v := lookup arena base rw hfit C.arena32
-    let l := v &&& 63
+    let l := v &&& 15
     if hl : l ≤ rc then
-      let byte := (v >>> 8).toUInt8
+      let byte := (v >>> 4).toUInt8
       have hl63 : l.toNat < 64 := by
-        have : (v &&& 63).toNat = v.toNat % 64 := by
+        have : (v &&& 15).toNat = v.toNat % 16 := by
           rw [UInt64.toNat_and]
-          exact Nat.and_two_pow_sub_one_eq_mod v.toNat 6
-        show (v &&& 63).toNat < 64
+          exact Nat.and_two_pow_sub_one_eq_mod v.toNat 4
+        show (v &&& 15).toNat < 64
         omega
       have hr : wpos.toNat < ring.size := by omega
       let ring' := ringWrite ring wpos byte hr
@@ -146,17 +146,14 @@ private theorem contextBytes_cons (b : Nat) (out : List Nat) :
     | nil => rfl
     | cons y ys => rfl
 
-private theorem and63 (v : UInt64) (h : v.toNat % 256 ≤ 15) : (v &&& 63).toNat = v.toNat % 256 := by
-  rw [UInt64.toNat_and]
-  have : v.toNat &&& 63 = v.toNat % 64 := Nat.and_two_pow_sub_one_eq_mod v.toNat 6
-  rw [show (63 : UInt64).toNat = 63 from rfl, this]
-  omega
+private theorem and15 (v : UInt64) (_h : v.toNat % 16 ≤ 15) : (v &&& 15).toNat = v.toNat % 16 := by
+  rw [UInt64.toNat_and, show (15 : UInt64).toNat = 2 ^ 4 - 1 from rfl, Nat.and_two_pow_sub_one_eq_mod]
 
-private theorem byte_of (v : UInt64) (h : v.toNat / 256 % 65536 < literalAlphabetSize) :
-    (v >>> 8).toUInt8.toNat = v.toNat / 256 % 65536 := by
-  have h' : v.toNat / 256 % 65536 < 256 := h
+private theorem byte_of (v : UInt64) (h : v.toNat / 16 < literalAlphabetSize) :
+    (v >>> 4).toUInt8.toNat = v.toNat / 16 := by
+  have h' : v.toNat / 16 < 256 := h
   simp only [UInt64.toNat_toUInt8, UInt64.toNat_shiftRight]
-  rw [show (8 : UInt64).toNat % 64 = 8 from rfl, Nat.shiftRight_eq_div_pow, show (2 : Nat) ^ 8 = 256 from rfl]
+  rw [show (4 : UInt64).toNat % 64 = 4 from rfl, Nat.shiftRight_eq_div_pow, show (2 : Nat) ^ 4 = 16 from rfl]
   omega
 
 /-- One literal with no block switch, in the spec's terms. -/
@@ -299,7 +296,7 @@ theorem literalRun_spec {α : Type} {nTrees : Nat} {arena litBase lMap : ByteArr
     have hhit := hok.hit (refill word count a pos stop hs hp).word.toNat
     rw [← hv1, ← hv2] at hhit
     have hl15 := hhit.le_15 hC
-    have hl63 := and63 _ hl15
+    have hl63 := and15 _ hl15
     have hrest : ∀ F, availBits word count a pos stop F =
         (refill word count a pos stop hs hp).buf.held ++ (chunkBits a (refill word count a pos stop hs hp).pos.toNat stop.toNat ++ F) := by
       intro F
@@ -326,19 +323,19 @@ theorem literalRun_spec {α : Type} {nTrees : Nat} {arena litBase lMap : ByteArr
       have hstep := fun F : List Bool => literal_step (w := w) (K := K) (s := s) (ic := ic) (c := c) (ilen := ilen)
         (clen := clen) (n := L') hlit hcur hmode hmapget hcode (hdec F)
       have hwr : wpos.toNat < ring.size := by rw [hsize]; exact hwp
-      have hringNew := RingOk.write (v := (lookup arena _ (refill word count a pos stop hs hp).word hok.toTableFits C.arena32 >>> 8).toUInt8)
+      have hringNew := RingOk.write (v := (lookup arena _ (refill word count a pos stop hs hp).word hok.toTableFits C.arena32 >>> 4).toUInt8)
         hring hk hmask hwr
       have hnextLt : (ringNext wpos mask).toNat < 2 ^ k := hringNew.pos_lt
       have hsizeNew := hringNew.size
-      have hdropLt : (lookup arena _ (refill word count a pos stop hs hp).word hok.toTableFits C.arena32 &&& 63).toNat < 64 := by
+      have hdropLt : (lookup arena _ (refill word count a pos stop hs hp).word hok.toTableFits C.arena32 &&& 15).toNat < 64 := by
         rw [hl63]
         omega
       have hleCount := UInt64.le_iff_toNat_le.mp hl
       have hih := ih (n - USize.ofNat 1)
         ((BitBuffer.mk (refill word count a pos stop hs hp).word (refill word count a pos stop hs hp).count).drop
-          (lookup arena _ (refill word count a pos stop hs hp).word hok.toTableFits C.arena32 &&& 63)).word
+          (lookup arena _ (refill word count a pos stop hs hp).word hok.toTableFits C.arena32 &&& 15)).word
         ((BitBuffer.mk (refill word count a pos stop hs hp).word (refill word count a pos stop hs hp).count).drop
-          (lookup arena _ (refill word count a pos stop hs hp).word hok.toTableFits C.arena32 &&& 63)).count
+          (lookup arena _ (refill word count a pos stop hs hp).word hok.toTableFits C.arena32 &&& 15)).count
         (refill word count a pos stop hs hp).pos (ringNext wpos mask) _ _ p1 hrp2
         (BitBuffer.drop_wf hrw hdropLt hleCount) hsizeNew hnextLt L' { lit with count := lit.count - 1 } _
         (by omega) (by omega) (by show N ≤ lit.count - 1; omega) hcur (by rw [contextBytes_cons, hctx]) hringNew
@@ -363,14 +360,14 @@ theorem literalRun_spec {α : Type} {nTrees : Nat} {arena litBase lMap : ByteArr
             lowBits (refill word count a pos stop hs hp).word.toNat (refill word count a pos stop hs hp).count.toNat := rfl
         have eL : L' + 1 - (N + 1 - run.left.toNat) = L' - (N - run.left.toNat) := by omega
         have hb : availBits ((BitBuffer.mk (refill word count a pos stop hs hp).word (refill word count a pos stop hs hp).count).drop
-              (lookup arena _ (refill word count a pos stop hs hp).word hok.toTableFits C.arena32 &&& 63)).word
+              (lookup arena _ (refill word count a pos stop hs hp).word hok.toTableFits C.arena32 &&& 15)).word
             ((BitBuffer.mk (refill word count a pos stop hs hp).word (refill word count a pos stop hs hp).count).drop
-              (lookup arena _ (refill word count a pos stop hs hp).word hok.toTableFits C.arena32 &&& 63)).count
+              (lookup arena _ (refill word count a pos stop hs hp).word hok.toTableFits C.arena32 &&& 15)).count
             a (refill word count a pos stop hs hp).pos stop F =
             lowBits ((refill word count a pos stop hs hp).word.toNat /
-                2 ^ ((lookup arena _ (refill word count a pos stop hs hp).word hok.toTableFits C.arena32).toNat % 256))
+                2 ^ ((lookup arena _ (refill word count a pos stop hs hp).word hok.toTableFits C.arena32).toNat % 16))
               ((refill word count a pos stop hs hp).count.toNat -
-                (lookup arena _ (refill word count a pos stop hs hp).word hok.toTableFits C.arena32).toNat % 256) ++
+                (lookup arena _ (refill word count a pos stop hs hp).word hok.toTableFits C.arena32).toNat % 16) ++
               (chunkBits a (refill word count a pos stop hs hp).pos.toNat stop.toNat ++ F) := by
           unfold availBits
           simp only [BitBuffer.held]
@@ -397,7 +394,7 @@ theorem literalRun_spec {α : Type} {nTrees : Nat} {arena litBase lMap : ByteArr
         simp only [BitBuffer.held]
         rw [hw', hc', hl63]
     · rename_i hl
-      have hnot : (refill word count a pos stop hs hp).count.toNat < (lookup arena _ (refill word count a pos stop hs hp).word hok.toTableFits C.arena32 &&& 63).toNat :=
+      have hnot : (refill word count a pos stop hs hp).count.toNat < (lookup arena _ (refill word count a pos stop hs hp).word hok.toTableFits C.arena32 &&& 15).toNat :=
         Nat.lt_of_not_le fun hle => hl (UInt64.le_iff_toNat_le.mpr hle)
       rw [hl63] at hnot
       refine ⟨lit, out, by simp only; omega, rfl, rfl, by simp only; omega, by simp only; omega, ⟨[], rfl⟩, hring, hctx, hrw, hrp1, hrp2, hbytes, ?_, ?_, ?_⟩

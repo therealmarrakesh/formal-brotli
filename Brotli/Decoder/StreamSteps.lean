@@ -243,7 +243,7 @@ def stepDMeta (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : D
     else { D with pos := pos, status := .bad }
   else { D with pos := pos, status := .needsOutput }
 
-theorem smallMax_eq : smallMax = 12432 := rfl
+theorem smallMax_eq : smallMax = 6216 := rfl
 
 /-- Nothing is settled at a header's start, and the arena has reserved room for the categories' codes. -/
 theorem Upto.start {d : Done} {g : Gh} (h0 : d.arena.size = 0) (hc : d.arenaCap.toNat = smallMax)
@@ -256,7 +256,7 @@ theorem Upto.start {d : Done} {g : Gh} (h0 : d.arena.size = 0) (hc : d.arenaCap.
   capLe := by rw [hc]; omega
   room := by
     rw [smallMax_eq, Nat.add_assoc]
-    exact hl
+    exact Nat.lt_of_le_of_lt (Nat.add_le_add_left (by decide) _) hl
   small _ := hc
   cat i hi := absurd hi (by cases i <;> decide)
   np h := absurd h (by decide)

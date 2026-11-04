@@ -12,38 +12,32 @@ namespace Brotli.Decoder
 
 open Brotli.Spec Brotli.Properties
 
-/-- A lookup word's bit count. Masked to 63 so that dropping that many bits is always well defined; on a real table
-it is at most 15. -/
-@[inline] def wordBits (v : UInt64) : UInt64 := v &&& 63
+/-- A lookup word's bit count, its low 4 bits. -/
+@[inline] def wordBits (v : UInt64) : UInt64 := v &&& 15
 
-/-- A lookup word's symbol. -/
-@[inline] def wordSym (v : UInt64) : UInt64 := (v >>> 8) &&& 65535
+/-- A lookup word's symbol, its 12 bits above the bit count. -/
+@[inline] def wordSym (v : UInt64) : UInt64 := (v >>> 4) &&& 4095
 
 /-- A lookup word's value. -/
 def wordValue (v : UInt64) : Nat := (wordSym v).toNat
 
 theorem wordValue_lt (v : UInt64) : wordValue v < 2 ^ 16 := by
   unfold wordValue wordSym
-  rw [UInt64.toNat_and, show (65535 : UInt64).toNat = 2 ^ 16 - 1 from rfl, Nat.and_two_pow_sub_one_eq_mod]
-  exact Nat.mod_lt _ (Nat.two_pow_pos _)
+  rw [UInt64.toNat_and, show (4095 : UInt64).toNat = 2 ^ 12 - 1 from rfl, Nat.and_two_pow_sub_one_eq_mod]
+  have := Nat.mod_lt ((v >>> 4).toNat) (Nat.two_pow_pos 12)
+  omega
+
+theorem wordBits_eq (v : UInt64) : (wordBits v).toNat = v.toNat % 16 := by
+  unfold wordBits
+  rw [UInt64.toNat_and, show (15 : UInt64).toNat = 2 ^ 4 - 1 from rfl, Nat.and_two_pow_sub_one_eq_mod]
 
 theorem wordBits_lt (v : UInt64) : (wordBits v).toNat < 64 := by
-  unfold wordBits
-  rw [UInt64.toNat_and]
-  have : v.toNat &&& 63 = v.toNat % 64 := Nat.and_two_pow_sub_one_eq_mod v.toNat 6
-  rw [show (63 : UInt64).toNat = 63 from rfl, this]
+  rw [wordBits_eq]
   omega
 
-theorem wordBits_eq (v : UInt64) (h : v.toNat % 256 ≤ 15) : (wordBits v).toNat = v.toNat % 256 := by
-  unfold wordBits
-  rw [UInt64.toNat_and]
-  have : v.toNat &&& 63 = v.toNat % 64 := Nat.and_two_pow_sub_one_eq_mod v.toNat 6
-  rw [show (63 : UInt64).toNat = 63 from rfl, this]
-  omega
-
-theorem wordValue_eq (v : UInt64) : wordValue v = v.toNat / 256 % 65536 := by
+theorem wordValue_eq (v : UInt64) : wordValue v = v.toNat / 16 % 4096 := by
   unfold wordValue wordSym
-  rw [UInt64.toNat_and, show (65535 : UInt64).toNat = 2 ^ 16 - 1 from rfl, Nat.and_two_pow_sub_one_eq_mod,
+  rw [UInt64.toNat_and, show (4095 : UInt64).toNat = 2 ^ 12 - 1 from rfl, Nat.and_two_pow_sub_one_eq_mod,
     UInt64.toNat_shiftRight, Nat.shiftRight_eq_div_pow]
   rfl
 
@@ -58,13 +52,13 @@ theorem lookup_read {t : ByteArray} {base : USize} {b : BitBuffer} {c : PrefixCo
       (¬ wordBits v ≤ b.count → decodeSymbol c b.held = none) := by
   intro v
   obtain ⟨h1, h2⟩ := lookup_spec (w := b.word) hfit h32
-  have hh : Hit c b.word.toNat (v.toNat % 256) (v.toNat / 256 % 65536) := by
+  have hh : Hit c b.word.toNat (v.toNat % 16) (v.toNat / 16) := by
     have := hok.hit b.word.toNat
     rw [← h1, ← h2] at this
     exact this
-  have hl15 : v.toNat % 256 ≤ 15 := hh.le_15 hC
-  have hb := wordBits_eq v hl15
+  have hb := wordBits_eq v
   have hk : (wordBits v).toNat < 64 := wordBits_lt v
+  have hv16 : v.toNat < 65536 := lookup_lt hfit h32
   refine ⟨by omega, ?_, ?_⟩
   · intro hle f
     have hle' := UInt64.le_iff_toNat_le.mp hle
@@ -72,12 +66,14 @@ theorem lookup_read {t : ByteArray} {base : USize} {b : BitBuffer} {c : PrefixCo
     have hd := hh.decode hC hle' f
     have hw := drop_word b hk
     have hc := drop_count (b := b) (k := wordBits v) (UInt64.le_iff_toNat_le.mp hle)
-    have ev : wordValue v = v.toNat / 256 % 65536 := wordValue_eq v
+    have ev : wordValue v = v.toNat / 16 := by
+      rw [wordValue_eq]
+      omega
     simp only [BitBuffer.held] at hd ⊢
     rw [hw, hc, hb, ev]
     exact hd
   · intro hnot
-    have hlt : b.count.toNat < v.toNat % 256 := by
+    have hlt : b.count.toNat < v.toNat % 16 := by
       rw [← hb]
       exact Nat.lt_of_not_le fun h => hnot (UInt64.le_iff_toNat_le.mpr h)
     exact hh.short hC hlt

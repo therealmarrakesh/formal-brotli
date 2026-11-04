@@ -19,7 +19,8 @@ open Brotli.Spec Brotli.Properties
 /-- A table's work, with its lengths complete: at most twelve for each symbol and 3735 more, and for a context map's code
 the map's zeros as read and as transformed, and its three lists of 256 bytes. -/
 theorem tableDoneW_le {st : Hd} {single : Bool} (hn : st.size.toNat ≤ 704) (hlens : st.size.toNat ≤ st.lens.size)
-    (hC : single = false → Complete (.canonical (lensOf st.lens st.size.toNat))) :
+    (hC : single = false → Complete (.canonical (lensOf st.lens st.size.toNat)))
+    (har : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 4096 < 2 ^ 32) :
     tableDoneW st single ≤ 12 * st.size.toNat + 3735 +
       (if st.role = .map then 1028 + zbW (mapSizeFast st) + zbW (mapSizeFast st) else 0) := by
   have hu : st.size.toUSize.toNat = st.size.toNat := word_toUSize (by omega)
@@ -27,14 +28,19 @@ theorem tableDoneW_le {st : Hd} {single : Bool} (hn : st.size.toNat ≤ 704) (hl
   dsimp only
   have hnle : st.size.toUSize.toNat ≤ st.lens.size := by rw [hu]; exact hlens
   rw [dite_eq_left hnle]
-  have hb : (if single then buildSingleW else buildFastW st.lens st.size.toUSize hnle) ≤ 12 * st.size.toNat + 3734 := by
+  have hb : ∀ t : ByteArray, t.size % 2 = 0 ∧ t.size + 4096 < 2 ^ 32 →
+      (if single then buildSingleW else buildLensW t st.lens st.size.toUSize hnle) ≤ 12 * st.size.toNat + 3734 := by
+    intro t ht
     cases hs : single with
-    | true => show buildSingleW ≤ _; unfold buildSingleW; omega
+    | true =>
+      show buildSingleW ≤ _
+      have := buildSingleW_le
+      omega
     | false =>
-      show buildFastW st.lens st.size.toUSize hnle ≤ _
+      show buildLensW t st.lens st.size.toUSize hnle ≤ _
       have hC' := hC hs
       rw [← hu] at hC'
-      have h1 := buildFastW_le (hn := hnle) (by omega) hC'
+      have h1 := buildLensW_le (hn := hnle) (⟨hC', by rw [hu]; exact hn, ht.1, ht.2⟩ : LensArgs t st.lens st.size.toUSize)
       have h2 := longCount_le (lensOf st.lens st.size.toUSize.toNat)
       rw [lensOf_length hnle, hu] at h2
       rw [hu] at h1
@@ -43,10 +49,20 @@ theorem tableDoneW_le {st : Hd} {single : Bool} (hn : st.size.toNat ≤ 704) (hl
   | map =>
     simp only [↓reduceIte]
     have := zbW_le 256
+    have := hb (ByteArray.emptyWithCapacity soloCap) ⟨rfl, by decide⟩
     omega
-  | type => simp only [reduceCtorEq, ↓reduceIte]; omega
-  | count => simp only [reduceCtorEq, ↓reduceIte]; omega
-  | codes => simp only [reduceCtorEq, ↓reduceIte]; omega
+  | type =>
+    simp only [reduceCtorEq, ↓reduceIte]
+    have := hb st.d.arena har
+    omega
+  | count =>
+    simp only [reduceCtorEq, ↓reduceIte]
+    have := hb st.d.arena har
+    omega
+  | codes =>
+    simp only [reduceCtorEq, ↓reduceIte]
+    have := hb st.d.arena har
+    omega
 
 /-- The code length code's table's work, with its lengths complete when it has two symbols or more. -/
 theorem clTableW_le {st : Hd} (hC : st.clNz ≠ 1 → Complete (.canonical (lensOf st.clLens 18))) : clTableW st ≤ 3950 := by
@@ -54,14 +70,15 @@ theorem clTableW_le {st : Hd} (hC : st.clNz ≠ 1 → Complete (.canonical (lens
   unfold clTableW
   by_cases h1 : st.clNz = 1
   · rw [ite_eq_left h1]
-    unfold buildSingleW
+    have := buildSingleW_le
     omega
   · rw [ite_eq_right h1]
     by_cases hn : (USize.ofNat 18).toNat ≤ st.clLens.size
     · rw [dite_eq_left hn]
       have hC' := hC h1
       rw [← h18] at hC'
-      have b1 := buildFastW_le (hn := hn) (by rw [h18]; decide) hC'
+      have b1 := buildLensW_le (hn := hn) (⟨hC', by rw [h18]; decide, rfl, by decide⟩ :
+        LensArgs ByteArray.empty st.clLens (USize.ofNat 18))
       have b2 := longCount_le (lensOf st.clLens (USize.ofNat 18).toNat)
       rw [lensOf_length hn, h18] at b2
       rw [h18] at b1
@@ -596,17 +613,19 @@ theorem hcost_syms_other (g : Gh) (o : Owner) (n : Nat) (clc : PrefixCode) (ls :
   cases p' <;> first | rfl | exact absurd rfl h
 
 /-- Where a finished table's step goes. -/
-theorem growSingle_role (st : Hd) (sym : UInt64) : (growSingle st sym).role = st.role := by
+theorem growSingle_role (st : Hd) (sym : UInt64) (h : st.d.arena.size + 4096 < 2 ^ 32 ∧ st.d.arena.size % 2 = 0) :
+    (growSingle st sym h).role = st.role := by
   unfold growSingle clearDone
   rfl
 
-theorem growPlanned_role (st : Hd) (lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) (p : Plan) :
-    (growPlanned st lens n hn p).role = st.role := by
-  unfold growPlanned clearDone
+theorem growLens_role (st : Hd) (lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) (h : LensArgs st.d.arena lens n) :
+    (growLens st lens n hn h).role = st.role := by
+  unfold growLens clearDone
   rfl
 
-theorem tableDone_tag {st : Hd} {s : Bool} {y : UInt64} {ha : TableArgs st.size st.lens s y} {hi : InstallOk st.role st.idx st.fill} :
-    (tableDone st s y ha hi).tag ≠ .clens ∧ (tableDone st s y ha hi).tag ≠ .syms := by
+theorem tableDone_tag {st : Hd} {s : Bool} {y : UInt64} {ha : TableArgs st.size st.lens s y} {hi : InstallOk st.role st.idx st.fill}
+    {har : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 4096 < 2 ^ 32} :
+    (tableDone st s y ha hi har).tag ≠ .clens ∧ (tableDone st s y ha hi har).tag ≠ .syms := by
   have key : ∀ (x : Hd) (b : UInt64) (hx : InstallOk x.role x.idx x.fill), x.role ≠ .map →
       (installTable x b hx).tag ≠ .clens ∧ (installTable x b hx).tag ≠ .syms := by
     intro x b hx hm
@@ -624,11 +643,11 @@ theorem tableDone_tag {st : Hd} {s : Bool} {y : UInt64} {ha : TableArgs st.size 
     unfold mapTableDone
     exact ⟨fun e => HTag.noConfusion e, fun e => HTag.noConfusion e⟩
   | type | count | codes =>
-    cases s
-    · simp only [Bool.false_eq_true, ↓reduceIte]
-      exact key _ _ _ (by rw [growPlanned_role, hr]; decide)
-    · simp only [↓reduceIte]
+    by_cases hs : s = true
+    · rw [dite_eq_left hs]
       exact key _ _ _ (by rw [growSingle_role, hr]; decide)
+    · rw [dite_eq_right hs]
+      exact key _ _ _ (by rw [growLens_role, hr]; decide)
 
 theorem mapFin_ge {st : Hd} {g : Gh} {isL : Bool} (hi : st.isL = isL) (hu : Upto st.d g (mapIdx isL)) :
     mapFinishW st ≤ mapFin g isL := by
@@ -907,7 +926,7 @@ theorem wCode {st : Hd} {g : Gh} {o : Owner} {n : Nat} {pos : USize} {g' : Gh} {
           (fun hsg => hcomp hsr (fun e => by
             have : r.e = 0 := UInt64.toNat_inj.mp e
             rw [this] at hsg
-            cases hsg))
+            cases hsg)) hu.arenaOk
         have hz := zbW_le st.size.toNat
         rw [hcost_code, ite_eq_right hnc]
         have hT' : tableDoneW { st with
@@ -1061,7 +1080,7 @@ theorem wSyms {st : Hd} {g : Gh} {o : Owner} {n : Nat} {clc : PrefixCode} {ls : 
       · rw [lengthSum_append, lengthSum_replicate_zero, Nat.add_zero, ← hy.sumOk, hsum]
         rfl
     have hT := tableDoneW_le (st := { st with pos := pos, status := .next }) (single := false) (show st.size.toNat ≤ 704 by omega)
-      (show st.size.toNat ≤ st.lens.size by rw [hy.sz, hs1]; exact Nat.le_refl _) (fun _ => hC)
+      (show st.size.toNat ≤ st.lens.size by rw [hy.sz, hs1]; exact Nat.le_refl _) (fun _ => hC) hu.arenaOk
     have hT' : tableDoneW { st with pos := pos, status := .next } false ≤
         12 * st.size.toNat + 3735 + (if st.role = .map then 1028 + zbW (mapSizeFast st) + zbW (mapSizeFast st) else 0) := hT
     omega
@@ -1265,7 +1284,7 @@ theorem codeW_le {st : Hd} {g : Gh} {o : Owner} {n : Nat} {pos : USize} {hH : �
         intro hn
         obtain ⟨hw2, hw3, hsmall⟩ := hwit hsr
         have hd := simple_done (K := (⟨fun _ _ => none, fun _ _ => none⟩ : HK Unit)) pos hrel' hw2 hw3 hsmall hb (ha := hra hsr)
-          (hi := code_install hH hT)
+          (hi := code_install hH hT) (har := hrel_arena hH)
         exact absurd hd.status hn
     · rw [ite_eq_right h1] at hn
       exact absurd rfl hn
@@ -1341,7 +1360,7 @@ theorem symsW_stop {st : Hd} {g : Gh} {o : Owner} {n : Nat} {clc : PrefixCode} {
       · rw [lengthSum_append, lengthSum_replicate_zero, Nat.add_zero, ← hy.sumOk, hsum]
         rfl
     have hT := tableDoneW_le (st := { st with pos := pos, status := .next }) (single := false) (show st.size.toNat ≤ 704 by omega)
-      (show st.size.toNat ≤ st.lens.size by rw [hy.sz, hs1]; exact Nat.le_refl _) (fun _ => hC)
+      (show st.size.toNat ≤ st.lens.size by rw [hy.sz, hs1]; exact Nat.le_refl _) (fun _ => hC) hu.arenaOk
     have hT' : tableDoneW { st with pos := pos, status := .next } false ≤
         12 * st.size.toNat + 3735 + (if st.role = .map then 1028 + zbW (mapSizeFast st) + zbW (mapSizeFast st) else 0) := hT
     omega
@@ -1512,7 +1531,8 @@ theorem stepHW_stop {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} 
 Such a step leaves the state at its place, so its work is not paid for by the potential: it is at most 259. -/
 
 theorem tableDone_ni {st : Hd} {s : Bool} {y : UInt64} {ha : TableArgs st.size st.lens s y} {hi : InstallOk st.role st.idx st.fill}
-    (h : st.status = .next) : (tableDone st s y ha hi).status ≠ .needsInput := by
+    {har : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 4096 < 2 ^ 32}
+    (h : st.status = .next) : (tableDone st s y ha hi har).status ≠ .needsInput := by
   unfold tableDone
   dsimp only
   cases hr : st.role with
@@ -1524,13 +1544,13 @@ theorem tableDone_ni {st : Hd} {s : Bool} {y : UInt64} {ha : TableArgs st.size s
     exact fun e => HStatus.noConfusion e
   | type | count | codes =>
     dsimp only
-    cases s
-    · simp only [Bool.false_eq_true, ↓reduceIte]
+    by_cases hs : s = true
+    · rw [dite_eq_left hs]
       rw [(installTable_spec _ _ _).2.2.2.1]
       show st.status ≠ _
       rw [h]
       exact fun e => HStatus.noConfusion e
-    · simp only [↓reduceIte]
+    · rw [dite_eq_right hs]
       rw [(installTable_spec _ _ _).2.2.2.1]
       show st.status ≠ _
       rw [h]

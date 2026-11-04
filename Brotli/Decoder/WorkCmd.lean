@@ -44,14 +44,14 @@ def literalRunW {nTrees : Nat} {arena litBase lMap : ByteArray} (C : LitChecked 
       rw [treeBase_toNat]
       exact C.fits _ htree
     let v := lookup arena base rw hfit C.arena32
-    let l := v &&& 63
+    let l := v &&& 15
     if hl : l ≤ rc then
-      let byte := (v >>> 8).toUInt8
+      let byte := (v >>> 4).toUInt8
       have hl63 : l.toNat < 64 := by
-        have : (v &&& 63).toNat = v.toNat % 64 := by
+        have : (v &&& 15).toNat = v.toNat % 16 := by
           rw [UInt64.toNat_and]
-          exact Nat.and_two_pow_sub_one_eq_mod v.toNat 6
-        show (v &&& 63).toNat < 64
+          exact Nat.and_two_pow_sub_one_eq_mod v.toNat 4
+        show (v &&& 15).toNat < 64
         omega
       have hr : wpos.toNat < ring.size := by omega
       let ring' := ringWrite ring wpos byte hr

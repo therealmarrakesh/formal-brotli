@@ -163,4 +163,189 @@ theorem foldCodes_ind {β : Type} {f : β → Nat → Nat → Nat → β} {lens 
   intro l hl0 hl16
   simp [h2 l hl16]
 
+/-! ### Visiting the symbols in canonical order -/
+
+/-- The symbols of length `l`, in increasing order. -/
+def symsOf (lens : List Nat) (l : Nat) : List Nat := (List.range lens.length).filter (fun s => lens[s]? == some l)
+
+theorem mem_symsOf {lens : List Nat} {l s : Nat} : s ∈ symsOf lens l ↔ lens[s]? = some l := by
+  unfold symsOf
+  simp only [List.mem_filter, List.mem_range, beq_iff_eq]
+  exact ⟨fun h => h.2, fun h => ⟨(List.getElem?_eq_some_iff.mp h).1, h⟩⟩
+
+/-- In a filtered range, the `i`th element has `i` elements of the filter below it. -/
+private theorem filter_range_idx (p : Nat → Bool) : ∀ (n i : Nat) (hi : i < ((List.range n).filter p).length),
+    ((List.range ((List.range n).filter p)[i]).filter p).length = i := by
+  intro n
+  induction n with
+  | zero => intro i hi; simp at hi
+  | succ n ih =>
+    intro i hi
+    by_cases hp : p n = true
+    · have e : (List.range (n + 1)).filter p = (List.range n).filter p ++ [n] := by
+        rw [List.range_succ, List.filter_append]
+        simp [hp]
+      have hi' : i < ((List.range n).filter p).length + 1 := by
+        rw [e] at hi
+        simpa using hi
+      by_cases hlt : i < ((List.range n).filter p).length
+      · have g : ((List.range (n + 1)).filter p)[i] = ((List.range n).filter p)[i] := by
+          simp only [e]
+          exact List.getElem_append_left hlt
+        rw [g]
+        exact ih i hlt
+      · have hie : i = ((List.range n).filter p).length := by omega
+        have g : ((List.range (n + 1)).filter p)[i] = n := by
+          simp only [e]
+          rw [List.getElem_append_right (by omega)]
+          simp [hie]
+        rw [g, hie]
+    · have e : (List.range (n + 1)).filter p = (List.range n).filter p := by
+        rw [List.range_succ, List.filter_append]
+        simp [hp]
+      have hi' : i < ((List.range n).filter p).length := by
+        rw [e] at hi
+        exact hi
+      have g : ((List.range (n + 1)).filter p)[i] = ((List.range n).filter p)[i] := by
+        simp only [e]
+      rw [g]
+      exact ih i hi'
+
+/-- Counting the lengths below `k` in the list or over the range. -/
+private theorem filter_range_len (lens : List Nat) (l : Nat) : ∀ k, k ≤ lens.length →
+    ((List.range k).filter (fun s => lens[s]? == some l)).length = ((lens.take k).filter (· == l)).length := by
+  intro k
+  induction k with
+  | zero => intro _; simp
+  | succ k ih =>
+    intro hk
+    rw [List.range_succ, List.filter_append, List.length_append, ih (by omega), List.take_add_one, List.filter_append,
+      List.length_append]
+    by_cases he : lens[k] = l <;> simp [he, List.getElem?_eq_getElem (show k < lens.length by omega)]
+
+/-- The `k`th symbol of length `l` has the code `nextCode` plus `k`. -/
+theorem code_symsOf {lens : List Nat} {l k : Nat} (hk : k < (symsOf lens l).length) (h0 : l ≠ 0) :
+    lens[(symsOf lens l)[k]]? = some l ∧ code lens (symsOf lens l)[k] = some (nextCode lens l + k) := by
+  have hmem : (symsOf lens l)[k] ∈ symsOf lens l := List.getElem_mem hk
+  have hget := mem_symsOf.mp hmem
+  have hlt : (symsOf lens l)[k] < lens.length := (List.getElem?_eq_some_iff.mp hget).1
+  refine ⟨hget, ?_⟩
+  have hidx := filter_range_idx (fun s => lens[s]? == some l) lens.length k hk
+  have hle : ((List.range lens.length).filter (fun s => lens[s]? == some l))[k] ≤ lens.length := Nat.le_of_lt hlt
+  rw [filter_range_len lens l _ hle] at hidx
+  simp only [code, hget, h0, ↓reduceIte]
+  exact congrArg (fun x => some (nextCode lens l + x)) hidx
+
+/-- How many symbols have length `l`. -/
+theorem length_symsOf {lens : List Nat} {l : Nat} (h0 : l ≠ 0) : (symsOf lens l).length = blCount lens l := by
+  unfold symsOf blCount
+  rw [filter_range_len lens l _ (Nat.le_refl _), List.take_length, ite_eq_right h0]
+
+/-- Visits the symbols `ss`, each of length `l`, each with the code one below the last, from `e`. Gives the last code. -/
+def walkSyms {β : Type} (f : β → Nat → Nat → Nat → β) (l : Nat) : List Nat → Nat → β → β × Nat
+  | [], e, acc => (acc, e)
+  | s :: ss, e, acc => walkSyms f l ss (e - 1) (f acc s l (e - 1))
+
+/-- Visits the symbols of lengths `l` down to 1, longest first, from the code above the last of length `l`. -/
+def walkFrom {β : Type} (f : β → Nat → Nat → Nat → β) (lens : List Nat) : Nat → Nat → β → β
+  | 0, _, acc => acc
+  | l + 1, e, acc =>
+    let r := walkSyms f (l + 1) (symsOf lens (l + 1)).reverse e acc
+    walkFrom f lens l (r.2 / 2) r.1
+
+/-- Visits each symbol that has a code, longest codes first and in decreasing order within a length, each with its code
+worked out downwards from the top of the code space. -/
+def walkDown {β : Type} (f : β → Nat → Nat → Nat → β) (lens : List Nat) (acc : β) : β := walkFrom f lens 15 32768 acc
+
+/-- A complete code's codes end at the top of the code space. -/
+theorem top_code {lens : List Nat} (hC : Brotli.Properties.Complete (.canonical lens)) :
+    nextCode lens 15 + blCount lens 15 = 32768 := by
+  have h1 := Brotli.Properties.nextCode_sum lens 15 (by decide) (by decide)
+  rw [Brotli.Properties.sumUpTo_eq lens hC.1, hC.2] at h1
+  simpa using h1
+
+/-- Halving the code above a length's codes gives the code above the next shorter length's. -/
+theorem nextCode_half (lens : List Nat) (l : Nat) : nextCode lens (l + 1) / 2 = nextCode lens l + blCount lens l := by
+  show ((nextCode lens l + blCount lens l) <<< 1) / 2 = _
+  rw [Nat.shiftLeft_eq, Nat.pow_one, Nat.mul_div_cancel _ (by decide)]
+
+/-- What `walkDown` visits, for a complete code: a property kept by each symbol that has a code, seen with the spec's
+`code` once every longer code has been seen, holds at the end, for a list of the symbols seen that has every symbol with
+a code. -/
+theorem walkDown_ind {β : Type} {f : β → Nat → Nat → Nat → β} {lens : List Nat}
+    (hC : Brotli.Properties.Complete (.canonical lens))
+    (P : List Nat → β → Prop)
+    (hs : ∀ done s l c acc, P done acc → lens[s]? = some l → l ≠ 0 → code lens s = some c →
+      (∀ s' l', lens[s']? = some l' → l < l' → s' ∈ done) → P (s :: done) (f acc s l c))
+    {acc : β} (h0 : P [] acc) :
+    ∃ done, P done (walkDown f lens acc) ∧ ∀ s l, lens[s]? = some l → l ≠ 0 → s ∈ done := by
+  -- One length: the symbols from the `k`th last, with every longer code seen.
+  have hsyms : ∀ (l : Nat), l ≠ 0 → ∀ (N k : Nat) (done : List Nat) (acc : β), (symsOf lens l).length - k = N →
+      k ≤ (symsOf lens l).length → P done acc → (∀ s' l', lens[s']? = some l' → l < l' → s' ∈ done) →
+      ∃ done', P done' (walkSyms f l ((symsOf lens l).reverse.drop k) (nextCode lens l + ((symsOf lens l).length - k)) acc).1 ∧
+        (walkSyms f l ((symsOf lens l).reverse.drop k) (nextCode lens l + ((symsOf lens l).length - k)) acc).2 =
+          nextCode lens l ∧
+        (∀ i (hi : i < (symsOf lens l).length), i + k < (symsOf lens l).length → (symsOf lens l)[i] ∈ done') ∧
+        ∀ s ∈ done, s ∈ done' := by
+    intro l hl0 N
+    induction N with
+    | zero =>
+      intro k done acc hN hk hp _
+      have hd : (symsOf lens l).reverse.drop k = [] := List.drop_eq_nil_of_le (by rw [List.length_reverse]; omega)
+      rw [hd, hN, Nat.add_zero]
+      exact ⟨done, hp, rfl, fun i hi hle => absurd hle (by omega), fun _ h => h⟩
+    | succ N ih =>
+      intro k done acc hN hk hp hlong
+      have hlt : k < (symsOf lens l).length := by omega
+      have hlt' : k < (symsOf lens l).reverse.length := by rw [List.length_reverse]; exact hlt
+      have hj : (symsOf lens l).length - 1 - k < (symsOf lens l).length := by omega
+      obtain ⟨hg, hc⟩ := code_symsOf hj hl0
+      have hrev : (symsOf lens l).reverse[k] = (symsOf lens l)[(symsOf lens l).length - 1 - k] := List.getElem_reverse _
+      rw [List.drop_eq_getElem_cons hlt', walkSyms, hrev]
+      have he : nextCode lens l + ((symsOf lens l).length - k) - 1 = nextCode lens l + ((symsOf lens l).length - (k + 1)) := by
+        omega
+      rw [he]
+      have hk1 : (symsOf lens l).length - 1 - k = (symsOf lens l).length - (k + 1) := by omega
+      have hc' : code lens (symsOf lens l)[(symsOf lens l).length - 1 - k] =
+          some (nextCode lens l + ((symsOf lens l).length - (k + 1))) := by
+        rw [hc, hk1]
+      have hp' := hs done _ l _ acc hp hg hl0 hc' hlong
+      obtain ⟨done', h1, h2, h3, h4⟩ := ih (k + 1) _ _ (by omega) (by omega) hp'
+        (fun s' l' hg' hl' => List.mem_cons_of_mem _ (hlong s' l' hg' hl'))
+      refine ⟨done', h1, h2, fun i hi hle => ?_, fun s hs' => h4 s (List.mem_cons_of_mem _ hs')⟩
+      by_cases hei : i = (symsOf lens l).length - 1 - k
+      · subst hei
+        exact h4 _ List.mem_cons_self
+      · exact h3 i hi (by omega)
+  -- The lengths, from `l` down.
+  have hlens : ∀ (l : Nat) (done : List Nat) (acc : β), P done acc →
+      (∀ s' l', lens[s']? = some l' → l < l' → s' ∈ done) →
+      ∃ done', P done' (walkFrom f lens l (nextCode lens l + blCount lens l) acc) ∧
+        (∀ s' l', lens[s']? = some l' → l' ≠ 0 → s' ∈ done') := by
+    intro l
+    induction l with
+    | zero =>
+      intro done acc hp hlong
+      exact ⟨done, hp, fun s' l' hg h0 => hlong s' l' hg (by omega)⟩
+    | succ l ih =>
+      intro done acc hp hlong
+      have hlen := length_symsOf (lens := lens) (l := l + 1) (by omega)
+      obtain ⟨d1, p1, e1, c1, s1⟩ := hsyms (l + 1) (by omega) _ 0 done acc rfl (Nat.zero_le _) hp hlong
+      rw [List.drop_zero, Nat.sub_zero, hlen] at p1 e1
+      have hnext := nextCode_half lens l
+      simp only [walkFrom]
+      rw [e1, hnext]
+      refine ih d1 _ p1 fun s' l' hg hl' => ?_
+      by_cases he : l' = l + 1
+      · subst he
+        obtain ⟨i, hi, e⟩ := List.getElem_of_mem (mem_symsOf.mpr hg)
+        exact e ▸ c1 i hi (by omega)
+      · exact s1 s' (hlong s' l' hg (by omega))
+  have htop := top_code hC
+  obtain ⟨done, p, c⟩ := hlens 15 [] acc h0 fun s' l' hg hl' =>
+    absurd hl' (by have := hC.1 l' (List.mem_of_getElem? hg); omega)
+  unfold walkDown
+  rw [← htop]
+  exact ⟨done, p, c⟩
+
 end Brotli.Decoder

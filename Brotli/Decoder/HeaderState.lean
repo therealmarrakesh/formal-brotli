@@ -26,14 +26,14 @@ theorem usize_zero' : (USize.ofNat 0).toNat = 0 := by
 
 /-- A table of zeros, before a real one is read. -/
 def Tab.none : Tab where
-  t := zeroBytes 1024
+  t := zeroBytes 512
   h32 := by rw [zeroBytes_size (by decide)]; decide
   fits := by
     rw [usize_zero']
     refine ⟨by rw [zeroBytes_size (by decide)]; omega, fun r _ hb => ?_⟩
-    have : (slotAt (zeroBytes 1024) (0 + r)).1 = 0 := by
-      simp only [slotAt]
-      rw [zeroBytes_get (by decide)]
+    have : (slotAt (zeroBytes 512) (0 + r)).1 = 0 := by
+      simp only [slotAt, slotNum]
+      rw [zeroBytes_get (by decide), zeroBytes_get (by decide)]
       rfl
     omega
 
@@ -288,7 +288,7 @@ structure MapOk (b : ByteArray) (l : List Nat) (size ntrees : Nat) : Prop where
   lt : ∀ v ∈ l, v < ntrees
 
 /-- The bytes a table of a code over `size` symbols can take (`tableBytes_le`). -/
-def treeMax (size : Nat) : Nat := 4 * (size + 376)
+def treeMax (size : Nat) : Nat := 2 * (size + 376)
 
 /-- The bytes a category's block type and block count codes' tables can take. -/
 def catMax : Nat := treeMax 258 + treeMax 26
@@ -299,7 +299,7 @@ def smallMax : Nat := 3 * catMax
 /-- What's settled at stage `n`. Until both context maps are read, the arena has reserved room for the categories' codes;
 after, also for the groups'. -/
 structure Upto (d : Done) (g : Gh) (n : Nat) : Prop where
-  four : d.arena.size % 4 = 0
+  four : d.arena.size % 2 = 0
   le : d.arena.size ≤ d.arenaCap.toNat
   max : d.arenaCap.toNat + 132096 < 2 ^ 32
   capLe : d.arenaCap.toNat ≤ smallMax + d.arenaMax.toNat
@@ -317,9 +317,9 @@ structure Upto (d : Done) (g : Gh) (n : Nat) : Prop where
 
 /-- The array grew at its end only. -/
 structure Keep (t t' : ByteArray) : Prop where
-  four : t.size % 4 = 0
+  four : t.size % 2 = 0
   le : t.size ≤ t'.size
-  frame : ∀ q, q < t.size / 4 → slotAt t' q = slotAt t q
+  frame : ∀ q, q < t.size / 2 → slotAt t' q = slotAt t q
 
 theorem CatRel.frame {t t' : ByteArray} {a b : USize} {c : BlockCategory} (h : CatRel t a b c) (hk : Keep t t') : CatRel t' a b c where
   type hn := by
@@ -338,7 +338,7 @@ theorem CodesPart.frame {t t' bases : ByteArray} {cs : List PrefixCode} {total s
     exact ⟨c, h1, h2.frame hk.four hk.le hk.frame, h3⟩
 
 /-- A longer arena keeps everything settled. -/
-theorem Upto.frame {d : Done} {g : Gh} {n : Nat} (h : Upto d g n) {a : ByteArray} (hk : Keep d.arena a) (h4 : a.size % 4 = 0)
+theorem Upto.frame {d : Done} {g : Gh} {n : Nat} (h : Upto d g n) {a : ByteArray} (hk : Keep d.arena a) (h4 : a.size % 2 = 0)
     (hle : a.size ≤ d.arenaCap.toNat) : Upto { d with arena := a } g n where
   four := h4
   le := hle
@@ -611,8 +611,8 @@ theorem imtfNext_down (g : Gh) (isL : Bool) (ntrees : Nat) (vals : List Nat) : H
 
 /-- How many bytes a prefix code's table takes. -/
 def tableBytes : PrefixCode → Nat
-  | .single _ => 1024
-  | .canonical l => 4 * (256 + offSum (depths l) 256)
+  | .single _ => 512
+  | .canonical l => 2 * (256 + offSum (depths l) 256)
 
 /-- What a header's move does to its reading besides moving: builds a prefix code's table, or reserves the groups'
 tables once every group's number of trees is known. -/
@@ -640,12 +640,12 @@ theorem Wr_id {α : Type} {K : HK α} (hr : ∀ g x, K.r g x = x) (oc : Option H
 /-- A complete code's table takes at most `treeMax` of its alphabet's size. -/
 theorem tableBytes_le {c : PrefixCode} {size : Nat} (hC : Complete c) (hs : c.Symbols size) : tableBytes c ≤ treeMax size := by
   cases c with
-  | single _ => show 1024 ≤ 4 * (size + 376); omega
+  | single _ => show 512 ≤ 2 * (size + 376); omega
   | canonical lens =>
     have h1 := offSum_le hC
     have h2 := longCount_le lens
     have h3 : lens.length = size := hs
-    show 4 * (256 + offSum (depths lens) 256) ≤ 4 * (size + 376)
+    show 2 * (256 + offSum (depths lens) 256) ≤ 2 * (size + 376)
     omega
 
 /-- The bytes a header's reading holds outside the arena, with bounds set by the format. -/
@@ -654,9 +654,9 @@ structure HSize (st : Hd) : Prop where
   lens : st.lens.size ≤ 704
   clLens : st.clLens.size ≤ 18
   /-- `treeMax 18`. -/
-  clt : st.clt.t.size ≤ 1576
+  clt : st.clt.t.size ≤ 788
   /-- `treeMax 272`: a context map's alphabet has at most 256 trees and 16 run lengths. -/
-  mapT : st.mapT.t.size ≤ 2592
+  mapT : st.mapT.t.size ≤ 1296
   modes : st.d.modes.size ≤ 256
   lMap : st.d.lMap.size ≤ 16384
   dMap : st.d.dMap.size ≤ 1024

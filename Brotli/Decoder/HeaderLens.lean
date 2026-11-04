@@ -91,11 +91,6 @@ theorem ClDone.len18 {st : Hd} {acc : List (Nat × Nat)} (hd : ClDone st acc) (h
   rw [usize18, (hd.lens h1).sz]
   exact Nat.le_refl _
 
-/-- The code length code's table. -/
-def clTable (st : Hd) (h : ∃ acc, ClDone st acc) : ByteArray :=
-  if h1 : st.clNz = 1 then buildSingleFast ByteArray.empty st.clSym
-  else buildFast ByteArray.empty st.clLens (USize.ofNat 18) (by obtain ⟨_, hd⟩ := h; exact hd.len18 h1)
-
 private theorem mem_lengthsOf_le {size : Nat} {P : List (Nat × Nat)} (h : ∀ p ∈ P, p.2 ≤ 5) : ∀ l ∈ lengthsOf size P, l ≤ 15 := by
   intro l hl
   simp only [lengthsOf, List.mem_map] at hl
@@ -108,9 +103,24 @@ private theorem mem_lengthsOf_le {size : Nat} {P : List (Nat × Nat)} (h : ∀ p
     simp only [Option.map_some, Option.getD_some]
     omega
 
+/-- A finished code length code with more than one symbol is a complete code over its lengths. -/
+theorem ClDone.complete {st : Hd} {acc : List (Nat × Nat)} (hd : ClDone st acc) (h1 : st.clNz ≠ 1) :
+    Complete (.canonical (lensOf st.clLens (USize.ofNat 18).toNat)) := by
+  have hl := hd.lens h1
+  rw [usize18, hl.eq]
+  refine ⟨mem_lengthsOf_le (fun p hp => (hd.small p hp).2), ?_⟩
+  rw [lengthSum_lengthsOf_eq 18 acc hd.keys (fun p hp => (hd.small p hp).1), hd.sum h1]
+
+/-- The code length code's table. -/
+def clTable (st : Hd) (h : ∃ acc, ClDone st acc) : ByteArray :=
+  if h1 : st.clNz = 1 then buildSingleFast ByteArray.empty st.clSym (by decide)
+  else
+    buildLens ByteArray.empty st.clLens (USize.ofNat 18) (by obtain ⟨_, hd⟩ := h; exact hd.len18 h1)
+      ⟨by obtain ⟨_, hd⟩ := h; exact hd.complete h1, by rw [usize18]; decide, rfl, by decide⟩
+
 /-- A finished code length code's table is the code's. -/
 theorem clTable_built {st : Hd} {acc : List (Nat × Nat)} (hd : ClDone st acc) (h : ∃ acc, ClDone st acc) :
-    Built ByteArray.empty (clTable st h) (codeLengthCode acc) ∧ (clTable st h).size ≤ 1576 ∧ Complete (codeLengthCode acc) ∧
+    Built ByteArray.empty (clTable st h) (codeLengthCode acc) ∧ (clTable st h).size ≤ 788 ∧ Complete (codeLengthCode acc) ∧
       (codeLengthCode acc).Symbols 18 := by
     unfold clTable
     by_cases h1 : st.clNz = 1
@@ -119,7 +129,7 @@ theorem clTable_built {st : Hd} {acc : List (Nat × Nat)} (hd : ClDone st acc) (
       have hc : codeLengthCode acc = .single st.clSym.toNat := by
         unfold codeLengthCode
         rw [hl]
-      obtain ⟨b1, b2⟩ := built_single (t := ByteArray.empty) (sym := st.clSym) (by have := hd.symLt; omega) (by decide) (by decide)
+      obtain ⟨b1, b2⟩ := built_single (t := ByteArray.empty) (sym := st.clSym) (by have := hd.symLt; omega) (by decide)
       rw [hc]
       exact ⟨b1, by rw [b2]; decide, trivial, hd.symLt⟩
     · rw [dite_eq_right h1]
@@ -135,11 +145,8 @@ theorem clTable_built {st : Hd} {acc : List (Nat × Nat)} (hd : ClDone st acc) (
           rw [he] at this
           simp at this
         · rfl
-      have hC : Complete (.canonical (lensOf st.clLens (USize.ofNat 18).toNat)) := by
-        rw [hn, hl.eq]
-        refine ⟨mem_lengthsOf_le (fun p hp => (hd.small p hp).2), ?_⟩
-        rw [lengthSum_lengthsOf_eq 18 acc hd.keys (fun p hp => (hd.small p hp).1), hd.sum h1]
-      obtain ⟨b1, b2⟩ := built_canonical (t := ByteArray.empty) (hn := hnle) (by rw [hn]; decide) hC (by decide) (by decide)
+      have hC := hd.complete h1
+      obtain ⟨b1, b2⟩ := built_canonical (t := ByteArray.empty) (hn := hnle) ⟨hC, by rw [hn]; decide, rfl, by decide⟩
       have hlen : (lensOf st.clLens (USize.ofNat 18).toNat).length = 18 := by rw [length_lensOf hnle, hn]
       have ht := tableBytes_le hC (size := 18) hlen
       unfold treeMax at ht
