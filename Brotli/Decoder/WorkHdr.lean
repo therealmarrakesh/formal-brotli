@@ -16,8 +16,8 @@ open Brotli.Spec Brotli.Properties
 
 /-! ### Tables -/
 
-/-- A table's work, with its lengths complete: twelve for each symbol and 3735 more, and for a context map's code its
-check, the map's zeros as read and as transformed, and its three lists of 256 bytes. -/
+/-- A table's work, with its lengths complete: at most twelve for each symbol and 3735 more, and for a context map's code
+the map's zeros as read and as transformed, and its three lists of 256 bytes. -/
 theorem tableDoneW_le {st : Hd} {single : Bool} (hn : st.size.toNat ≤ 704) (hlens : st.size.toNat ≤ st.lens.size)
     (hC : single = false → Complete (.canonical (lensOf st.lens st.size.toNat))) :
     tableDoneW st single ≤ 12 * st.size.toNat + 3735 +
@@ -43,7 +43,6 @@ theorem tableDoneW_le {st : Hd} {single : Bool} (hn : st.size.toNat ≤ 704) (hl
   | map =>
     simp only [↓reduceIte]
     have := zbW_le 256
-    unfold fitsW
     omega
   | type => simp only [reduceCtorEq, ↓reduceIte]; omega
   | count => simp only [reduceCtorEq, ↓reduceIte]; omega
@@ -82,8 +81,8 @@ def hdrRate : Nat := 22343
 /-- A bound on the work of zero-filling `k` bytes (`zbW_le`). -/
 def zb (k : Nat) : Nat := k + k / 65536 + 1
 
-/-- What a context map of `S` values costs besides its code and the values read: its zeros, its table's check, the values
-a code gives without reading, the transform's rounds, and the check that every tree occurs. -/
+/-- At most what a context map of `S` values costs besides its code and the values read: its zeros, the values a code
+gives without reading, the transform's rounds, and the check that every tree occurs. -/
 def mapPre (S : Nat) : Nat := 15 * S + 2244
 
 /-- What follows the second context map: the groups' steps, their arrays' zeros and the header's last step. -/
@@ -121,8 +120,8 @@ def codesPot (g : Gh) : CK → Nat → Nat
   | .I, left => 11 * left + zb (4 * g.treesD) + 24 + 11 * g.treesD
   | .D, left => 11 * left + 12
 
-/-- What a code's table's step does for its owner: for a context map, the table's check, the map's zeros as read and as
-transformed, and its three lists of 256 bytes. -/
+/-- At most what a code's table's step does for its owner: for a context map, the map's zeros as read and as transformed,
+and its three lists of 256 bytes. -/
 def ownerX (g : Gh) : Owner → Nat
   | .map isL _ _ => 1029 + zb (mapSize g isL) + zb (mapSize g isL)
   | _ => 0
@@ -596,44 +595,25 @@ theorem hcost_syms_other (g : Gh) (o : Owner) (n : Nat) (clc : PrefixCode) (ls :
     (h : ptag p' ≠ .syms) : hcost g (.syms o n clc ls) p' = 12 * n + 3746 + ownerX g o := by
   cases p' <;> first | rfl | exact absurd rfl h
 
-/-- Where a finished table's step goes, when it goes on. -/
-theorem tableDone_tag {st : Hd} {s : Bool} {y : UInt64} (h : (tableDone st s y).status = .next) :
-    (tableDone st s y).tag ≠ .clens ∧ (tableDone st s y).tag ≠ .syms := by
+/-- Where a finished table's step goes. -/
+theorem tableDone_tag {st : Hd} {s : Bool} {y : UInt64} {ha : TableArgs st.size st.lens s y} :
+    (tableDone st s y ha).tag ≠ .clens ∧ (tableDone st s y ha).tag ≠ .syms := by
   have key : ∀ (x : Hd) (b : UInt64), (installTable x b).tag ≠ .clens ∧ (installTable x b).tag ≠ .syms := by
     intro x b
     unfold installTable
     split <;> exact ⟨fun e => HTag.noConfusion e, fun e => HTag.noConfusion e⟩
-  unfold tableDone at h ⊢
-  dsimp only at h ⊢
-  by_cases hn : st.size.toUSize.toNat ≤ st.lens.size
-  · rw [dite_eq_left hn] at h ⊢
-    cases hr : st.role with
-    | map =>
-      simp only [hr] at h ⊢
-      unfold mapTableDone at h ⊢
-      generalize (if s = true then buildSingleFast ByteArray.empty y else buildFast ByteArray.empty st.lens st.size.toUSize hn) = t at h ⊢
-      by_cases hf : fitsFast t 0 = true
-      · rw [dite_eq_left hf]
-        exact ⟨fun e => HTag.noConfusion e, fun e => HTag.noConfusion e⟩
-      · rw [dite_eq_right hf] at h
-        exact absurd h (fun e => HStatus.noConfusion e)
-    | type | count | codes =>
-      simp only [hr] at h ⊢
-      cases s
-      · simp only [Bool.false_eq_true, ↓reduceIte] at h ⊢
-        by_cases c : UInt64.ofNat st.d.arena.size + (planFast st.lens st.size.toUSize hn).bytes ≤ st.d.arenaCap
-        · rw [ite_eq_left c]
-          exact key _ _
-        · rw [ite_eq_right c] at h
-          exact absurd h (fun e => HStatus.noConfusion e)
-      · simp only [↓reduceIte] at h ⊢
-        by_cases c : UInt64.ofNat st.d.arena.size + 1024 ≤ st.d.arenaCap
-        · rw [ite_eq_left c]
-          exact key _ _
-        · rw [ite_eq_right c] at h
-          exact absurd h (fun e => HStatus.noConfusion e)
-  · rw [dite_eq_right hn] at h
-    exact absurd h (fun e => HStatus.noConfusion e)
+  unfold tableDone
+  dsimp only
+  cases hr : st.role with
+  | map =>
+    unfold mapTableDone
+    exact ⟨fun e => HTag.noConfusion e, fun e => HTag.noConfusion e⟩
+  | type | count | codes =>
+    cases s
+    · simp only [Bool.false_eq_true, ↓reduceIte]
+      exact key _ _
+    · simp only [↓reduceIte]
+      exact key _ _
 
 theorem mapFin_ge {st : Hd} {g : Gh} {isL : Bool} (hi : st.isL = isL) (hu : Upto st.d g (mapIdx isL)) :
     mapFinishW st ≤ mapFin g isL := by
@@ -860,8 +840,9 @@ theorem ownerX_ge {st : Hd} {g : Gh} {n : Nat} {o : Owner} (ho : OwnerRel st g n
     simp only [↓reduceIte, ownerX, zb]
     omega
 
-theorem wCode {st : Hd} {g : Gh} {o : Owner} {n : Nat} {pos : USize} {g' : Gh} {p' : HPhase} (hrel : HRel st g (.code o n))
-    (hn : (stepHCode st pos).status = .next) (hr : HRel (stepHCode st pos) g' p') :
+theorem wCode {st : Hd} {g : Gh} {o : Owner} {n : Nat} {pos : USize} {g' : Gh} {p' : HPhase} {hH : ∃ g p, HRel st g p}
+    {hT : st.tag = .code} (hrel : HRel st g (.code o n))
+    (hn : (stepHCode st pos hH hT).status = .next) (hr : HRel (stepHCode st pos hH hT) g' p') :
     stepHCodeW st pos + 10 ≤ hcost g (.code o n) p' := by
   obtain ⟨hw, hu, ht, hs, ho⟩ := hrel
   obtain ⟨hs1, hs2, hs3⟩ := hs
@@ -872,18 +853,29 @@ theorem wCode {st : Hd} {g : Gh} {o : Owner} {n : Nat} {pos : USize} {g' : Gh} {
   unfold stepHCode at htag hn
   dsimp only at htag hn ⊢
   by_cases h2 : 2 ≤ st.count
-  · rw [ite_eq_left h2] at htag hn ⊢
+  · rw [dite_eq_left h2] at htag hn
+    rw [ite_eq_left h2]
     by_cases h1 : (BitBuffer.mk st.word st.count).peek 2 = 1
     · rw [ite_eq_left h1] at htag hn ⊢
       have hcomp := simple_complete hw (by omega) h2 h1
-      generalize simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2) = r at htag hn hcomp ⊢
-      cases hsr : r.status with
-      | short => dsimp only; omega
-      | bad => dsimp only; omega
-      | ok =>
-        rw [hsr] at htag hn
-        dsimp only at htag hn ⊢
-        have hnc : ptag p' ≠ .clens := by rw [← htag]; exact (tableDone_tag hn).1
+      generalize hT' : simpleFastT st hH hT h2 = rr at htag hn
+      obtain ⟨r, hra⟩ := rr
+      have e : r = simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2) := by
+        rw [← simpleFastT_val (h := hH) (ht := hT) (h2 := h2), hT']
+      clear hT'
+      rw [← e] at hcomp ⊢
+      dsimp only at htag hn
+      revert htag hn
+      split
+      · intro _ hn
+        simp [markH] at hn
+      · intro _ hn
+        simp [markH] at hn
+      · rename_i hsr
+        intro htag hn
+        try rw [hsr]
+        dsimp only
+        have hnc : ptag p' ≠ .clens := by rw [← htag]; exact tableDone_tag.1
         have hsz : st.size.toNat ≤ (writeSimple (zeroBytes st.size.toNat) r).size := by
           rw [writeSimple_size, zeroBytes_size (by omega)]
           exact Nat.le_refl _
@@ -1022,8 +1014,9 @@ private theorem add_grew {a d : UInt64} {m : Nat} (h : (a + d).toNat = m) (hm : 
     omega
 
 theorem wSyms {st : Hd} {g : Gh} {o : Owner} {n : Nat} {clc : PrefixCode} {ls : LengthState} {pos : USize} {g' : Gh} {p' : HPhase}
-    {bs c : List Bool} (hrel : HRel st g (.syms o n clc ls)) (hn : (stepHSyms st pos).status = .next)
-    (hr : HRel (stepHSyms st pos) g' p') (hj : hStepP (g, .syms o n clc ls) bs = .next (g', p') c) :
+    {bs c : List Bool} {hH : ∃ g p, HRel st g p} {hT : st.tag = .syms} (hrel : HRel st g (.syms o n clc ls))
+    (hn : (stepHSyms st pos hH hT).status = .next) (hr : HRel (stepHSyms st pos hH hT) g' p')
+    (hj : hStepP (g, .syms o n clc ls) bs = .next (g', p') c) :
     stepHSymsW st pos + 10 ≤ hcost g (.syms o n clc ls) p' := by
   obtain ⟨hw, hu, ht, hs, ho, hy⟩ := hrel
   obtain ⟨hs1, hs2, hs3⟩ := hs
@@ -1032,8 +1025,9 @@ theorem wSyms {st : Hd} {g : Gh} {o : Owner} {n : Nat} {clc : PrefixCode} {ls : 
   unfold stepHSymsW
   unfold stepHSyms at hr hn
   by_cases hsum : st.symSum = 32768
-  · rw [ite_eq_left hsum] at hr hn ⊢
-    have hns : ptag p' ≠ .syms := by rw [← hr.tag_eq]; exact (tableDone_tag hn).2
+  · rw [dite_eq_left hsum] at hr
+    rw [ite_eq_left hsum]
+    have hns : ptag p' ≠ .syms := by rw [← hr.tag_eq]; exact tableDone_tag.2
     rw [hcost_syms_other g o n clc ls hns]
     have hC : Complete (.canonical (lensOf st.lens st.size.toNat)) := by
       rw [hs1, lens_full hy.sz hy.le hy.at_ hy.zero]
@@ -1049,7 +1043,8 @@ theorem wSyms {st : Hd} {g : Gh} {o : Owner} {n : Nat} {clc : PrefixCode} {ls : 
     have hT' : tableDoneW { st with pos := pos, status := .next } false ≤
         12 * st.size.toNat + 3735 + (if st.role = .map then 1028 + zbW (mapSizeFast st) + zbW (mapSizeFast st) else 0) := hT
     omega
-  · rw [ite_eq_right hsum] at hr hn ⊢
+  · rw [dite_eq_right hsum] at hr hn
+    rw [ite_eq_right hsum]
     by_cases hln : st.ln = st.size
     · rw [ite_eq_left hln]
       omega
@@ -1105,7 +1100,7 @@ theorem stepAtHW_cost {st : Hd} {g : Gh} {p : HPhase} {pos : USize} {g' : Gh} {p
     have e : stepAtHW st pos = 1 := by unfold stepAtHW; rw [htag] <;> rfl
     omega
   | code o n =>
-    have e1 : stepAtH st pos h = stepHCode st pos := stepAtH_code htag
+    have e1 : stepAtH st pos h = stepHCode st pos h htag := stepAtH_code htag
     have e2 : stepAtHW st pos = stepHCodeW st pos := by unfold stepAtHW; rw [htag] <;> rfl
     rw [e1] at hn hr
     rw [e2]
@@ -1117,7 +1112,7 @@ theorem stepAtHW_cost {st : Hd} {g : Gh} {p : HPhase} {pos : USize} {g' : Gh} {p
     rw [e2]
     exact wClens hrel hn hr
   | syms o n clc ls =>
-    have e1 : stepAtH st pos h = stepHSyms st pos := stepAtH_syms htag
+    have e1 : stepAtH st pos h = stepHSyms st pos h htag := stepAtH_syms htag
     have e2 : stepAtHW st pos = stepHSymsW st pos := by unfold stepAtHW; rw [htag] <;> rfl
     rw [e1] at hn hr
     rw [e2]
@@ -1160,7 +1155,7 @@ theorem stepAtHW_cost {st : Hd} {g : Gh} {p : HPhase} {pos : USize} {g' : Gh} {p
 
 /-- A header step's work, by where it goes. -/
 theorem stepHW_cost {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {st : Hd} {pos : USize} {g : Gh} {p : HPhase}
-    {g' : Gh} {p' : HPhase} {h : ∃ g p, HRel st g p} (hrel : HRel st g p) (hp : pos.toNat ≤ stop.toNat)
+    {g' : Gh} {p' : HPhase} {h : HIn st} (hrel : HRel st g p) (hp : pos.toNat ≤ stop.toNat)
     (hn : (stepH a stop hs st pos h hp).status = .next)
     (hr : HRel (stepH a stop hs st pos h hp) g' p')
     (hj : ∀ F, hStepP (g, p) (availBits st.word st.count a pos stop F) =
@@ -1171,7 +1166,7 @@ theorem stepHW_cost {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} 
   have eH : stepH a stop hs st pos h hp = stepAtH { st with
       word := (refill st.word st.count a pos stop hs hp).word
       count := (refill st.word st.count a pos stop hs hp).count } (refill st.word st.count a pos stop hs hp).pos
-      (hrel_bits h (refill_spec hs hp (hrel_wf h)).1) := by
+      (hrel_bits h.rel (refill_spec hs hp (hrel_wf h.rel)).1) := by
     unfold stepH refillH
     rfl
   have eW : stepHW a stop hs st pos = refillW st.word st.count a pos stop hs + stepAtHW { st with
@@ -1210,11 +1205,10 @@ theorem ownerPot_ge (g : Gh) (o : Owner) : 12 ≤ ownerPot g o := by
   | map isL t r => simp only [ownerPot, mapOwner]; omega
   | codes k done left => cases k <;> simp only [ownerPot, codesPot, afterD] <;> omega
 
-/-- A code's step that stops reads too few bits or rejects them; with the arena's room, its table, which never fails, is
-never built. -/
-theorem codeW_le {st : Hd} {g : Gh} {o : Owner} {n : Nat} {pos : USize} (hrel : HRel st g (.code o n))
-    (hb : st.d.arena.size + budO g o ≤ st.d.arenaCap.toNat) (hn : (stepHCode st pos).status ≠ .next) :
-    stepHCodeW st pos + 10 ≤ hpot g (.code o n) := by
+/-- A code's step that stops reads too few bits or rejects them; with the arena's room, its table is never built. -/
+theorem codeW_le {st : Hd} {g : Gh} {o : Owner} {n : Nat} {pos : USize} {hH : ∃ g p, HRel st g p} {hT : st.tag = .code}
+    (hrel : HRel st g (.code o n)) (hb : st.d.arena.size + budO g o ≤ st.d.arenaCap.toNat)
+    (hn : (stepHCode st pos hH hT).status ≠ .next) : stepHCodeW st pos + 10 ≤ hpot g (.code o n) := by
   have hrel' := hrel
   obtain ⟨hw, hu, ht, hs, ho⟩ := hrel
   obtain ⟨hs1, hs2, hs3⟩ := hs
@@ -1225,22 +1219,31 @@ theorem codeW_le {st : Hd} {g : Gh} {o : Owner} {n : Nat} {pos : USize} (hrel : 
   unfold stepHCode at hn
   dsimp only at hn ⊢
   by_cases h2 : 2 ≤ st.count
-  · rw [ite_eq_left h2] at hn ⊢
+  · rw [dite_eq_left h2] at hn
+    rw [ite_eq_left h2]
     by_cases h1 : (BitBuffer.mk st.word st.count).peek 2 = 1
     · rw [ite_eq_left h1] at hn ⊢
       have hwit := fun hsr => simple_wit hw (by omega) h2 h1 hsr
-      generalize simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2) = r at hwit hn ⊢
-      cases hsr : r.status with
-      | short => dsimp only; omega
-      | bad => dsimp only; omega
-      | ok =>
-        rw [hsr] at hn
-        dsimp only at hn
+      generalize hT' : simpleFastT st hH hT h2 = rr at hn
+      obtain ⟨r, hra⟩ := rr
+      have e : r = simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2) := by
+        rw [← simpleFastT_val (h := hH) (ht := hT) (h2 := h2), hT']
+      clear hT'
+      rw [← e] at hwit ⊢
+      dsimp only at hn
+      revert hn
+      split
+      · rename_i hsr
+        intro _
+        (try rw [hsr]); (try dsimp only); omega
+      · rename_i hsr
+        intro _
+        (try rw [hsr]); (try dsimp only); omega
+      · rename_i hsr
+        intro hn
         obtain ⟨hw2, hw3, hsmall⟩ := hwit hsr
-        have hd := simple_done (K := (⟨fun _ _ => none, fun _ _ => none⟩ : HK Unit)) pos hrel' hw2 hw3 hsmall
-        obtain ⟨_, _, h3, h4⟩ := hd.other hn
-        have h3' : st.d.arenaCap.toNat < st.d.arena.size + tableBytes (simpleValue st.size r) := h3
-        omega
+        have hd := simple_done (K := (⟨fun _ _ => none, fun _ _ => none⟩ : HK Unit)) pos hrel' hw2 hw3 hsmall hb (ha := hra hsr)
+        exact absurd hd.status hn
     · rw [ite_eq_right h1] at hn
       exact absurd rfl hn
   · rw [ite_eq_right h2]
@@ -1293,7 +1296,8 @@ theorem clensW_le {st : Hd} {g : Gh} {o : Owner} {n : Nat} {order : List Nat} {a
           omega
 
 theorem symsW_stop {st : Hd} {g : Gh} {o : Owner} {n : Nat} {clc : PrefixCode} {ls : LengthState} {pos : USize}
-    (hrel : HRel st g (.syms o n clc ls)) (hn : (stepHSyms st pos).status ≠ .next) :
+    {hH : ∃ g p, HRel st g p} {hT : st.tag = .syms}
+    (hrel : HRel st g (.syms o n clc ls)) (hn : (stepHSyms st pos hH hT).status ≠ .next) :
     stepHSymsW st pos + 10 ≤ hpot g (.syms o n clc ls) := by
   obtain ⟨hw, hu, ht, hs, ho, hy⟩ := hrel
   obtain ⟨hs1, hs2, hs3⟩ := hs
@@ -1318,7 +1322,8 @@ theorem symsW_stop {st : Hd} {g : Gh} {o : Owner} {n : Nat} {clc : PrefixCode} {
     have hT' : tableDoneW { st with pos := pos, status := .next } false ≤
         12 * st.size.toNat + 3735 + (if st.role = .map then 1028 + zbW (mapSizeFast st) + zbW (mapSizeFast st) else 0) := hT
     omega
-  · rw [ite_eq_right hsum] at hn ⊢
+  · rw [dite_eq_right hsum] at hn
+    rw [ite_eq_right hsum]
     by_cases hln : st.ln = st.size
     · rw [ite_eq_left hln]
       omega
@@ -1362,7 +1367,7 @@ theorem stepAtHW_stop {st : Hd} {g : Gh} {p : HPhase} {pos : USize} {h : ∃ g p
     show _ ≤ catPot g i 0
     omega
   | code o n =>
-    have e1 : stepAtH st pos h = stepHCode st pos := stepAtH_code htag
+    have e1 : stepAtH st pos h = stepHCode st pos h htag := stepAtH_code htag
     have e : stepAtHW st pos = stepHCodeW st pos := by unfold stepAtHW; rw [htag] <;> rfl
     rw [e1] at hn
     rw [e]
@@ -1373,7 +1378,7 @@ theorem stepAtHW_stop {st : Hd} {g : Gh} {p : HPhase} {pos : USize} {h : ∃ g p
     have := clensW_le (pos := pos) hrel
     omega
   | syms o n clc ls =>
-    have e1 : stepAtH st pos h = stepHSyms st pos := stepAtH_syms htag
+    have e1 : stepAtH st pos h = stepHSyms st pos h htag := stepAtH_syms htag
     have e : stepAtHW st pos = stepHSymsW st pos := by unfold stepAtHW; rw [htag] <;> rfl
     rw [e1] at hn
     rw [e]
@@ -1457,14 +1462,14 @@ theorem stepAtHW_stop {st : Hd} {g : Gh} {p : HPhase} {pos : USize} {h : ∃ g p
 
 /-- A header step that stops: its work is within its place's potential. -/
 theorem stepHW_stop {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {st : Hd} {pos : USize} {g : Gh} {p : HPhase}
-    {h : ∃ g p, HRel st g p} (hrel : HRel st g p) (hb : st.d.arena.size + budH g p ≤ st.d.arenaCap.toNat) (hp : pos.toNat ≤ stop.toNat)
+    {h : HIn st} (hrel : HRel st g p) (hb : st.d.arena.size + budH g p ≤ st.d.arenaCap.toNat) (hp : pos.toNat ≤ stop.toNat)
     (hn : (stepH a stop hs st pos h hp).status ≠ .next) :
     stepHW a stop hs st pos + 1 ≤ hpot g p := by
   have hp' : pos ≤ stop := USize.le_iff_toNat_le.mpr hp
   have eH : stepH a stop hs st pos h hp = stepAtH { st with
       word := (refill st.word st.count a pos stop hs hp).word
       count := (refill st.word st.count a pos stop hs hp).count } (refill st.word st.count a pos stop hs hp).pos
-      (hrel_bits h (refill_spec hs hp (hrel_wf h)).1) := by
+      (hrel_bits h.rel (refill_spec hs hp (hrel_wf h.rel)).1) := by
     unfold stepH refillH
     rfl
   have eW : stepHW a stop hs st pos = refillW st.word st.count a pos stop hs + stepAtHW { st with
@@ -1481,47 +1486,32 @@ theorem stepHW_stop {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} 
 
 /-! ### A step that runs out of input
 
-Such a step leaves the state at its place, so its work is not paid for by the potential: it is at most a table's check,
-which a block count's step makes before its read. -/
+Such a step leaves the state at its place, so its work is not paid for by the potential: it is at most 259. -/
 
-theorem tableDone_ni {st : Hd} {s : Bool} {y : UInt64} (h : st.status = .next) : (tableDone st s y).status ≠ .needsInput := by
+theorem tableDone_ni {st : Hd} {s : Bool} {y : UInt64} {ha : TableArgs st.size st.lens s y} (h : st.status = .next) :
+    (tableDone st s y ha).status ≠ .needsInput := by
   unfold tableDone
   dsimp only
-  by_cases hn : st.size.toUSize.toNat ≤ st.lens.size
-  · rw [dite_eq_left hn]
-    cases hr : st.role with
-    | map =>
-      dsimp only
-      unfold mapTableDone
-      generalize (if s = true then buildSingleFast ByteArray.empty y else buildFast ByteArray.empty st.lens st.size.toUSize hn) = t
-      by_cases hf : fitsFast t 0 = true
-      · rw [dite_eq_left hf]
-        show st.status ≠ _
-        rw [h]
-        exact fun e => HStatus.noConfusion e
-      · rw [dite_eq_right hf]
-        exact fun e => HStatus.noConfusion e
-    | type | count | codes =>
-      dsimp only
-      cases s
-      · simp only [Bool.false_eq_true, ↓reduceIte]
-        by_cases c : UInt64.ofNat st.d.arena.size + (planFast st.lens st.size.toUSize hn).bytes ≤ st.d.arenaCap
-        · rw [ite_eq_left c, (installTable_spec _ _).2.2.2.1]
-          show st.status ≠ _
-          rw [h]
-          exact fun e => HStatus.noConfusion e
-        · rw [ite_eq_right c]
-          exact fun e => HStatus.noConfusion e
-      · simp only [↓reduceIte]
-        by_cases c : UInt64.ofNat st.d.arena.size + 1024 ≤ st.d.arenaCap
-        · rw [ite_eq_left c, (installTable_spec _ _).2.2.2.1]
-          show st.status ≠ _
-          rw [h]
-          exact fun e => HStatus.noConfusion e
-        · rw [ite_eq_right c]
-          exact fun e => HStatus.noConfusion e
-  · rw [dite_eq_right hn]
+  cases hr : st.role with
+  | map =>
+    dsimp only
+    unfold mapTableDone
+    show st.status ≠ _
+    rw [h]
     exact fun e => HStatus.noConfusion e
+  | type | count | codes =>
+    dsimp only
+    cases s
+    · simp only [Bool.false_eq_true, ↓reduceIte]
+      rw [(installTable_spec _ _).2.2.2.1]
+      show st.status ≠ _
+      rw [h]
+      exact fun e => HStatus.noConfusion e
+    · simp only [↓reduceIte]
+      rw [(installTable_spec _ _).2.2.2.1]
+      show st.status ≠ _
+      rw [h]
+      exact fun e => HStatus.noConfusion e
 
 theorem clFinish_ni {st : Hd} {hd : ∃ acc, ClDone st acc} (h : st.status = .next) : (clFinish st hd).status ≠ .needsInput := by
   show st.status ≠ _
@@ -1540,7 +1530,7 @@ theorem ckFinish_ni {st : Hd} (h : st.status = .next) : (ckFinish st).status ≠
     exact fun e => HStatus.noConfusion e
   · exact fun e => HStatus.noConfusion e
 
-/-- A header step that runs out of input, once the buffer is refilled, does at most a table's check. -/
+/-- A header step that runs out of input, once the buffer is refilled, does at most 259 work. -/
 theorem stepAtHW_short {st : Hd} {pos : USize} {hH : ∃ g p, HRel st g p} (h : (stepAtH st pos hH).status = .needsInput) :
     stepAtHW st pos ≤ 259 := by
   unfold stepAtHW
@@ -1556,16 +1546,26 @@ theorem stepAtHW_short {st : Hd} {pos : USize} {hH : ∃ g p, HRel st g p} (h : 
     unfold stepHCodeW
     dsimp only at h ⊢
     by_cases h2 : 2 ≤ st.count
-    · rw [ite_eq_left h2] at h ⊢
+    · rw [dite_eq_left h2] at h
+      rw [ite_eq_left h2]
       by_cases h1 : (BitBuffer.mk st.word st.count).peek 2 = 1
       · rw [ite_eq_left h1] at h ⊢
-        generalize simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2) = r at h ⊢
-        cases hsr : r.status with
-        | short => dsimp only; omega
-        | bad => dsimp only; omega
-        | ok =>
-          rw [hsr] at h
-          dsimp only at h
+        generalize hT' : simpleFastT st hH ht h2 = rr at h
+        obtain ⟨r, hra⟩ := rr
+        have e : r = simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2) := by
+          rw [← simpleFastT_val (h := hH) (ht := ht) (h2 := h2), hT']
+        clear hT'
+        rw [← e]
+        dsimp only at h
+        revert h
+        split
+        · rename_i hsr
+          intro _
+          (try rw [hsr]); (try dsimp only); omega
+        · rename_i hsr
+          intro _
+          (try rw [hsr]); (try dsimp only); omega
+        · intro h
           exact absurd h (tableDone_ni rfl)
       · rw [ite_eq_right h1] at h
         exact absurd h (fun e => HStatus.noConfusion e)
@@ -1610,9 +1610,10 @@ theorem stepAtHW_short {st : Hd} {pos : USize} {hH : ∃ g p, HRel st g p} (h : 
     unfold stepHSyms at h
     unfold stepHSymsW
     by_cases hsum : st.symSum = 32768
-    · rw [ite_eq_left hsum] at h
+    · rw [dite_eq_left hsum] at h
       exact absurd h (tableDone_ni rfl)
-    · rw [ite_eq_right hsum] at h ⊢
+    · rw [dite_eq_right hsum] at h
+      rw [ite_eq_right hsum]
       by_cases hln : st.ln = st.size
       · rw [ite_eq_left hln]
         omega
@@ -1695,9 +1696,9 @@ theorem stepAtHW_short {st : Hd} {pos : USize} {hH : ∃ g p, HRel st g p} (h : 
     · rw [ite_eq_right h0]
       omega
 
-/-- A header step that runs out of input does at most a refill and a table's check. -/
+/-- A header step that runs out of input does at most a refill and 259 more. -/
 theorem stepHW_short {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {st : Hd} {pos : USize}
-    {hH : ∃ g p, HRel st g p} {hp : pos.toNat ≤ stop.toNat} (h : (stepH a stop hs st pos hH hp).status = .needsInput) :
+    {hH : HIn st} {hp : pos.toNat ≤ stop.toNat} (h : (stepH a stop hs st pos hH hp).status = .needsInput) :
     stepHW a stop hs st pos ≤ 268 := by
   unfold stepH refillH at h
   unfold stepHW

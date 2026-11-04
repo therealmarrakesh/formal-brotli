@@ -80,7 +80,7 @@ def stepDRawW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : D
 /-- The work of `stepDHdr`: the header step, and at a header's end the command loop's header, made with no check, and
 its first state, its block type flags copied from the shared ones. -/
 def stepDHdrW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize)
-    (hH : D.tag = .hdr → ∃ g p, HRel D.hd g p) (hp : pos.toNat ≤ stop.toNat) : Nat :=
+    (hH : D.tag = .hdr → HIn D.hd) (hp : pos.toNat ≤ stop.toNat) : Nat :=
   stepHW a stop hs D.hd pos +
     if ht : D.tag = .hdr then (if (stepH a stop hs D.hd pos (hH ht) hp).status = .ready then 770 else 0) else 0
 

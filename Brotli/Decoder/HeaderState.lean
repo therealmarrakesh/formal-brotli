@@ -858,11 +858,9 @@ structure HStepOk {α : Type} (K : HK α) (a : ByteArray) (stop : USize) (g : Gh
     (∀ F, availBits r.word r.count a r.pos stop F = availBits st.word st.count a pos stop F) ∧
     hStepP (g, p) (BitBuffer.mk r.word r.count).held = .short
   bad : r.status = .bad → ∀ F, hrest K g p (availBits st.word st.count a pos stop F) = none
-  /-- Either the next table doesn't fit what the arena reserved, which what it reserved rules out, or the groups' tables
-  would pass the arena's limit. -/
-  memory : r.status = .memory → (∃ c, st.d.arenaCap.toNat < st.d.arena.size + tableBytes c ∧ tableBytes c ≤ budH g p) ∨
-    ∃ g', st.d.arenaMax.toNat < resBytes g' ∧ resBytes g' ≤ resMax ∧ st.d.arenaCap.toNat = smallMax ∧
-      ∀ F, ∃ x, hrest K g p (availBits st.word st.count a pos stop F) = K.r g' x
+  /-- The groups' tables would pass the arena's limit. -/
+  memory : r.status = .memory → ∃ g', st.d.arenaMax.toNat < resBytes g' ∧ resBytes g' ≤ resMax ∧ st.d.arenaCap.toNat = smallMax ∧
+    ∀ F, ∃ x, hrest K g p (availBits st.word st.count a pos stop F) = K.r g' x
   ready : r.status = .ready → ∃ g', Upto r.d g' 10 ∧ (BitBuffer.mk r.word r.count).Wf ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
     (∀ F, hrest K g p (availBits st.word st.count a pos stop F) = K.k g'.m (availBits r.word r.count a r.pos stop F)) ∧ r.d.arenaMax = st.d.arenaMax ∧
     r.d.arena.size = st.d.arena.size ∧ r.d.arenaCap = st.d.arenaCap ∧ (HSize st → HSize r) ∧
@@ -940,11 +938,9 @@ theorem HStepOk.refilled {st1 : Hd} {pos1 : USize} (h : HStepOk K a stop g p st1
     exact ⟨h3, Nat.le_trans h1 h2, hrel, (fun F => by rw [hb]; exact h5 F), h6, h7.same he, (fun F => by rw [hb]; exact h8 F), h9⟩
   bad e := fun F => by rw [hb]; exact h.bad e F
   memory e := by
-    rcases h.memory e with ⟨c, h3, h4⟩ | ⟨g', h3, h4, h5, h6⟩
-    · rw [he.d] at h3
-      exact Or.inl ⟨c, h3, h4⟩
-    · rw [he.d] at h3 h5
-      exact Or.inr ⟨g', h3, h4, h5, fun F => by rw [hb]; exact h6 F⟩
+    obtain ⟨g', h3, h4, h5, h6⟩ := h.memory e
+    rw [he.d] at h3 h5
+    exact ⟨g', h3, h4, h5, fun F => by rw [hb]; exact h6 F⟩
   ready e := by
     obtain ⟨g', h3, h4, h5, h6, h7, h8, h9, h10, h11, h12⟩ := h.ready e
     exact ⟨g', h3, h4, Nat.le_trans h1 h5, h6, (fun F => by rw [hb]; exact h7 F), by rw [h8, he.d], by rw [h9, he.d], by rw [h10, he.d],

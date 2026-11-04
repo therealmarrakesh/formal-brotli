@@ -58,45 +58,6 @@ theorem fillLens_spec (v : UInt8) : ∀ (N : Nat) (t : ByteArray) (i n : UInt64)
       · rw [ite_eq_left hin, ite_eq_left (by omega)]
       · rw [ite_eq_right hin, ite_eq_right (by omega)]
 
-/-- The place reading a code's lengths. -/
-def stepHSyms (st : Hd) (pos : USize) : Hd :=
-  if st.symSum = 32768 then tableDone { st with pos := pos, status := .next } false 0
-  else if st.ln = st.size then markH st pos .bad
-  else
-    let r := lenSymFast st.clt.t (USize.ofNat 0) st.clt.fits st.clt.h32 ⟨st.word, st.count⟩
-    match r.status with
-    | .short => markH st pos .needsInput
-    | .bad => markH st pos .bad
-    | .ok =>
-      let sym := r.a
-      let ln := st.ln
-      if sym < 16 then
-        let sum := if sym = 0 then st.symSum else st.symSum + ((32768 : UInt64) >>> sym)
-        if 32768 < sum then markH st pos .bad
-        else
-          let lens := st.lens
-          let prev := if sym = 0 then st.prevLen else sym
-          let st0 := clearLens st
-          { st0 with
-            word := r.word, count := r.count, pos := pos, status := .next, lens := setLen lens ln sym, ln := ln + 1, prevLen := prev
-            repCount := 0, symSum := sum }
-      else
-        let len := if sym = 16 then st.prevLen else 0
-        let mult : UInt64 := if sym = 16 then 4 else 8
-        let old := if st.repCount ≠ 0 ∧ st.repSym = sym then st.repCount else 0
-        let new := if old = 0 then 3 + r.b else mult * (old - 2) + (3 + r.b)
-        let delta := new - old
-        if st.size < ln + delta then markH st pos .bad
-        else
-          let sum := if len = 0 then st.symSum else st.symSum + delta * ((32768 : UInt64) >>> len)
-          if 32768 < sum then markH st pos .bad
-          else
-            let lens := st.lens
-            let st0 := clearLens st
-            { st0 with
-              word := r.word, count := r.count, pos := pos, status := .next, lens := fillLens lens ln delta len.toUInt8, ln := ln + delta
-              repSym := sym, repCount := new, symSum := sum }
-
 section
 variable {α : Type} (K : HK α)
 
@@ -196,12 +157,84 @@ theorem lens_full {t : ByteArray} {A : List Nat} {size : Nat} (hs : t.size = siz
       simp only [List.length_append, List.length_replicate]
       omega)]
 
+/-- A state at a code's lengths stands for a place there. -/
+theorem syms_ex {st : Hd} (h : ∃ g p, HRel st g p) (ht : st.tag = .syms) :
+    ∃ g o size clc ls, HRel st g (.syms o size clc ls) := by
+  obtain ⟨g, p, hr⟩ := h
+  cases p with
+  | syms o size clc ls => exact ⟨g, o, size, clc, ls, hr⟩
+  | np => exact absurd (hr.2.2.symm.trans ht) (fun e => HTag.noConfusion e)
+  | _ => exact absurd (hr.2.2.1.symm.trans ht) (fun e => HTag.noConfusion e)
+
+/-- Lengths that fill the code space are a code that was read. -/
+theorem syms_args {st : Hd} (h : ∃ g p, HRel st g p) (ht : st.tag = .syms) (h0 : st.symSum = 32768) :
+    TableArgs st.size st.lens false 0 := by
+  obtain ⟨g, o, size, clc, ls, hrel⟩ := syms_ex h ht
+  obtain ⟨_, _, _, hs, _, hy⟩ := hrel
+  obtain ⟨hs1, _, hs3⟩ := hs
+  have hlenLe := hy.le
+  have hsum : lengthSum ls.lens = 32768 := by
+    rw [← hy.sumOk, h0]
+    rfl
+  have hfullL := lens_full hy.sz hlenLe hy.at_ hy.zero
+  refine ⟨.canonical (ls.lens ++ List.replicate (size - ls.lens.length) 0), size, hs1, hs3, fun e => Bool.noConfusion e,
+    fun _ => by rw [← hfullL], hy.sz, ⟨?_, ?_⟩, ?_⟩
+  · intro l hl
+    rcases List.mem_append.mp hl with h | h
+    · exact hy.small l h
+    · rw [(List.mem_replicate.mp h).2]
+      omega
+  · rw [lengthSum_append, lengthSum_replicate_zero, hsum]
+  · show (ls.lens ++ List.replicate (size - ls.lens.length) 0).length = size
+    simp
+    omega
+
+/-- The place reading a code's lengths. -/
+def stepHSyms (st : Hd) (pos : USize) (h : ∃ g p, HRel st g p) (ht : st.tag = .syms) : Hd :=
+  if h0 : st.symSum = 32768 then tableDone { st with pos := pos, status := .next } false 0 (syms_args (st := st) h ht h0)
+  else if st.ln = st.size then markH st pos .bad
+  else
+    let r := lenSymFast st.clt.t (USize.ofNat 0) st.clt.fits st.clt.h32 ⟨st.word, st.count⟩
+    match r.status with
+    | .short => markH st pos .needsInput
+    | .bad => markH st pos .bad
+    | .ok =>
+      let sym := r.a
+      let ln := st.ln
+      if sym < 16 then
+        let sum := if sym = 0 then st.symSum else st.symSum + ((32768 : UInt64) >>> sym)
+        if 32768 < sum then markH st pos .bad
+        else
+          let lens := st.lens
+          let prev := if sym = 0 then st.prevLen else sym
+          let st0 := clearLens st
+          { st0 with
+            word := r.word, count := r.count, pos := pos, status := .next, lens := setLen lens ln sym, ln := ln + 1, prevLen := prev
+            repCount := 0, symSum := sum }
+      else
+        let len := if sym = 16 then st.prevLen else 0
+        let mult : UInt64 := if sym = 16 then 4 else 8
+        let old := if st.repCount ≠ 0 ∧ st.repSym = sym then st.repCount else 0
+        let new := if old = 0 then 3 + r.b else mult * (old - 2) + (3 + r.b)
+        let delta := new - old
+        if st.size < ln + delta then markH st pos .bad
+        else
+          let sum := if len = 0 then st.symSum else st.symSum + delta * ((32768 : UInt64) >>> len)
+          if 32768 < sum then markH st pos .bad
+          else
+            let lens := st.lens
+            let st0 := clearLens st
+            { st0 with
+              word := r.word, count := r.count, pos := pos, status := .next, lens := fillLens lens ln delta len.toUInt8, ln := ln + delta
+              repSym := sym, repCount := new, symSum := sum }
+
 section
 variable {α : Type} {K : HK α} {a : ByteArray} {stop : USize}
 
 theorem stepHSyms_ok {o : Owner} {size : Nat} {clc : PrefixCode} {ls : LengthState} {st : Hd} {g : Gh} {pos : USize}
-    (hrel : HRel st g (.syms o size clc ls)) (hp : pos.toNat ≤ stop.toNat) (hfull : 56 < st.count.toNat ∨ pos = stop) :
-    HStepOk K a stop g (.syms o size clc ls) st pos (stepHSyms st pos) := by
+    (hrel : HRel st g (.syms o size clc ls)) (hp : pos.toNat ≤ stop.toNat) (hfull : 56 < st.count.toNat ∨ pos = stop)
+    (hb : st.d.arena.size + budH g (.syms o size clc ls) ≤ st.d.arenaCap.toNat) {hH : ∃ g p, HRel st g p} {hT : st.tag = .syms} :
+    HStepOk K a stop g (.syms o size clc ls) st pos (stepHSyms st pos hH hT) := by
   obtain ⟨hw, hu, ht, hs, ho, hy⟩ := hrel
   have hrel : HRel st g (.syms o size clc ls) := ⟨hw, hu, ht, hs, ho, hy⟩
   obtain ⟨hs1, hs2, hs3⟩ := hs
@@ -209,7 +242,7 @@ theorem stepHSyms_ok {o : Owner} {size : Nat} {clc : PrefixCode} {ls : LengthSta
   have hlenLe := hy.le
   unfold stepHSyms
   by_cases h0 : st.symSum = 32768
-  · rw [ite_eq_left h0]
+  · rw [dite_eq_left h0]
     have hsum : lengthSum ls.lens = 32768 := by
       rw [← hy.sumOk, h0]
       rfl
@@ -227,10 +260,11 @@ theorem stepHSyms_ok {o : Owner} {size : Nat} {clc : PrefixCode} {ls : LengthSta
       simp
       omega
     have hdone := tableDone_ok K (st := { st with pos := pos, status := .next }) (c := .canonical (ls.lens ++ List.replicate (size - ls.lens.length) 0))
-      (single := false) (sym := 0) hw hu hs ho rfl (fun e => Bool.noConfusion e) (fun _ => by rw [← hfullL]) hy.sz hC hsy
+      (single := false) (sym := 0) hw hu hs ho (fun e => Bool.noConfusion e) (fun _ => by rw [← hfullL]) hy.sz hC hsy hb
+      (ha := syms_args (st := st) hH hT h0)
     exact hdone.toStep rfl hp rfl (fun h => ⟨h.fill, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase, h.work⟩)
       (fun F => hrest_syms_done K g o size clc ls _ hlenLe hsum) (fun F => hStep_syms_done _ hlenLe hsum)
-  rw [ite_eq_right h0]
+  rw [dite_eq_right h0]
   have hsumNe : lengthSum ls.lens ≠ 32768 := by
     rw [← hy.sumOk]
     exact fun e => h0 (UInt64.toNat_inj.mp e)

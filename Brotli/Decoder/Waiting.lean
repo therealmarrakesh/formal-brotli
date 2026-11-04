@@ -319,7 +319,7 @@ theorem stepDRaw_pendLe (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.si
     · exact PendLe.keep rfl rfl
 
 theorem stepDHdr_pendLe (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize)
-    (hH : ∃ g p, HRel D.hd g p) (hp : pos.toNat ≤ stop.toNat) : PendLeD D (stepDHdr a stop hs D pos hH hp) := by
+    (hH : HIn D.hd) (hp : pos.toNat ≤ stop.toNat) : PendLeD D (stepDHdr a stop hs D pos hH hp) := by
   unfold PendLeD stepDHdr takeHd clearHd hdrNext cmdStart
   keepD_tac
 

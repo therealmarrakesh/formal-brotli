@@ -18,9 +18,9 @@ open Brotli.Spec Brotli.Properties
 def stepAtH (st : Hd) (pos : USize) (h : ∃ g p, HRel st g p) : Hd :=
   match ht : st.tag with
   | .cat => stepHCat st pos
-  | .code => stepHCode st pos
+  | .code => stepHCode st pos h ht
   | .clens => stepHClens st pos h ht
-  | .syms => stepHSyms st pos
+  | .syms => stepHSyms st pos h ht
   | .first => stepHFirst st pos (first_fits h ht)
   | .np => stepHNp st pos
   | .modes => stepHModes st pos
@@ -39,9 +39,9 @@ macro "stepAtH_tag" ht:ident : tactic =>
   `(tactic| (unfold stepAtH; split <;> rename_i e <;> first | rfl | exact absurd (e.symm.trans $ht) (fun x => HTag.noConfusion x)))
 
 theorem stepAtH_cat (ht : st.tag = .cat) : stepAtH st pos h = stepHCat st pos := by stepAtH_tag ht
-theorem stepAtH_code (ht : st.tag = .code) : stepAtH st pos h = stepHCode st pos := by stepAtH_tag ht
+theorem stepAtH_code (ht : st.tag = .code) : stepAtH st pos h = stepHCode st pos h ht := by stepAtH_tag ht
 theorem stepAtH_clens (ht : st.tag = .clens) : stepAtH st pos h = stepHClens st pos h ht := by stepAtH_tag ht
-theorem stepAtH_syms (ht : st.tag = .syms) : stepAtH st pos h = stepHSyms st pos := by stepAtH_tag ht
+theorem stepAtH_syms (ht : st.tag = .syms) : stepAtH st pos h = stepHSyms st pos h ht := by stepAtH_tag ht
 theorem stepAtH_first (ht : st.tag = .first) : stepAtH st pos h = stepHFirst st pos (first_fits h ht) := by stepAtH_tag ht
 theorem stepAtH_np (ht : st.tag = .np) : stepAtH st pos h = stepHNp st pos := by stepAtH_tag ht
 theorem stepAtH_modes (ht : st.tag = .modes) : stepAtH st pos h = stepHModes st pos := by stepAtH_tag ht
@@ -70,6 +70,13 @@ theorem hrel_pos0 {st : Hd} (h : ∃ g p, HRel st g p) : ∃ g p, HRel { st with
   obtain ⟨g, p, hr⟩ := h
   exact ⟨g, p, hr.mark 0 st.status⟩
 
+/-- A state stands for a place, with room in the arena's reservation for the tables still to come. -/
+def HIn (st : Hd) : Prop := ∃ g p, HRel st g p ∧ st.d.arena.size + budH g p ≤ st.d.arenaCap.toNat
+
+theorem HIn.rel {st : Hd} (h : HIn st) : ∃ g p, HRel st g p := by
+  obtain ⟨g, p, hr, _⟩ := h
+  exact ⟨g, p, hr⟩
+
 /-- A refill, with the buffer it leaves well formed. -/
 @[inline] def refillH (word count : UInt64) (a : ByteArray) (pos stop : USize) (hs : stop.toNat ≤ a.size) (hp : pos.toNat ≤ stop.toNat)
     (hw : (BitBuffer.mk word count).Wf) : { r : Refilled // r.buf.Wf } :=
@@ -79,33 +86,34 @@ theorem refillH_val {word count : UInt64} {a : ByteArray} {pos stop : USize} {hs
     {hw : (BitBuffer.mk word count).Wf} : (refillH word count a pos stop hs hp hw).1 = refill word count a pos stop hs hp := rfl
 
 /-- One step of the header machine. -/
-def stepH (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (st : Hd) (pos : USize) (h : ∃ g p, HRel st g p)
+def stepH (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (st : Hd) (pos : USize) (h : HIn st)
     (hp : pos.toNat ≤ stop.toNat) : Hd :=
-  match refillH st.word st.count a pos stop hs hp (hrel_wf h) with
+  match refillH st.word st.count a pos stop hs hp (hrel_wf h.rel) with
   | ⟨r, hr⟩ =>
     let rw := r.word
     let rc := r.count
     let rp := r.pos
-    stepAtH { st with word := rw, count := rc } rp (hrel_bits h hr)
+    stepAtH { st with word := rw, count := rc } rp (hrel_bits h.rel hr)
 
 section
 variable {α : Type} {K : HK α} {a : ByteArray} {stop : USize}
 
 theorem stepAtH_ok {g : Gh} {p : HPhase} {st : Hd} {pos : USize} (hrel : HRel st g p) (hp : pos.toNat ≤ stop.toNat)
-    (hfull : 56 < st.count.toNat ∨ pos = stop) {h : ∃ g p, HRel st g p} : HStepOk K a stop g p st pos (stepAtH st pos h) := by
+    (hfull : 56 < st.count.toNat ∨ pos = stop) (hb : st.d.arena.size + budH g p ≤ st.d.arenaCap.toNat) {h : ∃ g p, HRel st g p} :
+    HStepOk K a stop g p st pos (stepAtH st pos h) := by
   cases p with
   | cat i =>
     rw [stepAtH_cat hrel.2.2.1]
     exact stepHCat_ok hrel hp hfull
   | code o size =>
     rw [stepAtH_code hrel.2.2.1]
-    exact stepHCode_ok hrel hp hfull
+    exact stepHCode_ok hrel hp hfull hb
   | clens o size order acc sum =>
     rw [stepAtH_clens hrel.2.2.1]
     exact stepHClens_ok hrel hp hfull
   | syms o size clc ls =>
     rw [stepAtH_syms hrel.2.2.1]
-    exact stepHSyms_ok hrel hp hfull
+    exact stepHSyms_ok hrel hp hfull hb
   | first i n tc cc =>
     rw [stepAtH_first hrel.2.2.1]
     exact stepHFirst_ok hrel hp hfull
@@ -133,11 +141,12 @@ theorem stepAtH_ok {g : Gh} {p : HPhase} {st : Hd} {pos : USize} (hrel : HRel st
 
 /-- What a step of the header machine does in the spec's terms, for every future. -/
 theorem stepH_ok {g : Gh} {p : HPhase} {st : Hd} {pos : USize} {hs : stop.toNat ≤ a.size} (hrel : HRel st g p) (hp : pos.toNat ≤ stop.toNat)
-    {h : ∃ g p, HRel st g p} : HStepOk K a stop g p st pos (stepH a stop hs st pos h hp) := by
+    (hb : st.d.arena.size + budH g p ≤ st.d.arenaCap.toNat) {h : HIn st} :
+    HStepOk K a stop g p st pos (stepH a stop hs st pos h hp) := by
   unfold stepH refillH
   obtain ⟨h1, h2, h3, h4, h5⟩ := refill_spec hs hp hrel.wf
   dsimp only
-  refine (stepAtH_ok (hrel.withBits h1) h3 h5).refilled (fun F => ?_) h2 h3 ⟨rfl, rfl, rfl, rfl, rfl, rfl, ⟨rfl, rfl, rfl, rfl⟩⟩
+  refine (stepAtH_ok (hrel.withBits h1) h3 h5 hb).refilled (fun F => ?_) h2 h3 ⟨rfl, rfl, rfl, rfl, rfl, rfl, ⟨rfl, rfl, rfl, rfl⟩⟩
   show (BitBuffer.mk st.word st.count).held ++ (chunkBits a pos.toNat stop.toNat ++ F) =
     (refill st.word st.count a pos stop hs hp).buf.held ++
       (chunkBits a (refill st.word st.count a pos stop hs hp).pos.toNat stop.toNat ++ F)
@@ -147,18 +156,18 @@ end
 
 /-- A header step that leaves a header ready leaves one that was read. -/
 theorem stepH_upto {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {st : Hd} {pos : USize}
-    (h : ∃ g p, HRel st g p) (hp : pos.toNat ≤ stop.toNat) (hst : (stepH a stop hs st pos h hp).status = .ready) :
+    (h : HIn st) (hp : pos.toNat ≤ stop.toNat) (hst : (stepH a stop hs st pos h hp).status = .ready) :
     ∃ g, Upto (stepH a stop hs st pos h hp).d g 10 := by
-  obtain ⟨g, p, hrel⟩ := h
-  obtain ⟨g', hu, _⟩ := (stepH_ok (K := (⟨fun _ _ => none, fun _ x => x⟩ : HK Unit)) (hs := hs) hrel hp).ready hst
+  obtain ⟨g, p, hrel, hb⟩ := id h
+  obtain ⟨g', hu, _⟩ := (stepH_ok (K := (⟨fun _ _ => none, fun _ x => x⟩ : HK Unit)) (hs := hs) hrel hp hb).ready hst
   exact ⟨g', hu⟩
 
 /-- A header step, with what a ready header gives. -/
-@[inline] def stepHR (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (st : Hd) (pos : USize) (h : ∃ g p, HRel st g p)
+@[inline] def stepHR (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (st : Hd) (pos : USize) (h : HIn st)
     (hp : pos.toNat ≤ stop.toNat) : { r : Hd // r.status = .ready → ∃ g, Upto r.d g 10 } :=
   ⟨stepH a stop hs st pos h hp, stepH_upto h hp⟩
 
-theorem stepHR_val {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {st : Hd} {pos : USize} {h : ∃ g p, HRel st g p}
+theorem stepHR_val {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {st : Hd} {pos : USize} {h : HIn st}
     {hp : pos.toNat ≤ stop.toNat} : (stepHR a stop hs st pos h hp).1 = stepH a stop hs st pos h hp := rfl
 
 /-! ### The command loop's header -/

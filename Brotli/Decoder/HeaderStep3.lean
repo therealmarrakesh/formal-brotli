@@ -256,7 +256,7 @@ theorem mapFinish_ok {st0 st : Hd} {g : Gh} {p : HPhase} {isL : Bool} {n : UInt6
         rw [← hmx, ← hres]
         exact Nat.lt_of_not_le fun e => hc (UInt64.le_iff_toNat_le.mpr e)
       exact ⟨fun e => HStatus.noConfusion e, fun e => HStatus.noConfusion e, fun e => HStatus.noConfusion e,
-        fun _ => Or.inr ⟨g.setMap false ntrees cmap, hlt, resBytes_le hu h2, by rw [← hcp]; exact hu.small (by decide),
+        fun _ => ⟨g.setMap false ntrees cmap, hlt, resBytes_le hu h2, by rw [← hcp]; exact hu.small (by decide),
           fun F => ⟨_, hrest' F⟩⟩, fun e => HStatus.noConfusion e⟩
 
 /-! ### A context map's number of trees -/

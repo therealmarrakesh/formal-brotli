@@ -508,7 +508,7 @@ theorem vleft_le {st : Hd} {g : Gh} {p : HPhase} (h : HRel st g p) : vleft p ≤
 end by what the header holds for it, and a step that runs out of input costs at most 269. -/
 theorem pay_hdr {w : Nat} {st : StreamState} {last : Bool} {mlen : Nat} {g : Gh} {p : HPhase} {a : ByteArray} {stop : USize}
     {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize} (hrel : DRel D (.hdr w st last mlen g p)) (hp : pos.toNat ≤ stop.toNat)
-    {hH : ∃ g p, HRel D.hd g p} :
+    {hH : HIn D.hd} :
     ((stepDHdr a stop hs D pos hH hp).status = .next → Pays a stop (.hdr w st last mlen g p) D pos (stepDHdr a stop hs D pos hH hp)
       (stepDHdrW a stop hs D pos (fun _ => hH) hp + 1) 0) ∧
     ((stepDHdr a stop hs D pos hH hp).status = .needsInput → Pays a stop (.hdr w st last mlen g p) D pos (stepDHdr a stop hs D pos hH hp)
@@ -521,7 +521,7 @@ theorem pay_hdr {w : Nat} {st : StreamState} {last : Bool} {mlen : Nat} {g : Gh}
   have ht' : tag = .hdr := ht
   subst ht'
   dsimp only at hR
-  have hstep := stepH_ok (K := hdrK w (specSem.after w last) st mlen) (a := a) (hs := hs) (h := hH) hR hp
+  have hstep := stepH_ok (K := hdrK w (specSem.after w last) st mlen) (a := a) (hs := hs) (h := hH) hR hp hb
   have hsz := psize_le hR
   have eW : stepDHdrW a stop hs ⟨.hdr, cmd, hd, H, k, last', left, limit, pos', status⟩ pos (fun _ => hH) hp =
       stepHW a stop hs hd pos + (if (stepH a stop hs hd pos hH hp).status = .ready then 770 else 0) := rfl
@@ -1050,7 +1050,7 @@ theorem stepDWbits_memPend {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a
 
 /-- A header's step, when it reports the limit, leaves the bytes waiting as they were. -/
 theorem stepDHdr_memPend {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize}
-    {hH : ∃ g p, HRel D.hd g p} {hp : pos.toNat ≤ stop.toNat} :
+    {hH : HIn D.hd} {hp : pos.toNat ≤ stop.toNat} :
     (stepDHdr a stop hs D pos hH hp).status = .memory → (stepDHdr a stop hs D pos hH hp).cmd.pend = D.cmd.pend := by
   unfold stepDHdr takeHd clearHd hdrNext cmdStart
   dsimp only

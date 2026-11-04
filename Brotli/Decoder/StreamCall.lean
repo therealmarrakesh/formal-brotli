@@ -436,7 +436,7 @@ theorem stepDRaw_badWin : (stepDRaw a stop hs D pos).status = .bad →
   unfold stepDRaw takeRing moveOn rawFinish clearCmd clearRing
   badWinD_tac
 
-theorem stepDHdr_badWin {hH : ∃ g p, HRel D.hd g p} {hp : pos.toNat ≤ stop.toNat} : (stepDHdr a stop hs D pos hH hp).status = .bad →
+theorem stepDHdr_badWin {hH : HIn D.hd} {hp : pos.toNat ≤ stop.toNat} : (stepDHdr a stop hs D pos hH hp).status = .bad →
     (stepDHdr a stop hs D pos hH hp).cmd.WinSame D.cmd ∧ (stepDHdr a stop hs D pos hH hp).k = D.k := by
   unfold stepDHdr takeHd clearHd hdrNext cmdStart
   badWinD_tac

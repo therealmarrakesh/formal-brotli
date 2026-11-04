@@ -78,15 +78,15 @@ theorem refillW_le {word count : UInt64} {a : ByteArray} {pos stop : USize} (hs 
 
 /-! ### Tables -/
 
-/-- The work of `tableDone`: the table built, and for a context map's code the check of its table, the map's zeros as read
-and as transformed, and the transform's first list and the flags, each a copy of 256 bytes. -/
+/-- The work of `tableDone`: the table built, and for a context map's code the map's zeros as read and as transformed, and
+the transform's first list and the flags, each a copy of 256 bytes. -/
 def tableDoneW (st : Hd) (single : Bool) : Nat :=
   let n := st.size.toUSize
   let lens := st.lens
   if hn : n.toNat ≤ lens.size then
     (if single then buildSingleW else buildFastW lens n hn) +
       match st.role with
-      | .map => fitsW + zbW (mapSizeFast st) + zbW (mapSizeFast st) + 3 * zbW 256
+      | .map => zbW (mapSizeFast st) + zbW (mapSizeFast st) + 3 * zbW 256
       | _ => 1
   else 1
 

@@ -250,9 +250,6 @@ def buildFastW (lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) : Nat
 /-- The work of `buildSingleFast`: 1024 zeros pushed, 256 slots written. -/
 def buildSingleW : Nat := 1025 + 258
 
-/-- The work of `fitsFast`: at most 256 rounds. -/
-def fitsW : Nat := 258
-
 /-- The depths a plan works out, and its first codes. -/
 theorem planFast_parts {lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.size} (h64 : n.toNat < 65536)
     (hC : Complete (.canonical (lensOf lens n.toNat))) :

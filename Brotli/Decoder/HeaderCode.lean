@@ -184,13 +184,10 @@ theorem TableDone.toStep {g : Gh} {o : Owner} {c : PrefixCode} {p : HPhase} {st 
     (h : TableDone K g o c st0 r) (h2 : st0.pos = pos) (hp : pos.toNat ≤ stop.toNat) (hd : st0.d = st.d) (hsz : HSize st → HSize st0)
     (heq : ∀ F, hrest K g p (availBits st.word st.count a pos stop F) = ownerK K g o c (availBits st0.word st0.count a pos stop F))
     (hj : ∀ F, hStepP (g, p) (availBits st.word st.count a pos stop F) = .next (g, ownerPlace g o c) (availBits st0.word st0.count a pos stop F))
-    (hrank : (rankH p).1 = rankO o := by rfl) (hcap : budH g p = budO g o := by rfl) :
+    (hrank : (rankH p).1 = rankO o := by rfl) (hcap : budH g p = budO g o := by rfl) (hs0 : st0.status = .next := by rfl) :
     HStepOk K a stop g p st pos r := by
-  obtain ⟨⟨b1, b2, b3⟩, hnext, hother⟩ := h
-  have hne : ∀ s : HStatus, s ≠ .next → s ≠ .memory → r.status = s → False := by
-    intro s h1 h2 e
-    have := (hother (by rw [e]; exact h1)).1
-    exact h2 (e.symm.trans this)
+  obtain ⟨⟨b1, b2, b3⟩, hnext, hst⟩ := h
+  have hne : ∀ s : HStatus, s ≠ .next → r.status = s → False := fun s h1 e => h1 (e.symm.trans (hst.trans hs0))
   refine ⟨fun e => ?_, fun e => ?_, fun e F => ?_, fun e => ?_, fun e => ?_⟩
   · obtain ⟨g', p', oc, h4, h5, h6, h7, h8⟩ := hnext e
     have hmv := h7 p hcap
@@ -198,22 +195,21 @@ theorem TableDone.toStep {g : Gh} {o : Owner} {c : PrefixCode} {p : HPhase} {st 
       ⟨by rw [hmv.max, hd], by rw [hmv.grow, hd], fun hs => hmv.size (hsz hs), hmv.cap.same hd⟩, fun F => ?_⟩
     · rw [heq F, avail_mk, h5, avail_mk, b1, b2, b3, h2]
     · rw [h8, hj F, avail_mk, avail_mk, b1, b2, b3, h2]
-  · exact (hne _ (fun e => HStatus.noConfusion e) (fun e => HStatus.noConfusion e) e).elim
-  · exact (hne _ (fun e => HStatus.noConfusion e) (fun e => HStatus.noConfusion e) e).elim
-  · obtain ⟨_, _, h3, h4⟩ := hother (by rw [e]; exact fun e => HStatus.noConfusion e)
-    rw [hd] at h3
-    exact Or.inl ⟨c, h3, by rw [hcap]; exact h4⟩
-  · exact (hne _ (fun e => HStatus.noConfusion e) (fun e => HStatus.noConfusion e) e).elim
+  · exact (hne _ (fun e => HStatus.noConfusion e) e).elim
+  · exact (hne _ (fun e => HStatus.noConfusion e) e).elim
+  · exact (hne _ (fun e => HStatus.noConfusion e) e).elim
+  · exact (hne _ (fun e => HStatus.noConfusion e) e).elim
 
 /-- What a simple code's table leaves, once the code is read. -/
 theorem simple_done {o : Owner} {size : Nat} {st : Hd} {g : Gh} (pos : USize) {r : Rd} (hrel : HRel st g (.code o size))
     (hw2 : r.buf.Wf) (hwit : readPrefixCode st.size.toNat (BitBuffer.mk st.word st.count).held = some (simpleValue st.size r, r.buf.held))
-    (hsmall : SmallVals r) :
+    (hsmall : SmallVals r) (hb : st.d.arena.size + budO g o ≤ st.d.arenaCap.toNat)
+    {ha : TableArgs st.size (writeSimple (zeroBytes st.size.toNat) r) (r.e == 0) r.a} :
     TableDone K g o (simpleValue st.size r) { st with
         word := r.word, count := r.count, pos := pos, status := .next, lens := writeSimple (zeroBytes st.size.toNat) r }
       (tableDone { st with
         word := r.word, count := r.count, pos := pos, status := .next, lens := writeSimple (zeroBytes st.size.toNat) r }
-        (r.e == 0) r.a) := by
+        (r.e == 0) r.a ha) := by
   obtain ⟨_, hu, _, hs, ho⟩ := hrel
   obtain ⟨hs1, hs2, hs3⟩ := hs
   have hCc := readPrefixCode_complete hwit
@@ -237,27 +233,100 @@ theorem simple_done {o : Owner} {size : Nat} {st : Hd} {g : Gh} (pos : USize) {r
     rw [hs1] at this
     unfold simpleValue
     rw [hs1, this]
-  exact tableDone_ok K hw2 hu ⟨hs1, hs2, hs3⟩ ho rfl hsg hcn hlensEq hCc hsy
+  apply tableDone_ok K (size := size)
+  · exact hw2
+  · exact hu
+  · exact ⟨hs1, hs2, hs3⟩
+  · exact ho
+  · exact hsg
+  · exact hcn
+  · exact hlensEq
+  · exact hCc
+  · exact hsy
+  · exact hb
 
 /-! ### The place at a prefix code's first bits -/
 
+/-- A state at a prefix code's first bits stands for a place there. -/
+theorem code_ex {st : Hd} (h : ∃ g p, HRel st g p) (ht : st.tag = .code) : ∃ g o size, HRel st g (.code o size) := by
+  obtain ⟨g, p, hr⟩ := h
+  cases p with
+  | code o size => exact ⟨g, o, size, hr⟩
+  | np => exact absurd (hr.2.2.symm.trans ht) (fun e => HTag.noConfusion e)
+  | _ => exact absurd (hr.2.2.1.symm.trans ht) (fun e => HTag.noConfusion e)
+
+private theorem readInt_one (bs : List Bool) : readInt 2 (true :: false :: bs) = some (1, bs) := by
+  simp [readInt]
+
+/-- A simple code read after the first two bits is a code that was read. -/
+theorem simple_args {st : Hd} (h : ∃ g p, HRel st g p) (ht : st.tag = .code) (h2 : 2 ≤ st.count)
+    (hok : (simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2)).status = .ok) :
+    TableArgs st.size (writeSimple (zeroBytes st.size.toNat) (simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2)))
+      ((simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2)).e == 0)
+      (simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2)).a := by
+  obtain ⟨g, o, size, hrel⟩ := code_ex h ht
+  obtain ⟨hw, _, _, hs, _⟩ := hrel
+  obtain ⟨hs1, _, hs3⟩ := hs
+  have hw1 := drop_wf' hw (k := 2) (by decide) h2
+  obtain ⟨hbits, hbitsLe⟩ := alphabetBitsFast_toNat (size := st.size) (by omega)
+  have R := simpleFast_ok (size := st.size) (bits := alphabetBitsFast st.size) hw1 hbitsLe
+  rw [hbits, hs1] at R
+  have hsmall := simpleFast_small st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2) hbitsLe
+  generalize simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2) = r at R hsmall hok ⊢
+  have hN2 := (R.ok hok).2 []
+  simp only [List.append_nil] at hN2
+  have hwit : readPrefixCode st.size.toNat (true :: false :: ((BitBuffer.mk st.word st.count).drop 2).held) =
+      some (simpleValue st.size r, r.buf.held) := by
+    unfold readPrefixCode
+    rw [readInt_one]
+    show (if 1 = 1 then readSimple st.size.toNat ((BitBuffer.mk st.word st.count).drop 2).held
+      else readComplex st.size.toNat 1 ((BitBuffer.mk st.word st.count).drop 2).held) = _
+    rw [ite_eq_left rfl, simpleChain_eq, hs1]
+    exact hN2
+  have hCc := readPrefixCode_complete hwit
+  have hsy := readPrefixCode_symbols hwit
+  rw [hs1] at hsy
+  have hsn : st.size.toNat < 2 ^ 32 := by omega
+  have hlensEq : (writeSimple (zeroBytes st.size.toNat) r).size = size := by
+    rw [writeSimple_size, zeroBytes_size hsn, hs1]
+  refine ⟨simpleValue st.size r, size, hs1, hs3, fun he => ?_, fun he => ?_, hlensEq, hCc, hsy⟩
+  · have he' : r.e = 0 := by simpa using he
+    unfold simpleValue simpleCode
+    rw [he']
+    rfl
+  · have he' : r.e.toNat ≠ 0 := fun e => by
+      have : r.e = 0 := UInt64.toNat_inj.mp e
+      simp [this] at he
+    have := writeSimple_lens (size := st.size.toNat) hsn r he' hsmall.1 hsmall.2.1 hsmall.2.2.1 hsmall.2.2.2
+    rw [hs1] at this
+    unfold simpleValue
+    rw [hs1, this]
+
+/-- A simple code's read, with what a successful one gives. -/
+@[inline] def simpleFastT (st : Hd) (h : ∃ g p, HRel st g p) (ht : st.tag = .code) (h2 : 2 ≤ st.count) :
+    { r : Rd // r.status = .ok → TableArgs st.size (writeSimple (zeroBytes st.size.toNat) r) (r.e == 0) r.a } :=
+  ⟨simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2), simple_args h ht h2⟩
+
+theorem simpleFastT_val {st : Hd} {h : ∃ g p, HRel st g p} {ht : st.tag = .code} {h2 : 2 ≤ st.count} :
+    (simpleFastT st h ht h2).1 = simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2) := rfl
+
 /-- The place at a prefix code's first two bits. -/
-def stepHCode (st : Hd) (pos : USize) : Hd :=
+def stepHCode (st : Hd) (pos : USize) (h : ∃ g p, HRel st g p) (ht : st.tag = .code) : Hd :=
   let b0 : BitBuffer := ⟨st.word, st.count⟩
-  if 2 ≤ st.count then
+  if h2 : 2 ≤ st.count then
     let hskip := b0.peek 2
     let b1 := b0.drop 2
     if hskip = 1 then
-      let size := st.size
-      let r := simpleFast size (alphabetBitsFast size) b1
-      match r.status with
+      match simpleFastT st h ht h2 with
+      | ⟨r, hr⟩ =>
+      match hs : r.status with
       | .short => markH st pos .needsInput
       | .bad => markH st pos .bad
       | .ok =>
         tableDone { st with
             word := r.word, count := r.count, pos := pos, status := .next
-            lens := writeSimple (zeroBytes size.toNat) r }
-          (r.e == 0) r.a
+            lens := writeSimple (zeroBytes st.size.toNat) r }
+          (r.e == 0) r.a (hr hs)
     else
       { st with
         word := b1.word, count := b1.count, pos := pos, status := .next, tag := .clens, clIdx := hskip, clSum := 0, clNz := 0, clSym := 0
@@ -289,9 +358,10 @@ theorem clStart_rel {hskip : UInt64} (hh : hskip.toNat < 4) {st : Hd} (h1 : st.c
   nzOne := by simp
   symLt := by rw [h4]; decide
 
-theorem stepHCode_ok {o : Owner} {size : Nat} {st : Hd} {g : Gh} {pos : USize} (hrel : HRel st g (.code o size))
-    (hp : pos.toNat ≤ stop.toNat) (hfull : 56 < st.count.toNat ∨ pos = stop) :
-    HStepOk K a stop g (.code o size) st pos (stepHCode st pos) := by
+theorem stepHCode_ok {o : Owner} {size : Nat} {st : Hd} {g : Gh} {pos : USize} {hH : ∃ g p, HRel st g p} {hT : st.tag = .code}
+    (hrel : HRel st g (.code o size)) (hp : pos.toNat ≤ stop.toNat) (hfull : 56 < st.count.toNat ∨ pos = stop)
+    (hb : st.d.arena.size + budH g (.code o size) ≤ st.d.arenaCap.toNat) :
+    HStepOk K a stop g (.code o size) st pos (stepHCode st pos hH hT) := by
   obtain ⟨hw, hu, ht, hs, ho⟩ := hrel
   have hrel : HRel st g (.code o size) := ⟨hw, hu, ht, hs, ho⟩
   obtain ⟨hs1, hs2, hs3⟩ := hs
@@ -299,14 +369,20 @@ theorem stepHCode_ok {o : Owner} {size : Nat} {st : Hd} {g : Gh} {pos : USize} (
   unfold stepHCode
   dsimp only
   by_cases h2 : 2 ≤ st.count
-  · rw [ite_eq_left h2]
+  · rw [dite_eq_left h2]
+    generalize hT' : simpleFastT st hH hT h2 = rr
+    obtain ⟨r, hr⟩ := rr
+    have e : r = simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2) := by
+      rw [← simpleFastT_val (h := hH) (ht := hT) (h2 := h2), hT']
+    subst e
+    dsimp only
     have hread := fun f => read_int (b := ⟨st.word, st.count⟩) (k := 2) f (by decide) h2
     have hw1 := drop_wf' hw (k := 2) (by decide) h2
     have hcount1 : ((BitBuffer.mk st.word st.count).drop 2).count.toNat = st.count.toNat - 2 :=
       drop_count (UInt64.le_iff_toNat_le.mp h2)
     have h2' : 2 ≤ st.count.toNat := UInt64.le_iff_toNat_le.mp h2
     have hhlt : ((BitBuffer.mk st.word st.count).peek 2).toNat < 4 := peek_lt _ (k := 2) (by decide)
-    generalize (BitBuffer.mk st.word st.count).drop 2 = b1 at hread hw1 hcount1
+    generalize (BitBuffer.mk st.word st.count).drop 2 = b1 at hread hw1 hcount1 hr
     generalize (BitBuffer.mk st.word st.count).peek 2 = hskip at hread hhlt
     have hspec : ∀ f, hrest K g (.code o size) ((BitBuffer.mk st.word st.count).held ++ f) =
         if hskip.toNat = 1 then (simpleChain size (alphabetBits size) (b1.held ++ f) >>= fun p => ownerK K g o p.1 p.2)
@@ -330,9 +406,9 @@ theorem stepHCode_ok {o : Owner} {size : Nat} {st : Hd} {g : Gh} {pos : USize} (
       have hval := R.ok
       have hsh0 := R.short
       have hsmall := simpleFast_small st.size (alphabetBitsFast st.size) b1 hbitsLe
-      generalize simpleFast st.size (alphabetBitsFast st.size) b1 = r at Rok Rshort Rbad hval hsmall hsh0
-      cases hsr : r.status with
-      | short =>
+      generalize simpleFast st.size (alphabetBitsFast st.size) b1 = r at Rok Rshort Rbad hval hsmall hsh0 hr ⊢
+      split
+      · rename_i hsr
         obtain ⟨_, _, h3, h4⟩ := Rshort hsr
         obtain ⟨_, _, _, h5⟩ := hsh0 hsr
         refine HStepOk.ofShortRead (X := 45) hrel hfull (by omega) (by omega) (by rw [hnil]; exact h4) ?_
@@ -341,10 +417,9 @@ theorem stepHCode_ok {o : Owner} {size : Nat} {st : Hd} {g : Gh} {pos : USize} (
         show (if hskip.toNat = 1 then _ else _) = _
         rw [ite_eq_left h1']
         exact readIn_short h5 (by rw [held_len]; exact h3)
-      | bad =>
+      · rename_i hsr
         exact HStepOk.ofBad rfl (fun F => by rw [avail_mk, hspec]; exact Rbad hsr _)
-      | ok =>
-        dsimp only
+      · rename_i hsr
         obtain ⟨hw2, hN⟩ := Rok hsr
         have hN2 := (hval hsr).2 []
         simp only [List.append_nil] at hN2
@@ -359,7 +434,7 @@ theorem stepHCode_ok {o : Owner} {size : Nat} {st : Hd} {g : Gh} {pos : USize} (
           show (if 1 = 1 then readSimple st.size.toNat b1.held else readComplex st.size.toNat 1 b1.held) = _
           rw [ite_eq_left rfl, simpleChain_eq, hs1]
           exact hN2
-        have hdone := simple_done (K := K) pos hrel hw2 hwit hsmall
+        have hdone := simple_done (K := K) pos hrel hw2 hwit hsmall hb (ha := hr hsr)
         generalize hc : simpleValue st.size r = c at hN hdone
         exact hdone.toStep rfl hp rfl (fun h => ⟨h.fill, by
             show (writeSimple (zeroBytes st.size.toNat) r).size ≤ _
@@ -392,7 +467,7 @@ theorem stepHCode_ok {o : Owner} {size : Nat} {st : Hd} {g : Gh} {pos : USize} (
         show (if hskip.toNat = 1 then _ else _) = _
         rw [ite_eq_right h1']
         rfl
-  · rw [ite_eq_right h2]
+  · rw [dite_eq_right h2]
     have hc : st.count.toNat < 2 := not_le_lt'' h2
     have hnone : hrest K g (.code o size) (BitBuffer.mk st.word st.count).held = none := by
       rw [hrest_code, readInt_short (b := ⟨st.word, st.count⟩) hc]

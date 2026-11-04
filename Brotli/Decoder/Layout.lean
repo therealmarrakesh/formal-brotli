@@ -235,8 +235,8 @@ theorem hd_er {s t : Hd} (h : { s with pos := 0 } = { t with pos := 0 }) : t = {
   rfl
 
 theorem stepH_same {a1 a2 : ByteArray} {e1 e2 : USize} (hs1 : e1.toNat ≤ a1.size) (hs2 : e2.toNat ≤ a2.size) {s t : Hd}
-    (he : { s with pos := 0 } = { t with pos := 0 }) {p1 p2 : USize} (h : Same a1 e1 a2 e2 p1 p2) {h1 : ∃ g p, HRel s g p}
-    {h2 : ∃ g p, HRel t g p} {hp1 : p1.toNat ≤ e1.toNat} {hp2 : p2.toNat ≤ e2.toNat} :
+    (he : { s with pos := 0 } = { t with pos := 0 }) {p1 p2 : USize} (h : Same a1 e1 a2 e2 p1 p2) {h1 : HIn s}
+    {h2 : HIn t} {hp1 : p1.toNat ≤ e1.toNat} {hp2 : p2.toNat ≤ e2.toNat} :
     HdSame a1 e1 a2 e2 (stepH a1 e1 hs1 s p1 h1 hp1) (stepH a2 e2 hs2 t p2 h2 hp2) := by
   have et : t = { s with pos := t.pos } := hd_er he
   generalize t.pos = q at et
@@ -380,8 +380,8 @@ theorem stepDRaw_same {s t : Dec} (he : s.er = t.er) {p1 p2 : USize} (h : Same a
       exact ⟨rfl, h⟩
 
 include hs1 hs2 in
-theorem stepDHdr_same {s t : Dec} (he : s.er = t.er) {p1 p2 : USize} (h : Same a1 e1 a2 e2 p1 p2) {hH1 : ∃ g p, HRel s.hd g p}
-    {hH2 : ∃ g p, HRel t.hd g p} {hp1 : p1.toNat ≤ e1.toNat} {hp2 : p2.toNat ≤ e2.toNat} :
+theorem stepDHdr_same {s t : Dec} (he : s.er = t.er) {p1 p2 : USize} (h : Same a1 e1 a2 e2 p1 p2) {hH1 : HIn s.hd}
+    {hH2 : HIn t.hd} {hp1 : p1.toNat ≤ e1.toNat} {hp2 : p2.toNat ≤ e2.toNat} :
     DecSame a1 e1 a2 e2 (stepDHdr a1 e1 hs1 s p1 hH1 hp1) (stepDHdr a2 e2 hs2 t p2 hH2 hp2) := by
   revert hH2
   rw [dec_er he]

@@ -17,11 +17,11 @@ open Brotli.Spec Brotli.Properties
 /-- A state the loop can run from. -/
 def DInv (stop : USize) (D : Dec) : Prop := (∃ p, DRel D p) ∧ D.pos.toNat ≤ stop.toNat
 
-/-- A state in a header stands for a place in it. -/
-theorem DInv.hd {stop : USize} {D : Dec} (h : DInv stop D) (ht : D.tag = .hdr) : ∃ g p, HRel D.hd g p := by
+/-- A state in a header stands for a place in it, with room for the tables still to come. -/
+theorem DInv.hd {stop : USize} {D : Dec} (h : DInv stop D) (ht : D.tag = .hdr) : HIn D.hd := by
   obtain ⟨⟨p, hrel⟩, _⟩ := h
   cases p with
-  | hdr w st last mlen g q => exact ⟨g, q, hrel.2.2.2.2.2.2.1⟩
+  | hdr w st last mlen g q => exact ⟨g, q, hrel.2.2.2.2.2.2.1, hrel.2.2.2.2.2.2.2.2⟩
   | _ => exact absurd (hrel.1.symm.trans ht) (fun e => DTag.noConfusion e)
 
 /-- One step of the whole decoder. -/

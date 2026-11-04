@@ -967,7 +967,7 @@ private theorem move_mem {st r : Hd} {g g' : Gh} {q q' : HPhase} {oc : Option Ho
 
 /-- A header's step. -/
 theorem hdr_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {t : List UInt8}
-    (M : MemD Ws X L D (D.bits a D.pos stop (bits t))) (ht : D.tag = .hdr) (hp : D.pos.toNat ≤ stop.toNat) {hH : ∃ g p, HRel D.hd g p} :
+    (M : MemD Ws X L D (D.bits a D.pos stop (bits t))) (ht : D.tag = .hdr) (hp : D.pos.toNat ≤ stop.toNat) {hH : HIn D.hd} :
     StepM Ws X L a stop t (stepDHdr a stop hs D D.pos hH hp) := by
   obtain ⟨g, q, hR, h1, h2, h3⟩ := M.hdr ht
   rw [Dec.bits_hdr ht] at h1
@@ -988,12 +988,12 @@ theorem hdr_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs
   | ended => exact absurd (hrel.1.symm.trans ht) (by decide)
   | hdr w st last mlen g0 q0 =>
     have hD := stepDHdr_ok (S := demandSem) (a := a) (hs := hs) (hH := hH) hrel hp
-    have hHs := stepH_ok (K := tableK) (a := a) (hs := hs) (h := ⟨g, q, hR⟩) hR hp
+    have hHs := stepH_ok (K := tableK) (a := a) (hs := hs) (h := ⟨g, q, hR, h3⟩) hR hp h3
     unfold stepDHdr takeHd at hD ⊢
     dsimp only at hD ⊢
-    generalize hrr : stepHR a stop hs D.hd D.pos ⟨g, q, hR⟩ hp = rr at hD ⊢
+    generalize hrr : stepHR a stop hs D.hd D.pos ⟨g, q, hR, h3⟩ hp = rr at hD ⊢
     obtain ⟨r, hr⟩ := rr
-    have e : r = stepH a stop hs D.hd D.pos ⟨g, q, hR⟩ hp := by rw [← stepHR_val (h := ⟨g, q, hR⟩) (hp := hp), hrr]
+    have e : r = stepH a stop hs D.hd D.pos ⟨g, q, hR, h3⟩ hp := by rw [← stepHR_val (h := ⟨g, q, hR, h3⟩) (hp := hp), hrr]
     rw [← e] at hHs
     unfold hdrNext at hD ⊢
     dsimp only at hD ⊢
@@ -1031,8 +1031,7 @@ theorem hdr_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs
         rw [hm.max, h2]
     · exact ⟨fun _ e => absurd rfl e, fun e => DStatus.noConfusion e⟩
     · refine ⟨fun e => absurd rfl e, fun _ => ?_⟩
-      rcases hHs.memory hst with ⟨c, m1, m2⟩ | ⟨g', m1, m2, m3, m4⟩
-      · exact absurd h3 (by omega)
+      obtain ⟨g', m1, m2, m3, m4⟩ := hHs.memory hst
       obtain ⟨x, hx⟩ := m4 (bits t)
       rw [hx] at h1
       have h1' : D.hd.d.arenaCap.toNat + (resBytes g' + x.getD 0) ≤ smallMax + X := h1

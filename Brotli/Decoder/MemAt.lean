@@ -324,13 +324,16 @@ private theorem tables_move {st r : Hd} {g g' : Gh} {q q' : HPhase} {oc : Option
 /-- A header step's state, in a header still: what it has read of its meta-block grows by what the step read. -/
 theorem stepDHdr_x {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {t : List UInt8}
     {D : Dec} (M : MemD Ws X L D (D.bits a D.pos stop (bits t))) (ht : D.tag = .hdr) (hp : D.pos.toNat ≤ stop.toNat)
-    {hH : ∃ g p, HRel D.hd g p} : StepX Ws L a stop t D (stepDHdr a stop hs D D.pos hH hp) := by
+    {hH : HIn D.hd} : StepX Ws L a stop t D (stepDHdr a stop hs D D.pos hH hp) := by
   have hwin := M.win
   have hb0 := Dec.bits_hdr ht a D.pos stop (bits t)
   have hh0 := Dec.held_hdr ht
-  have hN := fun g q (hR : HRel D.hd g q) => stepH_next (K := tableK) (a := a) (hs := hs) (h := hH) hR hp
-  have hI := fun g q (hR : HRel D.hd g q) => stepH_ok (K := tableK) (a := a) (hs := hs) (h := hH) hR hp
-  have hMm := fun g q (hR : HRel D.hd g q) => stepH_memory (K := tableK) (a := a) (hs := hs) (h := hH) hR hp
+  have hN := fun g q (hR : HRel D.hd g q) (hb : D.hd.d.arena.size + budH g q ≤ D.hd.d.arenaCap.toNat) =>
+    stepH_next (K := tableK) (a := a) (hs := hs) (h := hH) hR hp hb
+  have hI := fun g q (hR : HRel D.hd g q) (hb : D.hd.d.arena.size + budH g q ≤ D.hd.d.arenaCap.toNat) =>
+    stepH_ok (K := tableK) (a := a) (hs := hs) (h := hH) hR hp hb
+  have hMm := fun g q (hR : HRel D.hd g q) (hb : D.hd.d.arena.size + budH g q ≤ D.hd.d.arenaCap.toNat) =>
+    stepH_memory (K := tableK) (a := a) (hs := hs) (h := hH) hR hp hb
   unfold stepDHdr takeHd
   dsimp only
   generalize hrr : stepHR a stop hs D.hd D.pos hH hp = rr
@@ -345,7 +348,7 @@ theorem stepDHdr_x {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} 
         HdLoc rh D.limit last' mlen' g' q' um u' ∧
         u ++ availBits D.hd.word D.hd.count a D.pos stop (bits t) = u' ++ availBits rh.word rh.count a rh.pos stop (bits t) := by
       intro last mlen g q um u hL
-      obtain ⟨g', p', oc, hR', hM', hDn, h1, h2, hW, hJ1⟩ := hN g q hL.rel hst
+      obtain ⟨g', p', oc, hR', hM', hDn, h1, h2, hW, hJ1⟩ := hN g q hL.rel hL.bud hst
       have hJ := fun F => Reach.one (step := hStepP) (hJ1 F)
       obtain ⟨v, hv⟩ := reach_suffix (step := hStepP) (fun q => (kfaith_hStep q.1 q.2).nfaith) (hJ [])
       have hv' : (BitBuffer.mk D.hd.word D.hd.count).held ++ chunkBits a D.pos.toNat rh.pos.toNat =
@@ -394,7 +397,7 @@ theorem stepDHdr_x {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} 
         HdLoc rh D.limit last' mlen' g' q' um u' ∧
         u ++ availBits D.hd.word D.hd.count a D.pos stop (bits t) = u' ++ availBits rh.word rh.count a rh.pos stop (bits t) := by
       intro last mlen g q um u hL
-      obtain ⟨h1, _, hR', _, _, hM', hb, _⟩ := (hI g q hL.rel).needsInput hst
+      obtain ⟨h1, _, hR', _, _, hM', hb, _⟩ := (hI g q hL.rel hL.bud).needsInput hst
       have hheld : (BitBuffer.mk rh.word rh.count).held = (BitBuffer.mk D.hd.word D.hd.count).held ++ chunkBits a D.pos.toNat stop.toNat := by
         have e := hb []
         rw [avail_mk, avail_mk, h1, chunkBits_self, List.nil_append, List.append_nil, List.append_nil] at e
@@ -427,17 +430,15 @@ theorem stepDHdr_x {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} 
       fun _ e => absurd rfl e⟩
   next hst =>
     refine ⟨fun e => absurd rfl e, fun _ => ?_, fun e => absurd rfl e, fun e => absurd rfl e, fun e => absurd rfl e⟩
-    obtain ⟨g0, q0, hR0, _⟩ := M.hdr ht
-    obtain ⟨m1, m2, m3, _⟩ := hMm g0 q0 hR0 hst
+    obtain ⟨g0, q0, hR0, _, _, hbd0⟩ := M.hdr ht
+    obtain ⟨m1, m2, m3, _⟩ := hMm g0 q0 hR0 hbd0 hst
     refine ⟨m1, m2, ?_, Or.inr ⟨ht, ?_⟩⟩
     · rw [hh0, BitBuffer.held_length]
       exact m3
     · rcases hwin with ⟨e, _⟩ | ⟨_, w, g1, g2, g3⟩
       · exact absurd (ht.symm.trans e) (by decide)
       refine ⟨w, g1, g2, g3, fun last mlen g q um u hL s => ?_⟩
-      rcases (hMm g q hL.rel hst).2.2.2 with ⟨c, c1, c2⟩ | ⟨g', c1, _, _, c4⟩
-      · have := hL.bud
-        omega
+      obtain ⟨g', c1, _, _, c4⟩ := (hMm g q hL.rel hL.bud hst).2.2.2
       obtain ⟨x, hx⟩ := c4 (bits s)
       rw [avail_mk] at hx
       show D.hd.d.arenaMax.toNat < (hrest tableK g q (D.held ++ (chunkBits a D.pos.toNat rh.pos.toNat ++ bits s))).getD 0
@@ -448,7 +449,7 @@ theorem stepDHdr_x {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} 
     refine ⟨fun _ _ e => DTag.noConfusion e, fun e => DStatus.noConfusion e, fun _ _ _ b hc => Or.inr ?_,
       fun _ _ e => absurd (ht.symm.trans e) (by decide), fun _ _ _ => rfl⟩
     obtain ⟨_, last, mlen, g, q, um, u, hL, hb⟩ := hc
-    obtain ⟨_, _, _, _, _, _, _, _, _, _, hx⟩ := (hI g q hL.rel).ready hst
+    obtain ⟨_, _, _, _, _, _, _, _, _, _, hx⟩ := (hI g q hL.rel hL.bud).ready hst
     have hc := cert_ready (X := chunkBits a D.pos.toNat stop.toNat ++ bits t) hL ⟨_, _, hx (bits t)⟩
     rw [List.append_assoc] at hc
     rw [hb]
