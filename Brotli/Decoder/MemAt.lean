@@ -323,8 +323,8 @@ private theorem tables_move {st r : Hd} {g g' : Gh} {q q' : HPhase} {oc : Option
 
 /-- A header step's state, in a header still: what it has read of its meta-block grows by what the step read. -/
 theorem stepDHdr_x {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {t : List UInt8}
-    {D : Dec} (M : MemD Ws X L D (D.bits a D.pos stop (bits t))) (ht : D.tag = .hdr) (hp : D.pos.toNat ≤ stop.toNat) :
-    StepX Ws L a stop t D (stepDHdr a stop hs D D.pos) := by
+    {D : Dec} (M : MemD Ws X L D (D.bits a D.pos stop (bits t))) (ht : D.tag = .hdr) (hp : D.pos.toNat ≤ stop.toNat)
+    {hH : ∃ g p, HRel D.hd g p} : StepX Ws L a stop t D (stepDHdr a stop hs D D.pos hH hp) := by
   have hwin := M.win
   have hb0 := Dec.bits_hdr ht a D.pos stop (bits t)
   have hh0 := Dec.held_hdr ht
@@ -333,10 +333,14 @@ theorem stepDHdr_x {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} 
   have hMm := fun g q (hR : HRel D.hd g q) => stepH_memory (K := tableK) (a := a) (hs := hs) hR hp
   unfold stepDHdr takeHd
   dsimp only
-  generalize stepH a stop hs D.hd D.pos = rh at hN hI hMm
-  cases hst : rh.status with
-  | next =>
-    dsimp only
+  generalize hrr : stepHR a stop hs D.hd D.pos hH hp = rr
+  obtain ⟨rh, hr⟩ := rr
+  have e : rh = stepH a stop hs D.hd D.pos := by rw [← stepHR_val (h := hH) (hp := hp), hrr]
+  rw [← e] at hN hI hMm
+  unfold hdrNext
+  dsimp only
+  split
+  next hst =>
     have hA : ∀ last mlen g q um u, HdLoc D.hd D.limit last mlen g q um u → ∃ last' mlen' g' q' u',
         HdLoc rh D.limit last' mlen' g' q' um u' ∧
         u ++ availBits D.hd.word D.hd.count a D.pos stop (bits t) = u' ++ availBits rh.word rh.count a rh.pos stop (bits t) := by
@@ -385,8 +389,7 @@ theorem stepDHdr_x {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} 
     obtain ⟨_, last, mlen, g, q, um, u, hL, hb⟩ := hc
     obtain ⟨last', mlen', g', q', u', hL', he⟩ := hA last mlen g q um u hL
     exact ⟨ht, last', mlen', g', q', um, u', hL', by rw [hb, List.append_assoc, he, ← List.append_assoc]⟩
-  | needsInput =>
-    dsimp only
+  next hst =>
     have hA : ∀ last mlen g q um u, HdLoc D.hd D.limit last mlen g q um u → ∃ last' mlen' g' q' u',
         HdLoc rh D.limit last' mlen' g' q' um u' ∧
         u ++ availBits D.hd.word D.hd.count a D.pos stop (bits t) = u' ++ availBits rh.word rh.count a rh.pos stop (bits t) := by
@@ -420,10 +423,9 @@ theorem stepDHdr_x {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} 
     obtain ⟨_, last, mlen, g, q, um, u, hL, hb⟩ := hc
     obtain ⟨last', mlen', g', q', u', hL', he⟩ := hA last mlen g q um u hL
     exact ⟨ht, last', mlen', g', q', um, u', hL', by rw [hb, List.append_assoc, he, ← List.append_assoc]⟩
-  | bad => exact ⟨fun _ e => absurd rfl e, fun e => DStatus.noConfusion e, fun _ e => absurd rfl e, fun _ e => absurd rfl e,
+  next hst => exact ⟨fun _ e => absurd rfl e, fun e => DStatus.noConfusion e, fun _ e => absurd rfl e, fun _ e => absurd rfl e,
       fun _ e => absurd rfl e⟩
-  | memory =>
-    dsimp only
+  next hst =>
     refine ⟨fun e => absurd rfl e, fun _ => ?_, fun e => absurd rfl e, fun e => absurd rfl e, fun e => absurd rfl e⟩
     obtain ⟨g0, q0, hR0, _⟩ := M.hdr ht
     obtain ⟨m1, m2, m3, _⟩ := hMm g0 q0 hR0 hst
@@ -442,19 +444,15 @@ theorem stepDHdr_x {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} 
       rw [hh0, hx]
       show _ < resBytes g' + x.getD 0
       omega
-  | ready =>
-    dsimp only
-    split
-    · refine ⟨fun _ _ e => DTag.noConfusion e, fun e => DStatus.noConfusion e, fun _ _ _ b hc => Or.inr ?_,
-        fun _ _ e => absurd (ht.symm.trans e) (by decide), fun _ _ _ => rfl⟩
-      obtain ⟨_, last, mlen, g, q, um, u, hL, hb⟩ := hc
-      obtain ⟨_, _, _, _, _, _, _, _, _, _, hx⟩ := (hI g q hL.rel).ready hst
-      have hc := cert_ready (X := chunkBits a D.pos.toNat stop.toNat ++ bits t) hL ⟨_, _, hx (bits t)⟩
-      rw [List.append_assoc] at hc
-      rw [hb]
-      exact hc
-    · exact ⟨fun _ hb _ => absurd rfl hb, fun e => DStatus.noConfusion e, fun _ e => absurd rfl e, fun _ e => absurd rfl e,
-        fun _ e => absurd rfl e⟩
+  next hst =>
+    refine ⟨fun _ _ e => DTag.noConfusion e, fun e => DStatus.noConfusion e, fun _ _ _ b hc => Or.inr ?_,
+      fun _ _ e => absurd (ht.symm.trans e) (by decide), fun _ _ _ => rfl⟩
+    obtain ⟨_, last, mlen, g, q, um, u, hL, hb⟩ := hc
+    obtain ⟨_, _, _, _, _, _, _, _, _, _, hx⟩ := (hI g q hL.rel).ready hst
+    have hc := cert_ready (X := chunkBits a D.pos.toNat stop.toNat ++ bits t) hL ⟨_, _, hx (bits t)⟩
+    rw [List.append_assoc] at hc
+    rw [hb]
+    exact hc
 
 /-! ### The other steps -/
 
@@ -582,16 +580,15 @@ theorem stepDCmds_x {Ws : Option Nat} {L : Nat} {a : ByteArray} {stop : USize} {
 
 /-- A step of the stream. -/
 theorem stepD_x {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {t : List UInt8} {D : Dec}
-    (M : MemD Ws X L D (D.bits a D.pos stop (bits t))) (he : D.tag ≠ .ended) (hp : D.pos.toNat ≤ stop.toNat) :
-    StepX Ws L a stop t D (stepD a stop hs D) := by
-  unfold stepD
+    (M : MemD Ws X L D (D.bits a D.pos stop (bits t))) (he : D.tag ≠ .ended) (hp : D.pos.toNat ≤ stop.toNat) {h : DInv stop D} :
+    StepX Ws L a stop t D (stepD a stop hs D h) := by
   cases ht : D.tag with
-  | wbits => exact stepDWbits_x M ht hp
-  | mblock => exact stepDMeta_x M ht hp
-  | skip => exact stepDSkip_x ht
-  | raw => exact stepDRaw_x ht
-  | hdr => exact stepDHdr_x M ht hp
-  | cmds => exact stepDCmds_x ht
+  | wbits => rw [stepD_wbits ht]; exact stepDWbits_x M ht hp
+  | mblock => rw [stepD_mblock ht]; exact stepDMeta_x M ht hp
+  | skip => rw [stepD_skip ht]; exact stepDSkip_x ht
+  | raw => rw [stepD_raw ht]; exact stepDRaw_x ht
+  | hdr => rw [stepD_hdr ht]; exact stepDHdr_x M ht h.2
+  | cmds => rw [stepD_cmds ht]; exact stepDCmds_x ht
   | ended => exact absurd ht he
 
 /-- A step that neither rejects nor finds the limit moves on in the reading in order, passing no meta-block's start. -/
@@ -638,22 +635,22 @@ theorem runD_x {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs 
         (fun e => absurd (he.symm.trans e) (by decide)) (fun _ => rfl), fun e => DStatus.noConfusion e, fun _ => ⟨rfl, he⟩⟩
     · rw [dite_eq_right he]
       dsimp only
-      have hstep := stepD_x (hs := hs) (t := t) M he hinv.2
-      have hok := fun p (hrel : DRel D p) => stepD_ok specSem (a := a) (hs := hs) hrel he hinv.2
-      by_cases hn : (stepD a stop hs D).status = .next
+      have hstep := stepD_x (hs := hs) (t := t) (h := hinv) M he hinv.2
+      have hok := fun p (hrel : DRel D p) => stepD_ok specSem (a := a) (hs := hs) (h := hinv) hrel he hinv.2
+      by_cases hn : (stepD a stop hs D hinv).status = .next
       · rw [dite_eq_left hn]
-        have hM := (stepD_mem (hs := hs) M he hinv.2).go (by rw [hn]; decide) (by rw [hn]; decide)
-        have hih := ih ⟨stepD a stop hs D, hinv.step he hn⟩ ⟨he, hn, rfl⟩ hM
+        have hM := (stepD_mem (hs := hs) (h := hinv) M he hinv.2).go (by rw [hn]; decide) (by rw [hn]; decide)
+        have hih := ih ⟨stepD a stop hs D hinv, hinv.step he hn⟩ ⟨he, hn, rfl⟩ hM
         dsimp only at hih
         obtain ⟨p0, hrel0, _⟩ := M.place
         obtain ⟨_, _, hpos, _⟩ := (hok p0 hrel0).reach (by rw [hn]; decide) (by rw [hn]; decide)
-        have hn0 : (stepD a stop hs D).status ≠ .memory := by rw [hn]; decide
-        have hn1 : (stepD a stop hs D).status ≠ .bad := by rw [hn]; decide
-        have h1 : ∀ z Z, SInv z → Anch z Z a stop t D D.pos → Anch z Z a stop t (stepD a stop hs D) (stepD a stop hs D).pos := fun z Z hz h =>
+        have hn0 : (stepD a stop hs D hinv).status ≠ .memory := by rw [hn]; decide
+        have hn1 : (stepD a stop hs D hinv).status ≠ .bad := by rw [hn]; decide
+        have h1 : ∀ z Z, SInv z → Anch z Z a stop t D D.pos → Anch z Z a stop t (stepD a stop hs D hinv) (stepD a stop hs D hinv).pos := fun z Z hz h =>
           Anch.move hz h (fun p hrel => by
             obtain ⟨p', b1, _, b3⟩ := (hok p hrel).reach hn0 hn1
             exact ⟨p', b1, b3 t⟩) (hstep.hdr hn0 hn1) (hstep.cur hn0 hn1) (hstep.fresh hn0 hn1) (hstep.lim hn0 hn1)
-        generalize runD a stop hs (stepD a stop hs D) (hinv.step he hn) = r at hih ⊢
+        generalize runD a stop hs (stepD a stop hs D hinv) (hinv.step he hn) = r at hih ⊢
         refine ⟨fun h0 h1' z Z hz h => hih.go h0 h1' z Z hz (h1 z Z hz h), fun e => ?_, fun e => absurd e he⟩
         obtain ⟨m1, m2, m3⟩ := hih.why e
         refine ⟨Nat.le_trans hpos m1, m2, fun z Z hz h => ?_⟩

@@ -967,8 +967,8 @@ private theorem move_mem {st r : Hd} {g g' : Gh} {q q' : HPhase} {oc : Option Ho
 
 /-- A header's step. -/
 theorem hdr_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {t : List UInt8}
-    (M : MemD Ws X L D (D.bits a D.pos stop (bits t))) (ht : D.tag = .hdr) (hp : D.pos.toNat ≤ stop.toNat) :
-    StepM Ws X L a stop t (stepDHdr a stop hs D D.pos) := by
+    (M : MemD Ws X L D (D.bits a D.pos stop (bits t))) (ht : D.tag = .hdr) (hp : D.pos.toNat ≤ stop.toNat) {hH : ∃ g p, HRel D.hd g p} :
+    StepM Ws X L a stop t (stepDHdr a stop hs D D.pos hH hp) := by
   obtain ⟨g, q, hR, h1, h2, h3⟩ := M.hdr ht
   rw [Dec.bits_hdr ht] at h1
   have hWinr : ∃ w, Ws = some w ∧ w + 16 = 2 ^ D.k.toNat ∧ D.limit.toNat + 2 ^ D.k.toNat = L := by
@@ -987,19 +987,22 @@ theorem hdr_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs
   | cmds => exact absurd (hrel.1.symm.trans ht) (by decide)
   | ended => exact absurd (hrel.1.symm.trans ht) (by decide)
   | hdr w st last mlen g0 q0 =>
-    have hD := stepDHdr_ok (S := demandSem) (a := a) (hs := hs) hrel hp
-    have hH := stepH_ok (K := tableK) (a := a) (hs := hs) hR hp
+    have hD := stepDHdr_ok (S := demandSem) (a := a) (hs := hs) (hH := hH) hrel hp
+    have hHs := stepH_ok (K := tableK) (a := a) (hs := hs) hR hp
     unfold stepDHdr takeHd at hD ⊢
     dsimp only at hD ⊢
-    generalize stepH a stop hs D.hd D.pos = r at hH hD ⊢
+    generalize hrr : stepHR a stop hs D.hd D.pos ⟨g, q, hR⟩ hp = rr at hD ⊢
+    obtain ⟨r, hr⟩ := rr
+    have e : r = stepH a stop hs D.hd D.pos := by rw [← stepHR_val (h := ⟨g, q, hR⟩) (hp := hp), hrr]
+    rw [← e] at hHs
+    unfold hdrNext at hD ⊢
+    dsimp only at hD ⊢
     have hbitsAt : ∀ D' : Dec, D'.tag = .hdr → D'.hd = r → D'.pos = r.pos → D'.bits a D'.pos stop (bits t) = availBits r.word r.count a r.pos stop (bits t) := by
       intro D' e1 e2 e3
       rw [Dec.bits_hdr e1, e2, e3]
-    cases hst : r.status with
-    | next =>
-      rw [hst] at hD
-      dsimp only at hD
-      obtain ⟨g', q', oc, hR', a1, a2, a3, _, hm, _⟩ := hH.next hst
+    split <;> rename_i hst <;> split at hD <;> rename_i hst' <;>
+      (try exact absurd (hst.symm.trans hst') (fun e => HStatus.noConfusion e))
+    · obtain ⟨g', q', oc, hR', a1, a2, a3, _, hm, _⟩ := hHs.next hst
       have hT := a3 (bits t)
       have hN := congrArg (Option.getD · 0) hT
       simp only [wr_tableK] at hN
@@ -1013,10 +1016,7 @@ theorem hdr_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs
         exact key.1
       · show r.d.arenaMax = D.limit
         rw [hm.max, h2]
-    | needsInput =>
-      rw [hst] at hD
-      dsimp only at hD
-      obtain ⟨a1, a2, hR', a3, _, hm, _⟩ := hH.needsInput hst
+    · obtain ⟨a1, a2, hR', a3, _, hm, _⟩ := hHs.needsInput hst
       have hT := a3 (bits t)
       have key := move_mem (R' := (hrest tableK g q (availBits r.word r.count a r.pos stop (bits t))).getD 0) hm
         (by rw [hT]; exact (Nat.zero_add _).symm) h1 h3 hR.2.1.le
@@ -1029,10 +1029,9 @@ theorem hdr_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs
         exact key.1
       · show r.d.arenaMax = D.limit
         rw [hm.max, h2]
-    | bad => exact ⟨fun _ e => absurd rfl e, fun e => DStatus.noConfusion e⟩
-    | memory =>
-      refine ⟨fun e => absurd rfl e, fun _ => ?_⟩
-      rcases hH.memory hst with ⟨c, m1, m2⟩ | ⟨g', m1, m2, m3, m4⟩
+    · exact ⟨fun _ e => absurd rfl e, fun e => DStatus.noConfusion e⟩
+    · refine ⟨fun e => absurd rfl e, fun _ => ?_⟩
+      rcases hHs.memory hst with ⟨c, m1, m2⟩ | ⟨g', m1, m2, m3, m4⟩
       · exact absurd h3 (by omega)
       obtain ⟨x, hx⟩ := m4 (bits t)
       rw [hx] at h1
@@ -1045,13 +1044,7 @@ theorem hdr_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs
       refine ⟨?_, by omega⟩
       rw [g1, he]
       omega
-    | ready =>
-      rw [hst] at hD
-      dsimp only at hD
-      obtain ⟨g', hu, _, _, _, a3, hmax, _, hcapE, hsz, _⟩ := hH.ready hst
-      obtain ⟨H', hmk, _, _, e2, e3, e4, e5, e6, e7, e8⟩ := mkHdr_ok hu
-      rw [hmk] at hD ⊢
-      dsimp only at hD ⊢
+    · obtain ⟨g', hu, _, _, _, a3, hmax, _, hcapE, hsz, _⟩ := hHs.ready hst
       refine ⟨fun _ _ => ?_, fun e => DStatus.noConfusion e⟩
       obtain ⟨hA, hB⟩ := placed hrel hD hw (fun e => absurd (ht.symm.trans e) (by decide)) (fun e => DStatus.noConfusion e) (fun e => DStatus.noConfusion e) (fun e => absurd rfl e)
       have hS := hsz M.hd
@@ -1060,29 +1053,28 @@ theorem hdr_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs
       have hk0 : (tableK.k g'.m (availBits r.word r.count a r.pos stop (bits t))).getD 0 = 0 := rfl
       rw [hk0] at hT
       refine ⟨hA, hB, fun e => DTag.noConfusion e, fun _ => ⟨?_, ?_⟩, fun _ => rfl, fun e => absurd rfl e, hsize_none,
-        ⟨by rw [e2]; exact hS.litBase, by rw [e3]; exact hS.lMap, by rw [e4]; exact hS.icBase, by rw [e5]; exact hS.dBase, by rw [e6]; exact hS.dMap, by rw [e7]; exact hS.modes⟩,
+        ⟨hS.litBase, hS.lMap, hS.icBase, hS.dBase, hS.dMap, hS.modes⟩,
         Or.inr ⟨fun e => DTag.noConfusion e, w0, g1, g2, g3⟩⟩
-      · show H'.arenaCap.toNat ≤ smallMax + X
-        rw [e8, hcapE]
+      · show r.d.arenaCap.toNat ≤ smallMax + X
+        rw [hcapE]
         omega
-      · show H'.arenaCap.toNat ≤ smallMax + D.limit.toNat
-        rw [e8, ← h2, ← hmax]
+      · show r.d.arenaCap.toNat ≤ smallMax + D.limit.toNat
+        rw [← h2, ← hmax]
         exact hle
 
 /-! ### The loop and a call -/
 
 /-- A step of the stream. -/
 theorem stepD_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {t : List UInt8}
-    (M : MemD Ws X L D (D.bits a D.pos stop (bits t))) (he : D.tag ≠ .ended) (hp : D.pos.toNat ≤ stop.toNat) :
-    StepM Ws X L a stop t (stepD a stop hs D) := by
-  unfold stepD
+    (M : MemD Ws X L D (D.bits a D.pos stop (bits t))) (he : D.tag ≠ .ended) (hp : D.pos.toNat ≤ stop.toNat) {h : DInv stop D} :
+    StepM Ws X L a stop t (stepD a stop hs D h) := by
   cases ht : D.tag with
-  | wbits => exact wbits_mem M ht hp
-  | mblock => exact mblock_mem M ht hp
-  | skip => exact skip_mem hs M ht hp
-  | raw => exact raw_mem M ht hp
-  | hdr => exact hdr_mem M ht hp
-  | cmds => exact cmds_mem M ht hp
+  | wbits => rw [stepD_wbits ht]; exact wbits_mem M ht hp
+  | mblock => rw [stepD_mblock ht]; exact mblock_mem M ht hp
+  | skip => rw [stepD_skip ht]; exact skip_mem hs M ht hp
+  | raw => rw [stepD_raw ht]; exact raw_mem M ht hp
+  | hdr => rw [stepD_hdr ht]; exact hdr_mem M ht h.2
+  | cmds => rw [stepD_cmds ht]; exact cmds_mem M ht hp
   | ended => exact absurd ht he
 
 /-- The loop. -/
@@ -1102,11 +1094,11 @@ theorem runD_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {h
       exact M.move rfl ⟨p, hrel.congr rfl rfl rfl rfl rfl rfl rfl rfl, hw⟩ rfl rfl rfl rfl rfl rfl rfl rfl
     · rw [dite_eq_right he]
       dsimp only
-      have hstep := stepD_mem (hs := hs) M he hinv.2
-      by_cases hn : (stepD a stop hs D).status = .next
+      have hstep := stepD_mem (hs := hs) (h := hinv) M he hinv.2
+      by_cases hn : (stepD a stop hs D hinv).status = .next
       · rw [dite_eq_left hn]
         have hM := hstep.go (by rw [hn]; decide) (by rw [hn]; decide)
-        exact ih ⟨stepD a stop hs D, hinv.step he hn⟩ ⟨he, hn, rfl⟩ hM
+        exact ih ⟨stepD a stop hs D hinv, hinv.step he hn⟩ ⟨he, hn, rfl⟩ hM
       · rw [dite_eq_right hn]
         exact hstep
 

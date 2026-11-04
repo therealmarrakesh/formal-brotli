@@ -67,14 +67,14 @@ theorem runD_k10' {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} (x
   dsimp only at hrel hk ht ⊢
   by_cases hw : D.tag = .wbits
   · have he : D.tag ≠ .ended := by rw [hw]; exact fun e => DTag.noConfusion e
-    have e : stepD a stop hs D = stepDWbits a stop hs D D.pos := by unfold stepD; rw [hw]
+    have e : stepD a stop hs D hinv = stepDWbits a stop hs D D.pos := stepD_wbits hw
     rw [runD, dite_eq_right he] at ht ⊢
     dsimp only at ht ⊢
-    by_cases h1 : (stepD a stop hs D).status = .next
+    by_cases h1 : (stepD a stop hs D hinv).status = .next
     · rw [dite_eq_left h1] at ht ⊢
       have hw' : DRel D .wbits := by cases p <;> first | exact hrel | exact absurd hw (by rw [hrel.1]; exact fun e => DTag.noConfusion e)
-      have ht1 : (stepD a stop hs D).tag ≠ .wbits := by rw [e]; exact stepDWbits_tag (by rw [← e]; exact h1)
-      have hk1 : 10 ≤ (stepD a stop hs D).k.toNat := by
+      have ht1 : (stepD a stop hs D hinv).tag ≠ .wbits := by rw [e]; exact stepDWbits_tag (by rw [← e]; exact h1)
+      have hk1 : 10 ≤ (stepD a stop hs D hinv).k.toNat := by
         rw [e]
         exact stepDWbits_k hw'.2.1 hinv.2 (by rw [← e]; exact h1)
       rw [(runD_wk ⟨_, hinv.step he h1⟩ ht1).2]
@@ -92,12 +92,12 @@ theorem runD_past {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} (x
   obtain ⟨D, hinv⟩ := x
   dsimp only at hw ht ⊢
   have he : D.tag ≠ .ended := by rw [hw]; exact fun e => DTag.noConfusion e
-  have e : stepD a stop hs D = stepDWbits a stop hs D D.pos := by unfold stepD; rw [hw]
+  have e : stepD a stop hs D hinv = stepDWbits a stop hs D D.pos := stepD_wbits hw
   rw [runD, dite_eq_right he] at ht ⊢
   dsimp only at ht ⊢
-  by_cases h1 : (stepD a stop hs D).status = .next
+  by_cases h1 : (stepD a stop hs D hinv).status = .next
   · rw [dite_eq_left h1] at ht ⊢
-    have ht1 : (stepD a stop hs D).tag ≠ .wbits := by rw [e]; exact stepDWbits_tag (by rw [← e]; exact h1)
+    have ht1 : (stepD a stop hs D hinv).tag ≠ .wbits := by rw [e]; exact stepDWbits_tag (by rw [← e]; exact h1)
     refine ⟨by rw [← e]; exact h1, ?_⟩
     rw [(runD_wk ⟨_, hinv.step he h1⟩ ht1).2]
     exact congrArg Dec.k e

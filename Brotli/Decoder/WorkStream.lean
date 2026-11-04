@@ -77,17 +77,11 @@ def stepDRawW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : D
           (USize.le_iff_toNat_le.mp h.2) hsize hwp + 1
     else 1
 
-/-- The work of `mkHdr`: its sizes, a round for each byte of the maps and modes it checks, a table's check for each
-tree and each block switch's two tables. -/
-def mkHdrW (d : Done) : Nat :=
-  20 + (d.lMap.size + 1) + (d.modes.size + 1) + (d.dMap.size + 1) +
-    (d.treesL.toNat + d.nI.toNat + d.treesD.toNat + 3) * (fitsW + 1) + 6 * fitsW
-
-/-- The work of `stepDHdr`: the header step, and at a header's end the command loop's header and first state, its
-block type flags copied from the shared ones. -/
+/-- The work of `stepDHdr`: the header step, and at a header's end the command loop's header, made with no check, and
+its first state, its block type flags copied from the shared ones. -/
 def stepDHdrW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize) : Nat :=
   stepHW a stop hs D.hd pos +
-    if (stepH a stop hs D.hd pos).status = .ready then mkHdrW (stepH a stop hs D.hd pos).d + 769 else 0
+    if (stepH a stop hs D.hd pos).status = .ready then 770 else 0
 
 /-- The work of `stepDCmds`: the command loop, and at the commands' end the check that every block type occurred. -/
 def stepDCmdsW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize) : Nat :=
@@ -109,7 +103,7 @@ def stepDW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec)
 def runDW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (h : DInv stop D) : Nat :=
   if he : D.tag = .ended then 1
   else
-    let r := stepD a stop hs D
+    let r := stepD a stop hs D h
     stepDW a stop hs D + 1 + if hn : r.status = .next then runDW a stop hs r (h.step he hn) else 0
 termination_by (RunArg.mk D h : RunArg a stop hs)
 decreasing_by exact ⟨he, hn, rfl⟩
@@ -214,27 +208,6 @@ theorem metaStart_data {l : Bool} {mlen : Nat} {unc : Bool} {bs b : List Bool}
       exact absurd h3.1 (fun e => MetaStart.noConfusion e)
     · have := msBody_data h3
       omega
-
-/-- `mkHdr`'s work at a header's end: its maps' and modes' bytes, a table's check for each tree and each block switch's
-two tables. -/
-theorem mkHdrW_le {d : Done} {g : Gh} (hu : Upto d g 10) : mkHdrW d ≤ 218924 := by
-  have hL := hu.cat .L (by decide)
-  have hI := hu.cat .I (by decide)
-  have hD := hu.cat .D (by decide)
-  have h1 : g.m.literal.n ≤ 256 := hL.wf.2.1
-  have h2 : g.m.insertCopy.n ≤ 256 := hI.wf.2.1
-  have h3 : g.m.distance.n ≤ 256 := hD.wf.2.1
-  have hIn : d.nI.toNat = g.m.insertCopy.n := hI.n
-  have hm := (hu.modes (by decide)).sz
-  obtain ⟨t1, -, t3, ml⟩ := hu.lmap (by decide)
-  obtain ⟨u1, -, u3, md⟩ := hu.dmap (by decide)
-  have e1 := ml.sz
-  have e2 := md.sz
-  unfold literalContextMapSize at e1
-  unfold distanceContextMapSize at e2
-  unfold mkHdrW fitsW
-  rw [hm, e1, e2, t1, u1, hIn]
-  omega
 
 /-- The loop for uncompressed bytes: ten for each byte it moves, and ten. -/
 theorem rawRunW_le (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (mask : USize) (k : Nat) (hk : k ≤ 24)

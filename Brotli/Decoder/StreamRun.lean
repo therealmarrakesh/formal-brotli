@@ -14,16 +14,43 @@ open Brotli.Spec Brotli.Properties
 
 /-! ### The step -/
 
+/-- A state the loop can run from. -/
+def DInv (stop : USize) (D : Dec) : Prop := (∃ p, DRel D p) ∧ D.pos.toNat ≤ stop.toNat
+
+/-- A state in a header stands for a place in it. -/
+theorem DInv.hd {stop : USize} {D : Dec} (h : DInv stop D) (ht : D.tag = .hdr) : ∃ g p, HRel D.hd g p := by
+  obtain ⟨⟨p, hrel⟩, _⟩ := h
+  cases p with
+  | hdr w st last mlen g q => exact ⟨g, q, hrel.2.2.2.2.2.2.1⟩
+  | _ => exact absurd (hrel.1.symm.trans ht) (fun e => DTag.noConfusion e)
+
 /-- One step of the whole decoder. -/
-def stepD (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) : Dec :=
-  match D.tag with
+def stepD (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (h : DInv stop D) : Dec :=
+  match ht : D.tag with
   | .wbits => stepDWbits a stop hs D D.pos
   | .mblock => stepDMeta a stop hs D D.pos
   | .skip => stepDSkip stop D D.pos
   | .raw => stepDRaw a stop hs D D.pos
-  | .hdr => stepDHdr a stop hs D D.pos
+  | .hdr => stepDHdr a stop hs D D.pos (h.hd ht) h.2
   | .cmds => stepDCmds a stop hs D D.pos
   | .ended => D
+
+section
+variable {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {h : DInv stop D}
+
+/-- Settles `stepD`'s tag, given its equation. -/
+macro "stepD_tag" ht:ident : tactic =>
+  `(tactic| (unfold stepD; split <;> rename_i e <;> first | rfl | exact absurd (e.symm.trans $ht) (fun x => DTag.noConfusion x)))
+
+theorem stepD_wbits (ht : D.tag = .wbits) : stepD a stop hs D h = stepDWbits a stop hs D D.pos := by stepD_tag ht
+theorem stepD_mblock (ht : D.tag = .mblock) : stepD a stop hs D h = stepDMeta a stop hs D D.pos := by stepD_tag ht
+theorem stepD_skip (ht : D.tag = .skip) : stepD a stop hs D h = stepDSkip stop D D.pos := by stepD_tag ht
+theorem stepD_raw (ht : D.tag = .raw) : stepD a stop hs D h = stepDRaw a stop hs D D.pos := by stepD_tag ht
+theorem stepD_hdr (ht : D.tag = .hdr) : stepD a stop hs D h = stepDHdr a stop hs D D.pos (h.hd ht) h.2 := by stepD_tag ht
+theorem stepD_cmds (ht : D.tag = .cmds) : stepD a stop hs D h = stepDCmds a stop hs D D.pos := by stepD_tag ht
+theorem stepD_ended (ht : D.tag = .ended) : stepD a stop hs D h = D := by stepD_tag ht
+
+end
 
 /-- A state's place decides its tag. -/
 theorem DRel.tag_ne {D : Dec} {p : SPhase} (h : DRel D p) (he : D.tag ≠ .ended) : ∀ st, p ≠ .ended st := by
@@ -33,28 +60,18 @@ theorem DRel.tag_ne {D : Dec} {p : SPhase} (h : DRel D p) (he : D.tag ≠ .ended
 
 /-- A step does what its place's step does. -/
 theorem stepD_ok {α : Type} (S : Sem α) {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {p : SPhase} (hrel : DRel D p)
-    (he : D.tag ≠ .ended) (hp : D.pos.toNat ≤ stop.toNat) : DStepOk S a stop p D D.pos (stepD a stop hs D) := by
+    (he : D.tag ≠ .ended) (hp : D.pos.toNat ≤ stop.toNat) {h : DInv stop D} : DStepOk S a stop p D D.pos (stepD a stop hs D h) := by
   unfold stepD
-  cases p with
-  | wbits =>
-    rw [hrel.1]
-    exact stepDWbits_ok hrel hp
-  | mblock =>
-    rw [hrel.1]
-    exact stepDMeta_ok hrel hp
-  | skip =>
-    rw [hrel.1]
-    exact stepDSkip_ok hs hrel hp
-  | raw =>
-    rw [hrel.1]
-    exact stepDRaw_ok hrel hp
-  | hdr =>
-    rw [hrel.1]
-    exact stepDHdr_ok hrel hp
-  | cmds =>
-    rw [hrel.1]
-    exact stepDCmds_ok hrel hp
-  | ended st => exact absurd hrel.1 he
+  split <;> rename_i ht
+  all_goals cases p <;> first
+    | exact absurd (hrel.1.symm.trans ht) (fun e => DTag.noConfusion e)
+    | exact stepDWbits_ok hrel hp
+    | exact stepDMeta_ok hrel hp
+    | exact stepDSkip_ok hs hrel hp
+    | exact stepDRaw_ok hrel hp
+    | exact stepDHdr_ok hrel hp
+    | exact stepDCmds_ok hrel hp
+    | exact absurd ht he
 
 /-! ### What the measure counts -/
 
@@ -601,17 +618,19 @@ theorem stepDCmds_down {w : Nat} {last : Bool} {m : MetaBlockHeader} {p : Phase}
 
 /-- A step lowers the measure. -/
 theorem stepD_down {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {p : SPhase} (hrel : DRel D p) (he : D.tag ≠ .ended)
-    (hp : D.pos.toNat ≤ stop.toNat) : DDown a stop p D D.pos (stepD a stop hs D) := by
+    (hp : D.pos.toNat ≤ stop.toNat) {hinv : DInv stop D} : DDown a stop p D D.pos (stepD a stop hs D hinv) := by
   by_cases hc : ∃ w l m q, p = .cmds w l m q
   · obtain ⟨w, l, m, q, rfl⟩ := hc
     have ht : D.tag = .cmds := hrel.1
     unfold stepD
-    rw [ht]
-    exact stepDCmds_down hrel hp
+    split <;> rename_i ht'
+    all_goals first
+      | exact absurd (ht.symm.trans ht') (fun e => DTag.noConfusion e)
+      | exact stepDCmds_down hrel hp
   · have hc' : ∀ w l m q, p ≠ .cmds w l m q := fun w l m q e => hc ⟨w, l, m, q, e⟩
     have hn := hrel.tag_ne he
-    have h := stepD_ok lenSem (a := a) (hs := hs) hrel he hp
-    generalize stepD a stop hs D = r at h
+    have h := stepD_ok lenSem (a := a) (hs := hs) (h := hinv) hrel he hp
+    generalize stepD a stop hs D hinv = r at h
     refine ⟨fun e => ?_, fun e => ?_, fun e => ?_⟩
     · obtain ⟨p', r1, r2, r3, r4, r5, _⟩ := h.next e
       exact ⟨p', r1, r2, r3, fun t => down_next hc' hn r5 (r4 t)⟩
@@ -642,9 +661,6 @@ theorem mlt_wf : WellFounded MLt := plex_wf Nat.lt_wfRel.wf (plex_wf Nat.lt_wfRe
 
 /-! ### The loop -/
 
-/-- A state the loop can run from. -/
-def DInv (stop : USize) (D : Dec) : Prop := (∃ p, DRel D p) ∧ D.pos.toNat ≤ stop.toNat
-
 /-- What the loop recurs on. -/
 structure RunArg (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) where
   D : Dec
@@ -652,7 +668,7 @@ structure RunArg (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) whe
 
 /-- The state after a step that moved on. -/
 def runRel (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (x y : RunArg a stop hs) : Prop :=
-  y.D.tag ≠ .ended ∧ (stepD a stop hs y.D).status = .next ∧ x.D = stepD a stop hs y.D
+  y.D.tag ≠ .ended ∧ (stepD a stop hs y.D y.inv).status = .next ∧ x.D = stepD a stop hs y.D y.inv
 
 /-- The loop's steps can't go on forever. -/
 theorem runRel_wf (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) : WellFounded (runRel a stop hs) := by
@@ -676,7 +692,7 @@ instance (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) : WellFound
 
 /-- A step that moved on leaves a state the loop can run from. -/
 theorem DInv.step {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} (h : DInv stop D) (he : D.tag ≠ .ended)
-    (hn : (stepD a stop hs D).status = .next) : DInv stop (stepD a stop hs D) := by
+    (hn : (stepD a stop hs D h).status = .next) : DInv stop (stepD a stop hs D h) := by
   obtain ⟨⟨p, hrel⟩, hp⟩ := h
   obtain ⟨p', hR, _, h2, _⟩ := (stepD_ok specSem (a := a) (hs := hs) hrel he hp).next hn
   exact ⟨⟨p', hR⟩, h2⟩
@@ -685,7 +701,7 @@ theorem DInv.step {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
 def runD (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (h : DInv stop D) : Dec :=
   if he : D.tag = .ended then { D with status := .next }
   else
-    let r := stepD a stop hs D
+    let r := stepD a stop hs D h
     if hn : r.status = .next then runD a stop hs r (h.step he hn)
     else r
 termination_by (RunArg.mk D h : RunArg a stop hs)

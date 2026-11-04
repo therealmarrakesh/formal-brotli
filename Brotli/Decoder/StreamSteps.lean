@@ -13,27 +13,28 @@ open Brotli.Spec Brotli.Properties
 
 /-! ### Through the header machine -/
 
+/-- What follows a header step: a header left ready was read, so the command loop's header is made from it. -/
+@[inline] def hdrNext (c : Cmd) (left : UInt64) (D0 : Dec) (r : { r : Hd // r.status = .ready → ∃ g, Upto r.d g 10 }) : Dec :=
+  let r1 := r.1
+  let rp := r1.pos
+  match hst : r1.status with
+  | .next => { D0 with hd := r1, pos := rp, status := .next }
+  | .needsInput => { D0 with hd := r1, pos := rp, status := .needsInput }
+  | .bad => { D0 with hd := r1, pos := rp, status := .bad }
+  | .memory => { D0 with hd := r1, pos := rp, status := .memory }
+  | .ready => { D0 with tag := .cmds, H := mkHdr r1.d (r.2 hst), cmd := cmdStart c r1.d r1.word r1.count left seenInit, pos := rp, status := .next }
+
 /-- The place in a header. -/
-def stepDHdr (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize) : Dec :=
+def stepDHdr (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize) (hH : ∃ g p, HRel D.hd g p)
+    (hp : pos.toNat ≤ stop.toNat) : Dec :=
   let c := D.cmd
   let left := D.left
-  match takeHd D with
-  | (h, D0) =>
-  let r := stepH a stop hs h pos
-  let rp := r.pos
-  match r.status with
-  | .next => { D0 with hd := r, pos := rp, status := .next }
-  | .needsInput => { D0 with hd := r, pos := rp, status := .needsInput }
-  | .bad => { D0 with hd := r, pos := rp, status := .bad }
-  | .memory => { D0 with hd := r, pos := rp, status := .memory }
-  | .ready =>
-    match mkHdr r.d with
-    | some H => { D0 with tag := .cmds, H := H, cmd := cmdStart c r.d r.word r.count left seenInit, pos := rp, status := .next }
-    | none => { D0 with hd := r, pos := rp, status := .bad }
+  match hT : takeHd D with
+  | (h, D0) => hdrNext c left D0 (stepHR a stop hs h pos (by rw [← show (takeHd D).1 = h from congrArg Prod.fst hT]; exact hH) hp)
 
 theorem stepDHdr_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {last : Bool} {mlen : Nat} {g : Gh} {p : HPhase} {a : ByteArray} {stop : USize}
-    {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize} (hrel : DRel D (.hdr w st last mlen g p)) (hpos : pos.toNat ≤ stop.toNat) :
-    DStepOk S a stop (.hdr w st last mlen g p) D pos (stepDHdr a stop hs D pos) := by
+    {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize} {hH : ∃ g p, HRel D.hd g p} (hrel : DRel D (.hdr w st last mlen g p))
+    (hpos : pos.toNat ≤ stop.toNat) : DStepOk S a stop (.hdr w st last mlen g p) D pos (stepDHdr a stop hs D pos hH hpos) := by
   obtain ⟨tag, cmd, hd, H, k, last', left, limit, pos', status⟩ := D
   obtain ⟨ht, hall, hl, hleft, hm1, hm2, hR, hp0, hb⟩ := hrel
   have ht' : tag = .hdr := ht
@@ -43,37 +44,35 @@ theorem stepDHdr_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {last 
   have hmemH := stepH_memory (K := hdrK w (S.after w last) st mlen) (a := a) (hs := hs) hR hpos
   unfold stepDHdr takeHd
   dsimp only
-  generalize stepH a stop hs hd pos = r at hstep hbadH hmemH
-  cases hst : r.status with
-  | next =>
-    dsimp only
+  generalize hrr : stepHR a stop hs hd pos ⟨g, p, hR⟩ hpos = rr
+  obtain ⟨r, hr⟩ := rr
+  have e : r = stepH a stop hs hd pos := by rw [← stepHR_val (h := ⟨g, p, hR⟩) (hp := hpos), hrr]
+  rw [← e] at hstep hbadH hmemH
+  unfold hdrNext
+  dsimp only
+  split
+  next hst =>
     obtain ⟨g', p', oc, hR', h1, h2, h3, h4, hmv, h5⟩ := hstep.next hst
     exact ⟨fun _ => ⟨.hdr w st last mlen g' p', ⟨rfl, ⟨hall.win, hall.produced, hall.limit⟩, hl, hleft, hm1, hm2, hR', hp0, hmv.bud hb⟩, h1, h2, (fun t => (h3 _).trans (Wr_id (fun _ _ => rfl) oc _)), h4, ⟨[], rfl, rfl⟩,
       fun t => (sreach_hdr (q := (g, p)) (q' := (g', p')) (Reach.one (h5 _)))⟩,
       fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
-  | needsInput =>
-    dsimp only
+  next hst =>
     obtain ⟨h1, h2, hR', h3, h4, hmv, h5, h6⟩ := hstep.needsInput hst
     exact ⟨fun e => DStatus.noConfusion e, fun _ => ⟨h1, h2, .hdr w st last mlen g p, ⟨rfl, ⟨hall.win, hall.produced, hall.limit⟩, hl, hleft, hm1, hm2, hR', hp0, hmv.bud hb⟩,
       (fun t => h3 _), h4, ⟨rfl, rfl⟩, (fun _ _ e => SPhase.noConfusion e), ⟨[], rfl, rfl⟩, (fun t => SReach.ofEq (h5 _)),
       ⟨_, _, .refl _ _, short_hdr h6, rfl⟩⟩, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
-  | bad =>
-    dsimp only
+  next hst =>
     obtain ⟨g1, g2, g3, g4⟩ := hbadH hst
     exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e,
       fun _ => ⟨fun t => hstep.bad hst _, .hdr w st last mlen g p, (BitBuffer.mk hd.word hd.count).held, pos, Nat.le_refl _, g1, g2,
         by rw [BitBuffer.held_length]; exact g3, fun t => .refl _ _, fun t => g4 _⟩⟩
-  | memory =>
-    dsimp only
+  next hst =>
     obtain ⟨g1, g2, _, _⟩ := hmemH hst
     exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e,
       fun _ => ⟨g1, g2, rfl, hp0, Or.inr ⟨_, _, _, _, _, _, rfl⟩⟩, fun e => DStatus.noConfusion e⟩
-  | ready =>
-    dsimp only
+  next hst =>
     obtain ⟨g', hu, hw, h1, h2, h3, _, _, _, _, h4⟩ := hstep.ready hst
-    obtain ⟨H', hmk, hrelH, _⟩ := mkHdr_ok hu
-    rw [hmk]
-    dsimp only
+    have hrelH := mkHdr_ok hu (hr hst)
     have hRel := cmdStart_rel (c := cmd) (word := r.word) (count := r.count) (mlen := left) (seen := seenInit) seenInit_size seenInit_at hw hu
       (w := w) hall.win hall.produced
     rw [show left.toNat = mlen from hleft] at hRel

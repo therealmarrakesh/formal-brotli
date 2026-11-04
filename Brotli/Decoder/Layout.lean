@@ -380,22 +380,31 @@ theorem stepDRaw_same {s t : Dec} (he : s.er = t.er) {p1 p2 : USize} (h : Same a
       exact ⟨rfl, h⟩
 
 include hs1 hs2 in
-theorem stepDHdr_same {s t : Dec} (he : s.er = t.er) {p1 p2 : USize} (h : Same a1 e1 a2 e2 p1 p2) :
-    DecSame a1 e1 a2 e2 (stepDHdr a1 e1 hs1 s p1) (stepDHdr a2 e2 hs2 t p2) := by
+theorem stepDHdr_same {s t : Dec} (he : s.er = t.er) {p1 p2 : USize} (h : Same a1 e1 a2 e2 p1 p2) {hH1 : ∃ g p, HRel s.hd g p}
+    {hH2 : ∃ g p, HRel t.hd g p} {hp1 : p1.toNat ≤ e1.toNat} {hp2 : p2.toNat ≤ e2.toNat} :
+    DecSame a1 e1 a2 e2 (stepDHdr a1 e1 hs1 s p1 hH1 hp1) (stepDHdr a2 e2 hs2 t p2 hH2 hp2) := by
+  revert hH2
   rw [dec_er he]
   generalize t.pos = q0
   generalize t.cmd.pos = q1
   generalize t.hd.pos = q2
+  intro hH2
   obtain ⟨e, hS⟩ := stepH_same hs1 hs2 (s := s.hd) (t := { s.hd with pos := q2 }) rfl h
   have e' := hd_er e
   unfold stepDHdr takeHd clearHd
   dsimp only at e' hS ⊢
-  rw [e']
-  generalize (stepH a2 e2 hs2 { s.hd with pos := q2 } p2).pos = q3 at hS ⊢
-  generalize stepH a1 e1 hs1 s.hd p1 = R at hS ⊢
-  cases R
+  generalize hr1 : stepHR a1 e1 hs1 s.hd p1 hH1 hp1 = rr1
+  generalize hr2 : stepHR a2 e2 hs2 { s.hd with pos := q2 } p2 hH2 hp2 = rr2
+  obtain ⟨R1, k1⟩ := rr1
+  obtain ⟨R2, k2⟩ := rr2
+  have v1 : R1 = stepH a1 e1 hs1 s.hd p1 := by rw [← stepHR_val (h := hH1) (hp := hp1), hr1]
+  have v2 : R2 = stepH a2 e2 hs2 { s.hd with pos := q2 } p2 := by rw [← stepHR_val (h := hH2) (hp := hp2), hr2]
+  rw [← v1, ← v2] at e' hS
+  generalize R2.pos = q3 at hS e'
+  subst e'
+  unfold hdrNext
   dsimp only at hS ⊢
-  repeat' (first | split_all | (refine ⟨rfl, ?_⟩; exact hS))
+  split <;> exact ⟨rfl, hS⟩
 
 include hs1 hs2 in
 theorem stepDCmds_same {s t : Dec} (he : s.er = t.er) {p1 p2 : USize} (h : Same a1 e1 a2 e2 p1 p2) :
@@ -416,19 +425,24 @@ theorem stepDCmds_same {s t : Dec} (he : s.er = t.er) {p1 p2 : USize} (h : Same 
   repeat' (first | split_all | (refine ⟨rfl, ?_⟩; exact hS))
 
 include hs1 hs2 in
-theorem stepD_same {s t : Dec} (he : s.er = t.er) (h : Same a1 e1 a2 e2 s.pos t.pos) :
-    DecSame a1 e1 a2 e2 (stepD a1 e1 hs1 s) (stepD a2 e2 hs2 t) := by
+theorem stepD_same {s t : Dec} (he : s.er = t.er) (h : Same a1 e1 a2 e2 s.pos t.pos) {h1 : DInv e1 s} {h2 : DInv e2 t} :
+    DecSame a1 e1 a2 e2 (stepD a1 e1 hs1 s h1) (stepD a2 e2 hs2 t h2) := by
   have htag : t.tag = s.tag := by rw [dec_er he]
-  unfold stepD
-  rw [htag]
-  cases s.tag
-  · exact stepDWbits_same hs1 hs2 he h
-  · exact stepDMeta_same hs1 hs2 he h
-  · exact stepDSkip_same he h
-  · exact stepDRaw_same hs1 hs2 he h
-  · exact stepDHdr_same hs1 hs2 he h
-  · exact stepDCmds_same hs1 hs2 he h
-  · exact ⟨he, h⟩
+  cases hts : s.tag
+  · rw [stepD_wbits hts, stepD_wbits (htag.trans hts)]
+    exact stepDWbits_same hs1 hs2 he h
+  · rw [stepD_mblock hts, stepD_mblock (htag.trans hts)]
+    exact stepDMeta_same hs1 hs2 he h
+  · rw [stepD_skip hts, stepD_skip (htag.trans hts)]
+    exact stepDSkip_same he h
+  · rw [stepD_raw hts, stepD_raw (htag.trans hts)]
+    exact stepDRaw_same hs1 hs2 he h
+  · rw [stepD_hdr hts, stepD_hdr (htag.trans hts)]
+    exact stepDHdr_same hs1 hs2 he h
+  · rw [stepD_cmds hts, stepD_cmds (htag.trans hts)]
+    exact stepDCmds_same hs1 hs2 he h
+  · rw [stepD_ended hts, stepD_ended (htag.trans hts)]
+    exact ⟨he, h⟩
 
 include hs1 hs2 in
 theorem runD_same : ∀ (x : RunArg a1 e1 hs1) (t : Dec) (ht : DInv e2 t), x.D.er = t.er → Same a1 e1 a2 e2 x.D.pos t.pos →
@@ -448,9 +462,9 @@ theorem runD_same : ∀ (x : RunArg a1 e1 hs1) (t : Dec) (ht : DInv e2 t), x.D.e
       rfl
     · rw [dite_eq_right hE, dite_eq_right (fun e => hE (htag.symm.trans e))]
       dsimp only
-      obtain ⟨e, hS⟩ := stepD_same hs1 hs2 he h
-      have hst : (stepD a2 e2 hs2 t).status = (stepD a1 e1 hs1 D).status := by rw [dec_er e]
-      by_cases hn : (stepD a1 e1 hs1 D).status = .next
+      obtain ⟨e, hS⟩ := stepD_same hs1 hs2 he h (h1 := hinv) (h2 := ht)
+      have hst : (stepD a2 e2 hs2 t ht).status = (stepD a1 e1 hs1 D hinv).status := by rw [dec_er e]
+      by_cases hn : (stepD a1 e1 hs1 D hinv).status = .next
       · rw [dite_eq_left hn, dite_eq_left (hst.trans hn)]
         exact ih ⟨_, hinv.step hE hn⟩ ⟨hE, hn, rfl⟩ _ _ e hS
       · rw [dite_eq_right hn, dite_eq_right (fun e => hn (hst.symm.trans e))]

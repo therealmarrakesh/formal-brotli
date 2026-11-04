@@ -318,9 +318,9 @@ theorem stepDRaw_pendLe (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.si
         exact PendLe.ofRun rfl hf rfl (Nat.le_trans (sub_left_le (rawRun_left _ rfl)) (by rw [usmin_toNat]; exact Nat.min_le_right _ _))
     · exact PendLe.keep rfl rfl
 
-theorem stepDHdr_pendLe (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize) :
-    PendLeD D (stepDHdr a stop hs D pos) := by
-  unfold PendLeD stepDHdr takeHd clearHd cmdStart
+theorem stepDHdr_pendLe (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize)
+    (hH : ∃ g p, HRel D.hd g p) (hp : pos.toNat ≤ stop.toNat) : PendLeD D (stepDHdr a stop hs D pos hH hp) := by
+  unfold PendLeD stepDHdr takeHd clearHd hdrNext cmdStart
   keepD_tac
 
 theorem stepDCmds_pendLe (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize) :
@@ -330,16 +330,16 @@ theorem stepDCmds_pendLe (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.s
   try dsimp only
   repeat' (first | split_all | exact h)
 
-theorem stepD_pendLe (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) : PendLeD D (stepD a stop hs D) := by
-  unfold stepD
-  cases D.tag
-  · exact stepDWbits_pendLe a stop hs D D.pos
-  · exact stepDMeta_pendLe a stop hs D D.pos
-  · exact stepDSkip_pendLe stop D D.pos
-  · exact stepDRaw_pendLe a stop hs D D.pos
-  · exact stepDHdr_pendLe a stop hs D D.pos
-  · exact stepDCmds_pendLe a stop hs D D.pos
-  · exact PendLe.rfl' _
+theorem stepD_pendLe (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (h : DInv stop D) :
+    PendLeD D (stepD a stop hs D h) := by
+  cases ht : D.tag
+  · rw [stepD_wbits ht]; exact stepDWbits_pendLe a stop hs D D.pos
+  · rw [stepD_mblock ht]; exact stepDMeta_pendLe a stop hs D D.pos
+  · rw [stepD_skip ht]; exact stepDSkip_pendLe stop D D.pos
+  · rw [stepD_raw ht]; exact stepDRaw_pendLe a stop hs D D.pos
+  · rw [stepD_hdr ht]; exact stepDHdr_pendLe a stop hs D D.pos _ _
+  · rw [stepD_cmds ht]; exact stepDCmds_pendLe a stop hs D D.pos
+  · rw [stepD_ended ht]; exact PendLe.rfl' _
 
 theorem runD_pendLe (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) :
     ∀ x : RunArg a stop hs, PendLeD x.D (runD a stop hs x.D x.inv) := by
@@ -354,8 +354,8 @@ theorem runD_pendLe (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) 
       exact PendLe.keep rfl rfl
     · rw [dite_eq_right he]
       dsimp only
-      have h1 := stepD_pendLe a stop hs D
-      by_cases hn : (stepD a stop hs D).status = .next
+      have h1 := stepD_pendLe a stop hs D hinv
+      by_cases hn : (stepD a stop hs D hinv).status = .next
       · rw [dite_eq_left hn]
         exact h1.trans (ih ⟨_, hinv.step he hn⟩ ⟨he, hn, rfl⟩)
       · rw [dite_eq_right hn]

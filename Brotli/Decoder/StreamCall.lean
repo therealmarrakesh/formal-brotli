@@ -75,14 +75,14 @@ theorem runD_ok {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} : �
       | cmds => exact absurd (he.symm.trans hrel.1) (by decide)
     · rw [dite_eq_right he]
       dsimp only
-      have hstep := stepD_ok specSem (a := a) (hs := hs) hrel he hinv.2
-      by_cases hn : (stepD a stop hs D).status = .next
+      have hstep := stepD_ok specSem (a := a) (hs := hs) (h := hinv) hrel he hinv.2
+      by_cases hn : (stepD a stop hs D hinv).status = .next
       · rw [dite_eq_left hn]
         obtain ⟨p', hR, h1, h2, h3, _, h4, h5⟩ := hstep.next hn
         replace h5 := fun t => (h5 t).toReach
-        have hih := ih ⟨stepD a stop hs D, hinv.step he hn⟩ ⟨he, hn, rfl⟩ p' hR
+        have hih := ih ⟨stepD a stop hs D hinv, hinv.step he hn⟩ ⟨he, hn, rfl⟩ p' hR
         dsimp only at hih
-        generalize runD a stop hs (stepD a stop hs D) (hinv.step he hn) = r at hih ⊢
+        generalize runD a stop hs (stepD a stop hs D hinv) (hinv.step he hn) = r at hih ⊢
         refine ⟨fun e => ?_, fun e => ?_, fun e => ?_, fun e => ?_, fun e => ?_⟩
         rotate_right
         · obtain ⟨m1, m2, p2, D2, b1, b2, b3, b4, b5, b6, b7⟩ := hih.memory e
@@ -436,44 +436,43 @@ theorem stepDRaw_badWin : (stepDRaw a stop hs D pos).status = .bad →
   unfold stepDRaw takeRing moveOn rawFinish clearCmd clearRing
   badWinD_tac
 
-theorem stepDHdr_badWin : (stepDHdr a stop hs D pos).status = .bad →
-    (stepDHdr a stop hs D pos).cmd.WinSame D.cmd ∧ (stepDHdr a stop hs D pos).k = D.k := by
-  unfold stepDHdr takeHd clearHd cmdStart
+theorem stepDHdr_badWin {hH : ∃ g p, HRel D.hd g p} {hp : pos.toNat ≤ stop.toNat} : (stepDHdr a stop hs D pos hH hp).status = .bad →
+    (stepDHdr a stop hs D pos hH hp).cmd.WinSame D.cmd ∧ (stepDHdr a stop hs D pos hH hp).k = D.k := by
+  unfold stepDHdr takeHd clearHd hdrNext cmdStart
   badWinD_tac
 
 end
 
 /-- A stream step that rejects can hand out its bytes. -/
 theorem stepD_badWin {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {p : SPhase} (hrel : DRel D p)
-    (hp : D.pos.toNat ≤ stop.toNat) (hb : (stepD a stop hs D).status = .bad) : WinOk (stepD a stop hs D) := by
+    (hp : D.pos.toNat ≤ stop.toNat) {h : DInv stop D} (hb : (stepD a stop hs D h).status = .bad) : WinOk (stepD a stop hs D h) := by
   have hw := hrel.winOk
-  unfold stepD at hb ⊢
   cases p with
   | wbits =>
-    rw [hrel.1] at hb ⊢
+    rw [stepD_wbits hrel.1] at hb ⊢
     obtain ⟨h1, h2⟩ := stepDWbits_badWin hb
     exact hw.same h1 h2
   | mblock =>
-    rw [hrel.1] at hb ⊢
+    rw [stepD_mblock hrel.1] at hb ⊢
     obtain ⟨h1, h2⟩ := stepDMeta_badWin hb
     exact hw.same h1 h2
   | skip =>
-    rw [hrel.1] at hb ⊢
+    rw [stepD_skip hrel.1] at hb ⊢
     obtain ⟨h1, h2⟩ := stepDSkip_badWin hb
     exact hw.same h1 h2
   | raw =>
-    rw [hrel.1] at hb ⊢
+    rw [stepD_raw hrel.1] at hb ⊢
     obtain ⟨h1, h2⟩ := stepDRaw_badWin hb
     exact hw.same h1 h2
   | hdr =>
-    rw [hrel.1] at hb ⊢
+    rw [stepD_hdr hrel.1] at hb ⊢
     obtain ⟨h1, h2⟩ := stepDHdr_badWin hb
     exact hw.same h1 h2
   | cmds =>
-    rw [hrel.1] at hb ⊢
+    rw [stepD_cmds hrel.1] at hb ⊢
     exact stepDCmds_badWin hrel hp hb
   | ended =>
-    rw [hrel.1]
+    rw [stepD_ended hrel.1]
     exact hw
 
 /-- The loop, when it rejects, can hand out its bytes. -/
@@ -491,10 +490,10 @@ theorem runD_badWin {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} 
       exact fun e => DStatus.noConfusion e
     · rw [dite_eq_right he]
       dsimp only
-      by_cases hn : (stepD a stop hs D).status = .next
+      by_cases hn : (stepD a stop hs D hinv).status = .next
       · rw [dite_eq_left hn]
-        obtain ⟨p', hR, -⟩ := (stepD_ok specSem (a := a) (hs := hs) hrel he hinv.2).next hn
-        exact ih ⟨stepD a stop hs D, hinv.step he hn⟩ ⟨he, hn, rfl⟩ p' hR
+        obtain ⟨p', hR, -⟩ := (stepD_ok specSem (a := a) (hs := hs) (h := hinv) hrel he hinv.2).next hn
+        exact ih ⟨stepD a stop hs D hinv, hinv.step he hn⟩ ⟨he, hn, rfl⟩ p' hR
       · rw [dite_eq_right hn]
         exact stepD_badWin hrel hinv.2
 
@@ -1136,13 +1135,13 @@ theorem runD_down {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} : 
       | cmds => exact absurd (he.symm.trans hrel.1) (by decide)
     · rw [dite_eq_right he]
       dsimp only
-      have hstep := stepD_down (a := a) (hs := hs) hrel he hinv.2
-      by_cases hn : (stepD a stop hs D).status = .next
+      have hstep := stepD_down (a := a) (hs := hs) (hinv := hinv) hrel he hinv.2
+      by_cases hn : (stepD a stop hs D hinv).status = .next
       · rw [dite_eq_left hn]
         obtain ⟨p', hR, _, _, h3⟩ := hstep.next hn
-        have hih := ih ⟨stepD a stop hs D, hinv.step he hn⟩ ⟨he, hn, rfl⟩ p' hR
+        have hih := ih ⟨stepD a stop hs D hinv, hinv.step he hn⟩ ⟨he, hn, rfl⟩ p' hR
         dsimp only at hih
-        generalize runD a stop hs (stepD a stop hs D) (hinv.step he hn) = r at hih ⊢
+        generalize runD a stop hs (stepD a stop hs D hinv) (hinv.step he hn) = r at hih ⊢
         refine ⟨fun e => ?_, fun e => ?_, fun e => ?_⟩
         · obtain ⟨st, b1, b0, b2⟩ := hih.next e
           exact ⟨st, b1, b0, MPause.after h3 b2⟩

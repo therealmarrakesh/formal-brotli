@@ -245,11 +245,6 @@ def DLim (r1 r2 : Dec) : Prop := r1.status = .memory ∨ r2.status = .memory ∨
 
 theorem DLim.same {r1 r2 : Dec} {l a : UInt64} (h : r1 = decSet r2 l a) : DLim r1 r2 := Or.inr (Or.inr ⟨l, a, h⟩)
 
-theorem mkHdr_am (d : Done) (a : UInt64) : mkHdr { d with arenaMax := a } = mkHdr d := rfl
-
-theorem cmdStart_am (c : Cmd) (d : Done) (a word count mlen : UInt64) (seen : ByteArray) :
-    cmdStart c { d with arenaMax := a } word count mlen seen = cmdStart c d word count mlen seen := rfl
-
 section
 variable (D : Dec) (l a : UInt64) (ar : ByteArray) (stop : USize) (hs : stop.toNat ≤ ar.size) (pos : USize)
 
@@ -301,41 +296,53 @@ theorem stepDWbits_lim : DLim (stepDWbits ar stop hs (decSet D l a) pos) (stepDW
   · rw [dite_eq_right hp, dite_eq_right hp]
     exact DLim.same (l := l) (a := a) (by rfl)
 
-theorem stepDHdr_lim : DLim (stepDHdr ar stop hs (decSet D l a) pos) (stepDHdr ar stop hs D pos) := by
-  show DLim (stepDHdr ar stop hs { D with limit := l, hd := hdSet D.hd a } pos) _
-  simp only [stepDHdr, takeHd, clearHd]
-  have hr := stepH_lim D.hd a pos ar stop hs
-  generalize stepH ar stop hs (hdSet D.hd a) pos = r1 at hr ⊢
-  generalize stepH ar stop hs D.hd pos = r2 at hr ⊢
-  rcases hr with h1 | h2 | ⟨a', rfl⟩
-  · simp only [h1]
-    exact Or.inl rfl
-  · simp only [h2]
-    exact Or.inr (Or.inl rfl)
-  · rw [show (hdSet r2 a').status = r2.status from rfl]
-    cases hst : r2.status with
-    | next => exact DLim.same (l := l) (a := a') (by rfl)
-    | needsInput => exact DLim.same (l := l) (a := a') (by rfl)
-    | bad => exact DLim.same (l := l) (a := a') (by rfl)
-    | memory => exact Or.inl rfl
-    | ready =>
-      dsimp only
-      rw [show (hdSet r2 a').d = { r2.d with arenaMax := a' } from rfl, mkHdr_am, cmdStart_am]
-      cases mkHdr r2.d with
-      | none => exact DLim.same (l := l) (a := a') (by rfl)
-      | some H => exact DLim.same (l := l) (a := 0) (by rfl)
+theorem stepDHdr_lim (hH1 : ∃ g p, HRel (decSet D l a).hd g p) (hH2 : ∃ g p, HRel D.hd g p) (hp : pos.toNat ≤ stop.toNat) :
+    DLim (stepDHdr ar stop hs (decSet D l a) pos hH1 hp) (stepDHdr ar stop hs D pos hH2 hp) := by
+  unfold stepDHdr takeHd clearHd
+  dsimp only
+  have hr : HLim (stepH ar stop hs (decSet D l a).hd pos) (stepH ar stop hs D.hd pos) := stepH_lim D.hd a pos ar stop hs
+  generalize e1 : stepHR ar stop hs (decSet D l a).hd pos hH1 hp = rr1
+  generalize e2 : stepHR ar stop hs D.hd pos hH2 hp = rr2
+  obtain ⟨r1, h1⟩ := rr1
+  obtain ⟨r2, h2⟩ := rr2
+  have v1 : r1 = stepH ar stop hs (decSet D l a).hd pos := by rw [← stepHR_val (h := hH1) (hp := hp), e1]
+  have v2 : r2 = stepH ar stop hs D.hd pos := by rw [← stepHR_val (h := hH2) (hp := hp), e2]
+  rw [← v1, ← v2] at hr
+  unfold hdrNext
+  dsimp only
+  rcases hr with h | h | ⟨a', rfl⟩
+  · exact Or.inl (by split <;> first | rfl | (rename_i s; exact absurd (h.symm.trans s) (fun e => HStatus.noConfusion e)))
+  · exact Or.inr (Or.inl (by split <;> first | rfl | (rename_i s; exact absurd (h.symm.trans s) (fun e => HStatus.noConfusion e))))
+  · split <;> rename_i s1 <;> split <;> rename_i s2 <;> first
+      | exact absurd (s1.symm.trans s2) (fun e => HStatus.noConfusion e)
+      | exact Or.inl rfl
+      | exact DLim.same (l := l) (a := a') (by rfl)
+      | exact DLim.same (l := l) (a := 0) (by rfl)
 
-theorem stepD_lim : DLim (stepD ar stop hs (decSet D l a)) (stepD ar stop hs D) := by
-  unfold stepD
-  rw [show (decSet D l a).tag = D.tag from rfl]
-  cases D.tag with
-  | wbits => exact stepDWbits_lim D l a ar stop hs D.pos
-  | mblock => exact stepDMeta_lim D l a ar stop hs D.pos
-  | skip => exact DLim.same (stepDSkip_lim D l a stop D.pos)
-  | raw => exact DLim.same (stepDRaw_lim D l a ar stop hs D.pos)
-  | hdr => exact stepDHdr_lim D l a ar stop hs D.pos
-  | cmds => exact DLim.same (stepDCmds_lim D l a ar stop hs D.pos)
-  | ended => exact DLim.same (l := l) (a := a) rfl
+theorem stepD_lim (h1 : DInv stop (decSet D l a)) (h2 : DInv stop D) :
+    DLim (stepD ar stop hs (decSet D l a) h1) (stepD ar stop hs D h2) := by
+  cases ht : D.tag with
+  | wbits =>
+    rw [stepD_wbits (D := decSet D l a) ht, stepD_wbits ht]
+    exact stepDWbits_lim D l a ar stop hs D.pos
+  | mblock =>
+    rw [stepD_mblock (D := decSet D l a) ht, stepD_mblock ht]
+    exact stepDMeta_lim D l a ar stop hs D.pos
+  | skip =>
+    rw [stepD_skip (D := decSet D l a) ht, stepD_skip ht]
+    exact DLim.same (stepDSkip_lim D l a stop D.pos)
+  | raw =>
+    rw [stepD_raw (D := decSet D l a) ht, stepD_raw ht]
+    exact DLim.same (stepDRaw_lim D l a ar stop hs D.pos)
+  | hdr =>
+    rw [stepD_hdr (D := decSet D l a) ht, stepD_hdr ht]
+    exact stepDHdr_lim D l a ar stop hs D.pos _ _ h2.2
+  | cmds =>
+    rw [stepD_cmds (D := decSet D l a) ht, stepD_cmds ht]
+    exact DLim.same (stepDCmds_lim D l a ar stop hs D.pos)
+  | ended =>
+    rw [stepD_ended (D := decSet D l a) ht, stepD_ended ht]
+    exact DLim.same (l := l) (a := a) rfl
 
 end
 
@@ -352,19 +359,19 @@ theorem runD_lim (ar : ByteArray) (stop : USize) (hs : stop.toNat ≤ ar.size) :
       exact DLim.same (l := l) (a := a) rfl
     · rw [dite_eq_right (show ¬ (decSet x.D l a).tag = .ended from he), dite_eq_right he]
       dsimp only
-      have hs1 := stepD_lim x.D l a ar stop hs
+      have hs1 := stepD_lim x.D l a ar stop hs h1 x.inv
       rcases hs1 with h | h | ⟨l', a', e⟩
-      · rw [dite_eq_right (show ¬ (stepD ar stop hs (decSet x.D l a)).status = .next by rw [h]; exact fun e => DStatus.noConfusion e)]
+      · rw [dite_eq_right (show ¬ (stepD ar stop hs (decSet x.D l a) h1).status = .next by rw [h]; exact fun e => DStatus.noConfusion e)]
         exact Or.inl h
-      · rw [dite_eq_right (show ¬ (stepD ar stop hs x.D).status = .next by rw [h]; exact fun e => DStatus.noConfusion e)]
+      · rw [dite_eq_right (show ¬ (stepD ar stop hs x.D x.inv).status = .next by rw [h]; exact fun e => DStatus.noConfusion e)]
         exact Or.inr (Or.inl h)
-      · by_cases hn : (stepD ar stop hs x.D).status = .next
-        · have hn1 : (stepD ar stop hs (decSet x.D l a)).status = .next := by rw [e]; exact hn
+      · by_cases hn : (stepD ar stop hs x.D x.inv).status = .next
+        · have hn1 : (stepD ar stop hs (decSet x.D l a) h1).status = .next := by rw [e]; exact hn
           rw [dite_eq_left hn1, dite_eq_left hn]
-          have := ih ⟨stepD ar stop hs x.D, x.inv.step he hn⟩ ⟨he, hn, rfl⟩ l' a' (by rw [← e]; exact h1.step he hn1)
+          have := ih ⟨stepD ar stop hs x.D x.inv, x.inv.step he hn⟩ ⟨he, hn, rfl⟩ l' a' (by rw [← e]; exact h1.step he hn1)
           simp only [e] at this ⊢
           exact this
-        · have hn1 : ¬ (stepD ar stop hs (decSet x.D l a)).status = .next := by rw [e]; exact hn
+        · have hn1 : ¬ (stepD ar stop hs (decSet x.D l a) h1).status = .next := by rw [e]; exact hn
           rw [dite_eq_right hn1, dite_eq_right hn]
           exact DLim.same e
 
