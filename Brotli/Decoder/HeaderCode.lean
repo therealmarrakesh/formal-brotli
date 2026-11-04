@@ -120,6 +120,38 @@ private theorem writeSimple_lens {size : Nat} (hs : size < 2 ^ 32) (r : Rd) (he 
   rw [ite_eq_right e3', ite_eq_right e3]
   exact congrArg _ (((((z.set r.d 3 h4 (by decide)).set r.c 3 h3 (by decide))).set r.b 2 h2 (by decide)).set r.a 1 h1 (by decide)).eq.symm
 
+/-- A simple code with two symbols or more has complete lengths, as they are written into the state's array. -/
+theorem simple_complete {st : Hd} (hw : (BitBuffer.mk st.word st.count).Wf) (hs : st.size.toNat ≤ 704) (h2 : 2 ≤ st.count)
+    (h1 : (BitBuffer.mk st.word st.count).peek 2 = 1)
+    (hok : (simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2)).status = .ok)
+    (he : (simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2)).e.toNat ≠ 0) :
+    Complete (.canonical (lensOf (writeSimple (zeroBytes st.size.toNat)
+      (simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2))) st.size.toNat)) := by
+  have hread := read_int (b := ⟨st.word, st.count⟩) (k := 2) [] (by decide) h2
+  have hw1 := drop_wf' hw (k := 2) (by decide) h2
+  rw [h1] at hread
+  generalize (BitBuffer.mk st.word st.count).drop 2 = b1 at hread hw1 hok he ⊢
+  obtain ⟨hbits, hbitsLe⟩ := alphabetBitsFast_toNat (size := st.size) (by omega)
+  have R := simpleFast_ok (size := st.size) (bits := alphabetBitsFast st.size) hw1 hbitsLe
+  rw [hbits] at R
+  have hsmall := simpleFast_small st.size (alphabetBitsFast st.size) b1 hbitsLe
+  have hN2 := (R.ok hok).2 []
+  generalize simpleFast st.size (alphabetBitsFast st.size) b1 = r at hN2 hok he hsmall ⊢
+  simp only [List.append_nil] at hN2 hread
+  have e2 : (2 : UInt64).toNat = 2 := rfl
+  have e1 : (1 : UInt64).toNat = 1 := rfl
+  rw [e2, e1] at hread
+  have hwit : readPrefixCode st.size.toNat (BitBuffer.mk st.word st.count).held = some (simpleValue st.size r, r.buf.held) := by
+    unfold readPrefixCode
+    rw [hread]
+    show (if 1 = 1 then readSimple st.size.toNat b1.held else readComplex st.size.toNat 1 b1.held) = _
+    rw [ite_eq_left rfl, simpleChain_eq]
+    exact hN2
+  have hC := readPrefixCode_complete hwit
+  have hl := writeSimple_lens (size := st.size.toNat) (by omega) r he hsmall.1 hsmall.2.1 hsmall.2.2.1 hsmall.2.2.2
+  unfold simpleValue at hC
+  rwa [hl] at hC
+
 section
 variable {α : Type} {K : HK α} {a : ByteArray} {stop : USize}
 

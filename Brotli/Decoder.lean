@@ -61,6 +61,7 @@ import Brotli.Decoder.WorkTop
 import Brotli.Decoder.Layout
 import Brotli.Decoder.Cost
 import Brotli.Decoder.CostHeader
+import Brotli.Decoder.WorkHdr
 
 /-!
 # Decoder

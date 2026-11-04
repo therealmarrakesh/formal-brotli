@@ -452,7 +452,11 @@ def stepHSymsW (st : Hd) (pos : USize) : Nat :=
         let old := if st.repCount ≠ 0 ∧ st.repSym = sym then st.repCount else 0
         let new := if old = 0 then 3 + r.b else mult * (old - 2) + (3 + r.b)
         let delta := new - old
-        if st.size < ln + delta then 1 else delta.toNat + 2
+        if st.size < ln + delta then 1
+        else
+          let len := if sym = 16 then st.prevLen else 0
+          let sum := if len = 0 then st.symSum else st.symSum + delta * ((32768 : UInt64) >>> len)
+          if 32768 < sum then 1 else delta.toNat + 2
     | _ => 1
 
 /-- The work of `stepHFirst`: the table's check. -/

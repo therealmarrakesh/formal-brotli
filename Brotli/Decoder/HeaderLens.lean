@@ -248,6 +248,55 @@ private theorem apart_push {acc : List (Nat × Nat)} {x : Nat} {rest : List Nat}
   · rw [List.mem_singleton.mp h]
     exact ⟨hx, (List.nodup_cons.mp hnd).1, hlen⟩
 
+/-- The code length code's lengths are complete once the last one read fills the code space. -/
+theorem clens_complete {st : Hd} {order : List Nat} {acc : List (Nat × Nat)} {sum : Nat} (hw : (BitBuffer.mk st.word st.count).Wf)
+    (hc : ClRel st order acc sum) (h18 : st.clIdx ≠ 18) (hok : (cclFast ⟨st.word, st.count⟩).status = .ok)
+    (h0 : (cclFast ⟨st.word, st.count⟩).a ≠ 0) (h32 : st.clSum + ((32 : UInt64) >>> (cclFast ⟨st.word, st.count⟩).a) = 32) :
+    Complete (.canonical (lensOf (setLen st.clLens (getU clOrderLut st.clIdx.toUSize).toUInt64 (cclFast ⟨st.word, st.count⟩).a) 18)) := by
+  have horder := hc.orderOk
+  have hidxLe := hc.le
+  have hidx18 : st.clIdx.toNat ≠ 18 := fun e => h18 (UInt64.toNat_inj.mp e)
+  have hidxLt : st.clIdx.toNat < 18 := by omega
+  obtain ⟨x, hx, hx18, hlut⟩ := clOrderLut_at hidxLt
+  obtain ⟨hL1, hL2⟩ := List.getElem?_eq_some_iff.mp hx
+  have horder' : order = x :: codeLengthOrder.drop (st.clIdx.toNat + 1) := by
+    rw [horder, List.drop_eq_getElem_cons hL1, hL2]
+  have hnodup : (x :: codeLengthOrder.drop (st.clIdx.toNat + 1)).Nodup := by
+    rw [← horder', horder]
+    exact codeOrder_ok'.1.sublist (List.drop_sublist _ _)
+  generalize codeLengthOrder.drop (st.clIdx.toNat + 1) = rest at horder' hnodup
+  subst horder'
+  have R := cclFast_ok hw
+  have hval2 := (R.ok hok).2 []
+  generalize cclFast ⟨st.word, st.count⟩ = r at hval2 hok h0 h32 ⊢
+  have hlen5 : r.a.toNat ≤ 5 := (readCodeLengthCodeLength_width hval2).1
+  have happ := apart_push hx18 hnodup hc.apart hlen5
+  have hkeys := keys_push hc.keys (fun p hp => (hc.apart p hp).2.1) r.a.toNat
+  have h0' : r.a.toNat ≠ 0 := fun e => h0 (UInt64.toNat_inj.mp e)
+  have hsym : (getU clOrderLut st.clIdx.toUSize).toUInt64.toNat = x := by
+    rw [UInt8.toNat_toUInt64, getU_toNat, word_toUSize (by omega), hlut]
+  have hsh : ((32 : UInt64) >>> r.a).toNat = 32 >>> r.a.toNat := by
+    rw [UInt64.toNat_shiftRight, Nat.mod_eq_of_lt (show r.a.toNat < 64 by omega)]
+    rfl
+  have hshLt : 32 >>> r.a.toNat ≤ 32 := by
+    rw [Nat.shiftRight_eq_div_pow]
+    exact Nat.div_le_self _ _
+  have hsumU : (st.clSum + ((32 : UInt64) >>> r.a)).toNat = sum + 32 >>> r.a.toNat := by
+    rw [UInt64.toNat_add, hc.sumOk, hsh]
+    exact Nat.mod_eq_of_lt (by have := hc.sumLt; omega)
+  have h32' : sum + 32 >>> r.a.toNat = 32 := by
+    rw [← hsumU, h32]
+    rfl
+  have hlensP : LensIs (setLen st.clLens (getU clOrderLut st.clIdx.toUSize).toUInt64 r.a) 18 (acc ++ [(x, r.a.toNat)]) := by
+    have := LensIs.push (⟨hc.size, hc.lens⟩ : LensIs st.clLens 18 acc) (getU clOrderLut st.clIdx.toUSize).toUInt64 r.a (by rw [hsym]; exact hx18)
+      (by decide) (by omega) (fun p hp e => (hc.apart p hp).2.1 (by rw [e, hsym]; simp))
+    rwa [hsym] at this
+  have hsumP : lengthSum ((acc ++ [(x, r.a.toNat)]).map (·.2)) = 1024 * (sum + 32 >>> r.a.toNat) := by
+    rw [sum_push, ite_eq_right h0', hc.sumEq, len_scale _ (by omega) h0', Nat.mul_add]
+  rw [hlensP.eq]
+  refine ⟨mem_lengthsOf_le (fun p hp => (happ p hp).2.2), ?_⟩
+  rw [lengthSum_lengthsOf_eq 18 _ hkeys (fun p hp => (happ p hp).1), hsumP, h32']
+
 section
 variable {α : Type} {K : HK α} {a : ByteArray} {stop : USize}
 
