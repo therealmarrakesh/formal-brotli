@@ -214,6 +214,11 @@ theorem sinv_of_sreach {p q : SPhase} {bs c : List Bool} (h : SReach p bs q c) (
   obtain ⟨n, hn⟩ := h.toReach.count
   exact (steps_le hn hi).1
 
+theorem Pays.mono {a : ByteArray} {stop : USize} {p : SPhase} {D : Dec} {pos : USize} {r : Dec} {W e e' : Nat}
+    (h : Pays a stop p D pos r W e) (he : e ≤ e') : Pays a stop p D pos r W e' := by
+  obtain ⟨q, h1, h2, h3, h4, h5, h6⟩ := h
+  exact ⟨q, h1, h2, h3, h4, h5, fun t => by have := h6 t; omega⟩
+
 theorem dpot_mblock_le (w : Nat) (st : StreamState) (D : Dec) : dpot (.mblock w st) D ≤ roundCost := by
   unfold dpot spot
   dsimp only
@@ -906,5 +911,105 @@ theorem pay_raw {w : Nat} {st : StreamState} {last : Bool} {n : Nat} {a : ByteAr
       have : dpot (.raw w' st' l' n') (stepDRaw a stop hs D pos) = 10 := rfl
       omega
     | _ => exact absurd hsd id
+
+/-! ### A step of the stream -/
+
+/-- A stream step, against the potential: one that goes on is paid for, with the window when it is WBITS's; one that
+pauses costs at most 269 more; one that rejects or reports the limit costs at most the potential, the bits, the bytes it
+may decode first, and 23750. -/
+theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {p : SPhase} (hrel : DRel D p)
+    (hsi : SInv p) (he : D.tag ≠ .ended) (hp : D.pos.toNat ≤ stop.toNat) :
+    ((stepD a stop hs D).status = .next → Pays a stop p D D.pos (stepD a stop hs D) (stepDW a stop hs D + 1)
+      (if D.tag = .wbits then 5 * 2 ^ (stepD a stop hs D).k.toNat else 0)) ∧
+    ((stepD a stop hs D).status = .needsInput ∨ (stepD a stop hs D).status = .needsOutput →
+      Pays a stop p D D.pos (stepD a stop hs D) (stepDW a stop hs D + 1) 269) ∧
+    ((stepD a stop hs D).status = .bad ∨ (stepD a stop hs D).status = .memory → ∀ t : List UInt8,
+      stepDW a stop hs D + 1 ≤ dpot p D + hdrRate * (D.bits a D.pos stop (bits t)).length + 282 * capE D.cmd.cap + 23750) := by
+  have hok := stepD_ok specSem (hs := hs) hrel he hp
+  have hpl := stepD_pendLe a stop hs D
+  have hmem : (stepD a stop hs D).status = .memory → p = .wbits ∨ ∃ w st last mlen g q, p = .hdr w st last mlen g q :=
+    fun h => (hok.memory h).2.2.2.2
+  cases p with
+  | wbits =>
+    have e1 : stepD a stop hs D = stepDWbits a stop hs D D.pos := by unfold stepD; rw [hrel.1]
+    have e2 : stepDW a stop hs D = stepDWbitsW a stop hs D D.pos := by unfold stepDW; rw [hrel.1]
+    rw [e1, e2, ite_eq_left hrel.1]
+    rw [e1] at hok
+    obtain ⟨n1, n2, n3⟩ := pay_wbits (hs := hs) hrel hp
+    refine ⟨n1, fun h => ?_, fun h t => ?_⟩
+    · rcases h with h | h
+      · exact (n2 h).mono (by omega)
+      · obtain ⟨p', _, _, _, _, hne0, hsd, _⟩ := hok.needsOutput h
+        cases p' with
+        | wbits =>
+          have e : (stepDWbits a stop hs D D.pos).cmd.pend = D.cmd.pend := hsd
+          rw [e, hrel.2.2.2] at hne0
+          exact absurd rfl hne0
+        | _ => exact absurd hsd id
+    · have := n3 (by rcases h with h | h <;> rw [h] <;> exact fun e => DStatus.noConfusion e)
+      omega
+  | mblock w st =>
+    have e1 : stepD a stop hs D = stepDMeta a stop hs D D.pos := by unfold stepD; rw [hrel.1]
+    have e2 : stepDW a stop hs D = stepDMetaW a stop hs D D.pos := by unfold stepDW; rw [hrel.1]
+    rw [e1, e2, ite_eq_right (by rw [hrel.1]; exact fun e => DTag.noConfusion e)]
+    obtain ⟨n1, n2, n3, n4⟩ := pay_mblock (hs := hs) hrel hp
+    refine ⟨n1, fun h => ?_, fun _ t => by omega⟩
+    rcases h with h | h
+    · exact (n2 h).mono (by omega)
+    · exact (n3 h).mono (by omega)
+  | skip w st last n =>
+    have e1 : stepD a stop hs D = stepDSkip stop D D.pos := by unfold stepD; rw [hrel.1]
+    have e2 : stepDW a stop hs D = 1 := by unfold stepDW; rw [hrel.1]
+    rw [e1, e2, ite_eq_right (by rw [hrel.1]; exact fun e => DTag.noConfusion e)]
+    obtain ⟨n1, n2, n3⟩ := pay_skip (a := a) (hs := hs) hrel hp
+    refine ⟨n1, fun h => ?_, fun _ t => by omega⟩
+    rcases h with h | h
+    · exact (n2 h).mono (by omega)
+    · exact (n3 h).mono (by omega)
+  | raw w st last n =>
+    have e1 : stepD a stop hs D = stepDRaw a stop hs D D.pos := by unfold stepD; rw [hrel.1]
+    have e2 : stepDW a stop hs D = stepDRawW a stop hs D D.pos := by unfold stepDW; rw [hrel.1]
+    rw [e1, e2, ite_eq_right (by rw [hrel.1]; exact fun e => DTag.noConfusion e)]
+    rw [e1] at hpl
+    obtain ⟨n1, n2, n3, n4⟩ := pay_raw (hs := hs) hrel hp
+    refine ⟨n1, fun h => ?_, fun _ t => ?_⟩
+    · rcases h with h | h
+      · exact (n2 h).mono (by omega)
+      · exact (n3 h).mono (by omega)
+    · have := hpl.2
+      omega
+  | hdr w st last mlen g q =>
+    have e1 : stepD a stop hs D = stepDHdr a stop hs D D.pos := by unfold stepD; rw [hrel.1]
+    have e2 : stepDW a stop hs D = stepDHdrW a stop hs D D.pos := by unfold stepDW; rw [hrel.1]
+    rw [e1, e2, ite_eq_right (by rw [hrel.1]; exact fun e => DTag.noConfusion e)]
+    rw [e1] at hok
+    obtain ⟨n1, n2, n3⟩ := pay_hdr (hs := hs) hrel hp
+    refine ⟨n1, fun h => ?_, fun h t => ?_⟩
+    · rcases h with h | h
+      · exact n2 h
+      · obtain ⟨p', _, _, _, _, hne0, hsd, _⟩ := hok.needsOutput h
+        cases p' with
+        | hdr w' st' l' ml' g' q' =>
+          have e : (stepDHdr a stop hs D D.pos).cmd.pend = D.cmd.pend := hsd.2
+          rw [e, hrel.2.2.2.2.2.2.2] at hne0
+          exact absurd rfl hne0
+        | _ => exact absurd hsd id
+    · have := n3 (by rcases h with h | h <;> rw [h] <;> exact fun e => DStatus.noConfusion e)
+      have hd : dpot (.hdr w st last mlen g q) D = hpot g q + hdrEnd := rfl
+      have hS : hdrSlack = 23750 := rfl
+      omega
+  | cmds w last m q =>
+    have e1 : stepD a stop hs D = stepDCmds a stop hs D D.pos := by unfold stepD; rw [hrel.1]
+    have e2 : stepDW a stop hs D = stepDCmdsW a stop hs D D.pos := by unfold stepDW; rw [hrel.1]
+    rw [e1, e2, ite_eq_right (by rw [hrel.1]; exact fun e => DTag.noConfusion e)]
+    obtain ⟨n1, n2, n3⟩ := pay_cmds (hs := hs) hrel hsi hp
+    refine ⟨n1, fun h => (n2 h).mono (by omega), fun h t => ?_⟩
+    rcases h with h | h
+    · obtain ⟨L, hL, hb⟩ := n3 h
+      have := hb t
+      have : 282 * L ≤ 282 * capE D.cmd.cap := Nat.mul_le_mul_left _ hL
+      omega
+    · rcases hmem (by rw [e1]; exact h) with h' | ⟨_, _, _, _, _, _, h'⟩ <;> cases h'
+  | ended st => exact absurd hrel.1 he
 
 end Brotli.Decoder
