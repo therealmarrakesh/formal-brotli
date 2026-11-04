@@ -315,4 +315,162 @@ theorem pay_wbits {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
       omega
     | _ => exact absurd hsd id
 
+/-! ### A meta-block's start -/
+
+theorem metaGo_hd {D : Dec} {c : Cmd} {r : Rd} {pos : USize} (ht : D.tag = .mblock) (h : (metaGo D c r pos).tag = .hdr) :
+    (metaGo D c r pos).hd = hdStart r.word r.count D.limit := by
+  unfold metaGo at h ⊢
+  by_cases h0 : r.a = 0
+  · rw [ite_eq_left h0] at h
+    cases h
+  · rw [ite_eq_right h0] at h ⊢
+    by_cases h1 : r.a = 1
+    · rw [ite_eq_left h1] at h
+      split at h
+      · cases h
+      · dsimp only at h
+        rw [ht] at h
+        cases h
+    · rw [ite_eq_right h1] at h ⊢
+      by_cases h2 : (r.d != 0) = true
+      · rw [ite_eq_left h2] at h
+        split at h
+        · cases h
+        · dsimp only at h
+          rw [ht] at h
+          cases h
+      · rw [ite_eq_right h2]
+
+/-- A meta-block's start that leads to a header leaves the header machine at its start. -/
+theorem stepDMeta_hd {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize} (ht : D.tag = .mblock)
+    (h : (stepDMeta a stop hs D pos).tag = .hdr) : ∃ x y z, (stepDMeta a stop hs D pos).hd = hdStart x y z := by
+  unfold stepDMeta at h ⊢
+  by_cases h0 : D.cmd.pend = 0
+  · rw [ite_eq_left h0] at h ⊢
+    by_cases hp : pos ≤ stop
+    · rw [dite_eq_left hp] at h ⊢
+      dsimp only at h ⊢
+      split at h
+      · dsimp only at h
+        rw [ht] at h
+        cases h
+      · dsimp only at h
+        rw [ht] at h
+        cases h
+      · exact ⟨_, _, _, metaGo_hd ht h⟩
+    · rw [dite_eq_right hp] at h
+      dsimp only at h
+      rw [ht] at h
+      cases h
+  · rw [ite_eq_right h0] at h
+    dsimp only at h
+    rw [ht] at h
+    cases h
+
+/-- A header's start holds the potential of the literal category's number of block types not yet read. -/
+theorem hpot_start {x y z : UInt64} {g : Gh} {p : HPhase} (h : HRel (hdStart x y z) g p) : hpot g p = 4735 := by
+  have ht := h.tag_eq
+  cases p with
+  | cat i =>
+    have hc : (hdStart x y z).cat = i := h.2.2.2
+    cases i with
+    | L => rfl
+    | I => cases hc
+    | D => cases hc
+  | _ => cases ht
+
+theorem metaW_le {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize} (hp : pos.toNat ≤ stop.toNat) :
+    stepDMetaW a stop hs D pos ≤ 11 := by
+  unfold stepDMetaW
+  have := refillW_le (word := D.cmd.word) (count := D.cmd.count) hs hp
+  split
+  · split <;> omega
+  · omega
+
+/-- A meta-block's start, against the potential. -/
+theorem pay_mblock {w : Nat} {st : StreamState} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize}
+    (hrel : DRel D (.mblock w st)) (hp : pos.toNat ≤ stop.toNat) :
+    ((stepDMeta a stop hs D pos).status = .next → Pays a stop (.mblock w st) D pos (stepDMeta a stop hs D pos)
+      (stepDMetaW a stop hs D pos + 1) 0) ∧
+    ((stepDMeta a stop hs D pos).status = .needsInput → Pays a stop (.mblock w st) D pos (stepDMeta a stop hs D pos)
+      (stepDMetaW a stop hs D pos + 1) 12) ∧
+    ((stepDMeta a stop hs D pos).status = .needsOutput → Pays a stop (.mblock w st) D pos (stepDMeta a stop hs D pos)
+      (stepDMetaW a stop hs D pos + 1) 2) ∧
+    stepDMetaW a stop hs D pos + 1 ≤ 12 := by
+  have hok := stepDMeta_ok (S := specSem) (hs := hs) hrel hp
+  have hW := metaW_le (hs := hs) (D := D) hp
+  have hR : hdrRate = 22343 := rfl
+  refine ⟨fun hn => ?_, fun hn => ?_, fun hn => ?_, by omega⟩
+  · obtain ⟨p', hR', h1, h2, _, hsd, hout, hj⟩ := hok.next hn
+    refine ⟨p', hR', hout, h1, h2, fun t => ?_⟩
+    have hne : ∀ w' st', p' ≠ .mblock w' st' := fun w' st' e => by rw [e] at hsd; exact hsd
+    obtain ⟨hb, hb19⟩ := sreach_mblock (hj t) hne
+    rw [hR]
+    cases p' with
+    | ended st' =>
+      have : dpot (.ended st') (stepDMeta a stop hs D pos) = 0 := rfl
+      omega
+    | skip w' st' l n =>
+      have : dpot (.skip w' st' l n) (stepDMeta a stop hs D pos) = 10 := rfl
+      omega
+    | raw w' st' l n =>
+      have : dpot (.raw w' st' l n) (stepDMeta a stop hs D pos) = 10 := rfl
+      omega
+    | hdr w' st' l mlen g hp' =>
+      have h19 := hb19 w' st' l mlen g hp' rfl
+      obtain ⟨x, y, z, hx⟩ := stepDMeta_hd hrel.1 hR'.1
+      have hrh : HRel (hdStart x y z) g hp' := by rw [← hx]; exact hR'.2.2.2.2.2.2.1
+      have : dpot (.hdr w' st' l mlen g hp') (stepDMeta a stop hs D pos) = hpot g hp' + hdrEnd := by
+        unfold dpot spot
+        dsimp only
+        omega
+      rw [this, hpot_start hrh]
+      unfold hdrEnd hdrSlack cmdsEnd roundCost
+      omega
+    | _ => exact absurd hsd id
+  · obtain ⟨b1, b2, p', hR', _, _, hsd, _, hout, hj, _⟩ := hok.needsInput hn
+    refine ⟨p', hR', hout, by rw [b1]; exact hp, by rw [b1]; exact Nat.le_refl _, fun t => ?_⟩
+    have hb := sreach_len (hj t)
+    rw [hR]
+    cases p' with
+    | mblock w' st' =>
+      have he : dpot (.mblock w' st') (stepDMeta a stop hs D pos) = dpot (.mblock w st) D := by
+        unfold dpot spot
+        dsimp only
+        rw [hsd]
+      rw [he]
+      omega
+    | _ => exact absurd hsd id
+  · obtain ⟨p', hR', h1, h2, _, _, hsd, _, hout, hj⟩ := hok.needsOutput hn
+    refine ⟨p', hR', hout, h1, h2, fun t => ?_⟩
+    have hb := sreach_len (hj t)
+    have hw1 : stepDMetaW a stop hs D pos = 1 := by
+      have hpe : D.cmd.pend ≠ 0 := by
+        unfold stepDMeta at hn
+        intro e
+        rw [ite_eq_left e] at hn
+        by_cases hp' : pos ≤ stop
+        · rw [dite_eq_left hp'] at hn
+          dsimp only at hn
+          split at hn
+          · cases hn
+          · cases hn
+          · rename_i heq
+            unfold metaGo at hn
+            repeat' (first | split at hn | cases hn)
+        · rw [dite_eq_right hp'] at hn
+          cases hn
+      unfold stepDMetaW
+      rw [ite_eq_right hpe]
+    rw [hR, hw1]
+    cases p' with
+    | mblock w' st' =>
+      have he : dpot (.mblock w' st') (stepDMeta a stop hs D pos) = dpot (.mblock w st) D := by
+        unfold dpot spot
+        dsimp only
+        rw [hsd]
+      rw [he]
+      omega
+    | _ => exact absurd hsd id
+
 end Brotli.Decoder
