@@ -235,7 +235,7 @@ theorem wbits_range {b : BitBuffer} (hw : b.Wf) (h : (wbitsFast b).status = .ok)
 /-- WBITS's step that goes on: the window's zeros, and eleven, with the loop's round. -/
 theorem wbitsW_next {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize}
     (hw : (BitBuffer.mk D.cmd.word D.cmd.count).Wf) (hp : pos.toNat ≤ stop.toNat) (hn : (stepDWbits a stop hs D pos).status = .next) :
-    stepDWbitsW a stop hs D pos + 1 ≤ 5 * 2 ^ (stepDWbits a stop hs D pos).k.toNat + 77 := by
+    stepDWbitsW a stop hs D pos + 1 ≤ 2 ^ (stepDWbits a stop hs D pos).k.toNat + 268 := by
   have hp' : pos ≤ stop := USize.le_iff_toNat_le.mpr hp
   unfold stepDWbits at hn ⊢
   unfold stepDWbitsW
@@ -261,9 +261,11 @@ theorem wbitsW_next {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} 
         (refill D.cmd.word D.cmd.count a pos stop hs (USize.le_iff_toNat_le.mp hp')).count⟩).a = x at hb2 ⊢
       have hk : x.toUSize.toNat = x.toNat := word_toUSize (by omega)
       have hsh : ((1 : UInt64) <<< x).toNat = 2 ^ x.toNat := one_shl (by omega)
-      show _ + (zbW ((1 : UInt64) <<< x).toNat + 1) + 1 ≤ 5 * 2 ^ x.toUSize.toNat + 77
+      show _ + (zbW ((1 : UInt64) <<< x).toNat + 1) + 1 ≤ 2 ^ x.toUSize.toNat + 268
       rw [hk, hsh]
       have := zbW_le (2 ^ x.toNat)
+      have hpw : 2 ^ x.toNat ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hb2
+      have h224 : (2 : Nat) ^ 24 = 16777216 := rfl
       omega
     · exact absurd hn (fun e => DStatus.noConfusion e)
 
@@ -292,7 +294,7 @@ theorem wbitsW_stop {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} 
 theorem pay_wbits {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize} (hrel : DRel D .wbits)
     (hp : pos.toNat ≤ stop.toNat) :
     ((stepDWbits a stop hs D pos).status = .next → Pays a stop .wbits D pos (stepDWbits a stop hs D pos)
-      (stepDWbitsW a stop hs D pos + 1) (5 * 2 ^ (stepDWbits a stop hs D pos).k.toNat)) ∧
+      (stepDWbitsW a stop hs D pos + 1) (2 ^ (stepDWbits a stop hs D pos).k.toNat + 256)) ∧
     ((stepDWbits a stop hs D pos).status = .needsInput → Pays a stop .wbits D pos (stepDWbits a stop hs D pos)
       (stepDWbitsW a stop hs D pos + 1) 11) ∧
     ((stepDWbits a stop hs D pos).status ≠ .next → stepDWbitsW a stop hs D pos + 1 ≤ 11) := by
@@ -378,7 +380,7 @@ theorem stepDMeta_hd {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size}
     cases h
 
 /-- A header's start holds the potential of the literal category's number of block types not yet read. -/
-theorem hpot_start {x y z : UInt64} {g : Gh} {p : HPhase} (h : HRel (hdStart x y z) g p) : hpot g p = 17167 := by
+theorem hpot_start {x y z : UInt64} {g : Gh} {p : HPhase} (h : HRel (hdStart x y z) g p) : hpot g p = 16972 := by
   have ht := h.tag_eq
   cases p with
   | cat i =>
@@ -1046,7 +1048,7 @@ decodes first, which are waiting after it, and 23750. -/
 theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {p : SPhase} (hrel : DRel D p)
     (hsi : SInv p) (he : D.tag ≠ .ended) (hp : D.pos.toNat ≤ stop.toNat) :
     ((stepD a stop hs D).status = .next → Pays a stop p D D.pos (stepD a stop hs D) (stepDW a stop hs D + 1)
-      (if D.tag = .wbits then 5 * 2 ^ (stepD a stop hs D).k.toNat else 0)) ∧
+      (if D.tag = .wbits then 2 ^ (stepD a stop hs D).k.toNat + 256 else 0)) ∧
     ((stepD a stop hs D).status = .needsInput ∨ (stepD a stop hs D).status = .needsOutput →
       Pays a stop p D D.pos (stepD a stop hs D) (stepDW a stop hs D + 1) (stopCost (stepD a stop hs D))) ∧
     ((stepD a stop hs D).status = .bad ∨ (stepD a stop hs D).status = .memory → ∃ L,
@@ -1432,7 +1434,7 @@ theorem runD_k10 {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} (x 
 /-! ### The decoder's loop -/
 
 /-- The window a run of the loop allocates: WBITS's, when it starts there and gets past it. -/
-def winD (D r : Dec) : Nat := if D.tag = .wbits ∧ r.tag ≠ .wbits then 5 * 2 ^ r.k.toNat else 0
+def winD (D r : Dec) : Nat := if D.tag = .wbits ∧ r.tag ≠ .wbits then 2 ^ r.k.toNat + 256 else 0
 
 /-- The decoder's loop, against the potential: its steps are paid for by the potential, 22343 for each bit, 282 for each
 byte and the window, and the step that stops it by at most 270 more, or, when it rejects or reports the limit, by the bits
@@ -1474,7 +1476,7 @@ theorem pay_runD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} : �
         obtain ⟨q1, hR1, ho1, hp1, hp2, hsi1, hw1⟩ := s1 hn
         obtain ⟨i1, i2⟩ := ih ⟨_, hinv.step he hn⟩ ⟨he, hn, rfl⟩ q1 hR1 (hsi1 hsi)
         dsimp only at i1 i2
-        have hwin : (if D.tag = .wbits then 5 * 2 ^ (stepD a stop hs D).k.toNat else 0) +
+        have hwin : (if D.tag = .wbits then 2 ^ (stepD a stop hs D).k.toNat + 256 else 0) +
             winD (stepD a stop hs D) (runD a stop hs (stepD a stop hs D) (hinv.step he hn)) ≤
             winD D (runD a stop hs (stepD a stop hs D) (hinv.step he hn)) := by
           by_cases hw : D.tag = .wbits

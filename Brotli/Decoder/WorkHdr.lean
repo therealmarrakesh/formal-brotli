@@ -175,7 +175,7 @@ literal category's number of block types brings, 960 for each type, when that nu
 def hdrRate : Nat := 22343
 
 /-- A bound on the work of zero-filling `k` bytes (`zbW_le`). -/
-def zb (k : Nat) : Nat := 5 * k + 66
+def zb (k : Nat) : Nat := k + k / 65536 + 1
 
 /-- What a context map of `S` values costs besides its code and the values read: its zeros, its table's check, the values
 a code gives without reading, the transform's rounds, and the check that every tree occurs. -/

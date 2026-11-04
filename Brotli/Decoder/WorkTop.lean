@@ -44,7 +44,7 @@ theorem ReachesW.reaches {limit : Nat} {x : List UInt8} {R : Run DState} {W n : 
 
 /-- The window a run has paid for: none while it runs at WBITS, and the declared window's after. -/
 def winPaid (x : List UInt8) (R : Run DState) : Nat :=
-  if R.status.stopped = false ∧ R.state.val.tag = .wbits then 0 else 5 * (declaredWindow x + 16)
+  if R.status.stopped = false ∧ R.state.val.tag = .wbits then 0 else (declaredWindow x + 272)
 
 theorem stopped_false {s : Status} : s.stopped = false ↔ s = .needsInput ∨ s = .needsOutput := by
   cases s <;> simp [Status.stopped]
@@ -112,7 +112,7 @@ theorem work_inv {limit : Nat} {x : List UInt8} {R : Run DState} {W n : Nat} (h 
       R.state.val.cmd.pend.toNat ≤ n ∧
       W + dpot p R.state.val + 22343 * R.state.val.held.length ≤
         178744 * R.read + 284 * R.emitted.length + 282 * R.state.val.cmd.pend.toNat + winPaid x R + 280 * n) ∧
-    (R.status.stopped = true → W ≤ 178744 * R.read + 284 * R.emitted.length + 5 * (declaredWindow x + 16) + 562 * n + 24042) := by
+    (R.status.stopped = true → W ≤ 178744 * R.read + 284 * R.emitted.length + (declaredWindow x + 272) + 562 * n + 24042) := by
   induction h with
   | start =>
     by_cases hl : limit < fixedCost
@@ -144,7 +144,7 @@ theorem work_inv {limit : Nat} {x : List UInt8} {R : Run DState} {W n : Nat} (h 
     have hrd : (R.after decoder x c).read = R.read + (R.reply decoder x c).used := rfl
     have hs1 : (R.after decoder x c).status = (R.reply decoder x c).status := rfl
     have hs2 : (R.after decoder x c).state = (R.reply decoder x c).state := rfl
-    have hwR : winPaid x R = if R.state.val.tag = .wbits then 0 else 5 * (declaredWindow x + 16) := by
+    have hwR : winPaid x R = if R.state.val.tag = .wbits then 0 else (declaredWindow x + 272) := by
       unfold winPaid
       by_cases ht : R.state.val.tag = .wbits
       · rw [ite_eq_left ⟨ha.running, ht⟩, ite_eq_left ht]
@@ -156,7 +156,7 @@ theorem work_inv {limit : Nat} {x : List UInt8} {R : Run DState} {W n : Nat} (h 
       have hwq : winPaid x R + callWin R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.space ≤
           winPaid x (R.after decoder x c) := by
         have hwR' : winPaid x (R.after decoder x c) =
-            if (R.reply decoder x c).state.val.tag = .wbits then 0 else 5 * (declaredWindow x + 16) := by
+            if (R.reply decoder x c).state.val.tag = .wbits then 0 else (declaredWindow x + 272) := by
           unfold winPaid
           rw [hs1, hs2]
           by_cases ht : (R.reply decoder x c).state.val.tag = .wbits
@@ -179,7 +179,7 @@ theorem work_inv {limit : Nat} {x : List UInt8} {R : Run DState} {W n : Nat} (h 
       exact run_step hW d5 hwq
     · have hc := G
       have hwq : winPaid x R + callWin R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.space ≤
-          5 * (declaredWindow x + 16) := by
+          (declaredWindow x + 272) := by
         rw [hwR]
         by_cases ht : R.state.val.tag = .wbits
         · rw [ite_eq_left ht]
@@ -233,13 +233,13 @@ theorem decoder_potential {limit : Nat} {x : List UInt8} {R : Run DState} (h : R
   exact ⟨p, hrel, hsi, by unfold psiMax; omega⟩
 
 /-- The work bound for one call. A call's work, in the work model, is at most the potential it starts with, at most
-`psiMax`, and 178744 for each byte it uses, 284 for each byte it hands out, five for each byte of the window the stream
-declares and 16 more, and 24042. -/
+`psiMax`, and 178744 for each byte it uses, 284 for each byte it hands out, one for each byte of the window the stream
+declares and 272 more for zero-filling it, and 24042. -/
 theorem decoder_callWork {limit : Nat} {x : List UInt8} {R : Run DState} {c : Call} (h : Reaches decoder limit x R)
     (ha : R.Allowed x c) :
     callWork R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.buf.toByteArray c.space c.final ≤
       psiMax + 178744 * (R.reply decoder x c).used + 284 * ((R.reply decoder x c).output.size - c.buf.length) +
-        5 * (declaredWindow x + 16) + 24042 := by
+        (declaredWindow x + 272) + 24042 := by
   obtain ⟨W, n, hW⟩ := h.withWork
   obtain ⟨p, hrel, hsi, hk, -, -⟩ := (work_inv hW).1 ha.running
   have hG := (call_pays (x := x) (R := R) (c := c) ha.inside ha.fits hrel hsi hk).2
@@ -250,15 +250,16 @@ theorem decoder_callWork {limit : Nat} {x : List UInt8} {R : Run DState} {c : Ca
   omega
 
 /-- The work bound. The work of a run's calls, in the work model, is at most 178744 for each byte they use, 284 for each
-byte they hand out, five for each byte of the window the stream declares and 16 more, 562 for each call, and 24042. -/
+byte they hand out, one for each byte of the window the stream declares and 272 more for zero-filling it, 562 for each
+call, and 24042. -/
 theorem decoder_work {limit : Nat} {x : List UInt8} {R : Run DState} {W n : Nat} (h : ReachesW limit x R W n) :
-    W ≤ 178744 * R.read + 284 * R.emitted.length + 5 * (declaredWindow x + 16) + 562 * n + 24042 := by
+    W ≤ 178744 * R.read + 284 * R.emitted.length + (declaredWindow x + 272) + 562 * n + 24042 := by
   obtain ⟨I1, I2⟩ := work_inv h
   cases hst : R.status.stopped with
   | true => exact I2 hst
   | false =>
     obtain ⟨p, -, -, -, hpn, hW⟩ := I1 hst
-    have hw : winPaid x R ≤ 5 * (declaredWindow x + 16) := by
+    have hw : winPaid x R ≤ (declaredWindow x + 272) := by
       unfold winPaid
       split <;> omega
     exact run_now hW hpn hw

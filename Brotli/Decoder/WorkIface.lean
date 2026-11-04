@@ -167,9 +167,10 @@ theorem call_pays (hin : R.read + c.size ≤ x.length) (hfit : c.pre.length + c.
     exact arith_any (by omega) h2 i
 
 /-- The window a call allocates is the one the stream declares: a call that starts at WBITS and gets past it allocates
-the window its WBITS gives, and any other call allocates none. -/
+the window its WBITS gives, and any other call allocates none. Zero-filling the window takes a round for each byte and
+for each 65536 of them, at most 256. -/
 theorem callWin_le {limit : Nat} (h : Reaches decoder limit x R) (ha : R.Allowed x c) :
-    callWin R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.space ≤ 5 * (declaredWindow x + 16) := by
+    callWin R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.space ≤ declaredWindow x + 272 := by
   have hin := ha.inside
   have hfit := ha.fits
   obtain ⟨p, hrel, -, hro, hreach, -, -⟩ := (order_inv h).running ha.running

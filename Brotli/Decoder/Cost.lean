@@ -36,10 +36,7 @@ theorem zeroExtendW_le : ∀ n : Nat, zeroExtendW n ≤ n + n / 65536 + 1 := by
 /-- The work of `zeroBytes`. -/
 def zbW (k : Nat) : Nat := zeroExtendW k
 
-theorem zbW_le (k : Nat) : zbW k ≤ 5 * k + 66 := by
-  have := zeroExtendW_le k
-  unfold zbW
-  omega
+theorem zbW_le (k : Nat) : zbW k ≤ k + k / 65536 + 1 := zeroExtendW_le k
 
 /-! ### Sums over a code's symbols -/
 
@@ -273,10 +270,10 @@ theorem planFast_parts {lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.siz
       simp [Array.getD_eq_getD_getElem?, Array.getElem?_replicate]
       split <;> rfl)
 
-/-- The builder's work: a few rounds for each symbol, five for each slot of its table, and 10400 more. -/
+/-- The builder's work: seven rounds for each symbol, five for each code word longer than 8 bits, and 3734 more. -/
 theorem buildFastW_le {lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.size} (h64 : n.toNat < 65536)
     (hC : Complete (.canonical (lensOf lens n.toNat))) :
-    buildFastW lens n hn ≤ 8 * n.toNat + 5 * longCount (lensOf lens n.toNat) + 11000 := by
+    buildFastW lens n hn ≤ 7 * n.toNat + 5 * longCount (lensOf lens n.toNat) + 3734 := by
   obtain ⟨hnc, hD⟩ := planFast_parts (hn := hn) h64 hC
   have hfirst := firstCodesOf_spec (hn := hn) h64 hC
   have hlen := lensOf_length hn
@@ -301,6 +298,7 @@ theorem buildFastW_le {lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.size
   have z1 := zbW_le 32
   have z2 := zbW_le 256
   have z3 := zbW_le 512
+  have hLn := longCount_le (lensOf lens n.toNat)
   rw [List.length_range] at w1le w2b
   unfold buildFastW planFastW fillFastW walkW
   rw [w1, w2, hb]
