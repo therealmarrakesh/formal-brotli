@@ -95,7 +95,12 @@ theorem stepWord_pos (k : USize) (st : Cmd) (p : USize) :
 
 /-! A helper on the header's state keeps the position its state holds. -/
 
-theorem clTable_pos (st : Hd) (q : USize) : clTable { st with pos := q } = clTable st := rfl
+/-- A finished code length code is finished at any position. -/
+theorem clDone_pos {st : Hd} (h : ∃ acc, ClDone st acc) (q : USize) : ∃ acc, ClDone { st with pos := q } acc := by
+  obtain ⟨acc, hd⟩ := h
+  exact ⟨acc, { hd with }⟩
+
+theorem clTable_pos (st : Hd) (q : USize) (h : ∃ acc, ClDone st acc) : clTable { st with pos := q } (clDone_pos h q) = clTable st h := rfl
 
 theorem mapSizeFast_pos (st : Hd) (q : USize) : mapSizeFast { st with pos := q } = mapSizeFast st := rfl
 
@@ -132,15 +137,10 @@ theorem catMoveOn_nf (st : Hd) : catMoveOn st = { catMoveOn { st with pos := 0 }
   try dsimp only
   repeat' (first | split_all | rfl)
 
-theorem clFinish_nf (st : Hd) : clFinish st = { clFinish { st with pos := 0 } with pos := st.pos } := by
+theorem clFinish_nf (st : Hd) (h : ∃ acc, ClDone st acc) :
+    clFinish st h = { clFinish { st with pos := 0 } (clDone_pos h 0) with pos := st.pos } := by
   unfold clFinish
-  dsimp only
-  by_cases hc : fitsFast (clTable st) 0 = true
-  · have hc' : fitsFast (clTable { st with pos := 0 }) 0 = true := hc
-    rw [dite_eq_left hc, dite_eq_left hc']
-    rfl
-  · have hc' : ¬ fitsFast (clTable { st with pos := 0 }) 0 = true := hc
-    rw [dite_eq_right hc, dite_eq_right hc']
+  rfl
 
 theorem mapFinish_nf (st : Hd) (n : UInt64) (map : ByteArray) :
     mapFinish st n map = { mapFinish { st with pos := 0 } n map with pos := st.pos } := by
@@ -163,7 +163,7 @@ macro "hd_nf" : tactic => `(tactic| ((try unfold markH) <;> (try dsimp only) <;>
     | exact (mapTableDone_nf _ _).trans rfl
     | exact (tableDone_nf _ _ _).trans rfl
     | exact (catMoveOn_nf _).trans rfl
-    | exact (clFinish_nf _).trans rfl
+    | exact (clFinish_nf _ _).trans rfl
     | exact (mapFinish_nf _ _ _).trans rfl
     | exact (ckFinish_nf _).trans rfl
     | rfl)))
@@ -178,7 +178,8 @@ theorem stepHCode_pos (st : Hd) (p : USize) : stepHCode st p = { stepHCode { st 
   cases st
   hd_nf
 
-theorem stepHClens_pos (st : Hd) (p : USize) : stepHClens st p = { stepHClens { st with pos := 0 } 0 with pos := p } := by
+theorem stepHClens_pos (st : Hd) (p : USize) (h : ∃ g p, HRel st g p) (ht : st.tag = .clens) :
+    stepHClens st p h ht = { stepHClens { st with pos := 0 } 0 (hrel_pos0 h) ht with pos := p } := by
   unfold stepHClens
   cases st
   hd_nf
@@ -238,7 +239,7 @@ theorem stepAtH_pos (st : Hd) (p : USize) (h : ∃ g p, HRel st g p) :
   split
   · exact (stepHCat_pos _ _).trans rfl
   · exact (stepHCode_pos _ _).trans rfl
-  · exact (stepHClens_pos _ _).trans rfl
+  · exact (stepHClens_pos _ _ _ _).trans rfl
   · exact (stepHSyms_pos _ _).trans rfl
   · exact (stepHFirst_pos _ _ _).trans rfl
   · exact (stepHNp_pos _ _).trans rfl

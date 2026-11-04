@@ -19,7 +19,7 @@ def stepAtH (st : Hd) (pos : USize) (h : ∃ g p, HRel st g p) : Hd :=
   match ht : st.tag with
   | .cat => stepHCat st pos
   | .code => stepHCode st pos
-  | .clens => stepHClens st pos
+  | .clens => stepHClens st pos h ht
   | .syms => stepHSyms st pos
   | .first => stepHFirst st pos (first_fits h ht)
   | .np => stepHNp st pos
@@ -40,7 +40,7 @@ macro "stepAtH_tag" ht:ident : tactic =>
 
 theorem stepAtH_cat (ht : st.tag = .cat) : stepAtH st pos h = stepHCat st pos := by stepAtH_tag ht
 theorem stepAtH_code (ht : st.tag = .code) : stepAtH st pos h = stepHCode st pos := by stepAtH_tag ht
-theorem stepAtH_clens (ht : st.tag = .clens) : stepAtH st pos h = stepHClens st pos := by stepAtH_tag ht
+theorem stepAtH_clens (ht : st.tag = .clens) : stepAtH st pos h = stepHClens st pos h ht := by stepAtH_tag ht
 theorem stepAtH_syms (ht : st.tag = .syms) : stepAtH st pos h = stepHSyms st pos := by stepAtH_tag ht
 theorem stepAtH_first (ht : st.tag = .first) : stepAtH st pos h = stepHFirst st pos (first_fits h ht) := by stepAtH_tag ht
 theorem stepAtH_np (ht : st.tag = .np) : stepAtH st pos h = stepHNp st pos := by stepAtH_tag ht

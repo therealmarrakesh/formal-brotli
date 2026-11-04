@@ -909,25 +909,19 @@ theorem wCode {st : Hd} {g : Gh} {o : Owner} {n : Nat} {pos : USize} {g' : Gh} {
   · rw [ite_eq_right h2]
     omega
 
-theorem clFinish_tag {st : Hd} (h : (clFinish st).status = .next) : (clFinish st).tag = .syms := by
-  unfold clFinish at h ⊢
-  dsimp only at h ⊢
-  split
-  · rfl
-  · rename_i hf
-    rw [dite_eq_right hf] at h
-    exact absurd h (fun e => HStatus.noConfusion e)
+theorem clFinish_tag {st : Hd} {h : ∃ acc, ClDone st acc} : (clFinish st h).tag = .syms := rfl
 
 theorem clFinishW_le {st : Hd} (hC : st.clNz ≠ 1 → Complete (.canonical (lensOf st.clLens 18))) :
     clFinishW st ≤ st.size.toNat + st.size.toNat / 65536 + 4209 := by
-  unfold clFinishW fitsW
+  unfold clFinishW
   have := clTableW_le hC
   have := zbW_le st.size.toNat
   omega
 
 theorem wClens {st : Hd} {g : Gh} {o : Owner} {n : Nat} {order : List Nat} {acc : List (Nat × Nat)} {sum : Nat} {pos : USize}
-    {g' : Gh} {p' : HPhase} (hrel : HRel st g (.clens o n order acc sum)) (hn : (stepHClens st pos).status = .next)
-    (hr : HRel (stepHClens st pos) g' p') : stepHClensW st pos + 10 ≤ hcost g (.clens o n order acc sum) p' := by
+    {g' : Gh} {p' : HPhase} {hH : ∃ g p, HRel st g p} {hT : st.tag = .clens} (hrel : HRel st g (.clens o n order acc sum))
+    (hn : (stepHClens st pos hH hT).status = .next)
+    (hr : HRel (stepHClens st pos hH hT) g' p') : stepHClensW st pos + 10 ≤ hcost g (.clens o n order acc sum) p' := by
   obtain ⟨hw, hu, ht, hs, ho, hc⟩ := hrel
   obtain ⟨hs1, hs2, hs3⟩ := hs
   have htag := hr.tag_eq
@@ -936,10 +930,12 @@ theorem wClens {st : Hd} {g : Gh} {o : Owner} {n : Nat} {order : List Nat} {acc 
   unfold stepHClens at htag hn
   dsimp only at htag hn ⊢
   by_cases h18 : st.clIdx = 18
-  · rw [ite_eq_left h18] at htag hn ⊢
+  · rw [dite_eq_left h18] at htag hn
+    rw [ite_eq_left h18]
     by_cases hnz : st.clNz = 1
-    · rw [ite_eq_left hnz] at htag hn ⊢
-      have hsy : ptag p' = .syms := by rw [← htag]; exact clFinish_tag hn
+    · rw [dite_eq_left hnz] at htag hn
+      rw [ite_eq_left hnz]
+      have hsy : ptag p' = .syms := by rw [← htag]; exact clFinish_tag
       rw [hcost_clens, ite_eq_left hsy]
       have := clFinishW_le (st := { st with pos := pos, status := .next }) (fun h => absurd hnz h)
       have e : ({ st with pos := pos, status := .next } : Hd).size = st.size := rfl
@@ -947,9 +943,14 @@ theorem wClens {st : Hd} {g : Gh} {o : Owner} {n : Nat} {order : List Nat} {acc 
       omega
     · rw [ite_eq_right hnz]
       omega
-  · rw [ite_eq_right h18] at htag hn ⊢
+  · rw [dite_eq_right h18] at htag hn
+    rw [ite_eq_right h18]
     have hcomp := clens_complete hw hc h18
-    generalize cclFast ⟨st.word, st.count⟩ = r at htag hn hcomp ⊢
+    generalize hrr : cclFastS ⟨st.word, st.count⟩ = rr at htag hn
+    obtain ⟨r, hr5⟩ := rr
+    have er : r = cclFast ⟨st.word, st.count⟩ := by rw [← cclFastS_val, hrr]
+    rw [← er] at hcomp ⊢
+    dsimp only at htag hn
     cases hsr : r.status with
     | short => dsimp only; omega
     | bad => dsimp only; omega
@@ -959,10 +960,12 @@ theorem wClens {st : Hd} {g : Gh} {o : Owner} {n : Nat} {order : List Nat} {acc 
       by_cases h0 : r.a = 0
       · rw [ite_eq_left h0]
         omega
-      · rw [ite_eq_right h0] at htag hn ⊢
+      · rw [dite_eq_right h0] at htag hn
+        rw [ite_eq_right h0]
         by_cases h32 : st.clSum + ((32 : UInt64) >>> r.a) = 32
-        · rw [ite_eq_left h32] at htag hn ⊢
-          have hsy : ptag p' = .syms := by rw [← htag]; exact clFinish_tag hn
+        · rw [dite_eq_left h32] at htag hn
+          rw [ite_eq_left h32]
+          have hsy : ptag p' = .syms := by rw [← htag]; exact clFinish_tag
           rw [hcost_clens, ite_eq_left hsy]
           have := clFinishW_le (st := { st with
               word := r.word, count := r.count, pos := pos, status := .next
@@ -1108,7 +1111,7 @@ theorem stepAtHW_cost {st : Hd} {g : Gh} {p : HPhase} {pos : USize} {g' : Gh} {p
     rw [e2]
     exact wCode hrel hn hr
   | clens o n order acc sum =>
-    have e1 : stepAtH st pos h = stepHClens st pos := stepAtH_clens htag
+    have e1 : stepAtH st pos h = stepHClens st pos h htag := stepAtH_clens htag
     have e2 : stepAtHW st pos = stepHClensW st pos := by unfold stepAtHW; rw [htag] <;> rfl
     rw [e1] at hn hr
     rw [e2]
@@ -1520,14 +1523,10 @@ theorem tableDone_ni {st : Hd} {s : Bool} {y : UInt64} (h : st.status = .next) :
   · rw [dite_eq_right hn]
     exact fun e => HStatus.noConfusion e
 
-theorem clFinish_ni {st : Hd} (h : st.status = .next) : (clFinish st).status ≠ .needsInput := by
-  unfold clFinish
-  dsimp only
-  split
-  · show st.status ≠ _
-    rw [h]
-    exact fun e => HStatus.noConfusion e
-  · exact fun e => HStatus.noConfusion e
+theorem clFinish_ni {st : Hd} {hd : ∃ acc, ClDone st acc} (h : st.status = .next) : (clFinish st hd).status ≠ .needsInput := by
+  show st.status ≠ _
+  rw [h]
+  exact fun e => HStatus.noConfusion e
 
 theorem ckFinish_ni {st : Hd} (h : st.status = .next) : (ckFinish st).status ≠ .needsInput := by
   unfold ckFinish
@@ -1577,14 +1576,20 @@ theorem stepAtHW_short {st : Hd} {pos : USize} {hH : ∃ g p, HRel st g p} (h : 
     unfold stepHClensW
     dsimp only at h ⊢
     by_cases h18 : st.clIdx = 18
-    · rw [ite_eq_left h18] at h ⊢
+    · rw [dite_eq_left h18] at h
+      rw [ite_eq_left h18]
       by_cases hnz : st.clNz = 1
-      · rw [ite_eq_left hnz] at h
+      · rw [dite_eq_left hnz] at h
         exact absurd h (clFinish_ni rfl)
       · rw [ite_eq_right hnz]
         omega
-    · rw [ite_eq_right h18] at h ⊢
-      generalize cclFast ⟨st.word, st.count⟩ = r at h ⊢
+    · rw [dite_eq_right h18] at h
+      rw [ite_eq_right h18]
+      generalize hrr : cclFastS ⟨st.word, st.count⟩ = rr at h
+      obtain ⟨r, hr5⟩ := rr
+      have er : r = cclFast ⟨st.word, st.count⟩ := by rw [← cclFastS_val, hrr]
+      rw [← er]
+      dsimp only at h
       cases hsr : r.status with
       | short => dsimp only; omega
       | bad => dsimp only; omega
@@ -1594,9 +1599,10 @@ theorem stepAtHW_short {st : Hd} {pos : USize} {hH : ∃ g p, HRel st g p} (h : 
         by_cases h0 : r.a = 0
         · rw [ite_eq_left h0]
           omega
-        · rw [ite_eq_right h0] at h ⊢
+        · rw [dite_eq_right h0] at h
+          rw [ite_eq_right h0]
           by_cases h32 : st.clSum + ((32 : UInt64) >>> r.a) = 32
-          · rw [ite_eq_left h32] at h
+          · rw [dite_eq_left h32] at h
             exact absurd h (clFinish_ni rfl)
           · rw [ite_eq_right h32]
             omega

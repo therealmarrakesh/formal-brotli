@@ -70,23 +70,6 @@ theorem hrest_clens_cons (g : Gh) (o : Owner) (size : Nat) (sym : Nat) (rest : L
 
 end
 
-/-- The code length code's table. -/
-def clTable (st : Hd) : ByteArray :=
-  if st.clNz = 1 then buildSingleFast ByteArray.empty st.clSym
-  else if hn : (USize.ofNat 18).toNat ≤ st.clLens.size then buildFast ByteArray.empty st.clLens (USize.ofNat 18) hn
-  else ByteArray.empty
-
-/-- Goes on from the code length code to a code's lengths. -/
-def clFinish (st : Hd) : Hd :=
-  let t := clTable st
-  if h : fitsFast t 0 = true then
-    { st with
-      tag := .syms, lens := zeroBytes st.size.toNat, ln := 0, prevLen := 8, repSym := 0, repCount := 0, symSum := 0
-      clt := ⟨t, (fitsFast_iff.mp h).1, by
-        have := (fitsFast_iff.mp h).2
-        rwa [usize_zero']⟩ }
-  else { st with status := .bad }
-
 /-- What's needed of a finished code length code. -/
 structure ClDone (st : Hd) (acc : List (Nat × Nat)) : Prop where
   symLt : st.clSym.toNat < 18
@@ -96,6 +79,22 @@ structure ClDone (st : Hd) (acc : List (Nat × Nat)) : Prop where
   lens : st.clNz ≠ 1 → LensIs st.clLens 18 acc
   keys : (acc.map (·.1)).Nodup
   small : ∀ p ∈ acc, p.1 < 18 ∧ p.2 ≤ 5
+
+private theorem usize18 : (USize.ofNat 18).toNat = 18 := by
+  rw [USize.toNat_ofNat', ← USize.size_eq_two_pow]
+  have := USize.le_size
+  exact Nat.mod_eq_of_lt (by omega)
+
+/-- A finished code length code's lengths are all there. -/
+theorem ClDone.len18 {st : Hd} {acc : List (Nat × Nat)} (hd : ClDone st acc) (h1 : st.clNz ≠ 1) :
+    (USize.ofNat 18).toNat ≤ st.clLens.size := by
+  rw [usize18, (hd.lens h1).sz]
+  exact Nat.le_refl _
+
+/-- The code length code's table. -/
+def clTable (st : Hd) (h : ∃ acc, ClDone st acc) : ByteArray :=
+  if h1 : st.clNz = 1 then buildSingleFast ByteArray.empty st.clSym
+  else buildFast ByteArray.empty st.clLens (USize.ofNat 18) (by obtain ⟨_, hd⟩ := h; exact hd.len18 h1)
 
 private theorem mem_lengthsOf_le {size : Nat} {P : List (Nat × Nat)} (h : ∀ p ∈ P, p.2 ≤ 5) : ∀ l ∈ lengthsOf size P, l ≤ 15 := by
   intro l hl
@@ -109,17 +108,13 @@ private theorem mem_lengthsOf_le {size : Nat} {P : List (Nat × Nat)} (h : ∀ p
     simp only [Option.map_some, Option.getD_some]
     omega
 
-/-- A finished code length code's table. -/
-theorem clFinish_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {acc : List (Nat × Nat)}
-    (hw : (BitBuffer.mk st.word st.count).Wf) (hu : Upto st.d g (ownerStage o)) (hs : SizeOk st size) (ho : OwnerRel st g size o)
-    (hd : ClDone st acc) : HRel (clFinish st) g (.syms o size (codeLengthCode acc) ⟨[], 8, none⟩) ∧
-      (clFinish st).status = st.status ∧ (clFinish st).word = st.word ∧ (clFinish st).count = st.count ∧ (clFinish st).pos = st.pos ∧
-      (clFinish st).d = st.d ∧ (HSize st → HSize (clFinish st)) := by
-  have hbuilt : Built ByteArray.empty (clTable st) (codeLengthCode acc) ∧ (clTable st).size ≤ 1576 ∧ Complete (codeLengthCode acc) ∧
+/-- A finished code length code's table is the code's. -/
+theorem clTable_built {st : Hd} {acc : List (Nat × Nat)} (hd : ClDone st acc) (h : ∃ acc, ClDone st acc) :
+    Built ByteArray.empty (clTable st h) (codeLengthCode acc) ∧ (clTable st h).size ≤ 1576 ∧ Complete (codeLengthCode acc) ∧
       (codeLengthCode acc).Symbols 18 := by
     unfold clTable
     by_cases h1 : st.clNz = 1
-    · rw [ite_eq_left h1]
+    · rw [dite_eq_left h1]
       obtain ⟨l, hl⟩ := hd.one h1
       have hc : codeLengthCode acc = .single st.clSym.toNat := by
         unfold codeLengthCode
@@ -127,16 +122,10 @@ theorem clFinish_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {acc : List (Nat
       obtain ⟨b1, b2⟩ := built_single (t := ByteArray.empty) (sym := st.clSym) (by have := hd.symLt; omega) (by decide) (by decide)
       rw [hc]
       exact ⟨b1, by rw [b2]; decide, trivial, hd.symLt⟩
-    · rw [ite_eq_right h1]
+    · rw [dite_eq_right h1]
       have hl := hd.lens h1
-      have hn : (USize.ofNat 18).toNat = 18 := by
-        rw [USize.toNat_ofNat', ← USize.size_eq_two_pow]
-        have := USize.le_size
-        exact Nat.mod_eq_of_lt (by omega)
-      have hnle : (USize.ofNat 18).toNat ≤ st.clLens.size := by
-        rw [hn, hl.sz]
-        exact Nat.le_refl _
-      rw [dite_eq_left hnle]
+      have hn : (USize.ofNat 18).toNat = 18 := usize18
+      have hnle : (USize.ofNat 18).toNat ≤ st.clLens.size := hd.len18 h1
       have hc : codeLengthCode acc = .canonical (lensOf st.clLens (USize.ofNat 18).toNat) := by
         rw [hn, hl.eq]
         unfold codeLengthCode
@@ -159,11 +148,31 @@ theorem clFinish_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {acc : List (Nat
       rw [b2]
       show 0 + tableBytes (.canonical (lensOf st.clLens (USize.ofNat 18).toNat)) ≤ _
       omega
-  obtain ⟨hB, hsize, hC, hsy⟩ := hbuilt
-  have hfit : fitsFast (clTable st) 0 = true := fitsFast_iff.mpr ⟨by omega, hB.ok.toTableFits⟩
+
+/-- A finished code length code's table fits. -/
+theorem clTable_fits {st : Hd} (h : ∃ acc, ClDone st acc) :
+    (clTable st h).size < 2 ^ 32 ∧ TableFits (clTable st h) (USize.ofNat 0).toNat := by
+  obtain ⟨acc, hd⟩ := id h
+  obtain ⟨hB, hsize, _, _⟩ := clTable_built hd h
+  rw [usize_zero']
+  exact ⟨by omega, hB.ok.toTableFits⟩
+
+/-- Goes on from the code length code to a code's lengths. -/
+def clFinish (st : Hd) (h : ∃ acc, ClDone st acc) : Hd :=
+  { st with
+    tag := .syms, lens := zeroBytes st.size.toNat, ln := 0, prevLen := 8, repSym := 0, repCount := 0, symSum := 0
+    clt := ⟨clTable st h, (clTable_fits h).1, (clTable_fits h).2⟩ }
+
+/-- A finished code length code's table. -/
+theorem clFinish_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {acc : List (Nat × Nat)}
+    (hw : (BitBuffer.mk st.word st.count).Wf) (hu : Upto st.d g (ownerStage o)) (hs : SizeOk st size) (ho : OwnerRel st g size o)
+    (hd : ClDone st acc) {h : ∃ acc, ClDone st acc} :
+    HRel (clFinish st h) g (.syms o size (codeLengthCode acc) ⟨[], 8, none⟩) ∧
+      (clFinish st h).status = st.status ∧ (clFinish st h).word = st.word ∧ (clFinish st h).count = st.count ∧
+      (clFinish st h).pos = st.pos ∧ (clFinish st h).d = st.d ∧ (HSize st → HSize (clFinish st h)) := by
+  obtain ⟨hB, hsize, hC, hsy⟩ := clTable_built hd h
   unfold clFinish
   dsimp only
-  rw [dite_eq_left hfit]
   obtain ⟨hs1, hs2, hs3⟩ := hs
   have hzsize : (zeroBytes st.size.toNat).size = size := by
     rw [zeroBytes_size (by omega), hs1]
@@ -186,36 +195,6 @@ theorem clFinish_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {acc : List (Nat
     sumLe := by simp [lengthSum] }
 
 /-! ### The place reading them -/
-
-/-- The place at the next code length of a code length symbol. -/
-def stepHClens (st : Hd) (pos : USize) : Hd :=
-  let idx := st.clIdx
-  if idx = 18 then
-    if st.clNz = 1 then clFinish { st with pos := pos, status := .next }
-    else markH st pos .bad
-  else
-    let r := cclFast ⟨st.word, st.count⟩
-    match r.status with
-    | .short => markH st pos .needsInput
-    | .bad => markH st pos .bad
-    | .ok =>
-      let len := r.a
-      if len = 0 then { st with word := r.word, count := r.count, pos := pos, status := .next, clIdx := idx + 1 }
-      else
-        let sym := (getU clOrderLut idx.toUSize).toUInt64
-        let sum := st.clSum + ((32 : UInt64) >>> len)
-        if sum = 32 then
-          clFinish { st with
-            word := r.word, count := r.count, pos := pos, status := .next, clLens := setLen st.clLens sym len, clSum := sum, clNz := st.clNz + 1
-            clSym := sym, clIdx := idx + 1 }
-        else if 32 < sum then markH st pos .bad
-        else
-          let lens := st.clLens
-          let nz := st.clNz + 1
-          let st0 := clearClLens st
-          { st0 with
-            word := r.word, count := r.count, pos := pos, status := .next, clLens := setLen lens sym len, clSum := sum, clNz := nz
-            clSym := sym, clIdx := idx + 1 }
 
 private theorem codeOrder_ok' : codeLengthOrder.Nodup ∧ ∀ x ∈ codeLengthOrder, x < 18 := by
   decide +kernel
@@ -297,12 +276,150 @@ theorem clens_complete {st : Hd} {order : List Nat} {acc : List (Nat × Nat)} {s
   refine ⟨mem_lengthsOf_le (fun p hp => (happ p hp).2.2), ?_⟩
   rw [lengthSum_lengthsOf_eq 18 _ hkeys (fun p hp => (happ p hp).1), hsumP, h32']
 
+/-- A state at a code length code's lengths stands for a place there. -/
+theorem clens_ex {st : Hd} (h : ∃ g p, HRel st g p) (ht : st.tag = .clens) :
+    ∃ g o size order acc sum, HRel st g (.clens o size order acc sum) := by
+  obtain ⟨g, p, hr⟩ := h
+  cases p with
+  | clens o size order acc sum => exact ⟨g, o, size, order, acc, sum, hr⟩
+  | np => exact absurd (hr.2.2.symm.trans ht) (fun e => HTag.noConfusion e)
+  | _ => exact absurd (hr.2.2.1.symm.trans ht) (fun e => HTag.noConfusion e)
+
+/-- With all eighteen lengths read and one of them non-zero, the code length code is finished. -/
+theorem clens_done0 {st : Hd} {pos : USize} (h : ∃ g p, HRel st g p) (ht : st.tag = .clens) (h18 : st.clIdx = 18)
+    (hnz : st.clNz = 1) : ∃ acc, ClDone { st with pos := pos, status := .next } acc := by
+  obtain ⟨g, o, size, order, acc, sum, hrel⟩ := clens_ex h ht
+  obtain ⟨_, _, _, _, _, hc⟩ := hrel
+  have hnil : order = [] := by
+    rw [hc.orderOk, h18]
+    rfl
+  subst hnil
+  have hlen1 : (acc.filter (·.2 != 0)).length = 1 := by
+    rw [← hc.nz, hnz]
+    rfl
+  exact ⟨acc, {
+    symLt := hc.symLt
+    one := fun _ => hc.nzOne hlen1
+    sz := fun e => absurd hnz e
+    sum := fun e => absurd hnz e
+    lens := fun e => absurd hnz e
+    keys := hc.keys
+    small := fun p hp => ⟨(hc.apart p hp).1, (hc.apart p hp).2.2⟩ }⟩
+
+/-- A non-zero length that fills the code space finishes the code length code. -/
+theorem clens_done1 {st : Hd} {pos : USize} {r : Rd} (h : ∃ g p, HRel st g p) (ht : st.tag = .clens) (h18 : ¬ st.clIdx = 18)
+    (hr5 : r.a.toNat ≤ 5) (h0 : ¬ r.a = 0) (h32 : st.clSum + ((32 : UInt64) >>> r.a) = 32) :
+    ∃ acc, ClDone { st with
+      word := r.word, count := r.count, pos := pos, status := .next
+      clLens := setLen st.clLens (getU clOrderLut st.clIdx.toUSize).toUInt64 r.a, clSum := st.clSum + ((32 : UInt64) >>> r.a)
+      clNz := st.clNz + 1, clSym := (getU clOrderLut st.clIdx.toUSize).toUInt64, clIdx := st.clIdx + 1 } acc := by
+  obtain ⟨g, o, size, order, acc, sum, hrel⟩ := clens_ex h ht
+  obtain ⟨_, _, _, _, _, hc⟩ := hrel
+  have horder := hc.orderOk
+  have hidxLe := hc.le
+  have hidx18 : st.clIdx.toNat ≠ 18 := fun e => h18 (UInt64.toNat_inj.mp e)
+  have hidxLt : st.clIdx.toNat < 18 := by omega
+  obtain ⟨x, hx, hx18, hlut⟩ := clOrderLut_at hidxLt
+  obtain ⟨hL1, hL2⟩ := List.getElem?_eq_some_iff.mp hx
+  have horder' : order = x :: codeLengthOrder.drop (st.clIdx.toNat + 1) := by
+    rw [horder, List.drop_eq_getElem_cons hL1, hL2]
+  have hnodup : (x :: codeLengthOrder.drop (st.clIdx.toNat + 1)).Nodup := by
+    rw [← horder', horder]
+    exact codeOrder_ok'.1.sublist (List.drop_sublist _ _)
+  generalize codeLengthOrder.drop (st.clIdx.toNat + 1) = rest at horder' hnodup
+  subst horder'
+  have happ := apart_push hx18 hnodup hc.apart hr5
+  have hkeys := keys_push hc.keys (fun p hp => (hc.apart p hp).2.1) r.a.toNat
+  have h0' : r.a.toNat ≠ 0 := fun e => h0 (UInt64.toNat_inj.mp e)
+  have hsym : (getU clOrderLut st.clIdx.toUSize).toUInt64.toNat = x := by
+    rw [UInt8.toNat_toUInt64, getU_toNat, word_toUSize (by omega), hlut]
+  have hsh : ((32 : UInt64) >>> r.a).toNat = 32 >>> r.a.toNat := by
+    rw [UInt64.toNat_shiftRight, Nat.mod_eq_of_lt (show r.a.toNat < 64 by omega)]
+    rfl
+  have hshLt : 32 >>> r.a.toNat ≤ 32 := by
+    rw [Nat.shiftRight_eq_div_pow]
+    exact Nat.div_le_self _ _
+  have hsumU : (st.clSum + ((32 : UInt64) >>> r.a)).toNat = sum + 32 >>> r.a.toNat := by
+    rw [UInt64.toNat_add, hc.sumOk, hsh]
+    exact Nat.mod_eq_of_lt (by have := hc.sumLt; omega)
+  have hnz1 : (st.clNz + 1).toNat = (acc.filter (·.2 != 0)).length + 1 := by
+    have hle := hc.nzLe
+    rw [UInt64.toNat_add, show (1 : UInt64).toNat = 1 from rfl, Nat.mod_eq_of_lt (by omega), hc.nz]
+  have hfilt : (acc ++ [(x, r.a.toNat)]).filter (·.2 != 0) = acc.filter (·.2 != 0) ++ [(x, r.a.toNat)] := by
+    simp [h0']
+  have hlensP : LensIs (setLen st.clLens (getU clOrderLut st.clIdx.toUSize).toUInt64 r.a) 18 (acc ++ [(x, r.a.toNat)]) := by
+    have := LensIs.push (⟨hc.size, hc.lens⟩ : LensIs st.clLens 18 acc) (getU clOrderLut st.clIdx.toUSize).toUInt64 r.a (by rw [hsym]; exact hx18)
+      (by decide) (by omega) (fun p hp e => (hc.apart p hp).2.1 (by rw [e, hsym]; simp))
+    rwa [hsym] at this
+  have hsumP : lengthSum ((acc ++ [(x, r.a.toNat)]).map (·.2)) = 1024 * (sum + 32 >>> r.a.toNat) := by
+    rw [sum_push, ite_eq_right h0', hc.sumEq, len_scale _ (by omega) h0', Nat.mul_add]
+  have h32' : sum + 32 >>> r.a.toNat = 32 := by
+    rw [← hsumU, h32]
+    rfl
+  refine ⟨acc ++ [(x, r.a.toNat)], {
+    symLt := ?_
+    one := ?_
+    sz := ?_
+    sum := fun _ => by rw [hsumP, h32']
+    lens := fun _ => hlensP
+    keys := hkeys
+    small := fun p hp => ⟨(happ p hp).1, (happ p hp).2.2⟩ }⟩
+  · show (getU clOrderLut st.clIdx.toUSize).toUInt64.toNat < 18
+    rw [hsym]
+    exact hx18
+  · intro e
+    have h1 : (st.clNz + 1).toNat = 1 := by rw [show st.clNz + 1 = 1 from e]; rfl
+    rw [hnz1] at h1
+    have hz : acc.filter (·.2 != 0) = [] := List.length_eq_zero_iff.mp (by omega)
+    refine ⟨r.a.toNat, ?_⟩
+    rw [hfilt, hz, hsym]
+    rfl
+  · intro e
+    rw [hfilt]
+    simp only [List.length_append, List.length_singleton]
+    intro h2
+    have h1 : (st.clNz + 1).toNat = 1 := by rw [hnz1]; omega
+    exact e (UInt64.toNat_inj.mp h1)
+
+/-- The place at the next code length of a code length symbol. -/
+def stepHClens (st : Hd) (pos : USize) (h : ∃ g p, HRel st g p) (ht : st.tag = .clens) : Hd :=
+  if h18 : st.clIdx = 18 then
+    if hnz : st.clNz = 1 then clFinish { st with pos := pos, status := .next } (clens_done0 h ht h18 hnz)
+    else markH st pos .bad
+  else
+    match cclFastS ⟨st.word, st.count⟩ with
+    | ⟨r, hr5⟩ =>
+    match r.status with
+    | .short => markH st pos .needsInput
+    | .bad => markH st pos .bad
+    | .ok =>
+      if h0 : r.a = 0 then { st with word := r.word, count := r.count, pos := pos, status := .next, clIdx := st.clIdx + 1 }
+      else
+        if h32 : st.clSum + ((32 : UInt64) >>> r.a) = 32 then
+          clFinish { st with
+            word := r.word, count := r.count, pos := pos, status := .next
+            clLens := setLen st.clLens (getU clOrderLut st.clIdx.toUSize).toUInt64 r.a, clSum := st.clSum + ((32 : UInt64) >>> r.a)
+            clNz := st.clNz + 1, clSym := (getU clOrderLut st.clIdx.toUSize).toUInt64, clIdx := st.clIdx + 1 }
+            (clens_done1 h ht h18 hr5 h0 h32)
+        else
+          let sym := (getU clOrderLut st.clIdx.toUSize).toUInt64
+          let sum := st.clSum + ((32 : UInt64) >>> r.a)
+          if 32 < sum then markH st pos .bad
+          else
+            let lens := st.clLens
+            let nz := st.clNz + 1
+            let st0 := clearClLens st
+            { st0 with
+              word := r.word, count := r.count, pos := pos, status := .next, clLens := setLen lens sym r.a, clSum := sum, clNz := nz
+              clSym := sym, clIdx := st.clIdx + 1 }
+
 section
 variable {α : Type} {K : HK α} {a : ByteArray} {stop : USize}
 
 theorem stepHClens_ok {o : Owner} {size : Nat} {order : List Nat} {acc : List (Nat × Nat)} {sum : Nat} {st : Hd} {g : Gh} {pos : USize}
-    (hrel : HRel st g (.clens o size order acc sum)) (hp : pos.toNat ≤ stop.toNat) (hfull : 56 < st.count.toNat ∨ pos = stop) :
-    HStepOk K a stop g (.clens o size order acc sum) st pos (stepHClens st pos) := by
+    (hrel : HRel st g (.clens o size order acc sum)) (hp : pos.toNat ≤ stop.toNat) (hfull : 56 < st.count.toNat ∨ pos = stop)
+    {hH : ∃ g p, HRel st g p} {hT : st.tag = .clens} :
+    HStepOk K a stop g (.clens o size order acc sum) st pos (stepHClens st pos hH hT) := by
   obtain ⟨hw, hu, ht, hs, ho, hc⟩ := hrel
   have hrel : HRel st g (.clens o size order acc sum) := ⟨hw, hu, ht, hs, ho, hc⟩
   have horder := hc.orderOk
@@ -310,34 +427,35 @@ theorem stepHClens_ok {o : Owner} {size : Nat} {order : List Nat} {acc : List (N
   unfold stepHClens
   dsimp only
   by_cases h18 : st.clIdx = 18
-  · rw [ite_eq_left h18]
+  · rw [dite_eq_left h18]
     have hnil : order = [] := by
       rw [horder, h18]
       rfl
     subst hnil
     by_cases hnz : st.clNz = 1
-    · rw [ite_eq_left hnz]
+    · rw [dite_eq_left hnz]
       have hlen1 : (acc.filter (·.2 != 0)).length = 1 := by
         rw [← hc.nz, hnz]
         rfl
       have hdone : ClDone { st with pos := pos, status := .next } acc :=
         { symLt := hc.symLt, one := fun _ => hc.nzOne hlen1, sz := fun h => absurd hnz h, sum := fun h => absurd hnz h,
           lens := fun h => absurd hnz h, keys := hc.keys, small := fun p hp => ⟨(hc.apart p hp).1, (hc.apart p hp).2.2⟩ }
-      obtain ⟨h1, h2, h3, h4, h5, h6, h7⟩ := clFinish_ok (st := { st with pos := pos, status := .next }) hw hu hs ho hdone
-      have hsz : HSize st → HSize (clFinish { st with pos := pos, status := .next }) := fun h =>
+      obtain ⟨h1, h2, h3, h4, h5, h6, h7⟩ := clFinish_ok (st := { st with pos := pos, status := .next }) (h := ⟨acc, hdone⟩)
+        hw hu hs ho hdone
+      have hsz : HSize st → HSize (clFinish { st with pos := pos, status := .next } ⟨acc, hdone⟩) := fun h =>
         h7 ⟨h.fill, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase, h.work⟩
-      generalize clFinish { st with pos := pos, status := .next } = r2 at h1 h2 h3 h4 h5 h6 hsz
+      generalize clFinish { st with pos := pos, status := .next } ⟨acc, hdone⟩ = r2 at h1 h2 h3 h4 h5 h6 hsz
       refine HStepOk.ofNext (hm := HMove.ofD h6 hsz (Nat.le_refl _)) h2 h1 (by rw [h5]; exact Nat.le_refl _) (by rw [h5]; exact hp)
         (fun F => ?_) (fun F => ?_)
       · rw [hrest_clens_nil, ite_eq_left hlen1, avail_mk, avail_mk, h3, h4, h5]
       · show (if (acc.filter (·.2 != 0)).length = 1 then _ else _) = _
         rw [ite_eq_left hlen1, avail_mk, avail_mk, h3, h4, h5]
-    · rw [ite_eq_right hnz]
+    · rw [dite_eq_right hnz]
       have hlen1 : ¬ (acc.filter (·.2 != 0)).length = 1 := by
         rw [← hc.nz]
         exact fun e => hnz (UInt64.toNat_inj.mp e)
       exact HStepOk.ofBad rfl (fun F => by rw [hrest_clens_nil, ite_eq_right hlen1])
-  rw [ite_eq_right h18]
+  rw [dite_eq_right h18]
   have hidx18 : st.clIdx.toNat ≠ 18 := fun e => h18 (UInt64.toNat_inj.mp e)
   have hidxLt : st.clIdx.toNat < 18 := by omega
   obtain ⟨x, hx, hx18, hlut⟩ := clOrderLut_at hidxLt
@@ -361,7 +479,11 @@ theorem stepHClens_ok {o : Owner} {size : Nat} {order : List Nat} {acc : List (N
     else hrest K g (.clens o size rest (acc ++ [(x, v)]) (sum + (32 >>> v))) b) (fun bs => hrest_clens_cons K g o size x rest acc sum bs)
   have hval := R.ok
   have hsh0 := R.short
-  generalize cclFast ⟨st.word, st.count⟩ = r at Rok Rshort Rbad hval hsh0
+  generalize hrr : cclFastS ⟨st.word, st.count⟩ = rr
+  obtain ⟨r, hr5⟩ := rr
+  have er : r = cclFast ⟨st.word, st.count⟩ := by rw [← cclFastS_val, hrr]
+  rw [← er] at Rok Rshort Rbad hval hsh0
+  dsimp only
   cases hsr : r.status with
   | short =>
     obtain ⟨_, _, h3, h4⟩ := Rshort hsr
@@ -377,7 +499,7 @@ theorem stepHClens_ok {o : Owner} {size : Nat} {order : List Nat} {acc : List (N
     have happ := apart_push hx18 hnodup hc.apart hlen5
     have hkeys := keys_push hc.keys (fun p hp => (hc.apart p hp).2.1) r.a.toNat
     by_cases h0 : r.a = 0
-    · rw [ite_eq_left h0]
+    · rw [dite_eq_left h0]
       have h0' : r.a.toNat = 0 := by rw [h0]; rfl
       rw [h0'] at happ hkeys
       have hrelN : ClRel { st with word := r.word, count := r.count, pos := pos, status := .next, clIdx := st.clIdx + 1 } rest (acc ++ [(x, 0)]) sum :=
@@ -414,7 +536,7 @@ theorem stepHClens_ok {o : Owner} {size : Nat} {order : List Nat} {acc : List (N
         rw [readIn_some ((hval hsr).2 _)]
         simp only [h0', ↓reduceIte]
         rfl
-    · rw [ite_eq_right h0]
+    · rw [dite_eq_right h0]
       have h0' : r.a.toNat ≠ 0 := fun e => h0 (UInt64.toNat_inj.mp e)
       have hsym : (getU clOrderLut st.clIdx.toUSize).toUInt64.toNat = x := by
         rw [UInt8.toNat_toUInt64, getU_toNat, word_toUSize (by omega), hlut]
@@ -441,7 +563,7 @@ theorem stepHClens_ok {o : Owner} {size : Nat} {order : List Nat} {acc : List (N
       have hsumP : lengthSum ((acc ++ [(x, r.a.toNat)]).map (·.2)) = 1024 * (sum + 32 >>> r.a.toNat) := by
         rw [sum_push, ite_eq_right h0', hc.sumEq, len_scale _ (by omega) h0', Nat.mul_add]
       by_cases h32 : st.clSum + ((32 : UInt64) >>> r.a) = 32
-      · rw [ite_eq_left h32]
+      · rw [dite_eq_left h32]
         have h32' : sum + 32 >>> r.a.toNat = 32 := by
           rw [← hsumU, h32]
           rfl
@@ -472,16 +594,18 @@ theorem stepHClens_ok {o : Owner} {size : Nat} {order : List Nat} {acc : List (N
         obtain ⟨h1, h2, h3, h4, h5, h6, h7⟩ := clFinish_ok (st := { st with
             word := r.word, count := r.count, pos := pos, status := .next
             clLens := setLen st.clLens (getU clOrderLut st.clIdx.toUSize).toUInt64 r.a, clSum := st.clSum + ((32 : UInt64) >>> r.a)
-            clNz := st.clNz + 1, clSym := (getU clOrderLut st.clIdx.toUSize).toUInt64, clIdx := st.clIdx + 1 }) hw2 hu hs ho hdone
+            clNz := st.clNz + 1, clSym := (getU clOrderLut st.clIdx.toUSize).toUInt64, clIdx := st.clIdx + 1 })
+          (h := ⟨_, hdone⟩) hw2 hu hs ho hdone
         have hsz : HSize st → HSize (clFinish { st with
             word := r.word, count := r.count, pos := pos, status := .next
             clLens := setLen st.clLens (getU clOrderLut st.clIdx.toUSize).toUInt64 r.a, clSum := st.clSum + ((32 : UInt64) >>> r.a)
-            clNz := st.clNz + 1, clSym := (getU clOrderLut st.clIdx.toUSize).toUInt64, clIdx := st.clIdx + 1 }) := fun h =>
+            clNz := st.clNz + 1, clSym := (getU clOrderLut st.clIdx.toUSize).toUInt64, clIdx := st.clIdx + 1 } ⟨_, hdone⟩) := fun h =>
           h7 ⟨h.fill, h.lens, Nat.le_of_eq hlensP.sz, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase, h.work⟩
         generalize clFinish { st with
             word := r.word, count := r.count, pos := pos, status := .next
             clLens := setLen st.clLens (getU clOrderLut st.clIdx.toUSize).toUInt64 r.a, clSum := st.clSum + ((32 : UInt64) >>> r.a)
-            clNz := st.clNz + 1, clSym := (getU clOrderLut st.clIdx.toUSize).toUInt64, clIdx := st.clIdx + 1 } = r2 at h1 h2 h3 h4 h5 h6 hsz
+            clNz := st.clNz + 1, clSym := (getU clOrderLut st.clIdx.toUSize).toUInt64, clIdx := st.clIdx + 1 } ⟨_, hdone⟩ = r2
+          at h1 h2 h3 h4 h5 h6 hsz
         refine HStepOk.ofNext (hm := HMove.ofD h6 hsz (Nat.le_refl _)) h2 h1 (by rw [h5]; exact Nat.le_refl _) (by rw [h5]; exact hp)
           (fun F => ?_) (fun F => ?_)
         · rw [avail_mk, hN]
@@ -494,7 +618,7 @@ theorem stepHClens_ok {o : Owner} {size : Nat} {order : List Nat} {acc : List (N
           simp only [h0', h32', ↓reduceIte]
           rw [avail_mk, h3, h4, h5]
           rfl
-      · rw [ite_eq_right h32]
+      · rw [dite_eq_right h32]
         have h32' : ¬ sum + 32 >>> r.a.toNat = 32 := by
           rw [← hsumU]
           exact fun e => h32 (UInt64.toNat_inj.mp e)

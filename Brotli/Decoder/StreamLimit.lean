@@ -76,9 +76,8 @@ theorem ckFinish_lim : ckFinish (hdSet st a) = hdSet (ckFinish st) a := by
 theorem installTable_lim (base : UInt64) : installTable (hdSet st a) base = hdSet (installTable st base) a := by
   simp only [installTable, clearFill]; lim_tac
 
-theorem clFinish_lim : clFinish (hdSet st a) = hdSet (clFinish st) a := by
-  show clFinish { st with d := { st.d with arenaMax := a } } = _
-  simp only [clFinish, clTable]; lim_tac
+theorem clFinish_lim (h1 : ∃ acc, ClDone (hdSet st a) acc) (h2 : ∃ acc, ClDone st acc) :
+    clFinish (hdSet st a) h1 = hdSet (clFinish st h2) a := rfl
 
 theorem mapTableDone_lim (t : ByteArray) : mapTableDone (hdSet st a) t = hdSet (mapTableDone st t) a := by
   simp only [mapTableDone, mapSizeFast]; lim_tac
@@ -174,15 +173,19 @@ theorem stepHImtf_lim : HLim (stepHImtf (hdSet st a) pos) (stepHImtf st pos) := 
 theorem stepHCodes_lim : stepHCodes (hdSet st a) pos = hdSet (stepHCodes st pos) a := by
   simp only [stepHCodes, ckFinish, ckSizeFast]; lim_tac
 
-theorem clFinish_lim' {L : Hd} (h : L = hdSet st a) : clFinish L = hdSet (clFinish st) a := h ▸ clFinish_lim st a
+theorem clFinish_lim' {L : Hd} (h : L = hdSet st a) (h1 : ∃ acc, ClDone L acc) (h2 : ∃ acc, ClDone st acc) :
+    clFinish L h1 = hdSet (clFinish st h2) a := by
+  subst h
+  exact clFinish_lim st a h1 h2
 
 theorem tableDone_lim' {L : Hd} (h : L = hdSet st a) (single : Bool) (sym : UInt64) :
     HLim (tableDone L single sym) (tableDone st single sym) := h ▸ tableDone_lim st a single sym
 
-theorem stepHClens_lim : stepHClens (hdSet st a) pos = hdSet (stepHClens st pos) a := by
-  show stepHClens { st with d := { st.d with arenaMax := a } } pos = _
+theorem stepHClens_lim (h1 : ∃ g p, HRel (hdSet st a) g p) (h2 : ∃ g p, HRel st g p) (ht : st.tag = .clens) :
+    stepHClens (hdSet st a) pos h1 ht = hdSet (stepHClens st pos h2 ht) a := by
+  show stepHClens { st with d := { st.d with arenaMax := a } } pos h1 ht = _
   simp only [stepHClens, markH, clearClLens]
-  (repeat' split) <;> first | exact clFinish_lim' _ a (by rfl) | rfl | (simp_all [hdSet]; done)
+  (repeat' split) <;> first | exact clFinish_lim' _ a (by rfl) _ _ | rfl | (simp_all [hdSet]; done)
 
 theorem stepHCode_lim : HLim (stepHCode (hdSet st a) pos) (stepHCode st pos) := by
   show HLim (stepHCode { st with d := { st.d with arenaMax := a } } pos) _
@@ -209,7 +212,7 @@ theorem stepAtH_lim (h1 : ∃ g p, HRel (hdSet st a) g p) (h2 : ∃ g p, HRel st
   cases ht : st.tag with
   | cat => rw [stepAtH_cat (st := hdSet st a) ht, stepAtH_cat ht]; exact HLim.same (stepHCat_lim st a pos)
   | code => rw [stepAtH_code (st := hdSet st a) ht, stepAtH_code ht]; exact stepHCode_lim st a pos
-  | clens => rw [stepAtH_clens (st := hdSet st a) ht, stepAtH_clens ht]; exact HLim.same (stepHClens_lim st a pos)
+  | clens => rw [stepAtH_clens (st := hdSet st a) ht, stepAtH_clens ht]; exact HLim.same (stepHClens_lim st a pos _ _ ht)
   | syms => rw [stepAtH_syms (st := hdSet st a) ht, stepAtH_syms ht]; exact stepHSyms_lim st a pos
   | first => rw [stepAtH_first (st := hdSet st a) ht, stepAtH_first ht]; exact HLim.same (stepHFirst_lim st a pos _)
   | np => rw [stepAtH_np (st := hdSet st a) ht, stepAtH_np ht]; exact HLim.same (stepHNp_lim st a pos)

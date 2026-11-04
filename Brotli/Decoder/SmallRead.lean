@@ -316,6 +316,18 @@ def cclFast (b0 : BitBuffer) : Rd :=
     else Rd.short b0
   else Rd.short b0
 
+/-- A code length code's length is at most 5, whatever the bits. -/
+theorem cclFast_le (b0 : BitBuffer) : (cclFast b0).a.toNat ≤ 5 := by
+  unfold cclFast Rd.ok Rd.short
+  dsimp only
+  repeat' split
+  all_goals (dsimp only; decide)
+
+/-- `cclFast`, with its bound. -/
+@[inline] def cclFastS (b0 : BitBuffer) : { r : Rd // r.a.toNat ≤ 5 } := ⟨cclFast b0, cclFast_le b0⟩
+
+theorem cclFastS_val (b0 : BitBuffer) : (cclFastS b0).1 = cclFast b0 := rfl
+
 theorem cclFast_ok {b0 : BitBuffer} (hw : b0.Wf) :
     ROk readCodeLengthCodeLength b0 b0 4 (cclFast b0) (cclFast b0).a.toNat := by
   refine ROk.congr ?_ cclChain_eq

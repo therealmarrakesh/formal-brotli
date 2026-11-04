@@ -96,8 +96,8 @@ def clTableW (st : Hd) : Nat :=
   else if hn : (USize.ofNat 18).toNat ≤ st.clLens.size then buildFastW st.clLens (USize.ofNat 18) hn
   else 1
 
-/-- The work of `clFinish`: the code length code's table, its check, and the code's lengths' zeros. -/
-def clFinishW (st : Hd) : Nat := clTableW st + fitsW + zbW st.size.toNat
+/-- The work of `clFinish`: the code length code's table, with nothing checked, and the code's lengths' zeros. -/
+def clFinishW (st : Hd) : Nat := clTableW st + zbW st.size.toNat
 
 /-- The work of `mapFinish`: after the second map, the next group of codes' zeros and the arena's tables copied into its
 reservation. -/
