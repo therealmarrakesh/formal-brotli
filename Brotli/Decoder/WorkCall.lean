@@ -97,6 +97,7 @@ theorem pay_callD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {f
       ∃ q, DRel (callD a stop hs final D h buf space).D q ∧ SInv q ∧
         ((callD a stop hs final D h buf space).D.tag ≠ .wbits → 10 ≤ (callD a stop hs final D h buf space).D.k.toNat) ∧
         (callD a stop hs final D h buf space).pos = (callD a stop hs final D h buf space).D.pos ∧
+        D.pos.toNat ≤ (callD a stop hs final D h buf space).pos.toNat ∧ (callD a stop hs final D h buf space).pos.toNat ≤ stop.toNat ∧
         (callD a stop hs final D h buf space).D.cmd.pend.toNat ≤ D.cmd.pend.toNat + 1 ∧
         ∀ t : List UInt8, callDW a stop hs final D h buf space + dpot q (callD a stop hs final D h buf space).D +
           hdrRate * ((callD a stop hs final D h buf space).D.bits a (callD a stop hs final D h buf space).pos stop (bits t)).length +
@@ -205,8 +206,8 @@ theorem pay_callD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {f
           rw [hw0] at I1 I2
           rw [a8] at I1 I2
           refine ⟨by omega, fun hs' => ?_, fun t => ?_⟩
-          · obtain ⟨q', c1, c2, c3, c4, c5, c6⟩ := I1 hs'
-            refine ⟨q', c1, c2, c3, c4, by omega, fun t => ?_⟩
+          · obtain ⟨q', c1, c2, c3, c4, cp1, cp2, c5, c6⟩ := I1 hs'
+            refine ⟨q', c1, c2, c3, c4, Nat.le_trans hp1 cp1, cp2, by omega, fun t => ?_⟩
             have i1 := c6 t
             have i2 := hineq t
             rw [a10] at i1
@@ -252,7 +253,8 @@ theorem pay_callD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {f
           unfold stopCost
           rw [ite_eq_left hO]
           split <;> omega
-        refine ⟨by dsimp only; omega, fun _ => ⟨q, a4, hsiq hsi, fun _ => hk10, rfl, by dsimp only; omega, fun t => ?_⟩, fun t => ?_⟩
+        refine ⟨by dsimp only; omega, fun _ => ⟨q, a4, hsiq hsi, fun _ => hk10, rfl, by dsimp only; rw [a8]; exact hp1,
+          by dsimp only; rw [a8]; exact hp2, by dsimp only; omega, fun t => ?_⟩, fun t => ?_⟩
         · have i2 := hineq t
           have ed : dpot p (withCap D space) = dpot p D := rfl
           have eb : (withCap D space).bits a (withCap D space).pos stop (bits t) = D.bits a D.pos stop (bits t) := rfl
@@ -322,7 +324,8 @@ theorem pay_callD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {f
           cases final with
           | false =>
             rw [ite_eq_right Bool.false_ne_true]
-            refine ⟨by dsimp only; omega, fun _ => ⟨q, a4, hsiq hsi, htw, rfl, by dsimp only; omega, fun t => ?_⟩, fun t => ?_⟩
+            refine ⟨by dsimp only; omega, fun _ => ⟨q, a4, hsiq hsi, htw, rfl, by dsimp only; rw [a8]; exact hp1,
+              by dsimp only; rw [a8]; exact hp2, by dsimp only; omega, fun t => ?_⟩, fun t => ?_⟩
             · have i2 := hineq t
               rw [ed, eb, ew, hlo, hsc] at i2
               have hdm := dpot_mono q (D := runD a stop hs (withCap D space) (h.withCap space))
@@ -346,7 +349,8 @@ theorem pay_callD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {f
           have hne : (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D.cmd.pend.toNat ≠ 0 :=
             fun e => hz (USize.toNat_inj.mp (by rw [e]; rfl))
           have hsp : space - len' = 0 := a6 (by omega)
-          refine ⟨by dsimp only; omega, fun _ => ⟨q, a4, hsiq hsi, htw, rfl, by dsimp only; omega, fun t => ?_⟩, fun t => ?_⟩
+          refine ⟨by dsimp only; omega, fun _ => ⟨q, a4, hsiq hsi, htw, rfl, by dsimp only; rw [a8]; exact hp1,
+            by dsimp only; rw [a8]; exact hp2, by dsimp only; omega, fun t => ?_⟩, fun t => ?_⟩
           · have i2 := hineq t
             rw [ed, eb, ew, hlo, hsc] at i2
             have hdm := dpot_mono q (D := runD a stop hs (withCap D space) (h.withCap space))
@@ -391,7 +395,8 @@ theorem pay_callD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {f
                 · exact absurd e e8
               obtain ⟨-, -, f3, f4, f5, -, ⟨n, f7⟩, -, -⟩ := e5 hin
               have g2 := congrArg USize.toNat f5
-              refine ⟨.ended st, f4, trivial, fun _ => ?_, f3.symm, by omega, fun t => ?_⟩
+              rw [a8] at e1
+              refine ⟨.ended st, f4, trivial, fun _ => ?_, f3.symm, Nat.le_trans hp1 e1, e2, by omega, fun t => ?_⟩
               · rw [endCheck_k _ _ _ _ hin]
                 exact htw
               · have i2 := hineq t
@@ -413,8 +418,8 @@ theorem pay_callD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {f
           have hne : (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D.cmd.pend.toNat ≠ 0 :=
             fun e => hz (USize.toNat_inj.mp (by rw [e]; rfl))
           have hsp : space - len' = 0 := a6 (by omega)
-          refine ⟨by dsimp only; omega, fun _ => ⟨q, a4, hsiq hsi, fun _ => htw, rfl, by dsimp only; omega, fun t => ?_⟩,
-            fun t => ?_⟩
+          refine ⟨by dsimp only; omega, fun _ => ⟨q, a4, hsiq hsi, fun _ => htw, rfl, by dsimp only; rw [a8]; exact hp1,
+            by dsimp only; rw [a8]; exact hp2, by dsimp only; omega, fun t => ?_⟩, fun t => ?_⟩
           · have i2 := hineq t
             rw [ed, eb, ew, hlo, hsc] at i2
             have hdm := dpot_mono q (D := runD a stop hs (withCap D space) (h.withCap space))
