@@ -206,9 +206,13 @@ def dpot (p : SPhase) (D : Dec) : Nat :=
 /-- A step's work against the potential: the potential at the place after it and the bits left there, with its work,
 are at most the potential before, the bits there, 282 for each byte it produces, and `extra`. -/
 def Pays (a : ByteArray) (stop : USize) (p : SPhase) (D : Dec) (pos : USize) (r : Dec) (W extra : Nat) : Prop :=
-  ∃ q, DRel r q ∧ OutD p q D r ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
+  ∃ q, DRel r q ∧ OutD p q D r ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧ (SInv p → SInv q) ∧
     ∀ t : List UInt8, W + dpot q r + hdrRate * (r.bits a r.pos stop (bits t)).length ≤
       dpot p D + hdrRate * (D.bits a pos stop (bits t)).length + 282 * (q.out.length - p.out.length) + extra
+
+theorem sinv_of_sreach {p q : SPhase} {bs c : List Bool} (h : SReach p bs q c) (hi : SInv p) : SInv q := by
+  obtain ⟨n, hn⟩ := h.toReach.count
+  exact (steps_le hn hi).1
 
 theorem dpot_mblock_le (w : Nat) (st : StreamState) (D : Dec) : dpot (.mblock w st) D ≤ roundCost := by
   unfold dpot spot
@@ -292,7 +296,7 @@ theorem pay_wbits {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
   refine ⟨fun hn => ?_, fun hn => ?_, fun hn => wbitsW_stop hp hn⟩
   · have hW := wbitsW_next (hs := hs) hrel.2.1 hp hn
     obtain ⟨p', hR', h1, h2, _, hsd, hout, hj⟩ := hok.next hn
-    refine ⟨p', hR', hout, h1, h2, fun t => ?_⟩
+    refine ⟨p', hR', hout, h1, h2, fun hi => sinv_of_sreach (hj []) hi, fun t => ?_⟩
     have hne : p' ≠ .wbits := fun e => by rw [e] at hsd; exact hsd
     have hb := sreach_wbits (hj t) hne
     cases p' with
@@ -306,7 +310,8 @@ theorem pay_wbits {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
   · have hn' : (stepDWbits a stop hs D pos).status ≠ .next := by rw [hn]; exact fun e => DStatus.noConfusion e
     have hW := wbitsW_stop (hs := hs) (D := D) hp hn'
     obtain ⟨b1, b2, p', hR', _, _, hsd, _, hout, hj, _⟩ := hok.needsInput hn
-    refine ⟨p', hR', hout, by rw [b1]; exact hp, by rw [b1]; exact Nat.le_refl _, fun t => ?_⟩
+    refine ⟨p', hR', hout, by rw [b1]; exact hp, by rw [b1]; exact Nat.le_refl _, fun hi => sinv_of_sreach (hj []) hi,
+      fun t => ?_⟩
     have hb := sreach_len (hj t)
     cases p' with
     | wbits =>
@@ -402,7 +407,7 @@ theorem pay_mblock {w : Nat} {st : StreamState} {a : ByteArray} {stop : USize} {
   have hR : hdrRate = 22343 := rfl
   refine ⟨fun hn => ?_, fun hn => ?_, fun hn => ?_, by omega⟩
   · obtain ⟨p', hR', h1, h2, _, hsd, hout, hj⟩ := hok.next hn
-    refine ⟨p', hR', hout, h1, h2, fun t => ?_⟩
+    refine ⟨p', hR', hout, h1, h2, fun hi => sinv_of_sreach (hj []) hi, fun t => ?_⟩
     have hne : ∀ w' st', p' ≠ .mblock w' st' := fun w' st' e => by rw [e] at hsd; exact hsd
     obtain ⟨hb, hb19⟩ := sreach_mblock (hj t) hne
     rw [hR]
@@ -429,7 +434,8 @@ theorem pay_mblock {w : Nat} {st : StreamState} {a : ByteArray} {stop : USize} {
       omega
     | _ => exact absurd hsd id
   · obtain ⟨b1, b2, p', hR', _, _, hsd, _, hout, hj, _⟩ := hok.needsInput hn
-    refine ⟨p', hR', hout, by rw [b1]; exact hp, by rw [b1]; exact Nat.le_refl _, fun t => ?_⟩
+    refine ⟨p', hR', hout, by rw [b1]; exact hp, by rw [b1]; exact Nat.le_refl _, fun hi => sinv_of_sreach (hj []) hi,
+      fun t => ?_⟩
     have hb := sreach_len (hj t)
     rw [hR]
     cases p' with
@@ -442,7 +448,7 @@ theorem pay_mblock {w : Nat} {st : StreamState} {a : ByteArray} {stop : USize} {
       omega
     | _ => exact absurd hsd id
   · obtain ⟨p', hR', h1, h2, _, _, hsd, _, hout, hj⟩ := hok.needsOutput hn
-    refine ⟨p', hR', hout, h1, h2, fun t => ?_⟩
+    refine ⟨p', hR', hout, h1, h2, fun hi => sinv_of_sreach (hj []) hi, fun t => ?_⟩
     have hb := sreach_len (hj t)
     have hw1 : stepDMetaW a stop hs D pos = 1 := by
       have hpe : D.cmd.pend ≠ 0 := by
@@ -510,7 +516,8 @@ theorem pay_hdr {w : Nat} {st : StreamState} {last : Bool} {mlen : Nat} {g : Gh}
     have hW := stepHW_cost hR hp hst hR' h5
     rw [ite_eq_right (fun e => HStatus.noConfusion e)]
     refine ⟨fun _ => ⟨.hdr w st last mlen g' p', ⟨rfl, ⟨hall.win, hall.produced, hall.limit⟩, hl, hleft, hm1, hm2, hR', hp0⟩,
-      ⟨[], rfl, rfl⟩, h1, h2, fun t => ?_⟩, fun e => DStatus.noConfusion e, fun e => absurd rfl e⟩
+      ⟨[], rfl, rfl⟩, h1, h2, fun hi => sinv_of_sreach (sreach_hdr (q := (g, p)) (q' := (g', p')) (Reach.one (h5 []))) hi,
+      fun t => ?_⟩, fun e => DStatus.noConfusion e, fun e => absurd rfl e⟩
     have hpy := hpay hsz (h5 (bits t))
     simp only [Dec.bits, Dec.word, Dec.count, dpot, spot, clearHd]
     omega
@@ -520,7 +527,7 @@ theorem pay_hdr {w : Nat} {st : StreamState} {last : Bool} {mlen : Nat} {g : Gh}
     rw [ite_eq_right (fun e => HStatus.noConfusion e)]
     refine ⟨fun e => DStatus.noConfusion e, fun _ => ⟨.hdr w st last mlen g p,
       ⟨rfl, ⟨hall.win, hall.produced, hall.limit⟩, hl, hleft, hm1, hm2, hR', hp0⟩, ⟨[], rfl, rfl⟩,
-      by rw [b1]; exact hp, by rw [b1]; exact Nat.le_refl _, fun t => ?_⟩, fun _ => ?_⟩
+      by rw [b1]; exact hp, by rw [b1]; exact Nat.le_refl _, fun hi => hi, fun t => ?_⟩, fun _ => ?_⟩
     · simp only [Dec.bits, Dec.word, Dec.count, dpot, spot, clearHd]
       rw [h6]
       omega
@@ -546,7 +553,7 @@ theorem pay_hdr {w : Nat} {st : StreamState} {last : Bool} {mlen : Nat} {g : Gh}
     dsimp only at hok ⊢
     refine ⟨fun _ => ?_, fun e => DStatus.noConfusion e, fun e => absurd rfl e⟩
     obtain ⟨p', hR'', h1', h2', _, _, hout, hj⟩ := hok.next rfl
-    refine ⟨p', hR'', hout, h1', h2', fun t => ?_⟩
+    refine ⟨p', hR'', hout, h1', h2', fun hi => sinv_of_sreach (hj []) hi, fun t => ?_⟩
     have hb := sreach_len (hj t)
     cases p' with
     | cmds w' l' m' cp =>
@@ -570,7 +577,7 @@ theorem pay_skip {w : Nat} {st : StreamState} {last : Bool} {n : Nat} {a : ByteA
   have hd : dpot (.skip w st last n) D = 10 := rfl
   refine ⟨fun hn => ?_, fun hn => ?_, fun hn => ?_⟩
   · obtain ⟨p', hR', h1, h2, _, hsd, hout, hj⟩ := hok.next hn
-    refine ⟨p', hR', hout, h1, h2, fun t => ?_⟩
+    refine ⟨p', hR', hout, h1, h2, fun hi => sinv_of_sreach (hj []) hi, fun t => ?_⟩
     have hb := sreach_len (hj t)
     rw [hd, hR]
     cases p' with
@@ -590,7 +597,8 @@ theorem pay_skip {w : Nat} {st : StreamState} {last : Bool} {n : Nat} {a : ByteA
       omega
     | _ => exact absurd hsd id
   · obtain ⟨b1, b2, p', hR', _, _, hsd, _, hout, hj, _⟩ := hok.needsInput hn
-    refine ⟨p', hR', hout, by rw [b1]; exact hp, by rw [b1]; exact Nat.le_refl _, fun t => ?_⟩
+    refine ⟨p', hR', hout, by rw [b1]; exact hp, by rw [b1]; exact Nat.le_refl _, fun hi => sinv_of_sreach (hj []) hi,
+      fun t => ?_⟩
     have hb := sreach_len (hj t)
     rw [hd, hR]
     cases p' with
@@ -599,7 +607,7 @@ theorem pay_skip {w : Nat} {st : StreamState} {last : Bool} {n : Nat} {a : ByteA
       omega
     | _ => exact absurd hsd id
   · obtain ⟨p', hR', h1, h2, _, _, hsd, _, hout, hj⟩ := hok.needsOutput hn
-    refine ⟨p', hR', hout, h1, h2, fun t => ?_⟩
+    refine ⟨p', hR', hout, h1, h2, fun hi => sinv_of_sreach (hj []) hi, fun t => ?_⟩
     have hb := sreach_len (hj t)
     rw [hd, hR]
     cases p' with
@@ -680,7 +688,7 @@ theorem pay_raw {w : Nat} {st : StreamState} {last : Bool} {n : Nat} {a : ByteAr
   have hW := rawW_le (hs := hs) (D := D) (pos := pos)
   refine ⟨fun hn => ?_, fun hn => ?_, fun hn => ?_, by omega⟩
   · obtain ⟨p', hR', h1, h2, _, hsd, hout, hj⟩ := hok.next hn
-    refine ⟨p', hR', hout, h1, h2, fun t => ?_⟩
+    refine ⟨p', hR', hout, h1, h2, fun hi => sinv_of_sreach (hj []) hi, fun t => ?_⟩
     obtain ⟨l, hl1, hl2⟩ := hout
     have hlo : p'.out.length - (SPhase.raw w st last n).out.length = l.length := by rw [hl1, List.length_append]; omega
     rw [hl2] at hW
@@ -719,7 +727,8 @@ theorem pay_raw {w : Nat} {st : StreamState} {last : Bool} {n : Nat} {a : ByteAr
         omega
     | _ => exact absurd hsd id
   · obtain ⟨b1, b2, p', hR', _, _, hsd, _, hout, hj, _⟩ := hok.needsInput hn
-    refine ⟨p', hR', hout, by rw [b1]; exact hp, by rw [b1]; exact Nat.le_refl _, fun t => ?_⟩
+    refine ⟨p', hR', hout, by rw [b1]; exact hp, by rw [b1]; exact Nat.le_refl _, fun hi => sinv_of_sreach (hj []) hi,
+      fun t => ?_⟩
     obtain ⟨l, hl1, hl2⟩ := hout
     have hlo : p'.out.length - (SPhase.raw w st last n).out.length = l.length := by rw [hl1, List.length_append]; omega
     rw [hl2] at hW
@@ -731,7 +740,7 @@ theorem pay_raw {w : Nat} {st : StreamState} {last : Bool} {n : Nat} {a : ByteAr
       omega
     | _ => exact absurd hsd id
   · obtain ⟨p', hR', h1, h2, _, _, hsd, _, hout, hj⟩ := hok.needsOutput hn
-    refine ⟨p', hR', hout, h1, h2, fun t => ?_⟩
+    refine ⟨p', hR', hout, h1, h2, fun hi => sinv_of_sreach (hj []) hi, fun t => ?_⟩
     obtain ⟨l, hl1, hl2⟩ := hout
     have hlo : p'.out.length - (SPhase.raw w st last n).out.length = l.length := by rw [hl1, List.length_append]; omega
     rw [hl2] at hW
