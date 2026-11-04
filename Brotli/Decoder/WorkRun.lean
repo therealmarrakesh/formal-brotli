@@ -1079,4 +1079,92 @@ theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
     · rcases hmem (by rw [e1]; exact h) with h' | ⟨_, _, _, _, _, _, h'⟩ <;> cases h'
   | ended st => exact absurd hrel.1 he
 
+/-! ### The decoder's loop -/
+
+/-- The window a run of the loop allocates: WBITS's, when it starts there. -/
+def winD (D r : Dec) : Nat := if D.tag = .wbits then 5 * 2 ^ r.k.toNat else 0
+
+/-- The decoder's loop, against the potential: its steps are paid for by the potential, 22343 for each bit, 282 for each
+byte and the window, and the step that stops it by at most 270 more, or, when it rejects or reports the limit, by the bits
+and the bytes it may decode first, and 23751. -/
+theorem pay_runD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} : ∀ (x : RunArg a stop hs) (p : SPhase),
+    DRel x.D p → SInv p →
+    ((runD a stop hs x.D x.inv).status = .next ∨ (runD a stop hs x.D x.inv).status = .needsInput ∨
+        (runD a stop hs x.D x.inv).status = .needsOutput →
+      Pays a stop p x.D x.D.pos (runD a stop hs x.D x.inv) (runDW a stop hs x.D x.inv) (winD x.D (runD a stop hs x.D x.inv) + 270)) ∧
+    ((runD a stop hs x.D x.inv).status = .bad ∨ (runD a stop hs x.D x.inv).status = .memory → ∃ L,
+      x.D.cmd.pend.toNat + L ≤ max x.D.cmd.pend.toNat (capE x.D.cmd.cap) ∧ ∀ t : List UInt8,
+      runDW a stop hs x.D x.inv ≤ dpot p x.D + hdrRate * (x.D.bits a x.D.pos stop (bits t)).length + 282 * L +
+        winD x.D (runD a stop hs x.D x.inv) + 23751) := by
+  intro x
+  induction x using (runRel_wf a stop hs).induction with
+  | _ x ih =>
+    obtain ⟨D, hinv⟩ := x
+    intro p hrel hsi
+    dsimp only at ih hrel ⊢
+    rw [runDW, runD]
+    by_cases he : D.tag = .ended
+    · rw [dite_eq_left he, dite_eq_left he]
+      have e1 : dpot p { D with status := .next } = dpot p D := rfl
+      have e2 : ∀ t : List UInt8, ({ D with status := .next } : Dec).bits a D.pos stop (bits t) = D.bits a D.pos stop (bits t) :=
+        fun _ => rfl
+      refine ⟨fun _ => ⟨p, hrel.congr rfl rfl rfl rfl rfl rfl rfl rfl, ⟨[], rfl, rfl⟩, Nat.le_refl _, hinv.2, id, fun t => ?_⟩,
+        fun h => ?_⟩
+      · rw [e1, e2]
+        omega
+      · rcases h with h | h <;> cases h
+    · rw [dite_eq_right he, dite_eq_right he]
+      dsimp only
+      obtain ⟨s1, s2, s3⟩ := pay_stepD (hs := hs) hrel hsi he hinv.2
+      by_cases hn : (stepD a stop hs D).status = .next
+      · rw [dite_eq_left hn, dite_eq_left hn]
+        obtain ⟨q1, hR1, ho1, hp1, hp2, hsi1, hw1⟩ := s1 hn
+        obtain ⟨i1, i2⟩ := ih ⟨_, hinv.step he hn⟩ ⟨he, hn, rfl⟩ q1 hR1 (hsi1 hsi)
+        dsimp only at i1 i2
+        have hwin : (if D.tag = .wbits then 5 * 2 ^ (stepD a stop hs D).k.toNat else 0) +
+            winD (stepD a stop hs D) (runD a stop hs (stepD a stop hs D) (hinv.step he hn)) ≤
+            winD D (runD a stop hs (stepD a stop hs D) (hinv.step he hn)) := by
+          by_cases hw : D.tag = .wbits
+          · have e : stepD a stop hs D = stepDWbits a stop hs D D.pos := by unfold stepD; rw [hw]
+            have ht1 : (stepD a stop hs D).tag ≠ .wbits := by
+              rw [e]
+              exact stepDWbits_tag (by rw [← e]; exact hn)
+            obtain ⟨-, hk⟩ := runD_wk ⟨_, hinv.step he hn⟩ ht1
+            dsimp only at hk
+            unfold winD
+            rw [ite_eq_left hw, ite_eq_right ht1, ite_eq_left hw, hk]
+            omega
+          · have ht1 := stepD_tag (hs := hs) hw
+            unfold winD
+            rw [ite_eq_right hw, ite_eq_right ht1, ite_eq_right hw]
+            exact Nat.le_refl _
+        obtain ⟨l1, hl1, hl1'⟩ := ho1
+        have o1 : q1.out.length = l1.length + p.out.length := by rw [hl1, List.length_append]
+        refine ⟨fun h => ?_, fun h => ?_⟩
+        · obtain ⟨q, hR, ho, hq1, hq2, hsiq, hw⟩ := i1 h
+          obtain ⟨l2, hl2, hl2'⟩ := ho
+          refine ⟨q, hR, ⟨l2 ++ l1, by rw [hl2, hl1, List.append_assoc], by rw [hl2', hl1', List.length_append]; omega⟩,
+            by omega, hq2, fun h => hsiq (hsi1 h), fun t => ?_⟩
+          have a1 := hw1 t
+          have a2 := hw t
+          have o2 : q.out.length = l2.length + q1.out.length := by rw [hl2, List.length_append]
+          omega
+        · obtain ⟨L, hL, hb⟩ := i2 h
+          have hpl := stepD_pendLe a stop hs D
+          refine ⟨l1.length + L, ?_, fun t => ?_⟩
+          · have h2 := hpl.2
+            rw [hpl.1] at hL
+            omega
+          · have a1 := hw1 t
+            have a2 := hb t
+            omega
+      · rw [dite_eq_right hn, dite_eq_right hn]
+        refine ⟨fun h => ?_, fun h => ?_⟩
+        · rcases h with h | h | h
+          · exact absurd h hn
+          · exact (s2 (Or.inl h)).mono (by omega)
+          · exact (s2 (Or.inr h)).mono (by omega)
+        · obtain ⟨L, hL, hb⟩ := s3 h
+          exact ⟨L, hL, fun t => by have := hb t; omega⟩
+
 end Brotli.Decoder
