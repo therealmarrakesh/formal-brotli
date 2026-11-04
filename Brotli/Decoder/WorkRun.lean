@@ -1079,6 +1079,96 @@ theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
     · rcases hmem (by rw [e1]; exact h) with h' | ⟨_, _, _, _, _, _, h'⟩ <;> cases h'
   | ended st => exact absurd hrel.1 he
 
+/-! ### Handing bytes out -/
+
+/-- A round of handing bytes out: it hands out what waits, what the space takes, or the bytes up to the window's end,
+whichever is fewest, and keeps everything else. -/
+theorem flushCmd_st {k : USize} {st : Cmd} {buf : ByteArray} {sp : USize} (hk : k.toNat ≤ 24) (hplt : st.wpos.toNat < 2 ^ k.toNat)
+    (hle : st.pend.toNat ≤ 2 ^ k.toNat) (hp0 : st.pend.toNat ≠ 0) (hs0 : sp.toNat ≠ 0) :
+    (flushCmd k st buf sp).st = { st with pend := (flushCmd k st buf sp).st.pend } ∧
+    (flushCmd k st buf sp).st.pend.toNat = st.pend.toNat -
+      min (min st.pend.toNat sp.toNat) (2 ^ k.toNat - ringStart (2 ^ k.toNat) st.wpos.toNat st.pend.toNat) := by
+  unfold flushCmd
+  have hz : ¬ (st.pend = 0 ∨ sp = 0) := fun h => h.elim (fun e => hp0 (by rw [e]; rfl)) (fun e => hs0 (by rw [e]; rfl))
+  rw [ite_eq_right hz]
+  dsimp only
+  have hback : (ringBack st.wpos st.pend (ringMask k) (ringSize k)).toNat = ringStart (2 ^ k.toNat) st.wpos.toNat st.pend.toNat :=
+    ringBack_toNat hk (ringMask_toNat hk) (ringSize_toNat hk) hplt (by omega) hle
+  have hstart : ringStart (2 ^ k.toNat) st.wpos.toNat st.pend.toNat < 2 ^ k.toNat := by
+    unfold ringStart
+    exact ringIdx_lt hplt (by omega)
+  have hroom : (ringSize k - ringBack st.wpos st.pend (ringMask k) (ringSize k)).toNat =
+      2 ^ k.toNat - ringStart (2 ^ k.toNat) st.wpos.toNat st.pend.toNat := by
+    rw [USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr (by rw [hback, ringSize_toNat hk]; omega)), hback, ringSize_toNat hk]
+  have hlenN : (usmin (usmin st.pend sp) (ringSize k - ringBack st.wpos st.pend (ringMask k) (ringSize k))).toNat =
+      min (min st.pend.toNat sp.toNat) (2 ^ k.toNat - ringStart (2 ^ k.toNat) st.wpos.toNat st.pend.toNat) := by
+    rw [usmin_toNat, usmin_toNat, hroom]
+  have hpn : (st.pend - usmin (usmin st.pend sp) (ringSize k - ringBack st.wpos st.pend (ringMask k) (ringSize k))).toNat =
+      st.pend.toNat - (usmin (usmin st.pend sp) (ringSize k - ringBack st.wpos st.pend (ringMask k) (ringSize k))).toNat :=
+    USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr (by rw [hlenN]; omega))
+  exact ⟨rfl, by rw [hpn, hlenN]⟩
+
+/-- Handing bytes out takes at most three rounds: one up to the window's end, one from its start, and the one that finds
+nothing left to do. Its work is the bytes it hands out, and five. -/
+theorem flushAllW_le {k : USize} (hk : k.toNat ≤ 24) (st : Cmd) (buf : ByteArray) (space : Nat)
+    (hplt : st.wpos.toNat < 2 ^ k.toNat) (hle : st.pend.toNat ≤ 2 ^ k.toNat) :
+    flushAllW k st buf space ≤ min st.pend.toNat space + 5 := by
+  have hRmax : 2 ^ k.toNat ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
+  have h24 : (2 : Nat) ^ 24 = 16777216 := by decide
+  rw [flushAllW]
+  dsimp only
+  by_cases hz : st.pend = 0 ∨ space = 0
+  · rw [ite_eq_left hz]
+    omega
+  rw [ite_eq_right hz]
+  have hp0 : st.pend.toNat ≠ 0 := fun e => hz (Or.inl (USize.toNat_inj.mp (by rw [e]; rfl)))
+  have hs0 : space ≠ 0 := fun e => hz (Or.inr e)
+  have hsp : (USize.ofNat (min space 16777216)).toNat = min space 16777216 := usize_ofNat' (by omega)
+  obtain ⟨e1, e2⟩ := flushCmd_st (buf := buf) (sp := USize.ofNat (min space 16777216)) hk hplt hle hp0 (by rw [hsp]; omega)
+  rw [hsp] at e2
+  have hsdef : ringStart (2 ^ k.toNat) st.wpos.toNat st.pend.toNat = if st.pend.toNat - 1 < st.wpos.toNat then
+      st.wpos.toNat - 1 - (st.pend.toNat - 1) else st.wpos.toNat + 2 ^ k.toNat - 1 - (st.pend.toNat - 1) := rfl
+  generalize hr : flushCmd k st buf (USize.ofNat (min space 16777216)) = r at e1 e2 ⊢
+  have hlt : r.st.pend < st.pend := USize.lt_iff_toNat_lt.mpr (by split at hsdef <;> omega)
+  rw [dite_eq_left hlt]
+  have hsub : (st.pend - r.st.pend).toNat = st.pend.toNat - r.st.pend.toNat :=
+    USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr (by omega))
+  rw [hsub, flushAllW]
+  dsimp only
+  by_cases hz2 : r.st.pend = 0 ∨ space - (st.pend.toNat - r.st.pend.toNat) = 0
+  · rw [ite_eq_left hz2]
+    split at hsdef <;> omega
+  rw [ite_eq_right hz2]
+  have hq0 : r.st.pend.toNat ≠ 0 := fun e => hz2 (Or.inl (USize.toNat_inj.mp (by rw [e]; rfl)))
+  have hq1 : space - (st.pend.toNat - r.st.pend.toNat) ≠ 0 := fun e => hz2 (Or.inr e)
+  have hw1 : r.st.wpos = st.wpos := by rw [e1]
+  -- The first round stopped at the window's end: what is left starts at the window's start.
+  have hwrap : r.st.pend.toNat = st.wpos.toNat := by split at hsdef <;> omega
+  have hs1 : ringStart (2 ^ k.toNat) r.st.wpos.toNat r.st.pend.toNat = 0 := by
+    rw [hw1, hwrap]
+    show (if st.wpos.toNat - 1 < st.wpos.toNat then st.wpos.toNat - 1 - (st.wpos.toNat - 1) else _) = 0
+    rw [ite_eq_left (by omega)]
+    omega
+  have hsp2 : (USize.ofNat (min (space - (st.pend.toNat - r.st.pend.toNat)) 16777216)).toNat =
+      min (space - (st.pend.toNat - r.st.pend.toNat)) 16777216 := usize_ofNat' (by omega)
+  obtain ⟨-, f2⟩ := flushCmd_st (buf := r.buf) (sp := USize.ofNat (min (space - (st.pend.toNat - r.st.pend.toNat)) 16777216)) hk
+    (by rw [hw1]; exact hplt) (by omega) hq0 (by rw [hsp2]; omega)
+  rw [hsp2, hs1] at f2
+  generalize flushCmd k r.st r.buf (USize.ofNat (min (space - (st.pend.toNat - r.st.pend.toNat)) 16777216)) = r2 at f2 ⊢
+  have hlt2 : r2.st.pend < r.st.pend := USize.lt_iff_toNat_lt.mpr (by omega)
+  rw [dite_eq_left hlt2]
+  have hsub2 : (r.st.pend - r2.st.pend).toNat = r.st.pend.toNat - r2.st.pend.toNat :=
+    USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr (by omega))
+  rw [hsub2, flushAllW]
+  dsimp only
+  have hz3 : r2.st.pend = 0 ∨ space - (st.pend.toNat - r.st.pend.toNat) - (r.st.pend.toNat - r2.st.pend.toNat) = 0 := by
+    by_cases hh : r2.st.pend.toNat = 0
+    · exact Or.inl (USize.toNat_inj.mp (by rw [hh]; rfl))
+    · right
+      omega
+  rw [ite_eq_left hz3]
+  omega
+
 /-! ### The decoder's loop -/
 
 /-- The window a run of the loop allocates: WBITS's, when it starts there. -/
