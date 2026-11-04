@@ -1214,6 +1214,83 @@ theorem flushAllW_le {k : USize} (hk : k.toNat ≤ 24) (st : Cmd) (buf : ByteArr
   rw [ite_eq_left hz3]
   omega
 
+/-! ### Pausing for output space -/
+
+/-- A step that pauses for output space anywhere but at a meta-block's start has no room left. -/
+theorem stepD_room {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} (he : D.tag ≠ .ended) :
+    (stepD a stop hs D).status = .needsOutput → (stepD a stop hs D).tag ≠ .mblock →
+      room (stepD a stop hs D).k (stepD a stop hs D).cmd.cap ≤ (stepD a stop hs D).cmd.pend := by
+  unfold stepD
+  cases ht : D.tag <;> dsimp only
+  · unfold stepDWbits
+    repeat' (first | split_all | (intro h; exact absurd h (fun e => DStatus.noConfusion e)))
+  · unfold stepDMeta metaGo
+    repeat' (first | split_all | (intro h; exact absurd h (fun e => DStatus.noConfusion e)) |
+      (intro _ h2; exact absurd ht h2))
+  · unfold stepDSkip moveOn
+    repeat' (first | split_all | (intro h; exact absurd h (fun e => DStatus.noConfusion e)))
+  · unfold stepDRaw takeRing moveOn rawFinish clearCmd
+    repeat' (first | split_all | (intro h; exact absurd h (fun e => DStatus.noConfusion e)) | (intro _ _; assumption))
+  · unfold stepDHdr takeHd clearHd
+    dsimp only
+    repeat' (first | split_all | (intro h; exact absurd h (fun e => DStatus.noConfusion e)))
+  · unfold stepDCmds takeCmd clearCmd
+    dsimp only
+    have hf := runCmd_full (H := D.H) (k := D.k) (a := a) (hs := hs) _ cmdBudget D.cmd D.pos rfl
+    repeat' (first | split_all | (intro h; exact absurd h (fun e => DStatus.noConfusion e)) |
+      (intro _ _; exact hf (by assumption)))
+  · exact absurd ht he
+
+/-- The loop pauses for output space anywhere but at a meta-block's start only with no room left. -/
+theorem runD_room {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} :
+    ∀ x : RunArg a stop hs, (runD a stop hs x.D x.inv).status = .needsOutput → (runD a stop hs x.D x.inv).tag ≠ .mblock →
+      room (runD a stop hs x.D x.inv).k (runD a stop hs x.D x.inv).cmd.cap ≤ (runD a stop hs x.D x.inv).cmd.pend := by
+  intro x
+  induction x using (runRel_wf a stop hs).induction with
+  | _ x ih =>
+    obtain ⟨D, hinv⟩ := x
+    dsimp only at ih ⊢
+    rw [runD]
+    by_cases he : D.tag = .ended
+    · rw [dite_eq_left he]
+      intro h
+      cases h
+    · rw [dite_eq_right he]
+      dsimp only
+      by_cases hn : (stepD a stop hs D).status = .next
+      · rw [dite_eq_left hn]
+        exact ih ⟨_, hinv.step he hn⟩ ⟨he, hn, rfl⟩
+      · rw [dite_eq_right hn]
+        exact stepD_room he
+
+/-- WBITS's step that goes on sets a window of at least 2¹⁰ bytes. -/
+theorem stepDWbits_k {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize}
+    (hw : (BitBuffer.mk D.cmd.word D.cmd.count).Wf) (hp : pos.toNat ≤ stop.toNat) (hn : (stepDWbits a stop hs D pos).status = .next) :
+    10 ≤ (stepDWbits a stop hs D pos).k.toNat := by
+  have hp' : pos ≤ stop := USize.le_iff_toNat_le.mpr hp
+  unfold stepDWbits at hn ⊢
+  rw [dite_eq_left hp'] at hn ⊢
+  obtain ⟨h1, -⟩ := refill_spec hs hp hw
+  have hrange := wbits_range h1
+  dsimp only at hn ⊢
+  split at hn
+  · exact absurd hn (fun e => DStatus.noConfusion e)
+  · exact absurd hn (fun e => DStatus.noConfusion e)
+  · rename_i heq
+    obtain ⟨ha1, ha2⟩ := hrange heq
+    split at hn
+    · rename_i hl
+      rw [ite_eq_left hl]
+      show 10 ≤ (wbitsFast ⟨(refill D.cmd.word D.cmd.count a pos stop hs (USize.le_iff_toNat_le.mp hp')).word,
+        (refill D.cmd.word D.cmd.count a pos stop hs (USize.le_iff_toNat_le.mp hp')).count⟩).a.toUSize.toNat
+      have ha2' : (wbitsFast ⟨(refill D.cmd.word D.cmd.count a pos stop hs (USize.le_iff_toNat_le.mp hp')).word,
+          (refill D.cmd.word D.cmd.count a pos stop hs (USize.le_iff_toNat_le.mp hp')).count⟩).a.toNat ≤ 24 := ha2
+      have ha1' : 10 ≤ (wbitsFast ⟨(refill D.cmd.word D.cmd.count a pos stop hs (USize.le_iff_toNat_le.mp hp')).word,
+          (refill D.cmd.word D.cmd.count a pos stop hs (USize.le_iff_toNat_le.mp hp')).count⟩).a.toNat := ha1
+      rw [word_toUSize (by omega)]
+      exact ha1'
+    · exact absurd hn (fun e => DStatus.noConfusion e)
+
 /-! ### The decoder's loop -/
 
 /-- The window a run of the loop allocates: WBITS's, when it starts there. -/
