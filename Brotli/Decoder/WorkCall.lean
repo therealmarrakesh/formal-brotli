@@ -13,6 +13,40 @@ namespace Brotli.Decoder
 
 open Brotli.Spec Brotli.Properties
 
+/-- WBITS's step that goes on reads the window's size from the stream's bits. -/
+theorem stepDWbits_reads {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize}
+    (hw : (BitBuffer.mk D.cmd.word D.cmd.count).Wf) (hp : pos.toNat ≤ stop.toNat) (hn : (stepDWbits a stop hs D pos).status = .next)
+    (F : List Bool) : ∃ rest, readWBITS (availBits D.cmd.word D.cmd.count a pos stop F) =
+      some ((stepDWbits a stop hs D pos).k.toNat, rest) := by
+  have hp' : pos ≤ stop := USize.le_iff_toNat_le.mpr hp
+  obtain ⟨h1, -, -, h4, -⟩ := refill_spec hs hp hw
+  have hok := wbitsFast_ok h1
+  have hrange := wbits_range h1
+  have hb : availBits D.cmd.word D.cmd.count a pos stop F = (refill D.cmd.word D.cmd.count a pos stop hs hp).buf.held ++
+      (chunkBits a (refill D.cmd.word D.cmd.count a pos stop hs hp).pos.toNat stop.toNat ++ F) := by
+    show (BitBuffer.mk D.cmd.word D.cmd.count).held ++ (chunkBits a pos.toNat stop.toNat ++ F) = _
+    rw [← List.append_assoc, ← List.append_assoc, h4]
+  rw [hb]
+  unfold stepDWbits at hn ⊢
+  rw [dite_eq_left hp'] at hn ⊢
+  dsimp only at hn ⊢
+  split at hn
+  · exact absurd hn (fun e => DStatus.noConfusion e)
+  · exact absurd hn (fun e => DStatus.noConfusion e)
+  · rename_i heq
+    obtain ⟨-, ha2⟩ := hrange heq
+    obtain ⟨-, hr⟩ := hok.ok heq
+    split at hn
+    · rename_i hl
+      rw [ite_eq_left hl]
+      show ∃ rest, _ = some ((wbitsFast ⟨(refill D.cmd.word D.cmd.count a pos stop hs (USize.le_iff_toNat_le.mp hp')).word,
+        (refill D.cmd.word D.cmd.count a pos stop hs (USize.le_iff_toNat_le.mp hp')).count⟩).a.toUSize.toNat, rest)
+      have ha2' : (wbitsFast ⟨(refill D.cmd.word D.cmd.count a pos stop hs (USize.le_iff_toNat_le.mp hp')).word,
+          (refill D.cmd.word D.cmd.count a pos stop hs (USize.le_iff_toNat_le.mp hp')).count⟩).a.toNat ≤ 24 := ha2
+      rw [word_toUSize (by omega)]
+      exact ⟨_, hr _⟩
+    · exact absurd hn (fun e => DStatus.noConfusion e)
+
 theorem endCheck_k (D : Dec) (stop : USize) (final : Bool) (buf : ByteArray) :
     (endCheck D stop final buf).status = .needsInput → (endCheck D stop final buf).D.k = D.k := by
   unfold endCheck
