@@ -1291,6 +1291,22 @@ theorem stepDWbits_k {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size}
       exact ha1'
     · exact absurd hn (fun e => DStatus.noConfusion e)
 
+/-- Handing out a state's bytes: its work is the bytes it hands out, and five. -/
+theorem flushW_le {D : Dec} {p : SPhase} (h : DRel D p) (buf : ByteArray) (space : Nat) :
+    flushAllW D.k D.cmd buf space ≤ min D.cmd.pend.toNat space + 5 := by
+  rcases h.window with h0 | ⟨hr, hl, -, hk⟩
+  · rw [flushAllW]
+    dsimp only
+    rw [ite_eq_left (Or.inl h0)]
+    omega
+  · exact flushAllW_le hk _ _ _ hr.pos_lt hl
+
+/-- The cap a round gives the bytes waiting: one more than its space, at most 2²⁴ + 1. -/
+theorem capE_capFor (space : Nat) : capE (capFor space) = min space 16777216 + 1 := by
+  unfold capE capFor
+  rw [usize_ofNat' (by omega)]
+  omega
+
 /-- Fewer bytes waiting raises no place's potential. -/
 theorem dpot_mono (q : SPhase) {D D' : Dec} (h : D'.cmd.pend.toNat ≤ D.cmd.pend.toNat) : dpot q D' ≤ dpot q D := by
   unfold dpot
