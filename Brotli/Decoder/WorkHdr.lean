@@ -1798,4 +1798,195 @@ theorem stepHW_short {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size}
   · rw [dite_eq_right hp]
     omega
 
+/-! ### The most a header's place holds
+
+With at most 256 block types in a category, 256 trees in a context map and 16384 values in it, a header's place holds at
+most 8700000: the most is a literal context map's values, 515 for each one not 0. -/
+
+theorem beforeMaps_le {nL nI nD : Nat} (h1 : nL ≤ 256) (h2 : nI ≤ 256) (h3 : nD ≤ 256) : beforeMaps nL nI nD ≤ 280000 := by
+  unfold beforeMaps afterL afterD mapPre zb
+  omega
+
+theorem catPot_most {g : Gh} {i : Cat} {n : Nat} (h0 : g.m.literal.n ≤ 256) (hI : i = .D → g.m.insertCopy.n ≤ 256) (hn : n ≤ 256) :
+    catPot g i n ≤ 280000 := by
+  cases i with
+  | L => exact beforeMaps_le hn (by omega) (by omega)
+  | I => exact beforeMaps_le h0 hn (by omega)
+  | D => exact beforeMaps_le h0 (hI rfl) hn
+
+theorem mapTail_le {g : Gh} {isL : Bool} {t : Nat} (ht : t ≤ 256) (hI : g.m.insertCopy.n ≤ 256) (hD : g.m.distance.n ≤ 256)
+    (hL : isL = false → g.treesL ≤ 256) : mapFin g isL + mapAfter g isL t ≤ 40000 := by
+  unfold mapFin mapAfter afterL afterD mapPre zb
+  cases isL with
+  | false =>
+    have := hL rfl
+    simp only [Bool.false_eq_true, ↓reduceIte]
+    omega
+  | true =>
+    simp only [↓reduceIte]
+    omega
+
+theorem imtfTail_le {g : Gh} {isL : Bool} {t : Nat} (hS : mapSize g isL ≤ 16384) (ht : t ≤ 256) (hI : g.m.insertCopy.n ≤ 256)
+    (hD : g.m.distance.n ≤ 256) (hL : isL = false → g.treesL ≤ 256) : imtfTail g isL t ≤ 60000 := by
+  have := mapTail_le ht hI hD hL
+  unfold imtfTail
+  omega
+
+theorem mapOwner_le {g : Gh} {isL : Bool} {t : Nat} (hS : mapSize g isL ≤ 16384) (ht : t ≤ 256) (hI : g.m.insertCopy.n ≤ 256)
+    (hD : g.m.distance.n ≤ 256) (hL : isL = false → g.treesL ≤ 256) : mapOwner g isL t ≤ 340000 := by
+  have := imtfTail_le hS ht hI hD hL
+  unfold mapOwner
+  omega
+
+theorem codesPot_le {g : Gh} {k : CK} {left : Nat} (hl : left ≤ 256) (hI : g.m.insertCopy.n ≤ 256) (hD : g.treesD ≤ 256) :
+    codesPot g k left ≤ 30000 := by
+  cases k <;> simp only [codesPot, afterD, zb] <;> omega
+
+theorem ownerX_le {g : Gh} (hg : GOk g) (o : Owner) : ownerX g o ≤ 82300 := by
+  cases o with
+  | map isL t r =>
+    have := mapSize_le hg isL
+    simp only [ownerX, zb]
+    omega
+  | _ => simp [ownerX]
+
+/-- What a code's owner settled: a category's block types before a category's code, the categories before a context map,
+and the maps before the groups of codes. -/
+theorem ownerPot_le {st : Hd} {g : Gh} {n : Nat} {o : Owner} (ho : OwnerRel st g n o) (hu : Upto st.d g (ownerStage o)) (hg : GOk g) :
+    ownerPot g o ≤ 340000 := by
+  have hI : 1 < ownerStage o → g.m.insertCopy.n ≤ 256 := fun h => (hu.cat .I h).wf.2.1
+  cases o with
+  | type i k =>
+    obtain ⟨_, _, _, _, hk, _⟩ := ho
+    show catPot g i k ≤ _
+    refine Nat.le_trans (catPot_most (i := i) hg.1 (fun e => hI ?_) hk) (by omega)
+    subst e
+    show 1 < 2
+    decide
+  | count i k tc =>
+    obtain ⟨_, _, _, _, hk, _⟩ := ho
+    show catPot g i k ≤ _
+    refine Nat.le_trans (catPot_most (i := i) hg.1 (fun e => hI ?_) hk) (by omega)
+    subst e
+    show 1 < 2
+    decide
+  | map isL t r =>
+    obtain ⟨_, _, _, _, _, ht, _⟩ := ho
+    have hst : 5 ≤ ownerStage (.map isL t r) := by
+      show 5 ≤ mapIdx isL
+      unfold mapIdx
+      split <;> omega
+    refine mapOwner_le (mapSize_le hg isL) ht (hI (by omega)) hg.2.1 (fun e => ?_)
+    subst e
+    exact (hu.lmap (show 5 < 6 by decide)).2.2.1
+  | codes k done left =>
+    obtain ⟨_, _, _, _, _, hl, hc, _⟩ := ho
+    have hst : 7 ≤ ownerStage (.codes k done left) := by
+      show 7 ≤ ckIdx k + 7
+      omega
+    show codesPot g k left ≤ _
+    exact Nat.le_trans (codesPot_le (k := k) (left := left) (by omega) (hI (by omega)) (hu.dmap (by omega)).2.2.1) (by omega)
+
+/-- The most a header's place holds. -/
+theorem hpot_le {st : Hd} {g : Gh} {p : HPhase} (hrel : HRel st g p) (hg : GOk g) (hp : HOk p) : hpot g p ≤ 8700000 := by
+  obtain ⟨_, hu, hm⟩ := hrel
+  have hS := mapSize_le hg
+  have hI : 1 < stageOf p → g.m.insertCopy.n ≤ 256 := fun h => (hu.cat .I h).wf.2.1
+  have hL : 5 < stageOf p → g.treesL ≤ 256 := fun h => (hu.lmap h).2.2.1
+  have hD : 6 < stageOf p → g.treesD ≤ 256 := fun h => (hu.dmap h).2.2.1
+  have hmap : ∀ isL, stageOf p = mapIdx isL → (isL = false → g.treesL ≤ 256) ∧ g.m.insertCopy.n ≤ 256 := by
+    intro isL e
+    refine ⟨fun e2 => hL ?_, hI ?_⟩
+    · rw [e, e2]
+      decide
+    · rw [e]
+      unfold mapIdx
+      split <;> omega
+  cases p with
+  | cat i =>
+    refine Nat.le_trans (catPot_most (i := i) (n := 0) hg.1 (fun e => hI ?_) (Nat.zero_le 256)) (by omega)
+    subst e
+    show 1 < 2
+    decide
+  | code o n =>
+    obtain ⟨_, _, ho⟩ := hm
+    have := ownerX_le hg o
+    have := ownerPot_le ho hu hg
+    show ownerX g o + ownerPot g o ≤ _
+    omega
+  | clens o n order acc sum =>
+    obtain ⟨_, _, ho, _⟩ := hm
+    have := ownerX_le hg o
+    have := ownerPot_le ho hu hg
+    have hn := hp.1
+    show 31 * n + 22581 + ownerX g o + ownerPot g o ≤ _
+    omega
+  | syms o n clc ls =>
+    obtain ⟨_, _, ho, _⟩ := hm
+    have := ownerX_le hg o
+    have := ownerPot_le ho hu hg
+    have hn := hp.1
+    show 13 * (n - ls.lens.length) + 13 * n + 11012 + ownerX g o + ownerPot g o ≤ _
+    omega
+  | first i n tc cc =>
+    refine Nat.le_trans (catPot_most (i := i) (n := n) hg.1 (fun e => hI ?_) hp) (by omega)
+    subst e
+    show 1 < 2
+    decide
+  | np =>
+    exact Nat.le_trans (beforeMaps_le hg.1 (hI (show 1 < 3 by decide)) hg.2.1) (by omega)
+  | modes done left =>
+    exact Nat.le_trans (beforeMaps_le hg.1 (hI (show 1 < 4 by decide)) hg.2.1) (by omega)
+  | trees isL =>
+    obtain ⟨h1, h2⟩ := hmap isL rfl
+    have := mapTail_le (t := 0) (Nat.zero_le _) h2 hg.2.1 h1
+    have := hS isL
+    show mapPre (mapSize g isL) + mapFin g isL + mapAfter g isL 0 ≤ _
+    unfold mapPre
+    omega
+  | rlemax isL t =>
+    obtain ⟨h1, h2⟩ := hmap isL rfl
+    have := mapOwner_le (hS isL) hp h2 hg.2.1 h1
+    have := hS isL
+    show 258 + zb (mapSize g isL) + mapOwner g isL t ≤ _
+    unfold zb
+    omega
+  | vals isL t r code done left =>
+    obtain ⟨h1, h2⟩ := hmap isL rfl
+    obtain ⟨_, _, _, _, _, ht, _, _, _, _, _, _, hlen, _⟩ := hm
+    have hT := imtfTail_le (hS isL) ht h2 hg.2.1 h1
+    have hSi := hS isL
+    have hl : left ≤ 16384 := hp
+    show (if left = 0 then 11 + imtfTail g isL t + imtfB (mapSize g isL) t done
+      else match runOf r code with
+        | some v => left + 31 + imtfTail g isL t + imtfB (mapSize g isL) t (done ++ List.replicate left v)
+        | none => 12 + imtfTail g isL t + 8 * mapSize g isL + 515 * nzL done) ≤ _
+    have hd := nzL_le done
+    split
+    · have := imtfB_le (mapSize g isL) t done
+      omega
+    · split
+      · rename_i v _
+        have := imtfB_le (mapSize g isL) t (done ++ List.replicate left v)
+        have := nzL_le (done ++ List.replicate left v)
+        simp only [List.length_append, List.length_replicate] at this
+        omega
+      · omega
+  | imtf isL t vals =>
+    obtain ⟨h1, h2⟩ := hmap isL rfl
+    obtain ⟨_, _, _, _, ht, hmo⟩ := hm
+    have hT := imtfTail_le (hS isL) ht h2 hg.2.1 h1
+    have hSi := hS isL
+    have := imtfB_le (mapSize g isL) t vals
+    have := nzL_le vals
+    have := hmo.length
+    show imtfTail g isL t + imtfB (mapSize g isL) t vals ≤ _
+    omega
+  | codes k done left =>
+    obtain ⟨_, _, _, _, hl, hc, _⟩ := hm
+    have hst : 7 ≤ stageOf (.codes k done left) := by
+      show 7 ≤ ckIdx k + 7
+      omega
+    exact Nat.le_trans (codesPot_le (by omega) (hI (by omega)) (hD (by omega))) (by omega)
+
 end Brotli.Decoder

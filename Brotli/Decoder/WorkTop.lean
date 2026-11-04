@@ -189,6 +189,66 @@ theorem work_inv {limit : Nat} {x : List UInt8} {R : Run DState} {W n : Nat} (h 
       rw [hrd, em]
       exact run_stop hW hc hpn hwq
 
+/-- The most a state's place holds: a header's place, with what its end costs. -/
+theorem dpot_le {D : Dec} {p : SPhase} (hrel : DRel D p) (hsi : SInv p) : dpot p D ≤ 8944613 := by
+  cases p with
+  | hdr w st last mlen g q =>
+    obtain ⟨_, _, _, _, _, _, hh, _⟩ := hrel
+    have := hpot_le hh hsi.2.1 hsi.2.2
+    show hpot g q + hdrEnd + 0 ≤ _
+    unfold hdrEnd hdrSlack cmdsEnd roundCost
+    omega
+  | cmds w last m q =>
+    have := cpot_le q
+    show cpot q + cmdsEnd + 0 ≤ _
+    unfold cmdsEnd roundCost
+    omega
+  | mblock w st =>
+    simp only [dpot, spot, roundCost]
+    split <;> omega
+  | wbits => simp [dpot, spot]
+  | skip => simp [dpot, spot, tailEnd, roundCost]
+  | raw => simp [dpot, spot, tailEnd, roundCost]
+  | ended => simp [dpot, spot]
+
+/-- The most a call can leave for the next to use: the potential of where it pauses, and 22343 for each bit it holds. -/
+def psiMax : Nat := 10374565
+
+theorem Reaches.withWork {limit : Nat} {x : List UInt8} {R : Run DState} (h : Reaches decoder limit x R) :
+    ∃ W n, ReachesW limit x R W n := by
+  induction h with
+  | start => exact ⟨0, 0, .start⟩
+  | call _ ha ih =>
+    obtain ⟨W, n, hW⟩ := ih
+    exact ⟨_, _, .call hW ha⟩
+
+/-- The potential a running decoder holds is at most `psiMax`. -/
+theorem decoder_potential {limit : Nat} {x : List UInt8} {R : Run DState} (h : Reaches decoder limit x R)
+    (hs : R.status.stopped = false) :
+    ∃ p, DRel R.state.val p ∧ SInv p ∧ dpot p R.state.val + 22343 * R.state.val.held.length ≤ psiMax := by
+  obtain ⟨W, n, hW⟩ := h.withWork
+  obtain ⟨p, hrel, hsi, -, -, -⟩ := (work_inv hW).1 hs
+  have := dpot_le hrel hsi
+  have := Nat.mul_le_mul_left 22343 hrel.held_le
+  exact ⟨p, hrel, hsi, by unfold psiMax; omega⟩
+
+/-- The work bound for one call. A call's work, in the work model, is at most the potential it starts with, at most
+`psiMax`, and 178744 for each byte it uses, 284 for each byte it hands out, five for each byte of the window the stream
+declares and 16 more, and 24042. -/
+theorem decoder_callWork {limit : Nat} {x : List UInt8} {R : Run DState} {c : Call} (h : Reaches decoder limit x R)
+    (ha : R.Allowed x c) :
+    callWork R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.buf.toByteArray c.space c.final ≤
+      psiMax + 178744 * (R.reply decoder x c).used + 284 * ((R.reply decoder x c).output.size - c.buf.length) +
+        5 * (declaredWindow x + 16) + 24042 := by
+  obtain ⟨W, n, hW⟩ := h.withWork
+  obtain ⟨p, hrel, hsi, hk, -, -⟩ := (work_inv hW).1 ha.running
+  have hG := (call_pays (x := x) (R := R) (c := c) ha.inside ha.fits hrel hsi hk).2
+  have hwin := callWin_le h ha
+  have := dpot_le hrel hsi
+  have := Nat.mul_le_mul_left 22343 hrel.held_le
+  unfold psiMax
+  omega
+
 /-- The work bound. The work of a run's calls, in the work model, is at most 178744 for each byte they use, 284 for each
 byte they hand out, five for each byte of the window the stream declares and 16 more, 562 for each call, and 24042. -/
 theorem decoder_work {limit : Nat} {x : List UInt8} {R : Run DState} {W n : Nat} (h : ReachesW limit x R W n) :
