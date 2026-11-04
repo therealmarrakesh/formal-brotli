@@ -1,4 +1,5 @@
 import Brotli.Decoder.WorkHdr
+import Brotli.Decoder.Work
 
 /-!
 # The work of a meta-block's commands
@@ -372,8 +373,12 @@ theorem run_le {k cap pend : USize} {x : UInt64} (hk : k.toNat ≤ 24) (hr : ¬ 
   rw [word_toUSize (by rw [hm]; omega), hm]
   omega
 
+/-- The bytes a step adds to the window, counted when it doesn't reject. -/
+def addedW (pend : USize) (r : Cmd) : Nat := if r.status = .bad then 0 else r.pend.toNat - pend.toNat
+
 theorem copyW_le {k : USize} {st : Cmd} {pos : USize} (hk : k.toNat ≤ 24) :
-    stepCopyW k st ≤ 1 + ((stepCopy k st pos).pend.toNat - st.pend.toNat) := by
+    stepCopyW k st ≤ 1 + addedW st.pend (stepCopy k st pos) := by
+  unfold addedW
   unfold stepCopyW stepCopy
   by_cases h0 : st.left = 0
   · rw [ite_eq_left h0, ite_eq_left h0]
@@ -391,14 +396,16 @@ theorem copyW_le {k : USize} {st : Cmd} {pos : USize} (hk : k.toNat ≤ 24) :
   generalize (umin st.left (room k st.cap - st.pend).toUInt64).toUSize = run at hrun ⊢
   by_cases hc : winCheck k st.wpos st.ring = true ∧ USize.ofNat 1 ≤ st.dist.toUSize ∧ st.dist.toUSize ≤ ringSize k
   · rw [ite_eq_left hc, dite_eq_left hc]
+    rw [ite_eq_right (fun e => StepStatus.noConfusion e)]
     show _ ≤ 1 + ((((clearRing st).pend + run)).toNat - st.pend.toNat)
     rw [show (clearRing st).pend = st.pend from rfl, pend_add (by omega)]
     omega
   · rw [ite_eq_right hc, dite_eq_right hc]
-    omega
+    split <;> omega
 
 theorem wordW_le {k : USize} {st : Cmd} {pos : USize} (hk : k.toNat ≤ 24) :
-    stepWordW k st ≤ 1 + ((stepWord k st pos).pend.toNat - st.pend.toNat) := by
+    stepWordW k st ≤ 1 + addedW st.pend (stepWord k st pos) := by
+  unfold addedW
   unfold stepWordW stepWord
   dsimp only
   by_cases h0 : st.wordBuf.usize - st.wordPos = 0
@@ -420,14 +427,16 @@ theorem wordW_le {k : USize} {st : Cmd} {pos : USize} (hk : k.toNat ≤ 24) :
       st.wordPos.toNat + (usmin (st.wordBuf.usize - st.wordPos) (room k st.cap - st.pend)).toNat ≤ st.wordBuf.size ∧
       st.wordPos.toNat + (usmin (st.wordBuf.usize - st.wordPos) (room k st.cap - st.pend)).toNat ≤ 2 ^ 32 - 1
   · rw [ite_eq_left hc, dite_eq_left hc]
+    rw [ite_eq_right (fun e => StepStatus.noConfusion e)]
     show _ ≤ 1 + (((clearRing st).pend + usmin (st.wordBuf.usize - st.wordPos) (room k st.cap - st.pend)).toNat - st.pend.toNat)
     rw [show (clearRing st).pend = st.pend from rfl, pend_add (by omega)]
     omega
   · rw [ite_eq_right hc, dite_eq_right hc]
-    omega
+    split <;> omega
 
 theorem literalsW_le {H : Hdr} {k : USize} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {st : Cmd} {pos : USize}
-    (hk : k.toNat ≤ 24) : stepLiteralsW H k a stop hs st pos ≤ 12 + 10 * ((stepLiterals H k a stop hs st pos).pend.toNat - st.pend.toNat) := by
+    (hk : k.toNat ≤ 24) : stepLiteralsW H k a stop hs st pos ≤ 12 + 10 * addedW st.pend (stepLiterals H k a stop hs st pos) := by
+  unfold addedW
   unfold stepLiteralsW stepLiterals
   by_cases h0 : st.left = 0
   · rw [ite_eq_left h0]
@@ -459,8 +468,14 @@ theorem literalsW_le {H : Hdr} {k : USize} {a : ByteArray} {stop : USize} {hs : 
         omega
       generalize (umin st.left (umin st.lCount (room k st.cap - st.pend).toUInt64)).toUSize = run at hrun' ⊢
       have key : ∀ (W : Nat) (L : LitRun), W + 10 * L.left.toNat ≤ 10 * run.toNat + 11 → L.left.toNat ≤ run.toNat →
-          W + 1 ≤ 12 + 10 * ((finishLiterals (clearRing st) L run (ringSize k)).pend.toNat - st.pend.toNat) := by
+          W + 1 ≤ 12 + 10 * (if (finishLiterals (clearRing st) L run (ringSize k)).status = .bad then 0
+            else (finishLiterals (clearRing st) L run (ringSize k)).pend.toNat - st.pend.toNat) := by
         intro W L hW hL
+        have hnb : (finishLiterals (clearRing st) L run (ringSize k)).status ≠ .bad := by
+          unfold finishLiterals
+          dsimp only
+          split <;> exact fun e => StepStatus.noConfusion e
+        rw [ite_eq_right hnb]
         show W + 1 ≤ 12 + 10 * (((clearRing st).pend + (run - L.left)).toNat - st.pend.toNat)
         have hsub : (run - L.left).toNat = run.toNat - L.left.toNat := USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr hL)
         rw [show (clearRing st).pend = st.pend from rfl, pend_add (by rw [hsub]; omega), hsub]
@@ -559,7 +574,7 @@ theorem distanceSymbolW_le {H : Hdr} {st : Cmd} {pos : USize} (ht : st.tag = .di
 dictionary word's building when it begins one or stops. -/
 theorem stepAtW_le {H : Hdr} {k : USize} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {st : Cmd} {pos : USize}
     (hk : k.toNat ≤ 24) : stepAtW H k a stop hs st pos ≤
-      12 + 10 * ((stepAt H k a stop hs st pos).pend.toNat - st.pend.toNat) + wordCost st.tag (stepAt H k a stop hs st pos) := by
+      12 + 10 * addedW st.pend (stepAt H k a stop hs st pos) + wordCost st.tag (stepAt H k a stop hs st pos) := by
   unfold stepAtW stepAt
   cases ht : st.tag with
   | command => dsimp only; omega
@@ -582,7 +597,7 @@ theorem stepAtW_le {H : Hdr} {k : USize} {a : ByteArray} {stop : USize} {hs : st
 /-- A command loop step's work: the refill's, then the step's. -/
 theorem stepCmdW_le {H : Hdr} {k : USize} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {st : Cmd} {pos : USize}
     (hk : k.toNat ≤ 24) (hp : pos.toNat ≤ stop.toNat) : stepCmdW H k a stop hs st pos ≤
-      21 + 10 * ((stepCmd H k a stop hs st pos).pend.toNat - st.pend.toNat) + wordCost st.tag (stepCmd H k a stop hs st pos) := by
+      21 + 10 * addedW st.pend (stepCmd H k a stop hs st pos) + wordCost st.tag (stepCmd H k a stop hs st pos) := by
   have hp' : pos ≤ stop := USize.le_iff_toNat_le.mpr hp
   unfold stepCmdW stepCmd
   rw [dite_eq_left hp', dite_eq_left hp']
@@ -593,5 +608,244 @@ theorem stepCmdW_le {H : Hdr} {k : USize} {a : ByteArray} {stop : USize} {hs : s
     (pos := (refill st.word st.count a pos stop hs hp).pos) hk
   dsimp only at h2
   exact Nat.le_trans (Nat.add_le_add_left h2 _) (by omega)
+
+/-! ### The potential on the commands' places
+
+A step of the commands read in order reads bits, produces bytes, or goes lower in `cstage`. A command loop step, with its
+round, costs 22, ten for each byte and a word's building: the potential holds 22 for each rank and 95 for a word not yet
+built, so a step that reads and produces nothing pays from the potential, and any other step pays at most 388 for each
+bit it reads and 398 for each byte it adds. -/
+
+/-- The potential of a command's place. -/
+def cpot (p : Phase) : Nat := 22 * cstage p + (if 14 ≤ cstage p then 95 else 0)
+
+/-- A step of the commands read in order goes on only from a rank of 13 or more. -/
+theorem cstage_next {w : Nat} {m : MetaBlockHeader} {p : Phase} {bs : List Bool} {q : Phase} {c : List Bool}
+    (h : cStep w m p bs = .next q c) : 13 ≤ cstage p := by
+  cases p with
+  | command s =>
+    by_cases h0 : s.remaining = 0
+    · have h' : (if s.remaining = 0 then ORes.exit s bs else nextIn m.insertCopy s.insertCopy bs fun ic b =>
+          .next (Phase.insertCopy s ic) b) = .next q c := h
+      rw [ite_eq_left h0] at h'
+      cases h'
+    · simp only [cstage, h0, ↓reduceIte]
+      omega
+  | copy s d n => cases n <;> simp only [cstage] <;> omega
+  | word s pending => cases pending <;> simp only [cstage] <;> omega
+  | _ => simp only [cstage]; omega
+
+/-- A run of the commands read in order: it keeps what its places have, reads and produces at least nothing, and when it
+reads and produces nothing goes down a rank for each step. -/
+theorem creach {w : Nat} {m : MetaBlockHeader} (hm : m.ndirect ≤ 120) : ∀ {n : Nat} {p : Phase} {bs : List Bool} {q : Phase}
+    {c : List Bool}, ReachN (cStep w m) n p bs q c → CInv w p → CInv w q ∧ c.length ≤ bs.length ∧ p.out.length ≤ q.out.length ∧
+      (c.length = bs.length → q.out.length = p.out.length → cstage q + n ≤ cstage p) ∧ (1 ≤ n → 13 ≤ cstage p) := by
+  intro n p bs q c h
+  induction h with
+  | refl => intro hi; exact ⟨hi, Nat.le_refl _, Nat.le_refl _, fun _ _ => by omega, fun h => absurd h (by omega)⟩
+  | @next n p bs p' bs' q c hs _ ih =>
+    intro hi
+    obtain ⟨hi', ⟨l, hl⟩, hmv⟩ := cStep_moves hm p bs p' bs' hi hs
+    have hs' : sStep (.cmds w false m p) bs = .next (.cmds w false m p') bs' := by simp only [sStep, hs]
+    obtain ⟨u, hu, _⟩ := nfaith_sStep _ bs _ bs' hs'
+    have hb : bs'.length + u.length = bs.length := by rw [hu, List.length_append]; omega
+    have ho : p'.out.length = l.length + p.out.length := by rw [hl, List.length_append]
+    obtain ⟨hq, h1, h2, h3, -⟩ := ih hi'
+    refine ⟨hq, by omega, by omega, fun e1 e2 => ?_, fun _ => cstage_next hs⟩
+    rcases hmv with (hm1 | hm1) | hm1
+    · exact absurd e1 (by omega)
+    · exact absurd e2 (by omega)
+    · have := h3 (by omega) (by omega)
+      omega
+
+theorem Rel.k24 {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {p : Phase} (h : Rel w k m st p) : k ≤ 24 := by
+  cases p
+  case literalSymbol => exact h.elim
+  all_goals exact h.1.k24
+
+/-- A state at a word's bytes stands for a word's place. -/
+theorem Rel.word_of {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {p : Phase} (h : Rel w k m st p) (ht : st.tag = .word) :
+    ∃ s pending, p = .word s pending := by
+  cases p
+  case word s pending => exact ⟨s, pending, rfl⟩
+  case literalSymbol => exact h.elim
+  all_goals exact absurd (h.2.1.symm.trans ht) (fun e => Tag.noConfusion e)
+
+theorem cstage_le21 (p : Phase) : cstage p ≤ 21 := cstage_le p
+
+/-- A command loop step that goes on, against the potential: what it does is paid by the potential, 388 for each bit it
+reads and 398 for each byte it adds. -/
+theorem stepCmd_pot {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a : ByteArray} {stop : USize}
+    {hs : stop.toNat ≤ a.size} {p : Phase} {st : Cmd} {pos : USize} (hm : m.ndirect ≤ 120) (hH : HdrRel H m)
+    (hrel : Rel w k.toNat m st p) (hci : CInv w p) (hp : pos.toNat ≤ stop.toNat) (hn : (stepCmd H k a stop hs st pos).status = .next) :
+    ∃ p', Rel w k.toNat m (stepCmd H k a stop hs st pos) p' ∧ OutStep p p' st (stepCmd H k a stop hs st pos) ∧ CInv w p' ∧
+      (stepCmd H k a stop hs st pos).pos.toNat ≤ stop.toNat ∧ pos.toNat ≤ (stepCmd H k a stop hs st pos).pos.toNat ∧
+      ∀ F, ∃ n, 1 ≤ n ∧ ReachN (cStep w m) n p (stateBits st a pos stop F) p'
+        (stateBits (stepCmd H k a stop hs st pos) a (stepCmd H k a stop hs st pos).pos stop F) ∧
+        stepCmdW H k a stop hs st pos + 1 + cpot p' + 388 * (stateBits (stepCmd H k a stop hs st pos) a (stepCmd H k a stop hs st pos).pos stop F).length ≤
+          cpot p + 388 * (stateBits st a pos stop F).length + 398 * (p'.out.length - p.out.length) := by
+  obtain ⟨p', hR, hout, h2, h1, hj⟩ := stepCmd_count (hs := hs) hH hrel hp hn
+  have hk := hrel.k24
+  have hW := stepCmdW_le (H := H) (a := a) (hs := hs) (st := st) hk hp
+  obtain ⟨l, hl1, hl2⟩ := hout
+  refine ⟨p', hR, ⟨l, hl1, hl2⟩, ?_, h2, h1, fun F => ?_⟩
+  · obtain ⟨n, hn1, hr⟩ := hj []
+    exact (creach hm hr hci).1
+  obtain ⟨n, hn1, hr⟩ := hj F
+  obtain ⟨-, c1, c2, c3, c4⟩ := creach hm hr hci
+  have h13 := c4 hn1
+  refine ⟨n, hn1, hr, ?_⟩
+  have hq21 := cstage_le21 p'
+  have hp21 := cstage_le21 p
+  have hlo : p'.out.length = l.length + p.out.length := by rw [hl1, List.length_append]
+  unfold addedW at hW
+  rw [ite_eq_right (by rw [hn]; exact fun e => StepStatus.noConfusion e), hl2] at hW
+  generalize (stateBits (stepCmd H k a stop hs st pos) a (stepCmd H k a stop hs st pos).pos stop F).length = cb at c1 c3 ⊢
+  generalize (stateBits st a pos stop F).length = bb at c1 c3 ⊢
+  have hx : p'.out.length - p.out.length = l.length := by omega
+  rw [hx]
+  unfold cpot
+  have hWc : wordCost st.tag (stepCmd H k a stop hs st pos) ≤ 95 := by unfold wordCost; split <;> omega
+  by_cases hmv : cb = bb ∧ l.length = 0
+  · have hlt := c3 hmv.1 (by omega)
+    by_cases hwd : (stepCmd H k a stop hs st pos).tag = .word ∧ st.tag ≠ .word
+    · obtain ⟨s, pending, rfl⟩ := hR.word_of hwd.1
+      have h13 : cstage (.word s pending) = 13 := by
+        cases pending with
+        | nil =>
+          have : cstage (Phase.word s []) = 21 := rfl
+          omega
+        | cons => rfl
+      rw [h13] at hlt ⊢
+      split <;> split <;> omega
+    · have h0 : wordCost st.tag (stepCmd H k a stop hs st pos) = 0 := by
+        unfold wordCost
+        exact ite_eq_left ⟨hn, hwd⟩
+      split <;> split <;> omega
+  · have hmv' : 1 ≤ bb - cb ∨ 1 ≤ l.length := by omega
+    split <;> split <;> omega
+
+theorem cpot_le (p : Phase) : cpot p ≤ 557 := by
+  have := cstage_le21 p
+  unfold cpot
+  split <;> omega
+
+/-- A round that stops the command loop: its work, and the potential of where it stops, are at most 676 and ten for each
+byte it adds. -/
+theorem stopRound_le {H : Hdr} {k : USize} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {st : Cmd} {pos : USize}
+    {L : Nat} (hk : k.toNat ≤ 24) (hp : pos.toNat ≤ stop.toNat) (hL : (stepCmd H k a stop hs st pos).status ≠ .bad →
+      (stepCmd H k a stop hs st pos).pend.toNat = st.pend.toNat + L) (q : Phase) :
+    stepCmdW H k a stop hs st pos + 1 + cpot q ≤ 676 + 10 * L := by
+  have hW := stepCmdW_le (H := H) (a := a) (hs := hs) (st := st) hk hp
+  have hq := cpot_le q
+  have hc : wordCost st.tag (stepCmd H k a stop hs st pos) ≤ 95 := by unfold wordCost; split <;> omega
+  unfold addedW at hW
+  split at hW
+  · omega
+  · rename_i hb
+    rw [hL hb] at hW
+    omega
+
+/-- The command loop's work, against the potential: what it does is paid for by the potential, 388 for each bit it
+reads, 398 for each byte it adds, and 676 for the round that stops it. -/
+theorem runCmdW_count {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size}
+    (hm : m.ndirect ≤ 120) (hH : HdrRel H m) : ∀ (N : Nat) (n : USize) (st : Cmd) (p : Phase) (pos : USize), n.toNat = N →
+      Rel w k.toNat m st p → CInv w p → pos.toNat ≤ stop.toNat → ∀ F, ∃ c q st' pos', Rel w k.toNat m st' q ∧ CInv w q ∧
+        OutStep p q st st' ∧ PendLe st st' ∧ pos.toNat ≤ pos'.toNat ∧ pos'.toNat ≤ stop.toNat ∧
+        ReachN (cStep w m) c p (stateBits st a pos stop F) q (stateBits st' a pos' stop F) ∧
+        runCmdW H k a stop hs n st pos + cpot q + 388 * (stateBits st' a pos' stop F).length ≤
+          cpot p + 388 * (stateBits st a pos stop F).length + 398 * (q.out.length - p.out.length) + 676 ∧
+        ((runCmd H k a stop hs n st pos).status ≠ .bad → st' = runCmd H k a stop hs n st pos ∧ pos' = (runCmd H k a stop hs n st pos).pos) ∧
+        ((runCmd H k a stop hs n st pos).status = .done → ∃ s, q = .command s ∧ s.remaining = 0) ∧
+        ((runCmd H k a stop hs n st pos).status = .next → n ≠ 0 → 1 ≤ c) := by
+  intro N
+  induction N with
+  | zero =>
+    intro n st p pos hN hrel hci hp F
+    have hz : n = 0 := usize_zero hN
+    have e : runCmd H k a stop hs n st pos = markStep st pos .next := by rw [runCmd, dite_eq_left hz]
+    rw [e]
+    refine ⟨0, p, markStep st pos .next, pos, hrel.mark _ _, hci, ⟨[], rfl, rfl⟩, PendLe.keep rfl rfl, Nat.le_refl _, hp, .refl _ _, ?_,
+      fun _ => ⟨rfl, rfl⟩, fun h => StepStatus.noConfusion h, fun _ h => absurd hz h⟩
+    rw [runCmdW, dite_eq_left hz]
+    show 1 + cpot p + 388 * (stateBits st a pos stop F).length ≤ _
+    omega
+  | succ N ih =>
+    intro n st p pos hN hrel hci hp F
+    have hn : n ≠ 0 := fun e => by rw [e] at hN; exact Nat.succ_ne_zero _ hN.symm
+    have hpred := usize_pred hn
+    have hk := hrel.k24
+    have hok := stepCmd_ok (K := commandsFrom w m) (fun s bs h0 => commandsFrom_step bs h0) (hs := hs) hH hrel hp
+    have hsteps : runCmdW H k a stop hs n st pos = stepCmdW H k a stop hs st pos + 1 + match (stepCmd H k a stop hs st pos).status with
+        | .next => runCmdW H k a stop hs (n - USize.ofNat 1) (stepCmd H k a stop hs st pos) (stepCmd H k a stop hs st pos).pos
+        | _ => 0 := by
+      rw [runCmdW, dite_eq_right hn]
+    have hrun : runCmd H k a stop hs n st pos = match (stepCmd H k a stop hs st pos).status with
+        | .next => runCmd H k a stop hs (n - USize.ofNat 1) (stepCmd H k a stop hs st pos) (stepCmd H k a stop hs st pos).pos
+        | _ => stepCmd H k a stop hs st pos := by
+      rw [runCmd, dite_eq_right hn]
+      rfl
+    rw [hsteps, hrun]
+    cases hst : (stepCmd H k a stop hs st pos).status
+    case next =>
+      obtain ⟨p1, hR1, o1, hci1, h2, h1, hj1⟩ := stepCmd_pot (hs := hs) hm hH hrel hci hp hst
+      obtain ⟨n1, hn1, hr1, hw1⟩ := hj1 F
+      obtain ⟨c2, q, st', pos', hq, hciq, o2, l2, g1, g2, hr2, g3, g4, g5, g6⟩ :=
+        ih (n - USize.ofNat 1) _ p1 _ (by omega) hR1 hci1 h2 F
+      have ho1 : p.out.length ≤ p1.out.length := by
+        obtain ⟨l, e1, -⟩ := o1
+        rw [e1, List.length_append]
+        omega
+      have ho2 : p1.out.length ≤ q.out.length := by
+        obtain ⟨l, e1, -⟩ := o2
+        rw [e1, List.length_append]
+        omega
+      refine ⟨n1 + c2, q, st', pos', hq, hciq, o1.trans o2, (stepCmd_pendLe H k a stop hs st pos).trans l2, by omega, g2,
+        hr1.trans hr2, ?_, g4, g5, fun _ _ => by omega⟩
+      show stepCmdW H k a stop hs st pos + 1 + runCmdW H k a stop hs (n - USize.ofNat 1) (stepCmd H k a stop hs st pos)
+        (stepCmd H k a stop hs st pos).pos + cpot q + 388 * (stateBits st' a pos' stop F).length ≤ _
+      omega
+    case needsInput =>
+      obtain ⟨b1, _, p', hR', _, _, _, hout, hj, _⟩ := hok.needsInput hst
+      obtain ⟨c0, hc0⟩ := (hj F).count
+      obtain ⟨hci', c1, -, -, -⟩ := creach hm hc0 hci
+      obtain ⟨l, hl1, hl2⟩ := hout
+      have hw := stopRound_le (H := H) (k := k) (a := a) (hs := hs) (st := st) (pos := pos) (L := l.length) hk hp (fun _ => hl2) p'
+      have hlo : p'.out.length = l.length + p.out.length := by rw [hl1, List.length_append]
+      refine ⟨c0, p', _, _, hR', hci', ⟨l, hl1, hl2⟩, stepCmd_pendLe H k a stop hs st pos, by rw [b1]; exact hp,
+        by rw [b1]; exact Nat.le_refl _, hc0, ?_,
+        fun _ => ⟨rfl, rfl⟩, (fun h => absurd (hst.symm.trans h) (by decide)), (fun h => absurd (hst.symm.trans h) (by decide))⟩
+      show stepCmdW H k a stop hs st pos + 1 + 0 + cpot p' + _ ≤ _
+      omega
+    case needsOutput =>
+      obtain ⟨p', hR', b1, b2, _, _, _, hout, hj⟩ := hok.needsOutput hst
+      obtain ⟨c0, hc0⟩ := (hj F).count
+      obtain ⟨hci', c1, -, -, -⟩ := creach hm hc0 hci
+      obtain ⟨l, hl1, hl2⟩ := hout
+      have hw := stopRound_le (H := H) (k := k) (a := a) (hs := hs) (st := st) (pos := pos) (L := l.length) hk hp (fun _ => hl2) p'
+      have hlo : p'.out.length = l.length + p.out.length := by rw [hl1, List.length_append]
+      refine ⟨c0, p', _, _, hR', hci', ⟨l, hl1, hl2⟩, stepCmd_pendLe H k a stop hs st pos, b1, b2, hc0, ?_, fun _ => ⟨rfl, rfl⟩,
+        (fun h => absurd (hst.symm.trans h) (by decide)), (fun h => absurd (hst.symm.trans h) (by decide))⟩
+      show stepCmdW H k a stop hs st pos + 1 + 0 + cpot p' + _ ≤ _
+      omega
+    case done =>
+      obtain ⟨s, hR', b1, b2, _, h0, hout, hj⟩ := hok.done hst
+      obtain ⟨c0, hc0⟩ := (hj F).count
+      obtain ⟨hci', c1, -, -, -⟩ := creach hm hc0 hci
+      obtain ⟨l, hl1, hl2⟩ := hout
+      have hw := stopRound_le (H := H) (k := k) (a := a) (hs := hs) (st := st) (pos := pos) (L := l.length) hk hp (fun _ => hl2) (.command s)
+      have hlo : (Phase.command s).out.length = l.length + p.out.length := by rw [hl1, List.length_append]
+      exact ⟨c0, .command s, _, _, hR', hci', ⟨l, hl1, hl2⟩, stepCmd_pendLe H k a stop hs st pos, b1, b2, hc0, by
+          show stepCmdW H k a stop hs st pos + 1 + 0 + cpot (.command s) + _ ≤ _
+          omega,
+        fun _ => ⟨rfl, rfl⟩, fun _ => ⟨s, rfl, h0⟩,
+        (fun h => absurd (hst.symm.trans h) (by decide))⟩
+    case bad =>
+      have hw := stopRound_le (H := H) (k := k) (a := a) (hs := hs) (st := st) (pos := pos) (L := 0) hk hp (fun h => absurd hst h) p
+      exact ⟨0, p, st, pos, hrel, hci, ⟨[], rfl, rfl⟩, PendLe.rfl' _, Nat.le_refl _, hp, .refl _ _, by
+          show stepCmdW H k a stop hs st pos + 1 + 0 + cpot p + _ ≤ _
+          omega,
+        fun e => absurd hst e,
+        (fun h => absurd (hst.symm.trans h) (by decide)), (fun h => absurd (hst.symm.trans h) (by decide))⟩
 
 end Brotli.Decoder
