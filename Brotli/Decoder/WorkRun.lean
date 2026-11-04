@@ -914,6 +914,74 @@ theorem pay_raw {w : Nat} {st : StreamState} {last : Bool} {n : Nat} {a : ByteAr
 
 /-! ### A step of the stream -/
 
+/-- Only WBITS's step sets the window's size. -/
+theorem stepD_k {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} (h : D.tag ≠ .wbits) :
+    (stepD a stop hs D).k = D.k := by
+  unfold stepD
+  cases ht : D.tag <;> dsimp only
+  · exact absurd ht h
+  · unfold stepDMeta metaGo
+    repeat' (first | split_all | rfl)
+  · unfold stepDSkip moveOn
+    repeat' (first | split_all | rfl)
+  · unfold stepDRaw takeRing moveOn rawFinish clearCmd
+    repeat' (first | split_all | rfl)
+  · unfold stepDHdr takeHd clearHd
+    dsimp only
+    repeat' (first | split_all | rfl)
+  · unfold stepDCmds takeCmd clearCmd
+    dsimp only
+    repeat' (first | split_all | rfl)
+
+/-- No step goes back to WBITS. -/
+theorem stepD_tag {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} (h : D.tag ≠ .wbits) :
+    (stepD a stop hs D).tag ≠ .wbits := by
+  unfold stepD
+  cases ht : D.tag <;> dsimp only
+  · exact absurd ht h
+  · unfold stepDMeta metaGo
+    repeat' (first | split_all | (exact fun e => DTag.noConfusion e) | (rw [ht]; exact fun e => DTag.noConfusion e))
+  · unfold stepDSkip moveOn
+    repeat' (first | split_all | (exact fun e => DTag.noConfusion e) | (rw [ht]; exact fun e => DTag.noConfusion e))
+  · unfold stepDRaw takeRing moveOn rawFinish clearCmd
+    repeat' (first | split_all | (exact fun e => DTag.noConfusion e) | (rw [ht]; exact fun e => DTag.noConfusion e))
+  · unfold stepDHdr takeHd clearHd
+    dsimp only
+    repeat' (first | split_all | (exact fun e => DTag.noConfusion e) | (rw [ht]; exact fun e => DTag.noConfusion e))
+  · unfold stepDCmds takeCmd clearCmd
+    dsimp only
+    repeat' (first | split_all | (exact fun e => DTag.noConfusion e) | (rw [ht]; exact fun e => DTag.noConfusion e))
+  · rw [ht]
+    exact fun e => DTag.noConfusion e
+
+/-- WBITS's step that goes on leaves WBITS. -/
+theorem stepDWbits_tag {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize} :
+    (stepDWbits a stop hs D pos).status = .next → (stepDWbits a stop hs D pos).tag ≠ .wbits := by
+  unfold stepDWbits
+  repeat' (first | split_all | (intro _; exact fun e => DTag.noConfusion e) | (intro h; exact absurd h (fun e => DStatus.noConfusion e)))
+
+/-- After WBITS, the loop keeps the window's size. -/
+theorem runD_wk {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} :
+    ∀ x : RunArg a stop hs, x.D.tag ≠ .wbits → (runD a stop hs x.D x.inv).tag ≠ .wbits ∧ (runD a stop hs x.D x.inv).k = x.D.k := by
+  intro x
+  induction x using (runRel_wf a stop hs).induction with
+  | _ x ih =>
+    obtain ⟨D, hinv⟩ := x
+    intro h
+    dsimp only at ih h ⊢
+    rw [runD]
+    by_cases he : D.tag = .ended
+    · rw [dite_eq_left he]
+      exact ⟨h, rfl⟩
+    · rw [dite_eq_right he]
+      dsimp only
+      by_cases hn : (stepD a stop hs D).status = .next
+      · rw [dite_eq_left hn]
+        obtain ⟨i1, i2⟩ := ih ⟨_, hinv.step he hn⟩ ⟨he, hn, rfl⟩ (stepD_tag h)
+        exact ⟨i1, i2.trans (stepD_k h)⟩
+      · rw [dite_eq_right hn]
+        exact ⟨stepD_tag h, stepD_k h⟩
+
 /-- A stream step, against the potential: one that goes on is paid for, with the window when it is WBITS's; one that
 pauses costs at most 269 more; one that rejects or reports the limit costs at most the potential, the bits, the bytes it
 may decode first, and 23750. -/
