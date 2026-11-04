@@ -149,4 +149,126 @@ def callDW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (final : 
 termination_by space
 decreasing_by exact _hlt
 
+/-! ### What the stream's reads take -/
+
+private theorem obind {β γ : Type} {x : Option β} {f : β → Option γ} {z : γ} (h : (x >>= f) = some z) :
+    ∃ v, x = some v ∧ f v = some z :=
+  Option.bind_eq_some_iff.mp h
+
+theorem msUnc_le {last : Bool} {mlen : Nat} {bs b : List Bool} {v : MetaStart} (h : msUnc last mlen bs = some (v, b)) :
+    b.length ≤ bs.length := by
+  unfold msUnc at h
+  split at h
+  · simp only [Option.some.injEq, Prod.mk.injEq] at h
+    rw [← h.2]
+    exact Nat.le_refl _
+  · obtain ⟨u, hu, h2⟩ := obind h
+    simp only [Option.some.injEq, Prod.mk.injEq] at h2
+    rw [← h2.2]
+    have := readInt_length _ _ _ _ hu
+    omega
+
+theorem msLen_le {last : Bool} {mn : Nat} {bs b : List Bool} {v : MetaStart} (h : msLen last mn bs = some (v, b)) :
+    b.length + mn * 4 ≤ bs.length := by
+  unfold msLen at h
+  obtain ⟨u, hu, h2⟩ := obind h
+  have := readInt_length _ _ _ _ hu
+  split at h2
+  · cases h2
+  · have := msUnc_le h2
+    omega
+
+theorem msBody_data {last l : Bool} {mlen : Nat} {unc : Bool} {bs b : List Bool}
+    (h : msBody last bs = some (.data l mlen unc, b)) : b.length + 18 ≤ bs.length := by
+  unfold msBody at h
+  obtain ⟨u, hu, h2⟩ := obind h
+  have := readInt_length _ _ _ _ hu
+  split at h2
+  · obtain ⟨r, -, h3⟩ := obind h2
+    split at h3
+    · cases h3
+    · obtain ⟨n, -, h4⟩ := obind h3
+      unfold msSkip at h4
+      obtain ⟨x, -, h5⟩ := obind h4
+      split at h5
+      · cases h5
+      · simp only [Option.some.injEq, Prod.mk.injEq] at h5
+        exact absurd h5.1 (fun e => MetaStart.noConfusion e)
+  · have := msLen_le h2
+    omega
+
+/-- A meta-block of data takes at least 19 bits to start: ISLAST, MNIBBLES and at least four nibbles of MLEN. -/
+theorem metaStart_data {l : Bool} {mlen : Nat} {unc : Bool} {bs b : List Bool}
+    (h : metaStart bs = some (.data l mlen unc, b)) : b.length + 19 ≤ bs.length := by
+  unfold metaStart at h
+  obtain ⟨u, hu, h2⟩ := obind h
+  have := readInt_length _ _ _ _ hu
+  split at h2
+  · have := msBody_data h2
+    omega
+  · obtain ⟨e, he, h3⟩ := obind h2
+    have := readInt_length _ _ _ _ he
+    split at h3
+    · simp only [Option.some.injEq, Prod.mk.injEq] at h3
+      exact absurd h3.1 (fun e => MetaStart.noConfusion e)
+    · have := msBody_data h3
+      omega
+
+/-- `mkHdr`'s work at a header's end: its maps' and modes' bytes, a table's check for each tree and each block switch's
+two tables. -/
+theorem mkHdrW_le {d : Done} {g : Gh} (hu : Upto d g 10) : mkHdrW d ≤ 218924 := by
+  have hL := hu.cat .L (by decide)
+  have hI := hu.cat .I (by decide)
+  have hD := hu.cat .D (by decide)
+  have h1 : g.m.literal.n ≤ 256 := hL.wf.2.1
+  have h2 : g.m.insertCopy.n ≤ 256 := hI.wf.2.1
+  have h3 : g.m.distance.n ≤ 256 := hD.wf.2.1
+  have hIn : d.nI.toNat = g.m.insertCopy.n := hI.n
+  have hm := (hu.modes (by decide)).sz
+  obtain ⟨t1, -, t3, ml⟩ := hu.lmap (by decide)
+  obtain ⟨u1, -, u3, md⟩ := hu.dmap (by decide)
+  have e1 := ml.sz
+  have e2 := md.sz
+  unfold literalContextMapSize at e1
+  unfold distanceContextMapSize at e2
+  unfold mkHdrW fitsW
+  rw [hm, e1, e2, t1, u1, hIn]
+  omega
+
+/-- The loop for uncompressed bytes: ten for each byte it moves, and ten. -/
+theorem rawRunW_le (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (mask : USize) (k : Nat) (hk : k ≤ 24)
+    (hmask : mask.toNat = 2 ^ k - 1) : ∀ (N : Nat) (n : USize) (word count : UInt64) (pos : USize) (ring : ByteArray)
+    (wpos : USize) (p1 p2 : UInt8) (hp : pos.toNat ≤ stop.toNat) (hsize : ring.size = 2 ^ k) (hwp : wpos.toNat < 2 ^ k),
+    n.toNat = N → rawRunW a stop hs mask k hk hmask n word count pos ring wpos p1 p2 hp hsize hwp +
+      10 * (rawRun a stop hs mask k hk hmask n word count pos ring wpos p1 p2 hp hsize hwp).left.toNat ≤ 10 * N + 10 := by
+  intro N
+  induction N with
+  | zero =>
+    intro n word count pos ring wpos p1 p2 hp hsize hwp hN
+    have hz : n = 0 := usize_zero hN
+    rw [rawRunW, dite_eq_left hz, rawRun, dite_eq_left hz]
+    show 1 + 10 * n.toNat ≤ _
+    omega
+  | succ N ih =>
+    intro n word count pos ring wpos p1 p2 hp hsize hwp hN
+    have hn : n ≠ 0 := fun e => by rw [e] at hN; exact Nat.succ_ne_zero _ hN.symm
+    have hpred := usize_pred hn
+    have hR := refillW_le (word := word) (count := count) hs hp
+    rw [rawRunW, dite_eq_right hn, rawRun, dite_eq_right hn]
+    dsimp only
+    split
+    · rw [Nat.add_assoc]
+      refine Nat.le_trans (Nat.add_le_add_left (ih _ _ _ _ _ _ _ _ _ _ _ ?_) _) ?_
+      · rw [hpred]
+        omega
+      · omega
+    · split
+      · rw [Nat.add_assoc]
+        refine Nat.le_trans (Nat.add_le_add_left (ih _ _ _ _ _ _ _ _ _ _ _ ?_) _) ?_
+        · rw [hpred]
+          omega
+        · omega
+      · show refillW word count a pos stop hs + 1 + 10 * n.toNat ≤ _
+        omega
+
 end Brotli.Decoder
