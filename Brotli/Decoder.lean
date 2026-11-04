@@ -64,6 +64,7 @@ import Brotli.Decoder.CostHeader
 import Brotli.Decoder.WorkHdr
 import Brotli.Decoder.WorkCmd
 import Brotli.Decoder.WorkStream
+import Brotli.Decoder.WorkRun
 
 /-!
 # Decoder
