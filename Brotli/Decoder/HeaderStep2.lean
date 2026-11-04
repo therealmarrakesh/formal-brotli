@@ -273,21 +273,35 @@ theorem stepHNp_ok {st : Hd} {g : Gh} {pos : USize} (hrel : HRel st g .np) (hp :
 
 /-! ### The context modes -/
 
+/-- A state in the context modes, with modes left to read, has room for the next. -/
+theorem modes_room {st : Hd} (h : ∃ g p, HRel st g p) (ht : st.tag = .modes) (h0 : ¬ st.left = 0) :
+    st.idx.toUSize.toNat < st.fill.size := by
+  obtain ⟨g, p, hr⟩ := h
+  cases p with
+  | modes done left =>
+    obtain ⟨_, hu, _, hidx, hleft, hlen, hsize, _⟩ := hr
+    have h256 : g.m.literal.n ≤ 256 := (hu.cat .L (by show 0 < 4; omega)).wf.2.1
+    have hl0 : st.left.toNat ≠ 0 := fun e => h0 (UInt64.toNat_inj.mp (by rw [e]; rfl))
+    rw [word_toUSize (by omega), hsize]
+    omega
+  | np => exact absurd (hr.2.2.symm.trans ht) (fun e => HTag.noConfusion e)
+  | _ => exact absurd (hr.2.2.1.symm.trans ht) (fun e => HTag.noConfusion e)
+
 /-- The place in the context modes. -/
-def stepHModes (st : Hd) (pos : USize) : Hd :=
-  let left := st.left
-  if left = 0 then
+def stepHModes (st : Hd) (pos : USize) (h : ∃ g p, HRel st g p) (ht : st.tag = .modes) : Hd :=
+  if h0 : st.left = 0 then
     let fill := st.fill
     { st with pos := pos, status := .next, tag := .trees, isL := true, d := { st.d with modes := fill } }
   else if 2 ≤ st.count then
     let b : BitBuffer := ⟨st.word, st.count⟩
+    let left := st.left
     let idx := st.idx
     let fill := st.fill
     let st0 := clearFill st
     let b1 := b.drop 2
     { st0 with
       word := b1.word, count := b1.count, pos := pos, status := .next, idx := idx + 1, left := left - 1
-      fill := setU fill idx.toUSize (b.peek 2).toUInt8 }
+      fill := fill.uset idx.toUSize (b.peek 2).toUInt8 (modes_room h ht h0) }
   else markH st pos .needsInput
 
 /-- The context modes settled move the stage on. -/
@@ -309,8 +323,8 @@ theorem Upto.modesDone {d : Done} {g : Gh} (h : Upto d g 4) {b : ByteArray} {l :
   codes _ h := absurd h (by omega)
 
 theorem stepHModes_ok {done : List Nat} {left : Nat} {st : Hd} {g : Gh} {pos : USize} (hrel : HRel st g (.modes done left))
-    (hp : pos.toNat ≤ stop.toNat) (hfull : 56 < st.count.toNat ∨ pos = stop) :
-    HStepOk K a stop g (.modes done left) st pos (stepHModes st pos) := by
+    (hp : pos.toNat ≤ stop.toNat) (hfull : 56 < st.count.toNat ∨ pos = stop) {hH : ∃ g p, HRel st g p} {hT : st.tag = .modes} :
+    HStepOk K a stop g (.modes done left) st pos (stepHModes st pos hH hT) := by
   obtain ⟨hw, hu, ht, hidx, hleft, hlen, hsize, hlt, hat⟩ := hrel
   have hrel : HRel st g (.modes done left) := ⟨hw, hu, ht, hidx, hleft, hlen, hsize, hlt, hat⟩
   have hcL := hu.cat .L (by show 0 < 4; omega)
@@ -318,7 +332,7 @@ theorem stepHModes_ok {done : List Nat} {left : Nat} {st : Hd} {g : Gh} {pos : U
   unfold stepHModes
   dsimp only
   by_cases h0 : st.left = 0
-  · rw [ite_eq_left h0]
+  · rw [dite_eq_left h0]
     have hl0 : left = 0 := by
       rw [← hleft, h0]
       rfl
@@ -329,7 +343,7 @@ theorem stepHModes_ok {done : List Nat} {left : Nat} {st : Hd} {g : Gh} {pos : U
         ⟨rfl, by simp [budH, tableOf]⟩⟩) rfl
       ⟨hw, hu.modesDone hmap, rfl, rfl⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => rfl)
     exact hrest_modes_zero K g done _
-  rw [ite_eq_right h0]
+  rw [dite_eq_right h0]
   have hl0 : st.left.toNat ≠ 0 := fun e => h0 (UInt64.toNat_inj.mp (by rw [e]; rfl))
   obtain ⟨n, rfl⟩ : ∃ n, left = n + 1 := ⟨left - 1, by omega⟩
   by_cases h2 : 2 ≤ st.count
@@ -337,6 +351,7 @@ theorem stepHModes_ok {done : List Nat} {left : Nat} {st : Hd} {g : Gh} {pos : U
     have hread := fun f => read_int (b := ⟨st.word, st.count⟩) (k := 2) f (by decide) h2
     have hw1 := drop_wf' hw (k := 2) (by decide) h2
     have hvlt : ((BitBuffer.mk st.word st.count).peek 2).toNat < 4 := peek_lt _ (k := 2) (by decide)
+    rw [uset_setU]
     generalize hb1 : (BitBuffer.mk st.word st.count).drop 2 = b1 at hread hw1
     generalize (BitBuffer.mk st.word st.count).peek 2 = v at hread hvlt
     have hus : st.idx.toUSize.toNat = done.length := by

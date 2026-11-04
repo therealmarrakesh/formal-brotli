@@ -204,12 +204,12 @@ theorem TableDone.toStep {g : Gh} {o : Owner} {c : PrefixCode} {p : HPhase} {st 
 theorem simple_done {o : Owner} {size : Nat} {st : Hd} {g : Gh} (pos : USize) {r : Rd} (hrel : HRel st g (.code o size))
     (hw2 : r.buf.Wf) (hwit : readPrefixCode st.size.toNat (BitBuffer.mk st.word st.count).held = some (simpleValue st.size r, r.buf.held))
     (hsmall : SmallVals r) (hb : st.d.arena.size + budO g o ≤ st.d.arenaCap.toNat)
-    {ha : TableArgs st.size (writeSimple (zeroBytes st.size.toNat) r) (r.e == 0) r.a} :
+    {ha : TableArgs st.size (writeSimple (zeroBytes st.size.toNat) r) (r.e == 0) r.a} {hi : InstallOk st.role st.idx st.fill} :
     TableDone K g o (simpleValue st.size r) { st with
         word := r.word, count := r.count, pos := pos, status := .next, lens := writeSimple (zeroBytes st.size.toNat) r }
       (tableDone { st with
         word := r.word, count := r.count, pos := pos, status := .next, lens := writeSimple (zeroBytes st.size.toNat) r }
-        (r.e == 0) r.a ha) := by
+        (r.e == 0) r.a ha hi) := by
   obtain ⟨_, hu, _, hs, ho⟩ := hrel
   obtain ⟨hs1, hs2, hs3⟩ := hs
   have hCc := readPrefixCode_complete hwit
@@ -254,6 +254,11 @@ theorem code_ex {st : Hd} (h : ∃ g p, HRel st g p) (ht : st.tag = .code) : ∃
   | code o size => exact ⟨g, o, size, hr⟩
   | np => exact absurd (hr.2.2.symm.trans ht) (fun e => HTag.noConfusion e)
   | _ => exact absurd (hr.2.2.1.symm.trans ht) (fun e => HTag.noConfusion e)
+
+/-- A state at a prefix code's first bits has what `installTable` needs. -/
+theorem code_install {st : Hd} (h : ∃ g p, HRel st g p) (ht : st.tag = .code) : InstallOk st.role st.idx st.fill := by
+  obtain ⟨g, o, size, hrel⟩ := code_ex h ht
+  exact hrel.2.2.2.2.install
 
 private theorem readInt_one (bs : List Bool) : readInt 2 (true :: false :: bs) = some (1, bs) := by
   simp [readInt]
@@ -326,7 +331,7 @@ def stepHCode (st : Hd) (pos : USize) (h : ∃ g p, HRel st g p) (ht : st.tag = 
         tableDone { st with
             word := r.word, count := r.count, pos := pos, status := .next
             lens := writeSimple (zeroBytes st.size.toNat) r }
-          (r.e == 0) r.a (hr hs)
+          (r.e == 0) r.a (hr hs) (code_install (st := st) h ht)
     else
       { st with
         word := b1.word, count := b1.count, pos := pos, status := .next, tag := .clens, clIdx := hskip, clSum := 0, clNz := 0, clSym := 0
@@ -434,7 +439,7 @@ theorem stepHCode_ok {o : Owner} {size : Nat} {st : Hd} {g : Gh} {pos : USize} {
           show (if 1 = 1 then readSimple st.size.toNat b1.held else readComplex st.size.toNat 1 b1.held) = _
           rw [ite_eq_left rfl, simpleChain_eq, hs1]
           exact hN2
-        have hdone := simple_done (K := K) pos hrel hw2 hwit hsmall hb (ha := hr hsr)
+        have hdone := simple_done (K := K) pos hrel hw2 hwit hsmall hb (ha := hr hsr) (hi := code_install hH hT)
         generalize hc : simpleValue st.size r = c at hN hdone
         exact hdone.toStep rfl hp rfl (fun h => ⟨h.fill, by
             show (writeSimple (zeroBytes st.size.toNat) r).size ≤ _

@@ -596,12 +596,27 @@ theorem hcost_syms_other (g : Gh) (o : Owner) (n : Nat) (clc : PrefixCode) (ls :
   cases p' <;> first | rfl | exact absurd rfl h
 
 /-- Where a finished table's step goes. -/
-theorem tableDone_tag {st : Hd} {s : Bool} {y : UInt64} {ha : TableArgs st.size st.lens s y} :
-    (tableDone st s y ha).tag ≠ .clens ∧ (tableDone st s y ha).tag ≠ .syms := by
-  have key : ∀ (x : Hd) (b : UInt64), (installTable x b).tag ≠ .clens ∧ (installTable x b).tag ≠ .syms := by
-    intro x b
+theorem growSingle_role (st : Hd) (sym : UInt64) : (growSingle st sym).role = st.role := by
+  unfold growSingle clearDone
+  rfl
+
+theorem growPlanned_role (st : Hd) (lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) (p : Plan) :
+    (growPlanned st lens n hn p).role = st.role := by
+  unfold growPlanned clearDone
+  rfl
+
+theorem tableDone_tag {st : Hd} {s : Bool} {y : UInt64} {ha : TableArgs st.size st.lens s y} {hi : InstallOk st.role st.idx st.fill} :
+    (tableDone st s y ha hi).tag ≠ .clens ∧ (tableDone st s y ha hi).tag ≠ .syms := by
+  have key : ∀ (x : Hd) (b : UInt64) (hx : InstallOk x.role x.idx x.fill), x.role ≠ .map →
+      (installTable x b hx).tag ≠ .clens ∧ (installTable x b hx).tag ≠ .syms := by
+    intro x b hx hm
     unfold installTable
-    split <;> exact ⟨fun e => HTag.noConfusion e, fun e => HTag.noConfusion e⟩
+    split
+    · exact ⟨fun e => HTag.noConfusion e, fun e => HTag.noConfusion e⟩
+    · exact ⟨fun e => HTag.noConfusion e, fun e => HTag.noConfusion e⟩
+    · exact ⟨fun e => HTag.noConfusion e, fun e => HTag.noConfusion e⟩
+    · rename_i e
+      exact absurd e hm
   unfold tableDone
   dsimp only
   cases hr : st.role with
@@ -611,9 +626,9 @@ theorem tableDone_tag {st : Hd} {s : Bool} {y : UInt64} {ha : TableArgs st.size 
   | type | count | codes =>
     cases s
     · simp only [Bool.false_eq_true, ↓reduceIte]
-      exact key _ _
+      exact key _ _ _ (by rw [growPlanned_role, hr]; decide)
     · simp only [↓reduceIte]
-      exact key _ _
+      exact key _ _ _ (by rw [growSingle_role, hr]; decide)
 
 theorem mapFin_ge {st : Hd} {g : Gh} {isL : Bool} (hi : st.isL = isL) (hu : Upto st.d g (mapIdx isL)) :
     mapFinishW st ≤ mapFin g isL := by
@@ -1243,6 +1258,7 @@ theorem codeW_le {st : Hd} {g : Gh} {o : Owner} {n : Nat} {pos : USize} {hH : �
         intro hn
         obtain ⟨hw2, hw3, hsmall⟩ := hwit hsr
         have hd := simple_done (K := (⟨fun _ _ => none, fun _ _ => none⟩ : HK Unit)) pos hrel' hw2 hw3 hsmall hb (ha := hra hsr)
+          (hi := code_install hH hT)
         exact absurd hd.status hn
     · rw [ite_eq_right h1] at hn
       exact absurd rfl hn
@@ -1488,8 +1504,8 @@ theorem stepHW_stop {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} 
 
 Such a step leaves the state at its place, so its work is not paid for by the potential: it is at most 259. -/
 
-theorem tableDone_ni {st : Hd} {s : Bool} {y : UInt64} {ha : TableArgs st.size st.lens s y} (h : st.status = .next) :
-    (tableDone st s y ha).status ≠ .needsInput := by
+theorem tableDone_ni {st : Hd} {s : Bool} {y : UInt64} {ha : TableArgs st.size st.lens s y} {hi : InstallOk st.role st.idx st.fill}
+    (h : st.status = .next) : (tableDone st s y ha hi).status ≠ .needsInput := by
   unfold tableDone
   dsimp only
   cases hr : st.role with
@@ -1503,12 +1519,12 @@ theorem tableDone_ni {st : Hd} {s : Bool} {y : UInt64} {ha : TableArgs st.size s
     dsimp only
     cases s
     · simp only [Bool.false_eq_true, ↓reduceIte]
-      rw [(installTable_spec _ _).2.2.2.1]
+      rw [(installTable_spec _ _ _).2.2.2.1]
       show st.status ≠ _
       rw [h]
       exact fun e => HStatus.noConfusion e
     · simp only [↓reduceIte]
-      rw [(installTable_spec _ _).2.2.2.1]
+      rw [(installTable_spec _ _ _).2.2.2.1]
       show st.status ≠ _
       rw [h]
       exact fun e => HStatus.noConfusion e

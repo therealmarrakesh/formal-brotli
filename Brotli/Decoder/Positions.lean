@@ -104,12 +104,15 @@ theorem clTable_pos (st : Hd) (q : USize) (h : ∃ acc, ClDone st acc) : clTable
 
 theorem mapSizeFast_pos (st : Hd) (q : USize) : mapSizeFast { st with pos := q } = mapSizeFast st := rfl
 
-theorem installTable_nf (st : Hd) (base : UInt64) :
-    installTable st base = { installTable { st with pos := 0 } base with pos := st.pos } := by
-  unfold installTable clearFill
-  cases st
-  try dsimp only
-  repeat' (first | split_all | rfl)
+theorem installTable_nf (st : Hd) (base : UInt64) (hi : InstallOk st.role st.idx st.fill) :
+    installTable st base hi = { installTable { st with pos := 0 } base hi with pos := st.pos } := by
+  have hr4 : st.role = .type ∨ st.role = .count ∨ st.role = .codes ∨ st.role = .map := by
+    cases st.role <;> simp
+  rcases hr4 with hr | hr | hr | hr
+  · rw [installTable_type hr, installTable_type (st := { st with pos := 0 }) hr]
+  · rw [installTable_count hr, installTable_count (st := { st with pos := 0 }) hr]
+  · rw [installTable_codes hr, installTable_codes (st := { st with pos := 0 }) hr]; rfl
+  · rw [installTable_map hr, installTable_map (st := { st with pos := 0 }) hr]
 
 theorem growPlanned_nf (st : Hd) (lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) (pl : Plan) :
     growPlanned st lens n hn pl = { growPlanned { st with pos := 0 } lens n hn pl with pos := st.pos } := rfl
@@ -124,12 +127,13 @@ theorem mapTableDone_nf (st : Hd) (t : ByteArray) (hf : t.size < 2 ^ 32 ∧ Tabl
   repeat' (first | split_all | rfl)
 
 set_option maxRecDepth 8192 in
-theorem tableDone_nf (st : Hd) (single : Bool) (sym : UInt64) (ha : TableArgs st.size st.lens single sym) :
-    tableDone st single sym ha = { tableDone { st with pos := 0 } single sym ha with pos := st.pos } := by
+theorem tableDone_nf (st : Hd) (single : Bool) (sym : UInt64) (ha : TableArgs st.size st.lens single sym)
+    (hi : InstallOk st.role st.idx st.fill) :
+    tableDone st single sym ha hi = { tableDone { st with pos := 0 } single sym ha hi with pos := st.pos } := by
   unfold tableDone
   cases st
   try dsimp only
-  repeat' (first | split_all | exact (installTable_nf _ _).trans rfl | exact (mapTableDone_nf _ _ _).trans rfl | rfl)
+  repeat' (first | split_all | exact (installTable_nf _ _ _).trans rfl | exact (mapTableDone_nf _ _ _).trans rfl | rfl)
 
 theorem catMoveOn_nf (st : Hd) : catMoveOn st = { catMoveOn { st with pos := 0 } with pos := st.pos } := by
   unfold catMoveOn
@@ -159,9 +163,9 @@ theorem ckFinish_nf (st : Hd) : ckFinish st = { ckFinish { st with pos := 0 } wi
 macro "hd_nf" : tactic => `(tactic| ((try unfold markH) <;> (try dsimp only) <;> (try simp only [clTable_pos, mapSizeFast_pos]) <;>
   repeat' (first
     | split_all
-    | exact (installTable_nf _ _).trans rfl
+    | exact (installTable_nf _ _ _).trans rfl
     | exact (mapTableDone_nf _ _ _).trans rfl
-    | exact (tableDone_nf _ _ _ _).trans rfl
+    | exact (tableDone_nf _ _ _ _ _).trans rfl
     | exact (catMoveOn_nf _).trans rfl
     | exact (clFinish_nf _ _).trans rfl
     | exact (mapFinish_nf _ _ _).trans rfl
@@ -191,7 +195,7 @@ theorem stepHSyms_pos (st : Hd) (p : USize) (h : ∃ g p, HRel st g p) (ht : st.
   unfold stepHSyms
   by_cases h0 : st.symSum = 32768
   · rw [dite_eq_left h0, dite_eq_left (show ({ st with pos := 0 } : Hd).symSum = 32768 from h0)]
-    exact (tableDone_nf _ _ _ _).trans rfl
+    exact (tableDone_nf _ _ _ _ _).trans rfl
   · rw [dite_eq_right h0, dite_eq_right (show ¬ ({ st with pos := 0 } : Hd).symSum = 32768 from h0)]
     cases st
     hd_nf
@@ -207,7 +211,8 @@ theorem stepHNp_pos (st : Hd) (p : USize) : stepHNp st p = { stepHNp { st with p
   cases st
   hd_nf
 
-theorem stepHModes_pos (st : Hd) (p : USize) : stepHModes st p = { stepHModes { st with pos := 0 } 0 with pos := p } := by
+theorem stepHModes_pos (st : Hd) (p : USize) (h : ∃ g p, HRel st g p) (ht : st.tag = .modes) :
+    stepHModes st p h ht = { stepHModes { st with pos := 0 } 0 (hrel_pos0 h) ht with pos := p } := by
   unfold stepHModes
   cases st
   hd_nf
@@ -249,7 +254,7 @@ theorem stepAtH_pos (st : Hd) (p : USize) (h : ∃ g p, HRel st g p) :
   · exact (stepHSyms_pos _ _ _ _).trans rfl
   · exact (stepHFirst_pos _ _ _).trans rfl
   · exact (stepHNp_pos _ _).trans rfl
-  · exact (stepHModes_pos _ _).trans rfl
+  · exact (stepHModes_pos _ _ _ _).trans rfl
   · exact (stepHTrees_pos _ _).trans rfl
   · exact (stepHRlemax_pos _ _).trans rfl
   · exact (stepHVals_pos _ _).trans rfl

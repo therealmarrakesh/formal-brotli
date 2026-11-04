@@ -23,7 +23,7 @@ def stepAtH (st : Hd) (pos : USize) (h : ∃ g p, HRel st g p) : Hd :=
   | .syms => stepHSyms st pos h ht
   | .first => stepHFirst st pos (first_fits h ht)
   | .np => stepHNp st pos
-  | .modes => stepHModes st pos
+  | .modes => stepHModes st pos h ht
   | .trees => stepHTrees st pos
   | .rlemax => stepHRlemax st pos
   | .vals => stepHVals st pos
@@ -44,7 +44,7 @@ theorem stepAtH_clens (ht : st.tag = .clens) : stepAtH st pos h = stepHClens st 
 theorem stepAtH_syms (ht : st.tag = .syms) : stepAtH st pos h = stepHSyms st pos h ht := by stepAtH_tag ht
 theorem stepAtH_first (ht : st.tag = .first) : stepAtH st pos h = stepHFirst st pos (first_fits h ht) := by stepAtH_tag ht
 theorem stepAtH_np (ht : st.tag = .np) : stepAtH st pos h = stepHNp st pos := by stepAtH_tag ht
-theorem stepAtH_modes (ht : st.tag = .modes) : stepAtH st pos h = stepHModes st pos := by stepAtH_tag ht
+theorem stepAtH_modes (ht : st.tag = .modes) : stepAtH st pos h = stepHModes st pos h ht := by stepAtH_tag ht
 theorem stepAtH_trees (ht : st.tag = .trees) : stepAtH st pos h = stepHTrees st pos := by stepAtH_tag ht
 theorem stepAtH_rlemax (ht : st.tag = .rlemax) : stepAtH st pos h = stepHRlemax st pos := by stepAtH_tag ht
 theorem stepAtH_vals (ht : st.tag = .vals) : stepAtH st pos h = stepHVals st pos := by stepAtH_tag ht

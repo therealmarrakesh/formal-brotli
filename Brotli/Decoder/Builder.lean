@@ -43,6 +43,16 @@ theorem uset_eq (t : ByteArray) (i : USize) (v : UInt8) (h : i.toNat < t.size) :
   apply ba_ext
   rw [data_set, data_uset, Array.setIfInBounds, dite_eq_left (show i.toNat < t.data.size from h)]
 
+/-- A write within the array is `setU`'s. -/
+theorem uset_setU (t : ByteArray) (i : USize) (v : UInt8) (h : i.toNat < t.size) : t.uset i v h = setU t i v := by
+  unfold setU
+  rw [dite_eq_left h]
+
+/-- A read within the array is `getU`'s. -/
+theorem uget_getU (t : ByteArray) (i : USize) (h : i.toNat < t.size) : t.uget i h = getU t i := by
+  unfold getU
+  rw [dite_eq_left h]
+
 theorem setU_eq (t : ByteArray) (i : USize) (v : UInt8) : setU t i v = t.set! i.toNat v := by
   unfold setU
   by_cases h : i.toNat < t.size
@@ -59,7 +69,7 @@ private theorem size_set (t : ByteArray) (i : Nat) (v : UInt8) : (t.set! i v).si
 theorem size_setU (t : ByteArray) (i : USize) (v : UInt8) : (setU t i v).size = t.size := by
   rw [setU_eq, size_set]
 
-private theorem size_uset' (t : ByteArray) (i : USize) (v : UInt8) (h : i.toNat < t.size) : (t.uset i v h).size = t.size := by
+theorem size_uset' (t : ByteArray) (i : USize) (v : UInt8) (h : i.toNat < t.size) : (t.uset i v h).size = t.size := by
   rw [uset_eq, size_set]
 
 theorem uget_toNat (t : ByteArray) (i : USize) (h : i.toNat < t.size) :
@@ -100,6 +110,16 @@ theorem setU_get_ne {t : ByteArray} {i : USize} {v : UInt8} {j : Nat} (h : j ≠
     (setU t i v).data[j]? = t.data[j]? := by
   rw [setU_eq]
   exact get_set_ne h
+
+theorem uset_get_same {t : ByteArray} {i : USize} {v : UInt8} (h : i.toNat < t.size) :
+    (t.uset i v h).data[i.toNat]?.getD 0 = v := by
+  rw [uset_setU]
+  exact setU_get_same h
+
+theorem uset_get_ne {t : ByteArray} {i : USize} {v : UInt8} {j : Nat} (h : i.toNat < t.size) (hj : j ≠ i.toNat) :
+    (t.uset i v h).data[j]? = t.data[j]? := by
+  rw [uset_setU]
+  exact setU_get_ne hj
 
 private theorem usize_add' {a b : USize} (h : a.toNat + b.toNat < 2 ^ 32) : (a + b).toNat = a.toNat + b.toNat := by
   rw [USize.toNat_add, ← USize.size_eq_two_pow]
