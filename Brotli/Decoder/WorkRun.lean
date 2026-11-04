@@ -576,6 +576,17 @@ theorem avail_len (word count : UInt64) (a : ByteArray) (pos stop : USize) (F : 
   simp only [availBits, List.length_append, List.append_nil]
   omega
 
+/-- The bits from a position hold the chunk's bytes from there. -/
+theorem avail_chunk (word count : UInt64) {a : ByteArray} {stop : USize} (hs : stop.toNat ≤ a.size) (pos : USize) (F : List Bool) :
+    (stop.toNat - pos.toNat) * 8 ≤ (availBits word count a pos stop F).length := by
+  simp only [availBits, List.length_append, chunkBits_length hs]
+  omega
+
+/-- What the bits from a position pay for covers the chunk's bytes from any later position. -/
+theorem rate_chunk (D : Dec) {a : ByteArray} {stop : USize} (hs : stop.toNat ≤ a.size) {pos r : USize} (hp : pos.toNat ≤ r.toNat)
+    (F : List Bool) : hdrRate * ((stop.toNat - r.toNat) * 8) ≤ hdrRate * (D.bits a pos stop F).length :=
+  Nat.mul_le_mul_left _ (Nat.le_trans (by omega) (avail_chunk D.word D.count hs pos F))
+
 theorem cpot_end {s : CommandState} (h0 : s.remaining = 0) : cpot (.command s) = 0 := by
   simp [cpot, crank, cstage, h0]
 
@@ -590,8 +601,8 @@ theorem pay_cmds {w : Nat} {last : Bool} {m : MetaBlockHeader} {q0 : Phase} {a :
     ((stepDCmds a stop hs D pos).status = .needsInput ∨ (stepDCmds a stop hs D pos).status = .needsOutput →
       Pays a stop (.cmds w last m q0) D pos (stepDCmds a stop hs D pos) (stepDCmdsW a stop hs D pos + 1) 118) ∧
     ((stepDCmds a stop hs D pos).status = .bad → ∃ L, D.cmd.pend.toNat + L ≤ (stepDCmds a stop hs D pos).cmd.pend.toNat ∧
-      ∀ t : List UInt8,
-      stepDCmdsW a stop hs D pos + 1 ≤ dpot (.cmds w last m q0) D + hdrRate * (D.bits a pos stop (bits t)).length + 282 * L + 118) := by
+      ∀ t : List UInt8, stepDCmdsW a stop hs D pos + 1 + hdrRate * ((stop.toNat - (stepDCmds a stop hs D pos).pos.toNat) * 8) ≤
+        dpot (.cmds w last m q0) D + hdrRate * (D.bits a pos stop (bits t)).length + 282 * L + 118) := by
   obtain ⟨tag, cmd, hd, H, k, last', left, limit, pos', status⟩ := D
   obtain ⟨ht, hl, hlim, hH, hR⟩ := hrel
   have ht' : tag = .cmds := ht
@@ -667,14 +678,16 @@ theorem pay_cmds {w : Nat} {last : Bool} {m : MetaBlockHeader} {q0 : Phase} {a :
     have he : cmdEnd rc = 117 := by unfold cmdEnd; rw [hst]; rfl
     rw [he] at g3
     rw [ite_eq_right (fun e => StepStatus.noConfusion e)]
-    obtain ⟨-, -, e3⟩ := gb hst
+    obtain ⟨⟨-, -, e3⟩, hpr⟩ := gb hst
+    have hch := avail_chunk st'.word st'.count hs pos'' []
     refine ⟨fun e => ?_, fun e => ?_, fun _ => ⟨l.length, ?_, fun t => ?_⟩⟩
     · cases e
     · rcases e with e | e <;> cases e
     · show _ ≤ rc.pend.toNat
       rw [e3]
       omega
-    · simp only [Dec.bits, Dec.word, Dec.count, dpot, spot]
+    · show _ + 1 + hdrRate * ((stop.toNat - rc.pos.toNat) * 8) ≤ _
+      simp only [Dec.bits, Dec.word, Dec.count, dpot, spot]
       rw [avail_len cmd.word cmd.count a pos stop (bits t), hRate]
       rw [hlo] at g3
       omega
@@ -723,6 +736,8 @@ theorem pay_cmds {w : Nat} {last : Bool} {m : MetaBlockHeader} {q0 : Phase} {a :
       · rcases e with e | e <;> cases e
       · show _ ≤ st'.pend.toNat
         omega
+      have hch := avail_chunk st'.word st'.count hs st'.pos []
+      show _ + 1 + hdrRate * ((stop.toNat - st'.pos.toNat) * 8) ≤ _
       simp only [Dec.bits, Dec.word, Dec.count, dpot, spot]
       rw [avail_len cmd.word cmd.count a pos stop (bits t), hRate]
       rw [hlo] at g3
@@ -1037,17 +1052,25 @@ theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
     ((stepD a stop hs D).status = .bad ∨ (stepD a stop hs D).status = .memory → ∃ L,
       D.cmd.pend.toNat + L ≤ (stepD a stop hs D).cmd.pend.toNat ∧
       ((stepD a stop hs D).status = .memory → (stepD a stop hs D).cmd.pend.toNat = 0) ∧ ∀ t : List UInt8,
-      stepDW a stop hs D + 1 ≤ dpot p D + hdrRate * (D.bits a D.pos stop (bits t)).length + 282 * L + 23750) := by
+      stepDW a stop hs D + 1 + hdrRate * ((stop.toNat - (stepD a stop hs D).pos.toNat) * 8) ≤
+        dpot p D + hdrRate * (D.bits a D.pos stop (bits t)).length + 282 * L + 23750) := by
   have hok := stepD_ok specSem (hs := hs) hrel he hp
   have hpl := stepD_pendLe a stop hs D
   have hmem : (stepD a stop hs D).status = .memory → p = .wbits ∨ ∃ w st last mlen g q, p = .hdr w st last mlen g q :=
     fun h => (hok.memory h).2.2.2.2
+  have hpos : (stepD a stop hs D).status = .bad ∨ (stepD a stop hs D).status = .memory →
+      D.pos.toNat ≤ (stepD a stop hs D).pos.toNat := by
+    intro h
+    rcases h with h | h
+    · obtain ⟨_, _, _, d1, d2, _⟩ := (hok.bad h).2
+      omega
+    · exact (hok.memory h).1
   cases p with
   | wbits =>
     have e1 : stepD a stop hs D = stepDWbits a stop hs D D.pos := by unfold stepD; rw [hrel.1]
     have e2 : stepDW a stop hs D = stepDWbitsW a stop hs D D.pos := by unfold stepDW; rw [hrel.1]
     rw [e1, e2, ite_eq_left hrel.1]
-    rw [e1] at hok
+    rw [e1] at hok hpos
     obtain ⟨n1, n2, n3⟩ := pay_wbits (hs := hs) hrel hp
     refine ⟨n1, fun h => ?_, fun h => ?_⟩
     · rcases h with h | h
@@ -1061,18 +1084,20 @@ theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
         | _ => exact absurd hsd id
     · have := n3 (by rcases h with h | h <;> rw [h] <;> exact fun e => DStatus.noConfusion e)
       have h0 : D.cmd.pend.toNat = 0 := by rw [hrel.2.2.2]; rfl
-      exact ⟨0, by omega, fun hm => by rw [stepDWbits_memPend hm]; exact h0, fun t => by omega⟩
+      exact ⟨0, by omega, fun hm => by rw [stepDWbits_memPend hm]; exact h0,
+        fun t => by have := rate_chunk D hs (hpos h) (bits t); omega⟩
   | mblock w st =>
     have e1 : stepD a stop hs D = stepDMeta a stop hs D D.pos := by unfold stepD; rw [hrel.1]
     have e2 : stepDW a stop hs D = stepDMetaW a stop hs D D.pos := by unfold stepDW; rw [hrel.1]
     rw [e1, e2, ite_eq_right (by rw [hrel.1]; exact fun e => DTag.noConfusion e)]
     obtain ⟨n1, n2, n3, n4⟩ := pay_mblock (hs := hs) hrel hp
-    rw [e1] at hok
+    rw [e1] at hok hpos
     refine ⟨n1, fun h => ?_, fun h => ?_⟩
     rotate_left
     · rcases h with h | h
       · have e3 := congrArg USize.toNat (stepDMeta_badWin h).1.2.2
-        exact ⟨0, by omega, fun h' => absurd (h'.symm.trans h) (fun e => DStatus.noConfusion e), fun t => by omega⟩
+        exact ⟨0, by omega, fun h' => absurd (h'.symm.trans h) (fun e => DStatus.noConfusion e),
+          fun t => by have := rate_chunk D hs (hpos (Or.inl h)) (bits t); omega⟩
       · rcases hmem (by rw [e1]; exact h) with h' | ⟨_, _, _, _, _, _, h'⟩ <;> cases h'
     rcases h with h | h
     · exact (n2 h).mono (by rw [stopCost_in h]; omega)
@@ -1090,11 +1115,13 @@ theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
     have e2 : stepDW a stop hs D = 1 := by unfold stepDW; rw [hrel.1]
     rw [e1, e2, ite_eq_right (by rw [hrel.1]; exact fun e => DTag.noConfusion e)]
     obtain ⟨n1, n2, n3⟩ := pay_skip (a := a) (hs := hs) hrel hp
+    rw [e1] at hpos
     refine ⟨n1, fun h => ?_, fun h => ?_⟩
     rotate_left
     · rcases h with h | h
       · have e3 := congrArg USize.toNat (stepDSkip_badWin h).1.2.2
-        exact ⟨0, by omega, fun h' => absurd (h'.symm.trans h) (fun e => DStatus.noConfusion e), fun t => by omega⟩
+        exact ⟨0, by omega, fun h' => absurd (h'.symm.trans h) (fun e => DStatus.noConfusion e),
+          fun t => by have := rate_chunk D hs (hpos (Or.inl h)) (bits t); omega⟩
       · rcases hmem (by rw [e1]; exact h) with h' | ⟨_, _, _, _, _, _, h'⟩ <;> cases h'
     rcases h with h | h
     · exact (n2 h).mono (stopCost_ge _)
@@ -1103,7 +1130,7 @@ theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
     have e1 : stepD a stop hs D = stepDRaw a stop hs D D.pos := by unfold stepD; rw [hrel.1]
     have e2 : stepDW a stop hs D = stepDRawW a stop hs D D.pos := by unfold stepDW; rw [hrel.1]
     rw [e1, e2, ite_eq_right (by rw [hrel.1]; exact fun e => DTag.noConfusion e)]
-    rw [e1] at hpl hok
+    rw [e1] at hpl hok hpos
     obtain ⟨n1, n2, n3, n4⟩ := pay_raw (hs := hs) hrel hp
     refine ⟨n1, fun h => ?_, fun h => ?_⟩
     · rcases h with h | h
@@ -1119,13 +1146,14 @@ theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
         rcases h with h | h
         · exact Nat.le_of_eq (congrArg USize.toNat (stepDRaw_badWin h).1.2.2).symm
         · rcases hmem (by rw [e1]; exact h) with h' | ⟨_, _, _, _, _, _, h'⟩ <;> cases h'
-      refine ⟨(stepDRaw a stop hs D D.pos).cmd.pend.toNat - D.cmd.pend.toNat, by omega, fun hm => ?_, fun t => by omega⟩
+      refine ⟨(stepDRaw a stop hs D D.pos).cmd.pend.toNat - D.cmd.pend.toNat, by omega, fun hm => ?_,
+        fun t => by have := rate_chunk D hs (hpos h) (bits t); omega⟩
       rcases hmem (by rw [e1]; exact hm) with h' | ⟨_, _, _, _, _, _, h'⟩ <;> cases h'
   | hdr w st last mlen g q =>
     have e1 : stepD a stop hs D = stepDHdr a stop hs D D.pos := by unfold stepD; rw [hrel.1]
     have e2 : stepDW a stop hs D = stepDHdrW a stop hs D D.pos := by unfold stepDW; rw [hrel.1]
     rw [e1, e2, ite_eq_right (by rw [hrel.1]; exact fun e => DTag.noConfusion e)]
-    rw [e1] at hok
+    rw [e1] at hok hpos
     obtain ⟨n1, n2, n3⟩ := pay_hdr (hs := hs) hrel hp
     refine ⟨n1, fun h => ?_, fun h => ?_⟩
     · rcases h with h | h
@@ -1141,7 +1169,8 @@ theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
       have hd : dpot (.hdr w st last mlen g q) D = hpot g q + hdrEnd := rfl
       have hS : hdrSlack = 23750 := rfl
       have h0 : D.cmd.pend.toNat = 0 := by rw [hrel.2.2.2.2.2.2.2]; rfl
-      exact ⟨0, by omega, fun hm => by rw [stepDHdr_memPend hm]; exact h0, fun t => by omega⟩
+      exact ⟨0, by omega, fun hm => by rw [stepDHdr_memPend hm]; exact h0,
+        fun t => by have := rate_chunk D hs (hpos h) (bits t); omega⟩
   | cmds w last m q =>
     have e1 : stepD a stop hs D = stepDCmds a stop hs D D.pos := by unfold stepD; rw [hrel.1]
     have e2 : stepDW a stop hs D = stepDCmdsW a stop hs D D.pos := by unfold stepDW; rw [hrel.1]
@@ -1402,8 +1431,8 @@ theorem runD_k10 {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} (x 
 
 /-! ### The decoder's loop -/
 
-/-- The window a run of the loop allocates: WBITS's, when it starts there. -/
-def winD (D r : Dec) : Nat := if D.tag = .wbits then 5 * 2 ^ r.k.toNat else 0
+/-- The window a run of the loop allocates: WBITS's, when it starts there and gets past it. -/
+def winD (D r : Dec) : Nat := if D.tag = .wbits ∧ r.tag ≠ .wbits then 5 * 2 ^ r.k.toNat else 0
 
 /-- The decoder's loop, against the potential: its steps are paid for by the potential, 22343 for each bit, 282 for each
 byte and the window, and the step that stops it by at most 270 more, or, when it rejects or reports the limit, by the bits
@@ -1417,8 +1446,8 @@ theorem pay_runD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} : �
     ((runD a stop hs x.D x.inv).status = .bad ∨ (runD a stop hs x.D x.inv).status = .memory → ∃ L,
       x.D.cmd.pend.toNat + L ≤ (runD a stop hs x.D x.inv).cmd.pend.toNat ∧
       ((runD a stop hs x.D x.inv).status = .memory → (runD a stop hs x.D x.inv).cmd.pend.toNat = 0) ∧ ∀ t : List UInt8,
-      runDW a stop hs x.D x.inv ≤ dpot p x.D + hdrRate * (x.D.bits a x.D.pos stop (bits t)).length + 282 * L +
-        winD x.D (runD a stop hs x.D x.inv) + 23751) := by
+      runDW a stop hs x.D x.inv + hdrRate * ((stop.toNat - (runD a stop hs x.D x.inv).pos.toNat) * 8) ≤
+        dpot p x.D + hdrRate * (x.D.bits a x.D.pos stop (bits t)).length + 282 * L + winD x.D (runD a stop hs x.D x.inv) + 23751) := by
   intro x
   induction x using (runRel_wf a stop hs).induction with
   | _ x ih =>
@@ -1453,14 +1482,14 @@ theorem pay_runD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} : �
             have ht1 : (stepD a stop hs D).tag ≠ .wbits := by
               rw [e]
               exact stepDWbits_tag (by rw [← e]; exact hn)
-            obtain ⟨-, hk⟩ := runD_wk ⟨_, hinv.step he hn⟩ ht1
-            dsimp only at hk
+            obtain ⟨ht2, hk⟩ := runD_wk ⟨_, hinv.step he hn⟩ ht1
+            dsimp only at hk ht2
             unfold winD
-            rw [ite_eq_left hw, ite_eq_right ht1, ite_eq_left hw, hk]
+            rw [ite_eq_left hw, ite_eq_right (fun h => ht1 h.1), ite_eq_left ⟨hw, ht2⟩, hk]
             omega
           · have ht1 := stepD_tag (hs := hs) hw
             unfold winD
-            rw [ite_eq_right hw, ite_eq_right ht1, ite_eq_right hw]
+            rw [ite_eq_right hw, ite_eq_right (fun h => ht1 h.1), ite_eq_right (fun h => hw h.1)]
             exact Nat.le_refl _
         obtain ⟨l1, hl1, hl1'⟩ := ho1
         have o1 : q1.out.length = l1.length + p.out.length := by rw [hl1, List.length_append]

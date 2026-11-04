@@ -949,7 +949,8 @@ theorem runCmdW_count {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a :
           cpot p + 366 * (stateBits st a pos stop F).length + 281 * (q.out.length - p.out.length) +
             cmdEnd (runCmd H k a stop hs n st pos) ∧
         ((runCmd H k a stop hs n st pos).status ≠ .bad → st' = runCmd H k a stop hs n st pos ∧ pos' = (runCmd H k a stop hs n st pos).pos) ∧
-        ((runCmd H k a stop hs n st pos).status = .bad → (runCmd H k a stop hs n st pos).WinSame st') ∧
+        ((runCmd H k a stop hs n st pos).status = .bad → (runCmd H k a stop hs n st pos).WinSame st' ∧
+          pos'.toNat ≤ (runCmd H k a stop hs n st pos).pos.toNat) ∧
         ((runCmd H k a stop hs n st pos).status = .done → ∃ s, q = .command s ∧ s.remaining = 0) ∧
         ((runCmd H k a stop hs n st pos).status = .next → n.toNat ≤ c) := by
   intro N
@@ -1048,7 +1049,8 @@ theorem runCmdW_count {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a :
       exact ⟨0, p, st, pos, hrel, hci, ⟨[], rfl, rfl⟩, PendLe.rfl' _, Nat.le_refl _, hp, .refl _ _, by
           show stepCmdW H k a stop hs st pos + 1 + 0 + cpot p + _ ≤ _ + cmdEnd (stepCmd H k a stop hs st pos)
           omega,
-        fun e => absurd hst e, fun _ => stepCmd_badWin hst,
+        fun e => absurd hst e,
+        fun _ => ⟨stepCmd_badWin hst, (stepCmd_bad (K := commandsFrom w m) (fun s bs h0 => commandsFrom_step bs h0) hH hrel hp hst).1⟩,
         (fun h => absurd (hst.symm.trans h) (by decide)), (fun h => absurd (hst.symm.trans h) (by decide))⟩
 
 end Brotli.Decoder

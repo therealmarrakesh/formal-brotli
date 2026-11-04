@@ -1,4 +1,5 @@
 import Brotli.Decoder.WorkCall
+import Brotli.Decoder.MemAt
 
 /-!
 # The decoder's work at its interface
@@ -45,15 +46,23 @@ private theorem arith_pause {W dq ho ph dp hh size u hand po win : Nat} (hu : u 
   generalize 178744 * d = E at h
   omega
 
-private theorem arith_any {W dp hh size hand win : Nat}
-    (h : W ≤ dp + 22343 * (hh + size * 8) + 284 * hand + win + 24042) :
-    W ≤ dp + 22343 * hh + 178744 * size + 284 * hand + win + 24042 := by
-  have e : 22343 * (hh + size * 8) = 22343 * hh + 178744 * size := by
-    rw [Nat.mul_add, Nat.mul_comm size 8, ← Nat.mul_assoc]
-  rw [e] at h
+private theorem arith_any {W dp hh s size o hand win : Nat} (h1 : s ≤ o) (h2 : o ≤ s + size)
+    (h : W + 22343 * ((s + size - o) * 8) ≤ dp + 22343 * (hh + size * 8) + 284 * hand + win + 24042) :
+    W ≤ dp + 22343 * hh + 178744 * (o - s) + 284 * hand + win + 24042 := by
+  obtain ⟨d, rfl⟩ : ∃ d, o = s + d := ⟨o - s, by omega⟩
+  obtain ⟨e, rfl⟩ : ∃ e, size = d + e := ⟨size - d, by omega⟩
+  have g1 : s + (d + e) - (s + d) = e := by omega
+  rw [g1] at h
+  rw [Nat.add_sub_cancel_left]
+  have e1 : 22343 * (e * 8) = 178744 * e := by
+    rw [Nat.mul_comm e 8, ← Nat.mul_assoc]
+  have e2 : 22343 * (hh + (d + e) * 8) = 22343 * hh + 178744 * d + 178744 * e := by
+    rw [Nat.mul_add, Nat.mul_comm (d + e) 8, ← Nat.mul_assoc, Nat.mul_add, Nat.add_assoc]
+  rw [e1, e2] at h
   generalize 22343 * hh = B at h ⊢
-  generalize 178744 * size = C at h ⊢
-  generalize 284 * hand = D at h ⊢
+  generalize 178744 * d = C at h ⊢
+  generalize 178744 * e = E at h
+  generalize 284 * hand = F at h ⊢
   omega
 
 section
@@ -62,8 +71,8 @@ variable {x : List UInt8} {R : Run DState} {c : Call}
 /-- One call of the decoder, against the potential: a call that pauses is paid for by the potential of where it starts,
 22343 for each bit it takes from what its state holds and each of eight for each byte it uses, 284 for each byte it hands
 out, 282 for each byte it leaves waiting, the window it allocates and 280, less the potential and bits where it pauses.
-Any call is paid for by the potential, the bits its state holds and its chunk's, 284 for each byte it hands out, the window
-and 24042. -/
+Any call is paid for by the potential, 22343 for each bit its state holds and each of eight for each byte it uses, 284 for
+each byte it hands out, the window and 24042. -/
 theorem call_pays (hin : R.read + c.size ≤ x.length) (hfit : c.pre.length + c.size + c.post.length < USize.size) {p : SPhase}
     (hrel : DRel R.state.val p) (hsi : SInv p) (hk : R.state.val.tag ≠ .wbits → 10 ≤ R.state.val.k.toNat) :
     ((R.reply decoder x c).status = .needsInput ∨ (R.reply decoder x c).status = .needsOutput →
@@ -77,7 +86,7 @@ theorem call_pays (hin : R.read + c.size ≤ x.length) (hfit : c.pre.length + c.
             284 * ((R.reply decoder x c).output.size - c.buf.length) + 282 * (R.reply decoder x c).state.val.cmd.pend.toNat +
             callWin R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.space + 280) ∧
     callWork R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.buf.toByteArray c.space c.final ≤
-      dpot p R.state.val + 22343 * R.state.val.held.length + 178744 * c.size +
+      dpot p R.state.val + 22343 * R.state.val.held.length + 178744 * (R.reply decoder x c).used +
         284 * ((R.reply decoder x c).output.size - c.buf.length) +
         callWin R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.space + 24042 := by
   have hg : c.pre.length + c.size ≤ (R.input x c).size ∧ c.pre.length ≤ c.pre.length + c.size ∧ c.pre.length + c.size < USize.size :=
@@ -147,9 +156,15 @@ theorem call_pays (hin : R.read + c.size ≤ x.length) (hfit : c.pre.length + c.
     refine ⟨q, d1, d2, d3, d7, ?_⟩
     exact arith_pause (by omega) i
   · have i := C2 []
-    rw [hb0, e0, e2, hR] at i
+    rw [hb0, e0, e2, hR, hstop] at i
     simp only [List.length_append, bits_length, List.length_drop, take_length hin, List.append_nil] at i
-    exact arith_any i
+    have hc := callD_ok (hs := hs) (final := c.final) c.space (atPos R.state.val c.pre.length) (atPos_inv R.state hg.2.1 hg.2.2) p _
+      c.buf.toByteArray (atPos_rel hrel _) rfl
+    have h1 := hc.posLe
+    have h2 := hc.posStop
+    rw [hpos0] at h1
+    rw [hstop] at h2
+    exact arith_any (by omega) h2 i
 
 end
 
