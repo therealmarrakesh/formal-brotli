@@ -189,7 +189,8 @@ theorem stepHSyms_pos (st : Hd) (p : USize) : stepHSyms st p = { stepHSyms { st 
   cases st
   hd_nf
 
-theorem stepHFirst_pos (st : Hd) (p : USize) : stepHFirst st p = { stepHFirst { st with pos := 0 } 0 with pos := p } := by
+theorem stepHFirst_pos (st : Hd) (p : USize) (hf : st.d.arena.size < 2 ^ 32 ∧ TableFits st.d.arena (st.d.baseCOf st.cat).toNat) :
+    stepHFirst st p hf = { stepHFirst { st with pos := 0 } 0 hf with pos := p } := by
   unfold stepHFirst
   cases st
   hd_nf
@@ -229,7 +230,8 @@ theorem stepHCodes_pos (st : Hd) (p : USize) : stepHCodes st p = { stepHCodes { 
   cases st
   hd_nf
 
-theorem stepAtH_pos (st : Hd) (p : USize) : stepAtH st p = { stepAtH { st with pos := 0 } 0 with pos := p } := by
+theorem stepAtH_pos (st : Hd) (p : USize) (h : ∃ g p, HRel st g p) :
+    stepAtH st p h = { stepAtH { st with pos := 0 } 0 (hrel_pos0 h) with pos := p } := by
   unfold stepAtH
   cases st
   dsimp only
@@ -238,7 +240,7 @@ theorem stepAtH_pos (st : Hd) (p : USize) : stepAtH st p = { stepAtH { st with p
   · exact (stepHCode_pos _ _).trans rfl
   · exact (stepHClens_pos _ _).trans rfl
   · exact (stepHSyms_pos _ _).trans rfl
-  · exact (stepHFirst_pos _ _).trans rfl
+  · exact (stepHFirst_pos _ _ _).trans rfl
   · exact (stepHNp_pos _ _).trans rfl
   · exact (stepHModes_pos _ _).trans rfl
   · exact (stepHTrees_pos _ _).trans rfl
@@ -469,21 +471,24 @@ variable {α : Type} {K : HK α} {a : ByteArray} {stop : USize} {hs : stop.toNat
 /-- A header step that rejects decides on the bits it held and the bytes its refill took, whatever follows them: at most
 64 bits from the first bit it held. -/
 theorem stepH_bad {g : Gh} {p : HPhase} {st : Hd} {pos : USize} (hrel : HRel st g p) (hp : pos.toNat ≤ stop.toNat)
-    (hb : (stepH a stop hs st pos).status = .bad) :
-    pos.toNat ≤ (stepH a stop hs st pos).pos.toNat ∧ (stepH a stop hs st pos).pos.toNat ≤ stop.toNat ∧
-      8 * (stepH a stop hs st pos).pos.toNat + st.count.toNat ≤ 8 * pos.toNat + 64 ∧
-      ∀ F, hrest K g p (availBits st.word st.count a pos (stepH a stop hs st pos).pos F) = none := by
+    {h : ∃ g p, HRel st g p} (hb : (stepH a stop hs st pos h hp).status = .bad) :
+    pos.toNat ≤ (stepH a stop hs st pos h hp).pos.toNat ∧ (stepH a stop hs st pos h hp).pos.toNat ≤ stop.toNat ∧
+      8 * (stepH a stop hs st pos h hp).pos.toNat + st.count.toNat ≤ 8 * pos.toNat + 64 ∧
+      ∀ F, hrest K g p (availBits st.word st.count a pos (stepH a stop hs st pos h hp).pos F) = none := by
   unfold stepH at hb ⊢
-  rw [dite_eq_left (USize.le_iff_toNat_le.mpr hp)] at hb ⊢
+  dsimp only at hb ⊢
+  generalize hRR : refillH st.word st.count a pos stop hs hp (hrel_wf h) = RR at hb ⊢
+  obtain ⟨R, hRw⟩ := RR
+  have eR : R = refill st.word st.count a pos stop hs hp := by rw [← refillH_val (hw := hrel_wf h), hRR]
   obtain ⟨h1, h2, h3, _, _⟩ := refill_spec hs hp hrel.wf
   obtain ⟨l1, l2⟩ := refill_local hs hp hrel.wf
+  rw [← eR] at h1 h2 h3 l1 l2
   dsimp only at hb ⊢
-  generalize refill st.word st.count a pos stop hs hp = R at h1 h2 h3 l1 l2 hb ⊢
-  have e2 : (stepAtH { st with word := R.word, count := R.count } R.pos).pos = R.pos :=
-    (congrArg Hd.pos (stepAtH_pos _ R.pos)).trans rfl
+  have e2 : (stepAtH { st with word := R.word, count := R.count } R.pos (hrel_bits h hRw)).pos = R.pos :=
+    (congrArg Hd.pos (stepAtH_pos _ R.pos _)).trans rfl
   rw [e2]
   refine ⟨h2, h3, l2, fun F => ?_⟩
-  have hok := stepAtH_ok (K := K) (a := a) (stop := R.pos) (hrel.withBits h1) (Nat.le_refl _) (Or.inr rfl)
+  have hok := stepAtH_ok (K := K) (a := a) (stop := R.pos) (h := hrel_bits h hRw) (hrel.withBits h1) (Nat.le_refl _) (Or.inr rfl)
   have hbad := hok.bad hb F
   rw [avail_mk, chunkBits_self, List.nil_append] at hbad
   rw [avail_mk, ← List.append_assoc, ← l1]
@@ -492,22 +497,25 @@ theorem stepH_bad {g : Gh} {p : HPhase} {st : Hd} {pos : USize} (hrel : HRel st 
 /-- A header step that goes on does so on the bits it held and the bytes its refill took, whatever follows them: what the
 place it started at is worth is what the place it got to is worth, with the table of any code it read. -/
 theorem stepH_next {g : Gh} {p : HPhase} {st : Hd} {pos : USize} (hrel : HRel st g p) (hp : pos.toNat ≤ stop.toNat)
-    (hn : (stepH a stop hs st pos).status = .next) :
-    ∃ g' p' oc, HRel (stepH a stop hs st pos) g' p' ∧ HMove st (stepH a stop hs st pos) g p g' p' oc ∧ HDown p p' ∧
-      pos.toNat ≤ (stepH a stop hs st pos).pos.toNat ∧ (stepH a stop hs st pos).pos.toNat ≤ stop.toNat ∧
-      (∀ F, hrest K g p (availBits st.word st.count a pos (stepH a stop hs st pos).pos F) =
-        Wr K oc (hrest K g' p' ((BitBuffer.mk (stepH a stop hs st pos).word (stepH a stop hs st pos).count).held ++ F))) ∧
-      ∀ F, hStepP (g, p) (availBits st.word st.count a pos (stepH a stop hs st pos).pos F) = .next (g', p')
-        ((BitBuffer.mk (stepH a stop hs st pos).word (stepH a stop hs st pos).count).held ++ F) := by
+    {h : ∃ g p, HRel st g p} (hn : (stepH a stop hs st pos h hp).status = .next) :
+    ∃ g' p' oc, HRel (stepH a stop hs st pos h hp) g' p' ∧ HMove st (stepH a stop hs st pos h hp) g p g' p' oc ∧ HDown p p' ∧
+      pos.toNat ≤ (stepH a stop hs st pos h hp).pos.toNat ∧ (stepH a stop hs st pos h hp).pos.toNat ≤ stop.toNat ∧
+      (∀ F, hrest K g p (availBits st.word st.count a pos (stepH a stop hs st pos h hp).pos F) =
+        Wr K oc (hrest K g' p' ((BitBuffer.mk (stepH a stop hs st pos h hp).word (stepH a stop hs st pos h hp).count).held ++ F))) ∧
+      ∀ F, hStepP (g, p) (availBits st.word st.count a pos (stepH a stop hs st pos h hp).pos F) = .next (g', p')
+        ((BitBuffer.mk (stepH a stop hs st pos h hp).word (stepH a stop hs st pos h hp).count).held ++ F) := by
   unfold stepH at hn ⊢
-  rw [dite_eq_left (USize.le_iff_toNat_le.mpr hp)] at hn ⊢
+  dsimp only at hn ⊢
+  generalize hRR : refillH st.word st.count a pos stop hs hp (hrel_wf h) = RR at hn ⊢
+  obtain ⟨R, hRw⟩ := RR
+  have eR : R = refill st.word st.count a pos stop hs hp := by rw [← refillH_val (hw := hrel_wf h), hRR]
   obtain ⟨h1, h2, h3, _, _⟩ := refill_spec hs hp hrel.wf
   obtain ⟨l1, _⟩ := refill_local hs hp hrel.wf
+  rw [← eR] at h1 h2 h3 l1
   dsimp only at hn ⊢
-  generalize refill st.word st.count a pos stop hs hp = R at h1 h2 h3 l1 hn ⊢
-  have e2 : (stepAtH { st with word := R.word, count := R.count } R.pos).pos = R.pos :=
-    (congrArg Hd.pos (stepAtH_pos _ R.pos)).trans rfl
-  have hok := stepAtH_ok (K := K) (a := a) (stop := R.pos) (hrel.withBits h1) (Nat.le_refl _) (Or.inr rfl)
+  have e2 : (stepAtH { st with word := R.word, count := R.count } R.pos (hrel_bits h hRw)).pos = R.pos :=
+    (congrArg Hd.pos (stepAtH_pos _ R.pos _)).trans rfl
+  have hok := stepAtH_ok (K := K) (a := a) (stop := R.pos) (h := hrel_bits h hRw) (hrel.withBits h1) (Nat.le_refl _) (Or.inr rfl)
   obtain ⟨g', p', oc, hR, _, _, hW, hD, hM, hJ⟩ := hok.next hn
   refine ⟨g', p', oc, hR, ⟨hM.max, hM.grow, fun hz => hM.size { hz with }, hM.cap.same rfl⟩, hD, by rw [e2]; exact h2,
     by rw [e2]; exact h3, fun F => ?_, fun F => ?_⟩
@@ -523,23 +531,26 @@ theorem stepH_next {g : Gh} {p : HPhase} {st : Hd} {pos : USize} (hrel : HRel st
 /-- A header step that reports the limit decides on the bits it held and the bytes its refill took, whatever follows them:
 at most 64 bits from the first bit it held. -/
 theorem stepH_memory {g : Gh} {p : HPhase} {st : Hd} {pos : USize} (hrel : HRel st g p) (hp : pos.toNat ≤ stop.toNat)
-    (hm : (stepH a stop hs st pos).status = .memory) :
-    pos.toNat ≤ (stepH a stop hs st pos).pos.toNat ∧ (stepH a stop hs st pos).pos.toNat ≤ stop.toNat ∧
-      8 * (stepH a stop hs st pos).pos.toNat + st.count.toNat ≤ 8 * pos.toNat + 64 ∧
+    {h : ∃ g p, HRel st g p} (hm : (stepH a stop hs st pos h hp).status = .memory) :
+    pos.toNat ≤ (stepH a stop hs st pos h hp).pos.toNat ∧ (stepH a stop hs st pos h hp).pos.toNat ≤ stop.toNat ∧
+      8 * (stepH a stop hs st pos h hp).pos.toNat + st.count.toNat ≤ 8 * pos.toNat + 64 ∧
       ((∃ c, st.d.arenaCap.toNat < st.d.arena.size + tableBytes c ∧ tableBytes c ≤ budH g p) ∨
         ∃ g', st.d.arenaMax.toNat < resBytes g' ∧ resBytes g' ≤ resMax ∧ st.d.arenaCap.toNat = smallMax ∧
-          ∀ F, ∃ x, hrest K g p (availBits st.word st.count a pos (stepH a stop hs st pos).pos F) = K.r g' x) := by
+          ∀ F, ∃ x, hrest K g p (availBits st.word st.count a pos (stepH a stop hs st pos h hp).pos F) = K.r g' x) := by
   unfold stepH at hm ⊢
-  rw [dite_eq_left (USize.le_iff_toNat_le.mpr hp)] at hm ⊢
+  dsimp only at hm ⊢
+  generalize hRR : refillH st.word st.count a pos stop hs hp (hrel_wf h) = RR at hm ⊢
+  obtain ⟨R, hRw⟩ := RR
+  have eR : R = refill st.word st.count a pos stop hs hp := by rw [← refillH_val (hw := hrel_wf h), hRR]
   obtain ⟨h1, h2, h3, _, _⟩ := refill_spec hs hp hrel.wf
   obtain ⟨l1, l2⟩ := refill_local hs hp hrel.wf
+  rw [← eR] at h1 h2 h3 l1 l2
   dsimp only at hm ⊢
-  generalize refill st.word st.count a pos stop hs hp = R at h1 h2 h3 l1 l2 hm ⊢
-  have e2 : (stepAtH { st with word := R.word, count := R.count } R.pos).pos = R.pos :=
-    (congrArg Hd.pos (stepAtH_pos _ R.pos)).trans rfl
+  have e2 : (stepAtH { st with word := R.word, count := R.count } R.pos (hrel_bits h hRw)).pos = R.pos :=
+    (congrArg Hd.pos (stepAtH_pos _ R.pos _)).trans rfl
   rw [e2]
   refine ⟨h2, h3, l2, ?_⟩
-  have hok := stepAtH_ok (K := K) (a := a) (stop := R.pos) (hrel.withBits h1) (Nat.le_refl _) (Or.inr rfl)
+  have hok := stepAtH_ok (K := K) (a := a) (stop := R.pos) (h := hrel_bits h hRw) (hrel.withBits h1) (Nat.le_refl _) (Or.inr rfl)
   rcases hok.memory hm with ⟨c, c1, c2⟩ | ⟨g', c1, c2, c3, c4⟩
   · exact Or.inl ⟨c, c1, c2⟩
   refine Or.inr ⟨g', c1, c2, c3, fun F => ?_⟩

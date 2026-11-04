@@ -328,14 +328,14 @@ theorem stepDHdr_x {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} 
   have hwin := M.win
   have hb0 := Dec.bits_hdr ht a D.pos stop (bits t)
   have hh0 := Dec.held_hdr ht
-  have hN := fun g q (hR : HRel D.hd g q) => stepH_next (K := tableK) (a := a) (hs := hs) hR hp
-  have hI := fun g q (hR : HRel D.hd g q) => stepH_ok (K := tableK) (a := a) (hs := hs) hR hp
-  have hMm := fun g q (hR : HRel D.hd g q) => stepH_memory (K := tableK) (a := a) (hs := hs) hR hp
+  have hN := fun g q (hR : HRel D.hd g q) => stepH_next (K := tableK) (a := a) (hs := hs) (h := hH) hR hp
+  have hI := fun g q (hR : HRel D.hd g q) => stepH_ok (K := tableK) (a := a) (hs := hs) (h := hH) hR hp
+  have hMm := fun g q (hR : HRel D.hd g q) => stepH_memory (K := tableK) (a := a) (hs := hs) (h := hH) hR hp
   unfold stepDHdr takeHd
   dsimp only
   generalize hrr : stepHR a stop hs D.hd D.pos hH hp = rr
   obtain ⟨rh, hr⟩ := rr
-  have e : rh = stepH a stop hs D.hd D.pos := by rw [← stepHR_val (h := hH) (hp := hp), hrr]
+  have e : rh = stepH a stop hs D.hd D.pos hH hp := by rw [← stepHR_val (h := hH) (hp := hp), hrr]
   rw [← e] at hN hI hMm
   unfold hdrNext
   dsimp only

@@ -16,27 +16,32 @@ variable {α : Type} {K : HK α} {a : ByteArray} {stop : USize}
 
 /-! ### A category's first block count -/
 
-/-- Checks a table in the arena, once a place is about to use it. -/
-@[inline] def tableCheck (t : ByteArray) (base : USize) : Bool := fitsFast t base.toUInt64
-
-theorem tableCheck_iff {t : ByteArray} {base : USize} : tableCheck t base = true ↔ t.size < 2 ^ 32 ∧ TableFits t base.toNat := by
-  unfold tableCheck
-  rw [fitsFast_iff, USize.toNat_toUInt64]
+/-- At a category's first block count, the category's block count table fits the arena. -/
+theorem first_fits {st : Hd} (h : ∃ g p, HRel st g p) (ht : st.tag = .first) :
+    st.d.arena.size < 2 ^ 32 ∧ TableFits st.d.arena (st.d.baseCOf st.cat).toNat := by
+  obtain ⟨g, p, hr⟩ := h
+  cases p with
+  | first i n tc cc =>
+    obtain ⟨_, hu, _, hi, _, _, _, _, _, _, okC, _, _⟩ := hr
+    subst hi
+    have := hu.le
+    have := hu.max
+    exact ⟨by omega, okC.toTableFits⟩
+  | np => exact absurd (hr.2.2.symm.trans ht) (fun e => HTag.noConfusion e)
+  | _ => exact absurd (hr.2.2.1.symm.trans ht) (fun e => HTag.noConfusion e)
 
 /-- The place at a category's first block count. -/
-def stepHFirst (st : Hd) (pos : USize) : Hd :=
+def stepHFirst (st : Hd) (pos : USize) (hf : st.d.arena.size < 2 ^ 32 ∧ TableFits st.d.arena (st.d.baseCOf st.cat).toNat) : Hd :=
   let i := st.cat
   let base := st.d.baseCOf i
-  if h : tableCheck st.d.arena base = true then
-    let r := blockCountFast st.d.arena base (tableCheck_iff.mp h).2 (tableCheck_iff.mp h).1 ⟨st.word, st.count⟩
-    match r.status with
-    | .short => markH st pos .needsInput
-    | .bad => markH st pos .bad
-    | .ok =>
-      catMoveOn { st with
-        word := r.word, count := r.count, pos := pos, status := .next
-        d := st.d.setCount i r.a }
-  else markH st pos .bad
+  let r := blockCountFast st.d.arena base hf.2 hf.1 ⟨st.word, st.count⟩
+  match r.status with
+  | .short => markH st pos .needsInput
+  | .bad => markH st pos .bad
+  | .ok =>
+    catMoveOn { st with
+      word := r.word, count := r.count, pos := pos, status := .next
+      d := st.d.setCount i r.a }
 
 private theorem setCount_nOf' (d : Done) (i j : Cat) (v : UInt64) : (d.setCount i v).nOf j = d.nOf j := by
   cases i <;> cases j <;> rfl
@@ -57,26 +62,20 @@ private theorem setCount_countOf_ne (d : Done) (i j : Cat) (v : UInt64) (hj : j 
   cases i <;> cases j <;> first | exact absurd rfl hj | rfl
 
 theorem stepHFirst_ok {i : Cat} {n : Nat} {tc cc : PrefixCode} {st : Hd} {g : Gh} {pos : USize} (hrel : HRel st g (.first i n tc cc))
-    (hp : pos.toNat ≤ stop.toNat) (hfull : 56 < st.count.toNat ∨ pos = stop) :
-    HStepOk K a stop g (.first i n tc cc) st pos (stepHFirst st pos) := by
+    (hp : pos.toNat ≤ stop.toNat) (hfull : 56 < st.count.toNat ∨ pos = stop)
+    {hf : st.d.arena.size < 2 ^ 32 ∧ TableFits st.d.arena (st.d.baseCOf st.cat).toNat} :
+    HStepOk K a stop g (.first i n tc cc) st pos (stepHFirst st pos hf) := by
   obtain ⟨hw, hu, ht, hi, hn, h2, h256, okT, cT, sT, okC, cC, sC⟩ := hrel
   have hrel : HRel st g (.first i n tc cc) := ⟨hw, hu, ht, hi, hn, h2, h256, okT, cT, sT, okC, cC, sC⟩
   subst hi
-  have hsize : st.d.arena.size < 2 ^ 32 := by
-    have := hu.le
-    have := hu.max
-    omega
-  have hcheck : tableCheck st.d.arena (st.d.baseCOf st.cat) = true := tableCheck_iff.mpr ⟨hsize, okC.toTableFits⟩
   unfold stepHFirst
   dsimp only
-  rw [dite_eq_left hcheck]
-  have R := blockCountFast_ok (hfit := (tableCheck_iff.mp hcheck).2) (h32 := (tableCheck_iff.mp hcheck).1) hw okC cC sC
+  have R := blockCountFast_ok (hfit := hf.2) (h32 := hf.1) hw okC cC sC
   obtain ⟨Rok, Rshort, Rbad⟩ := R.run (X := hrest K g (.first st.cat n tc cc)) (N := fun v b =>
     afterCat K g st.cat ⟨n, tc, cc, v⟩ b) (fun bs => rfl)
   have hval := R.ok
   have hsh0 := R.short
-  generalize blockCountFast st.d.arena (st.d.baseCOf st.cat) (tableCheck_iff.mp hcheck).2 (tableCheck_iff.mp hcheck).1
-    ⟨st.word, st.count⟩ = r at Rok Rshort Rbad hval hsh0
+  generalize blockCountFast st.d.arena (st.d.baseCOf st.cat) hf.2 hf.1 ⟨st.word, st.count⟩ = r at Rok Rshort Rbad hval hsh0
   cases hs : r.status with
   | short =>
     obtain ⟨_, _, h3, h4⟩ := Rshort hs

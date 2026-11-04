@@ -510,31 +510,31 @@ theorem pay_hdr {w : Nat} {st : StreamState} {last : Bool} {mlen : Nat} {g : Gh}
     {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize} (hrel : DRel D (.hdr w st last mlen g p)) (hp : pos.toNat ≤ stop.toNat)
     {hH : ∃ g p, HRel D.hd g p} :
     ((stepDHdr a stop hs D pos hH hp).status = .next → Pays a stop (.hdr w st last mlen g p) D pos (stepDHdr a stop hs D pos hH hp)
-      (stepDHdrW a stop hs D pos + 1) 0) ∧
+      (stepDHdrW a stop hs D pos (fun _ => hH) hp + 1) 0) ∧
     ((stepDHdr a stop hs D pos hH hp).status = .needsInput → Pays a stop (.hdr w st last mlen g p) D pos (stepDHdr a stop hs D pos hH hp)
-      (stepDHdrW a stop hs D pos + 1) 269) ∧
+      (stepDHdrW a stop hs D pos (fun _ => hH) hp + 1) 269) ∧
     ((stepDHdr a stop hs D pos hH hp).status = .bad ∨ (stepDHdr a stop hs D pos hH hp).status = .memory →
-      stepDHdrW a stop hs D pos + 1 ≤ hpot g p) := by
+      stepDHdrW a stop hs D pos (fun _ => hH) hp + 1 ≤ hpot g p) := by
   have hok := stepDHdr_ok (S := specSem) (hs := hs) (hH := hH) hrel hp
   obtain ⟨tag, cmd, hd, H, k, last', left, limit, pos', status⟩ := D
   obtain ⟨ht, hall, hl, hleft, hm1, hm2, hR, hp0, hb⟩ := hrel
   have ht' : tag = .hdr := ht
   subst ht'
   dsimp only at hR
-  have hstep := stepH_ok (K := hdrK w (specSem.after w last) st mlen) (a := a) (hs := hs) hR hp
+  have hstep := stepH_ok (K := hdrK w (specSem.after w last) st mlen) (a := a) (hs := hs) (h := hH) hR hp
   have hsz := psize_le hR
-  have eW : stepDHdrW a stop hs ⟨.hdr, cmd, hd, H, k, last', left, limit, pos', status⟩ pos =
-      stepHW a stop hs hd pos + (if (stepH a stop hs hd pos).status = .ready then 770 else 0) := rfl
+  have eW : stepDHdrW a stop hs ⟨.hdr, cmd, hd, H, k, last', left, limit, pos', status⟩ pos (fun _ => hH) hp =
+      stepHW a stop hs hd pos + (if (stepH a stop hs hd pos hH hp).status = .ready then 770 else 0) := rfl
   rw [eW]
   unfold stepDHdr takeHd at hok ⊢
   dsimp only at hok ⊢
   generalize hrr : stepHR a stop hs hd pos hH hp = rr at hok ⊢
   obtain ⟨r, hr⟩ := rr
-  have e : r = stepH a stop hs hd pos := by rw [← stepHR_val (h := hH) (hp := hp), hrr]
+  have e : r = stepH a stop hs hd pos hH hp := by rw [← stepHR_val (h := hH) (hp := hp), hrr]
   subst e
   unfold hdrNext at hok ⊢
   dsimp only at hok ⊢
-  by_cases hrd : (stepH a stop hs hd pos).status = .ready
+  by_cases hrd : (stepH a stop hs hd pos hH hp).status = .ready
   · rw [ite_eq_left hrd]
     split at hok <;> rename_i hst' <;> (try exact absurd (hrd.symm.trans hst') (fun e => HStatus.noConfusion e))
     have hW := stepHW_stop hR hb hp (by rw [hrd]; exact fun e => HStatus.noConfusion e)
@@ -1061,14 +1061,14 @@ pauses costs at most 269 more; one that rejects or reports the limit costs at mo
 decodes first, which are waiting after it, and 118. -/
 theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {p : SPhase} (hrel : DRel D p)
     (hsi : SInv p) (he : D.tag ≠ .ended) (hp : D.pos.toNat ≤ stop.toNat) {hinv : DInv stop D} :
-    ((stepD a stop hs D hinv).status = .next → Pays a stop p D D.pos (stepD a stop hs D hinv) (stepDW a stop hs D + 1)
+    ((stepD a stop hs D hinv).status = .next → Pays a stop p D D.pos (stepD a stop hs D hinv) (stepDW a stop hs D hinv + 1)
       (if D.tag = .wbits then 2 ^ (stepD a stop hs D hinv).k.toNat + 256 else 0)) ∧
     ((stepD a stop hs D hinv).status = .needsInput ∨ (stepD a stop hs D hinv).status = .needsOutput →
-      Pays a stop p D D.pos (stepD a stop hs D hinv) (stepDW a stop hs D + 1) (stopCost (stepD a stop hs D hinv))) ∧
+      Pays a stop p D D.pos (stepD a stop hs D hinv) (stepDW a stop hs D hinv + 1) (stopCost (stepD a stop hs D hinv))) ∧
     ((stepD a stop hs D hinv).status = .bad ∨ (stepD a stop hs D hinv).status = .memory → ∃ L,
       D.cmd.pend.toNat + L ≤ (stepD a stop hs D hinv).cmd.pend.toNat ∧
       ((stepD a stop hs D hinv).status = .memory → (stepD a stop hs D hinv).cmd.pend.toNat = 0) ∧ ∀ t : List UInt8,
-      stepDW a stop hs D + 1 + hdrRate * ((stop.toNat - (stepD a stop hs D hinv).pos.toNat) * 8) ≤
+      stepDW a stop hs D hinv + 1 + hdrRate * ((stop.toNat - (stepD a stop hs D hinv).pos.toNat) * 8) ≤
         dpot p D + hdrRate * (D.bits a D.pos stop (bits t)).length + 282 * L + 118) := by
   have hok := stepD_ok specSem (hs := hs) (h := hinv) hrel he hp
   have hpl := stepD_pendLe a stop hs D hinv
@@ -1084,7 +1084,7 @@ theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
   cases p with
   | wbits =>
     have e1 : stepD a stop hs D hinv = stepDWbits a stop hs D D.pos := stepD_wbits hrel.1
-    have e2 : stepDW a stop hs D = stepDWbitsW a stop hs D D.pos := by unfold stepDW; rw [hrel.1]
+    have e2 : stepDW a stop hs D hinv = stepDWbitsW a stop hs D D.pos := by unfold stepDW; rw [hrel.1]
     rw [e1, e2, ite_eq_left hrel.1]
     rw [e1] at hok hpos
     obtain ⟨n1, n2, n3⟩ := pay_wbits (hs := hs) hrel hp
@@ -1104,7 +1104,7 @@ theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
         fun t => by have := rate_chunk D hs (hpos h) (bits t); omega⟩
   | mblock w st =>
     have e1 : stepD a stop hs D hinv = stepDMeta a stop hs D D.pos := stepD_mblock hrel.1
-    have e2 : stepDW a stop hs D = stepDMetaW a stop hs D D.pos := by unfold stepDW; rw [hrel.1]
+    have e2 : stepDW a stop hs D hinv = stepDMetaW a stop hs D D.pos := by unfold stepDW; rw [hrel.1]
     rw [e1, e2, ite_eq_right (by rw [hrel.1]; exact fun e => DTag.noConfusion e)]
     obtain ⟨n1, n2, n3, n4⟩ := pay_mblock (hs := hs) hrel hp
     rw [e1] at hok hpos
@@ -1128,7 +1128,7 @@ theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
       exact (n3 h).mono (Nat.le_of_eq hsc.symm)
   | skip w st last n =>
     have e1 : stepD a stop hs D hinv = stepDSkip stop D D.pos := stepD_skip hrel.1
-    have e2 : stepDW a stop hs D = 1 := by unfold stepDW; rw [hrel.1]
+    have e2 : stepDW a stop hs D hinv = 1 := by unfold stepDW; rw [hrel.1]
     rw [e1, e2, ite_eq_right (by rw [hrel.1]; exact fun e => DTag.noConfusion e)]
     obtain ⟨n1, n2, n3⟩ := pay_skip (a := a) (hs := hs) hrel hp
     rw [e1] at hpos
@@ -1144,7 +1144,7 @@ theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
     · exact (n3 h).mono (stopCost_ge _)
   | raw w st last n =>
     have e1 : stepD a stop hs D hinv = stepDRaw a stop hs D D.pos := stepD_raw hrel.1
-    have e2 : stepDW a stop hs D = stepDRawW a stop hs D D.pos := by unfold stepDW; rw [hrel.1]
+    have e2 : stepDW a stop hs D hinv = stepDRawW a stop hs D D.pos := by unfold stepDW; rw [hrel.1]
     rw [e1, e2, ite_eq_right (by rw [hrel.1]; exact fun e => DTag.noConfusion e)]
     rw [e1] at hpl hok hpos
     obtain ⟨n1, n2, n3, n4⟩ := pay_raw (hs := hs) hrel hp
@@ -1167,7 +1167,7 @@ theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
       rcases hmem (by rw [e1]; exact hm) with h' | ⟨_, _, _, _, _, _, h'⟩ <;> cases h'
   | hdr w st last mlen g q =>
     have e1 : stepD a stop hs D hinv = stepDHdr a stop hs D D.pos (hinv.hd hrel.1) hinv.2 := stepD_hdr hrel.1
-    have e2 : stepDW a stop hs D = stepDHdrW a stop hs D D.pos := by unfold stepDW; rw [hrel.1]
+    have e2 : stepDW a stop hs D hinv = stepDHdrW a stop hs D D.pos hinv.hd hinv.2 := by unfold stepDW; rw [hrel.1]
     rw [e1, e2, ite_eq_right (by rw [hrel.1]; exact fun e => DTag.noConfusion e)]
     rw [e1] at hok hpos
     obtain ⟨n1, n2, n3⟩ := pay_hdr (hs := hs) (hH := hinv.hd hrel.1) hrel hp
@@ -1188,7 +1188,7 @@ theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
         fun t => by have := rate_chunk D hs (hpos h) (bits t); omega⟩
   | cmds w last m q =>
     have e1 : stepD a stop hs D hinv = stepDCmds a stop hs D D.pos := stepD_cmds hrel.1
-    have e2 : stepDW a stop hs D = stepDCmdsW a stop hs D D.pos := by unfold stepDW; rw [hrel.1]
+    have e2 : stepDW a stop hs D hinv = stepDCmdsW a stop hs D D.pos := by unfold stepDW; rw [hrel.1]
     rw [e1, e2, ite_eq_right (by rw [hrel.1]; exact fun e => DTag.noConfusion e)]
     obtain ⟨n1, n2, n3⟩ := pay_cmds (hs := hs) hrel hsi hp
     refine ⟨n1, fun h => ?_, fun h => ?_⟩

@@ -208,8 +208,8 @@ def stepHSymsW (st : Hd) (pos : USize) : Nat :=
           if 32768 < sum then 1 else delta.toNat + 2
     | _ => 1
 
-/-- The work of `stepHFirst`: the table's check. -/
-def stepHFirstW : Nat := fitsW + 1
+/-- The work of `stepHFirst`: its read, with nothing checked. -/
+def stepHFirstW : Nat := 1
 
 /-- The work of `stepHNp`: the modes' zeros. -/
 def stepHNpW (st : Hd) : Nat :=

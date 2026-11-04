@@ -144,8 +144,9 @@ theorem tableDone_lim (single : Bool) (sym : UInt64) : HLim (tableDone (hdSet st
 theorem stepHCat_lim : stepHCat (hdSet st a) pos = hdSet (stepHCat st pos) a := by
   simp only [stepHCat, markH, catMoveOn]; lim_tac
 
-theorem stepHFirst_lim : stepHFirst (hdSet st a) pos = hdSet (stepHFirst st pos) a := by
-  show stepHFirst { st with d := { st.d with arenaMax := a } } pos = _
+theorem stepHFirst_lim (hf : st.d.arena.size < 2 ^ 32 ∧ TableFits st.d.arena (st.d.baseCOf st.cat).toNat) :
+    stepHFirst (hdSet st a) pos hf = hdSet (stepHFirst st pos hf) a := by
+  show stepHFirst { st with d := { st.d with arenaMax := a } } pos hf = _
   simp only [stepHFirst, markH, catMoveOn, baseCOf_am]; lim_tac
 
 theorem stepHNp_lim : stepHNp (hdSet st a) pos = hdSet (stepHNp st pos) a := by
@@ -203,34 +204,34 @@ theorem stepHSyms_lim : HLim (stepHSyms (hdSet st a) pos) (stepHSyms st pos) := 
       simp only [markH, clearLens]
       lim_tac
 
-theorem stepAtH_lim : HLim (stepAtH (hdSet st a) pos) (stepAtH st pos) := by
-  unfold stepAtH
-  rw [show (hdSet st a).tag = st.tag from rfl]
-  cases st.tag with
-  | cat => exact HLim.same (stepHCat_lim st a pos)
-  | code => exact stepHCode_lim st a pos
-  | clens => exact HLim.same (stepHClens_lim st a pos)
-  | syms => exact stepHSyms_lim st a pos
-  | first => exact HLim.same (stepHFirst_lim st a pos)
-  | np => exact HLim.same (stepHNp_lim st a pos)
-  | modes => exact HLim.same (stepHModes_lim st a pos)
-  | trees => exact stepHTrees_lim st a pos
-  | rlemax => exact HLim.same (stepHRlemax_lim st a pos)
-  | vals => exact HLim.same (stepHVals_lim st a pos)
-  | imtf => exact stepHImtf_lim st a pos
-  | codes => exact HLim.same (stepHCodes_lim st a pos)
-  | ready => exact HLim.same (a := a) rfl
+theorem stepAtH_lim (h1 : ∃ g p, HRel (hdSet st a) g p) (h2 : ∃ g p, HRel st g p) :
+    HLim (stepAtH (hdSet st a) pos h1) (stepAtH st pos h2) := by
+  cases ht : st.tag with
+  | cat => rw [stepAtH_cat (st := hdSet st a) ht, stepAtH_cat ht]; exact HLim.same (stepHCat_lim st a pos)
+  | code => rw [stepAtH_code (st := hdSet st a) ht, stepAtH_code ht]; exact stepHCode_lim st a pos
+  | clens => rw [stepAtH_clens (st := hdSet st a) ht, stepAtH_clens ht]; exact HLim.same (stepHClens_lim st a pos)
+  | syms => rw [stepAtH_syms (st := hdSet st a) ht, stepAtH_syms ht]; exact stepHSyms_lim st a pos
+  | first => rw [stepAtH_first (st := hdSet st a) ht, stepAtH_first ht]; exact HLim.same (stepHFirst_lim st a pos _)
+  | np => rw [stepAtH_np (st := hdSet st a) ht, stepAtH_np ht]; exact HLim.same (stepHNp_lim st a pos)
+  | modes => rw [stepAtH_modes (st := hdSet st a) ht, stepAtH_modes ht]; exact HLim.same (stepHModes_lim st a pos)
+  | trees => rw [stepAtH_trees (st := hdSet st a) ht, stepAtH_trees ht]; exact stepHTrees_lim st a pos
+  | rlemax => rw [stepAtH_rlemax (st := hdSet st a) ht, stepAtH_rlemax ht]; exact HLim.same (stepHRlemax_lim st a pos)
+  | vals => rw [stepAtH_vals (st := hdSet st a) ht, stepAtH_vals ht]; exact HLim.same (stepHVals_lim st a pos)
+  | imtf => rw [stepAtH_imtf (st := hdSet st a) ht, stepAtH_imtf ht]; exact stepHImtf_lim st a pos
+  | codes => rw [stepAtH_codes (st := hdSet st a) ht, stepAtH_codes ht]; exact HLim.same (stepHCodes_lim st a pos)
+  | ready => rw [stepAtH_ready (st := hdSet st a) ht, stepAtH_ready ht]; exact HLim.same (a := a) rfl
 
-theorem stepAtH_lim' {L : Hd} (h : L = hdSet st a) : HLim (stepAtH L pos) (stepAtH st pos) := h ▸ stepAtH_lim st a pos
+theorem stepAtH_lim' {L : Hd} (h : L = hdSet st a) (h1 : ∃ g p, HRel L g p) (h2 : ∃ g p, HRel st g p) :
+    HLim (stepAtH L pos h1) (stepAtH st pos h2) := by
+  subst h
+  exact stepAtH_lim st a pos h1 h2
 
-theorem stepH_lim (ar : ByteArray) (stop : USize) (hs : stop.toNat ≤ ar.size) :
-    HLim (stepH ar stop hs (hdSet st a) pos) (stepH ar stop hs st pos) := by
-  unfold stepH
-  by_cases hp : pos ≤ stop
-  · rw [dite_eq_left hp, dite_eq_left hp]
-    exact stepAtH_lim' _ a _ (by rfl)
-  · rw [dite_eq_right hp, dite_eq_right hp]
-    exact HLim.same (a := a) rfl
+theorem stepH_lim (ar : ByteArray) (stop : USize) (hs : stop.toNat ≤ ar.size) (h1 : ∃ g p, HRel (hdSet st a) g p)
+    (h2 : ∃ g p, HRel st g p) (hp : pos.toNat ≤ stop.toNat) :
+    HLim (stepH ar stop hs (hdSet st a) pos h1 hp) (stepH ar stop hs st pos h2 hp) := by
+  unfold stepH refillH
+  dsimp only
+  exact stepAtH_lim' _ a _ (by rfl) _ _
 
 end
 
@@ -300,13 +301,14 @@ theorem stepDHdr_lim (hH1 : ∃ g p, HRel (decSet D l a).hd g p) (hH2 : ∃ g p,
     DLim (stepDHdr ar stop hs (decSet D l a) pos hH1 hp) (stepDHdr ar stop hs D pos hH2 hp) := by
   unfold stepDHdr takeHd clearHd
   dsimp only
-  have hr : HLim (stepH ar stop hs (decSet D l a).hd pos) (stepH ar stop hs D.hd pos) := stepH_lim D.hd a pos ar stop hs
+  have hr : HLim (stepH ar stop hs (decSet D l a).hd pos hH1 hp) (stepH ar stop hs D.hd pos hH2 hp) :=
+    stepH_lim D.hd a pos ar stop hs hH1 hH2 hp
   generalize e1 : stepHR ar stop hs (decSet D l a).hd pos hH1 hp = rr1
   generalize e2 : stepHR ar stop hs D.hd pos hH2 hp = rr2
   obtain ⟨r1, h1⟩ := rr1
   obtain ⟨r2, h2⟩ := rr2
-  have v1 : r1 = stepH ar stop hs (decSet D l a).hd pos := by rw [← stepHR_val (h := hH1) (hp := hp), e1]
-  have v2 : r2 = stepH ar stop hs D.hd pos := by rw [← stepHR_val (h := hH2) (hp := hp), e2]
+  have v1 : r1 = stepH ar stop hs (decSet D l a).hd pos hH1 hp := by rw [← stepHR_val (h := hH1) (hp := hp), e1]
+  have v2 : r2 = stepH ar stop hs D.hd pos hH2 hp := by rw [← stepHR_val (h := hH2) (hp := hp), e2]
   rw [← v1, ← v2] at hr
   unfold hdrNext
   dsimp only

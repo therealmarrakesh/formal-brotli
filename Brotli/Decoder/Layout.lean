@@ -235,21 +235,21 @@ theorem hd_er {s t : Hd} (h : { s with pos := 0 } = { t with pos := 0 }) : t = {
   rfl
 
 theorem stepH_same {a1 a2 : ByteArray} {e1 e2 : USize} (hs1 : e1.toNat ≤ a1.size) (hs2 : e2.toNat ≤ a2.size) {s t : Hd}
-    (he : { s with pos := 0 } = { t with pos := 0 }) {p1 p2 : USize} (h : Same a1 e1 a2 e2 p1 p2) :
-    HdSame a1 e1 a2 e2 (stepH a1 e1 hs1 s p1) (stepH a2 e2 hs2 t p2) := by
-  have hq1 : p1 ≤ e1 := USize.le_iff_toNat_le.mpr h.2.2.1
-  have hq2 : p2 ≤ e2 := USize.le_iff_toNat_le.mpr h.2.2.2.1
-  have hw : t.word = s.word := by rw [hd_er he]
-  have hc : t.count = s.count := by rw [hd_er he]
-  unfold stepH
-  rw [dite_eq_left hq1, dite_eq_left hq2]
+    (he : { s with pos := 0 } = { t with pos := 0 }) {p1 p2 : USize} (h : Same a1 e1 a2 e2 p1 p2) {h1 : ∃ g p, HRel s g p}
+    {h2 : ∃ g p, HRel t g p} {hp1 : p1.toNat ≤ e1.toNat} {hp2 : p2.toNat ≤ e2.toNat} :
+    HdSame a1 e1 a2 e2 (stepH a1 e1 hs1 s p1 h1 hp1) (stepH a2 e2 hs2 t p2 h2 hp2) := by
+  have et : t = { s with pos := t.pos } := hd_er he
+  generalize t.pos = q at et
+  subst et
+  unfold stepH refillH
   dsimp only
-  obtain ⟨ew, ec, hS⟩ := refill_same (word := s.word) (count := s.count) hs1 hs2 h.2.2.1 h.2.2.2.1 h
-  rw [hw, hc, stepAtH_pos _ (refill s.word s.count a1 p1 e1 hs1 _).pos, stepAtH_pos _ (refill s.word s.count a2 p2 e2 hs2 _).pos]
+  obtain ⟨ew, ec, hS⟩ := refill_same (word := s.word) (count := s.count) hs1 hs2 hp1 hp2 h
+  have key : ∀ (S1 S2 : Hd) (P1 : ∃ g p, HRel S1 g p) (P2 : ∃ g p, HRel S2 g p), S1 = S2 → stepAtH S1 0 P1 = stepAtH S2 0 P2 :=
+    fun S1 S2 P1 P2 e => by subst e; rfl
+  rw [stepAtH_pos _ (refill s.word s.count a1 p1 e1 hs1 _).pos, stepAtH_pos _ (refill s.word s.count a2 p2 e2 hs2 _).pos]
   refine ⟨?_, hS⟩
-  show { stepAtH { s with word := _, count := _, pos := 0 } 0 with pos := 0 } =
-    { stepAtH { t with word := _, count := _, pos := 0 } 0 with pos := 0 }
-  rw [ew, ec, hd_er he]
+  refine congrArg (fun x : Hd => { x with pos := 0 }) (key _ _ _ _ ?_)
+  rw [ew, ec]
 
 /-! ### The stream's steps -/
 
@@ -389,7 +389,7 @@ theorem stepDHdr_same {s t : Dec} (he : s.er = t.er) {p1 p2 : USize} (h : Same a
   generalize t.cmd.pos = q1
   generalize t.hd.pos = q2
   intro hH2
-  obtain ⟨e, hS⟩ := stepH_same hs1 hs2 (s := s.hd) (t := { s.hd with pos := q2 }) rfl h
+  obtain ⟨e, hS⟩ := stepH_same hs1 hs2 (s := s.hd) (t := { s.hd with pos := q2 }) rfl h (h1 := hH1) (h2 := hH2) (hp1 := hp1) (hp2 := hp2)
   have e' := hd_er e
   unfold stepDHdr takeHd clearHd
   dsimp only at e' hS ⊢
@@ -397,8 +397,8 @@ theorem stepDHdr_same {s t : Dec} (he : s.er = t.er) {p1 p2 : USize} (h : Same a
   generalize hr2 : stepHR a2 e2 hs2 { s.hd with pos := q2 } p2 hH2 hp2 = rr2
   obtain ⟨R1, k1⟩ := rr1
   obtain ⟨R2, k2⟩ := rr2
-  have v1 : R1 = stepH a1 e1 hs1 s.hd p1 := by rw [← stepHR_val (h := hH1) (hp := hp1), hr1]
-  have v2 : R2 = stepH a2 e2 hs2 { s.hd with pos := q2 } p2 := by rw [← stepHR_val (h := hH2) (hp := hp2), hr2]
+  have v1 : R1 = stepH a1 e1 hs1 s.hd p1 hH1 hp1 := by rw [← stepHR_val (h := hH1) (hp := hp1), hr1]
+  have v2 : R2 = stepH a2 e2 hs2 { s.hd with pos := q2 } p2 hH2 hp2 := by rw [← stepHR_val (h := hH2) (hp := hp2), hr2]
   rw [← v1, ← v2] at e' hS
   generalize R2.pos = q3 at hS e'
   subst e'

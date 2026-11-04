@@ -79,9 +79,10 @@ def stepDRawW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : D
 
 /-- The work of `stepDHdr`: the header step, and at a header's end the command loop's header, made with no check, and
 its first state, its block type flags copied from the shared ones. -/
-def stepDHdrW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize) : Nat :=
+def stepDHdrW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize)
+    (hH : D.tag = .hdr → ∃ g p, HRel D.hd g p) (hp : pos.toNat ≤ stop.toNat) : Nat :=
   stepHW a stop hs D.hd pos +
-    if (stepH a stop hs D.hd pos).status = .ready then 770 else 0
+    if ht : D.tag = .hdr then (if (stepH a stop hs D.hd pos (hH ht) hp).status = .ready then 770 else 0) else 0
 
 /-- The work of `stepDCmds`: the command loop, and at the commands' end the check that every block type occurred. -/
 def stepDCmdsW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize) : Nat :=
@@ -89,13 +90,13 @@ def stepDCmdsW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : 
     if (runCmd D.H D.k a stop hs cmdBudget D.cmd pos).status = .done then 772 else 0
 
 /-- The work of a step of the whole decoder. -/
-def stepDW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) : Nat :=
+def stepDW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (h : DInv stop D) : Nat :=
   match D.tag with
   | .wbits => stepDWbitsW a stop hs D D.pos
   | .mblock => stepDMetaW a stop hs D D.pos
   | .skip => 1
   | .raw => stepDRawW a stop hs D D.pos
-  | .hdr => stepDHdrW a stop hs D D.pos
+  | .hdr => stepDHdrW a stop hs D D.pos h.hd h.2
   | .cmds => stepDCmdsW a stop hs D D.pos
   | .ended => 1
 
@@ -104,7 +105,7 @@ def runDW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) 
   if he : D.tag = .ended then 1
   else
     let r := stepD a stop hs D h
-    stepDW a stop hs D + 1 + if hn : r.status = .next then runDW a stop hs r (h.step he hn) else 0
+    stepDW a stop hs D h + 1 + if hn : r.status = .next then runDW a stop hs r (h.step he hn) else 0
 termination_by (RunArg.mk D h : RunArg a stop hs)
 decreasing_by exact ⟨he, hn, rfl⟩
 

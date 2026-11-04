@@ -1090,9 +1090,10 @@ theorem wSyms {st : Hd} {g : Gh} {o : Owner} {n : Nat} {clc : PrefixCode} {ls : 
 
 /-- A header step's work, once the buffer is refilled, by where it goes. -/
 theorem stepAtHW_cost {st : Hd} {g : Gh} {p : HPhase} {pos : USize} {g' : Gh} {p' : HPhase} {a : ByteArray} {stop : USize}
-    {F : List Bool} (hrel : HRel st g p) (hn : (stepAtH st pos).status = .next) (hr : HRel (stepAtH st pos) g' p')
+    {F : List Bool} {h : ∃ g p, HRel st g p} (hrel : HRel st g p) (hn : (stepAtH st pos h).status = .next)
+    (hr : HRel (stepAtH st pos h) g' p')
     (hj : hStepP (g, p) (availBits st.word st.count a pos stop F) =
-      .next (g', p') (availBits (stepAtH st pos).word (stepAtH st pos).count a (stepAtH st pos).pos stop F)) :
+      .next (g', p') (availBits (stepAtH st pos h).word (stepAtH st pos h).count a (stepAtH st pos h).pos stop F)) :
     stepAtHW st pos + 10 ≤ hcost g p p' := by
   have htag := hrel.tag_eq
   have hge := hcost_ge g p p'
@@ -1101,19 +1102,19 @@ theorem stepAtHW_cost {st : Hd} {g : Gh} {p : HPhase} {pos : USize} {g' : Gh} {p
     have e : stepAtHW st pos = 1 := by unfold stepAtHW; rw [htag] <;> rfl
     omega
   | code o n =>
-    have e1 : stepAtH st pos = stepHCode st pos := by unfold stepAtH; rw [htag] <;> rfl
+    have e1 : stepAtH st pos h = stepHCode st pos := stepAtH_code htag
     have e2 : stepAtHW st pos = stepHCodeW st pos := by unfold stepAtHW; rw [htag] <;> rfl
     rw [e1] at hn hr
     rw [e2]
     exact wCode hrel hn hr
   | clens o n order acc sum =>
-    have e1 : stepAtH st pos = stepHClens st pos := by unfold stepAtH; rw [htag] <;> rfl
+    have e1 : stepAtH st pos h = stepHClens st pos := stepAtH_clens htag
     have e2 : stepAtHW st pos = stepHClensW st pos := by unfold stepAtHW; rw [htag] <;> rfl
     rw [e1] at hn hr
     rw [e2]
     exact wClens hrel hn hr
   | syms o n clc ls =>
-    have e1 : stepAtH st pos = stepHSyms st pos := by unfold stepAtH; rw [htag] <;> rfl
+    have e1 : stepAtH st pos h = stepHSyms st pos := stepAtH_syms htag
     have e2 : stepAtHW st pos = stepHSymsW st pos := by unfold stepAtHW; rw [htag] <;> rfl
     rw [e1] at hn hr
     rw [e2]
@@ -1121,7 +1122,7 @@ theorem stepAtHW_cost {st : Hd} {g : Gh} {p : HPhase} {pos : USize} {g' : Gh} {p
   | first i n tc cc =>
     have e : stepAtHW st pos = stepHFirstW := by unfold stepAtHW; rw [htag] <;> rfl
     rw [e]
-    show 259 + 10 ≤ 269
+    show 1 + 10 ≤ 269
     omega
   | np =>
     have e : stepAtHW st pos = stepHNpW st := by unfold stepAtHW; rw [htag] <;> rfl
@@ -1131,7 +1132,7 @@ theorem stepAtHW_cost {st : Hd} {g : Gh} {p : HPhase} {pos : USize} {g' : Gh} {p
     have e : stepAtHW st pos = 1 := by unfold stepAtHW; rw [htag] <;> rfl
     omega
   | trees isL =>
-    have e1 : stepAtH st pos = stepHTrees st pos := by unfold stepAtH; rw [htag] <;> rfl
+    have e1 : stepAtH st pos h = stepHTrees st pos := stepAtH_trees htag
     have e2 : stepAtHW st pos = stepHTreesW st := by unfold stepAtHW; rw [htag] <;> rfl
     rw [e1] at hr
     rw [e2]
@@ -1140,7 +1141,7 @@ theorem stepAtHW_cost {st : Hd} {g : Gh} {p : HPhase} {pos : USize} {g' : Gh} {p
     have e : stepAtHW st pos = 1 := by unfold stepAtHW; rw [htag] <;> rfl
     omega
   | vals isL t r code done left =>
-    have e1 : stepAtH st pos = stepHVals st pos := by unfold stepAtH; rw [htag] <;> rfl
+    have e1 : stepAtH st pos h = stepHVals st pos := stepAtH_vals htag
     have e2 : stepAtHW st pos = stepHValsW st := by unfold stepAtHW; rw [htag] <;> rfl
     rw [e1] at hj
     rw [e2]
@@ -1156,17 +1157,20 @@ theorem stepAtHW_cost {st : Hd} {g : Gh} {p : HPhase} {pos : USize} {g' : Gh} {p
 
 /-- A header step's work, by where it goes. -/
 theorem stepHW_cost {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {st : Hd} {pos : USize} {g : Gh} {p : HPhase}
-    {g' : Gh} {p' : HPhase} (hrel : HRel st g p) (hp : pos.toNat ≤ stop.toNat) (hn : (stepH a stop hs st pos).status = .next)
-    (hr : HRel (stepH a stop hs st pos) g' p')
+    {g' : Gh} {p' : HPhase} {h : ∃ g p, HRel st g p} (hrel : HRel st g p) (hp : pos.toNat ≤ stop.toNat)
+    (hn : (stepH a stop hs st pos h hp).status = .next)
+    (hr : HRel (stepH a stop hs st pos h hp) g' p')
     (hj : ∀ F, hStepP (g, p) (availBits st.word st.count a pos stop F) =
-      .next (g', p') (availBits (stepH a stop hs st pos).word (stepH a stop hs st pos).count a (stepH a stop hs st pos).pos stop F)) :
+      .next (g', p') (availBits (stepH a stop hs st pos h hp).word (stepH a stop hs st pos h hp).count a
+        (stepH a stop hs st pos h hp).pos stop F)) :
     stepHW a stop hs st pos + 1 ≤ hcost g p p' := by
   have hp' : pos ≤ stop := USize.le_iff_toNat_le.mpr hp
-  have eH : stepH a stop hs st pos = stepAtH { st with
+  have eH : stepH a stop hs st pos h hp = stepAtH { st with
       word := (refill st.word st.count a pos stop hs hp).word
-      count := (refill st.word st.count a pos stop hs hp).count } (refill st.word st.count a pos stop hs hp).pos := by
-    unfold stepH
-    rw [dite_eq_left hp']
+      count := (refill st.word st.count a pos stop hs hp).count } (refill st.word st.count a pos stop hs hp).pos
+      (hrel_bits h (refill_spec hs hp (hrel_wf h)).1) := by
+    unfold stepH refillH
+    rfl
   have eW : stepHW a stop hs st pos = refillW st.word st.count a pos stop hs + stepAtHW { st with
       word := (refill st.word st.count a pos stop hs hp).word
       count := (refill st.word st.count a pos stop hs hp).count } (refill st.word st.count a pos stop hs hp).pos := by
@@ -1344,8 +1348,8 @@ theorem symsW_stop {st : Hd} {g : Gh} {o : Owner} {n : Nat} {clc : PrefixCode} {
               exact absurd rfl hn
 
 /-- A header step that stops, once the buffer is refilled: its work is within its place's potential. -/
-theorem stepAtHW_stop {st : Hd} {g : Gh} {p : HPhase} {pos : USize} (hrel : HRel st g p)
-    (hb : st.d.arena.size + budH g p ≤ st.d.arenaCap.toNat) (hn : (stepAtH st pos).status ≠ .next) :
+theorem stepAtHW_stop {st : Hd} {g : Gh} {p : HPhase} {pos : USize} {h : ∃ g p, HRel st g p} (hrel : HRel st g p)
+    (hb : st.d.arena.size + budH g p ≤ st.d.arenaCap.toNat) (hn : (stepAtH st pos h).status ≠ .next) :
     stepAtHW st pos + 10 ≤ hpot g p := by
   have htag := hrel.tag_eq
   cases p with
@@ -1355,7 +1359,7 @@ theorem stepAtHW_stop {st : Hd} {g : Gh} {p : HPhase} {pos : USize} (hrel : HRel
     show _ ≤ catPot g i 0
     omega
   | code o n =>
-    have e1 : stepAtH st pos = stepHCode st pos := by unfold stepAtH; rw [htag] <;> rfl
+    have e1 : stepAtH st pos h = stepHCode st pos := stepAtH_code htag
     have e : stepAtHW st pos = stepHCodeW st pos := by unfold stepAtHW; rw [htag] <;> rfl
     rw [e1] at hn
     rw [e]
@@ -1366,7 +1370,7 @@ theorem stepAtHW_stop {st : Hd} {g : Gh} {p : HPhase} {pos : USize} (hrel : HRel
     have := clensW_le (pos := pos) hrel
     omega
   | syms o n clc ls =>
-    have e1 : stepAtH st pos = stepHSyms st pos := by unfold stepAtH; rw [htag] <;> rfl
+    have e1 : stepAtH st pos h = stepHSyms st pos := stepAtH_syms htag
     have e : stepAtHW st pos = stepHSymsW st pos := by unfold stepAtHW; rw [htag] <;> rfl
     rw [e1] at hn
     rw [e]
@@ -1376,7 +1380,7 @@ theorem stepAtHW_stop {st : Hd} {g : Gh} {p : HPhase} {pos : USize} (hrel : HRel
     have e : stepAtHW st pos = stepHFirstW := by unfold stepAtHW; rw [htag] <;> rfl
     rw [e]
     have := catPot_ge g i (n := n)
-    show 259 + 10 ≤ catPot g i n
+    show 1 + 10 ≤ catPot g i n
     omega
   | np =>
     have e : stepAtHW st pos = stepHNpW st := by unfold stepAtHW; rw [htag] <;> rfl
@@ -1419,7 +1423,7 @@ theorem stepAtHW_stop {st : Hd} {g : Gh} {p : HPhase} {pos : USize} (hrel : HRel
       omega
     omega
   | vals isL t r code done left =>
-    have e1 : stepAtH st pos = stepHVals st pos := by unfold stepAtH; rw [htag] <;> rfl
+    have e1 : stepAtH st pos h = stepHVals st pos := stepAtH_vals htag
     have e : stepAtHW st pos = stepHValsW st := by unfold stepAtHW; rw [htag] <;> rfl
     rw [e1] at hn
     rw [e]
@@ -1450,15 +1454,16 @@ theorem stepAtHW_stop {st : Hd} {g : Gh} {p : HPhase} {pos : USize} (hrel : HRel
 
 /-- A header step that stops: its work is within its place's potential. -/
 theorem stepHW_stop {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {st : Hd} {pos : USize} {g : Gh} {p : HPhase}
-    (hrel : HRel st g p) (hb : st.d.arena.size + budH g p ≤ st.d.arenaCap.toNat) (hp : pos.toNat ≤ stop.toNat)
-    (hn : (stepH a stop hs st pos).status ≠ .next) :
+    {h : ∃ g p, HRel st g p} (hrel : HRel st g p) (hb : st.d.arena.size + budH g p ≤ st.d.arenaCap.toNat) (hp : pos.toNat ≤ stop.toNat)
+    (hn : (stepH a stop hs st pos h hp).status ≠ .next) :
     stepHW a stop hs st pos + 1 ≤ hpot g p := by
   have hp' : pos ≤ stop := USize.le_iff_toNat_le.mpr hp
-  have eH : stepH a stop hs st pos = stepAtH { st with
+  have eH : stepH a stop hs st pos h hp = stepAtH { st with
       word := (refill st.word st.count a pos stop hs hp).word
-      count := (refill st.word st.count a pos stop hs hp).count } (refill st.word st.count a pos stop hs hp).pos := by
-    unfold stepH
-    rw [dite_eq_left hp']
+      count := (refill st.word st.count a pos stop hs hp).count } (refill st.word st.count a pos stop hs hp).pos
+      (hrel_bits h (refill_spec hs hp (hrel_wf h)).1) := by
+    unfold stepH refillH
+    rfl
   have eW : stepHW a stop hs st pos = refillW st.word st.count a pos stop hs + stepAtHW { st with
       word := (refill st.word st.count a pos stop hs hp).word
       count := (refill st.word st.count a pos stop hs hp).count } (refill st.word st.count a pos stop hs hp).pos := by
@@ -1537,12 +1542,16 @@ theorem ckFinish_ni {st : Hd} (h : st.status = .next) : (ckFinish st).status ≠
   · exact fun e => HStatus.noConfusion e
 
 /-- A header step that runs out of input, once the buffer is refilled, does at most a table's check. -/
-theorem stepAtHW_short {st : Hd} {pos : USize} (h : (stepAtH st pos).status = .needsInput) : stepAtHW st pos ≤ 259 := by
-  unfold stepAtH at h
+theorem stepAtHW_short {st : Hd} {pos : USize} {hH : ∃ g p, HRel st g p} (h : (stepAtH st pos hH).status = .needsInput) :
+    stepAtHW st pos ≤ 259 := by
   unfold stepAtHW
-  cases ht : st.tag <;> simp only [ht] at h ⊢
+  cases ht : st.tag <;> dsimp only <;> first
+    | rw [stepAtH_cat ht] at h | rw [stepAtH_code ht] at h | rw [stepAtH_clens ht] at h | rw [stepAtH_syms ht] at h
+    | rw [stepAtH_first ht] at h | rw [stepAtH_np ht] at h | rw [stepAtH_modes ht] at h | rw [stepAtH_trees ht] at h
+    | rw [stepAtH_rlemax ht] at h | rw [stepAtH_vals ht] at h | rw [stepAtH_imtf ht] at h | rw [stepAtH_codes ht] at h
+    | rw [stepAtH_ready ht] at h
   case cat | modes | rlemax | ready => omega
-  case first => show 259 ≤ 259; exact Nat.le_refl _
+  case first => show 1 ≤ 259; omega
   case code =>
     unfold stepHCode at h
     unfold stepHCodeW
@@ -1682,17 +1691,15 @@ theorem stepAtHW_short {st : Hd} {pos : USize} (h : (stepAtH st pos).status = .n
 
 /-- A header step that runs out of input does at most a refill and a table's check. -/
 theorem stepHW_short {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {st : Hd} {pos : USize}
-    (h : (stepH a stop hs st pos).status = .needsInput) : stepHW a stop hs st pos ≤ 268 := by
-  unfold stepH at h
+    {hH : ∃ g p, HRel st g p} {hp : pos.toNat ≤ stop.toNat} (h : (stepH a stop hs st pos hH hp).status = .needsInput) :
+    stepHW a stop hs st pos ≤ 268 := by
+  unfold stepH refillH at h
   unfold stepHW
-  by_cases hp : pos ≤ stop
-  · rw [dite_eq_left hp] at h ⊢
-    dsimp only at h ⊢
-    have := refillW_le (word := st.word) (count := st.count) hs (USize.le_iff_toNat_le.mp hp)
-    have := stepAtHW_short h
-    omega
-  · rw [dite_eq_right hp]
-    omega
+  rw [dite_eq_left (USize.le_iff_toNat_le.mpr hp)]
+  dsimp only at h ⊢
+  have := refillW_le (word := st.word) (count := st.count) hs hp
+  have := stepAtHW_short h
+  omega
 
 /-! ### The most a header's place holds
 

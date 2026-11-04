@@ -39,14 +39,14 @@ theorem stepDHdr_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {last 
   obtain ⟨ht, hall, hl, hleft, hm1, hm2, hR, hp0, hb⟩ := hrel
   have ht' : tag = .hdr := ht
   subst ht'
-  have hstep := stepH_ok (K := hdrK w (S.after w last) st mlen) (a := a) (hs := hs) hR hpos
-  have hbadH := stepH_bad (K := hdrK w (S.after w last) st mlen) (a := a) (hs := hs) hR hpos
-  have hmemH := stepH_memory (K := hdrK w (S.after w last) st mlen) (a := a) (hs := hs) hR hpos
+  have hstep := stepH_ok (K := hdrK w (S.after w last) st mlen) (a := a) (hs := hs) (h := ⟨g, p, hR⟩) hR hpos
+  have hbadH := stepH_bad (K := hdrK w (S.after w last) st mlen) (a := a) (hs := hs) (h := ⟨g, p, hR⟩) hR hpos
+  have hmemH := stepH_memory (K := hdrK w (S.after w last) st mlen) (a := a) (hs := hs) (h := ⟨g, p, hR⟩) hR hpos
   unfold stepDHdr takeHd
   dsimp only
   generalize hrr : stepHR a stop hs hd pos ⟨g, p, hR⟩ hpos = rr
   obtain ⟨r, hr⟩ := rr
-  have e : r = stepH a stop hs hd pos := by rw [← stepHR_val (h := ⟨g, p, hR⟩) (hp := hpos), hrr]
+  have e : r = stepH a stop hs hd pos ⟨g, p, hR⟩ hpos := by rw [← stepHR_val (h := ⟨g, p, hR⟩) (hp := hpos), hrr]
   rw [← e] at hstep hbadH hmemH
   unfold hdrNext
   dsimp only

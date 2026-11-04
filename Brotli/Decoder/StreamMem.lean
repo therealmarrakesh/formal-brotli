@@ -988,12 +988,12 @@ theorem hdr_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs
   | ended => exact absurd (hrel.1.symm.trans ht) (by decide)
   | hdr w st last mlen g0 q0 =>
     have hD := stepDHdr_ok (S := demandSem) (a := a) (hs := hs) (hH := hH) hrel hp
-    have hHs := stepH_ok (K := tableK) (a := a) (hs := hs) hR hp
+    have hHs := stepH_ok (K := tableK) (a := a) (hs := hs) (h := ⟨g, q, hR⟩) hR hp
     unfold stepDHdr takeHd at hD ⊢
     dsimp only at hD ⊢
     generalize hrr : stepHR a stop hs D.hd D.pos ⟨g, q, hR⟩ hp = rr at hD ⊢
     obtain ⟨r, hr⟩ := rr
-    have e : r = stepH a stop hs D.hd D.pos := by rw [← stepHR_val (h := ⟨g, q, hR⟩) (hp := hp), hrr]
+    have e : r = stepH a stop hs D.hd D.pos ⟨g, q, hR⟩ hp := by rw [← stepHR_val (h := ⟨g, q, hR⟩) (hp := hp), hrr]
     rw [← e] at hHs
     unfold hdrNext at hD ⊢
     dsimp only at hD ⊢
