@@ -229,8 +229,9 @@ theorem DRel.congr {D D' : Dec} {p : SPhase} (h : DRel D p) (e1 : D'.tag = D.tag
     obtain ⟨a1, a2, a3, a4, a5, a6⟩ := h
     exact ⟨e1.trans a1, by rw [e2]; exact a2, a3.congr e5 e2 e8, e6.trans a4, by rw [e7]; exact a5, a6⟩
   | hdr =>
-    obtain ⟨a1, a2, a3, a4, a5, a6, a7, a8⟩ := h
-    exact ⟨e1.trans a1, a2.congr e5 e2 e8, e6.trans a3, by rw [e7]; exact a4, a5, a6, by rw [e3]; exact a7, by rw [e2]; exact a8⟩
+    obtain ⟨a1, a2, a3, a4, a5, a6, a7, a8, a9⟩ := h
+    exact ⟨e1.trans a1, a2.congr e5 e2 e8, e6.trans a3, by rw [e7]; exact a4, a5, a6, by rw [e3]; exact a7, by rw [e2]; exact a8,
+      by rw [e3]; exact a9⟩
   | cmds =>
     obtain ⟨a1, a2, a3, a4, a5⟩ := h
     exact ⟨e1.trans a1, e6.trans a2, by rw [e8]; exact a3, by rw [e4]; exact a4, by rw [e5, e2]; exact a5⟩
@@ -262,9 +263,9 @@ theorem DRel.withPend {D : Dec} {p : SPhase} (h : DRel D p) {x : USize} (hx : x.
     obtain ⟨a1, a2, a3, a4, a5, a6⟩ := h
     exact ⟨a1, a2, hwin a3, a4, a5, a6⟩
   | hdr =>
-    obtain ⟨a1, a2, a3, a4, a5, a6, a7, a8⟩ := h
+    obtain ⟨a1, a2, a3, a4, a5, a6, a7, a8, a9⟩ := h
     have h0 : D.cmd.pend.toNat = 0 := by rw [a8]; rfl
-    exact ⟨a1, hwin a2, a3, a4, a5, a6, a7, USize.toNat_inj.mp (by show x.toNat = 0; omega)⟩
+    exact ⟨a1, hwin a2, a3, a4, a5, a6, a7, USize.toNat_inj.mp (by show x.toNat = 0; omega), a9⟩
   | cmds =>
     obtain ⟨a1, a2, a3, a4, a5⟩ := h
     exact ⟨a1, a2, a3, a4, a5.withPend hx⟩

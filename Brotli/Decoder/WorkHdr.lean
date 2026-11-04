@@ -968,16 +968,6 @@ theorem ownerX_ge {st : Hd} {g : Gh} {n : Nat} {o : Owner} (ho : OwnerRel st g n
     simp only [↓reduceIte, ownerX, zb]
     omega
 
-theorem writeSimple_size (t : ByteArray) (r : Rd) : (writeSimple t r).size = t.size := by
-  unfold writeSimple setLen
-  split
-  · rw [size_setU, size_setU]
-  · split
-    · rw [size_setU, size_setU, size_setU]
-    · split
-      · rw [size_setU, size_setU, size_setU, size_setU]
-      · rw [size_setU, size_setU, size_setU, size_setU]
-
 theorem wCode {st : Hd} {g : Gh} {o : Owner} {n : Nat} {pos : USize} {g' : Gh} {p' : HPhase} (hrel : HRel st g (.code o n))
     (hn : (stepHCode st pos).status = .next) (hr : HRel (stepHCode st pos) g' p') :
     stepHCodeW st pos + 10 ≤ hcost g (.code o n) p' := by
@@ -1306,51 +1296,54 @@ theorem stepHW_cost {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} 
 
 /-! ### A step that stops
 
-A step that needs input, rejects, runs out of memory or finishes the header stops the call's run of steps. Its work is
-what the potential holds and at most a simple code's table more. -/
+A step that needs input, rejects, runs out of memory or finishes the header stops the call's run of steps. With room in
+the arena's reservation, its work is within what the potential holds. -/
 
-/-- The most a step that stops does beyond its place's potential. -/
-def hdrSlack : Nat := 12899
+/-- A category's places hold at least a block count's step. -/
+theorem catPot_ge (g : Gh) (i : Cat) {n : Nat} : 269 ≤ catPot g i n := by
+  cases i <;> simp only [catPot, beforeMaps, mapPre] <;> omega
 
-theorem codeW_le {st : Hd} {g : Gh} {o : Owner} {n : Nat} {pos : USize} (hrel : HRel st g (.code o n)) :
-    stepHCodeW st pos + 10 ≤ hpot g (.code o n) + hdrSlack := by
+/-- What a code's owner holds is at least 12: the least is a distance group's last code. -/
+theorem ownerPot_ge (g : Gh) (o : Owner) : 12 ≤ ownerPot g o := by
+  cases o with
+  | type i k => have := catPot_ge g i (n := k); show 12 ≤ catPot g i k; omega
+  | count i k tc => have := catPot_ge g i (n := k); show 12 ≤ catPot g i k; omega
+  | map isL t r => simp only [ownerPot, mapOwner]; omega
+  | codes k done left => cases k <;> simp only [ownerPot, codesPot, afterD] <;> omega
+
+/-- A code's step that stops reads too few bits or rejects them; with the arena's room, its table, which never fails, is
+never built. -/
+theorem codeW_le {st : Hd} {g : Gh} {o : Owner} {n : Nat} {pos : USize} (hrel : HRel st g (.code o n))
+    (hb : st.d.arena.size + budO g o ≤ st.d.arenaCap.toNat) (hn : (stepHCode st pos).status ≠ .next) :
+    stepHCodeW st pos + 10 ≤ hpot g (.code o n) := by
+  have hrel' := hrel
   obtain ⟨hw, hu, ht, hs, ho⟩ := hrel
   obtain ⟨hs1, hs2, hs3⟩ := hs
-  have hX := ownerX_ge ho hu
+  have hP := ownerPot_ge g o
   have e0 : hpot g (.code o n) = ownerX g o + ownerPot g o := rfl
   rw [e0]
-  unfold hdrSlack stepHCodeW
-  dsimp only
+  unfold stepHCodeW
+  unfold stepHCode at hn
+  dsimp only at hn ⊢
   by_cases h2 : 2 ≤ st.count
-  · rw [ite_eq_left h2]
+  · rw [ite_eq_left h2] at hn ⊢
     by_cases h1 : (BitBuffer.mk st.word st.count).peek 2 = 1
-    · rw [ite_eq_left h1]
-      have hcomp := simple_complete hw (by omega) h2 h1
-      generalize simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2) = r at hcomp ⊢
+    · rw [ite_eq_left h1] at hn ⊢
+      have hwit := fun hsr => simple_wit hw (by omega) h2 h1 hsr
+      generalize simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2) = r at hwit hn ⊢
       cases hsr : r.status with
       | short => dsimp only; omega
       | bad => dsimp only; omega
       | ok =>
-        dsimp only
-        have hsz : st.size.toNat ≤ (writeSimple (zeroBytes st.size.toNat) r).size := by
-          rw [writeSimple_size, zeroBytes_size (by omega)]
-          exact Nat.le_refl _
-        have hT := tableDoneW_le (st := { st with
-            word := r.word, count := r.count, pos := pos, status := .next
-            lens := writeSimple (zeroBytes st.size.toNat) r }) (single := r.e == 0) (by show st.size.toNat ≤ 704; omega) hsz
-          (fun hsg => hcomp hsr (fun e => by
-            have : r.e = 0 := UInt64.toNat_inj.mp e
-            rw [this] at hsg
-            cases hsg))
-        have hT' : tableDoneW { st with
-            word := r.word, count := r.count, pos := pos, status := .next
-            lens := writeSimple (zeroBytes st.size.toNat) r } (r.e == 0) ≤
-            12 * st.size.toNat + 3735 + (if st.role = .map then 257 + zbW (mapSizeFast st) else 0) := hT
-        have hz := zbW_le st.size.toNat
+        rw [hsr] at hn
+        dsimp only at hn
+        obtain ⟨hw2, hw3, hsmall⟩ := hwit hsr
+        have hd := simple_done (K := (⟨fun _ _ => none, fun _ _ => none⟩ : HK Unit)) pos hrel' hw2 hw3 hsmall
+        obtain ⟨_, _, h3, h4⟩ := hd.other hn
+        have h3' : st.d.arenaCap.toNat < st.d.arena.size + tableBytes (simpleValue st.size r) := h3
         omega
-    · rw [ite_eq_right h1]
-      have := zbW_le 18
-      omega
+    · rw [ite_eq_right h1] at hn
+      exact absurd rfl hn
   · rw [ite_eq_right h2]
     omega
 
@@ -1458,19 +1451,23 @@ theorem symsW_stop {st : Hd} {g : Gh} {o : Owner} {n : Nat} {clc : PrefixCode} {
             · rw [ite_eq_right hbig] at hn
               exact absurd rfl hn
 
-/-- A header step that stops, once the buffer is refilled: its work is its place's potential, and at most `hdrSlack`. -/
-theorem stepAtHW_stop {st : Hd} {g : Gh} {p : HPhase} {pos : USize} (hrel : HRel st g p) (hn : (stepAtH st pos).status ≠ .next) :
-    stepAtHW st pos + 10 ≤ hpot g p + hdrSlack := by
+/-- A header step that stops, once the buffer is refilled: its work is within its place's potential. -/
+theorem stepAtHW_stop {st : Hd} {g : Gh} {p : HPhase} {pos : USize} (hrel : HRel st g p)
+    (hb : st.d.arena.size + budH g p ≤ st.d.arenaCap.toNat) (hn : (stepAtH st pos).status ≠ .next) :
+    stepAtHW st pos + 10 ≤ hpot g p := by
   have htag := hrel.tag_eq
-  have hS : hdrSlack = 12899 := rfl
   cases p with
   | cat i =>
     have e : stepAtHW st pos = 1 := by unfold stepAtHW; rw [htag] <;> rfl
+    have := catPot_ge g i (n := 0)
+    show _ ≤ catPot g i 0
     omega
   | code o n =>
+    have e1 : stepAtH st pos = stepHCode st pos := by unfold stepAtH; rw [htag] <;> rfl
     have e : stepAtHW st pos = stepHCodeW st pos := by unfold stepAtHW; rw [htag] <;> rfl
+    rw [e1] at hn
     rw [e]
-    exact codeW_le hrel
+    exact codeW_le hrel hb hn
   | clens o n order acc sum =>
     have e : stepAtHW st pos = stepHClensW st pos := by unfold stepAtHW; rw [htag] <;> rfl
     rw [e]
@@ -1486,16 +1483,25 @@ theorem stepAtHW_stop {st : Hd} {g : Gh} {p : HPhase} {pos : USize} (hrel : HRel
   | first i n tc cc =>
     have e : stepAtHW st pos = stepHFirstW := by unfold stepAtHW; rw [htag] <;> rfl
     rw [e]
-    show 259 + 10 ≤ _ + 12899
+    have := catPot_ge g i (n := n)
+    show 259 + 10 ≤ catPot g i n
     omega
   | np =>
     have e : stepAtHW st pos = stepHNpW st := by unfold stepAtHW; rw [htag] <;> rfl
     rw [e]
     have := wNp (p' := .np) hrel
     have : hcost g .np .np = 1357 := rfl
+    have : 1357 ≤ hpot g .np := by
+      show 1357 ≤ beforeMaps _ _ _
+      unfold beforeMaps mapPre
+      omega
     omega
   | modes done left =>
     have e : stepAtHW st pos = 1 := by unfold stepAtHW; rw [htag] <;> rfl
+    have : 11 ≤ hpot g (.modes done left) := by
+      show 11 ≤ beforeMaps _ _ _
+      unfold beforeMaps
+      omega
     omega
   | trees isL =>
     have e : stepAtHW st pos = stepHTreesW st := by unfold stepAtHW; rw [htag] <;> rfl
@@ -1516,12 +1522,20 @@ theorem stepAtHW_stop {st : Hd} {g : Gh} {p : HPhase} {pos : USize} (hrel : HRel
     · omega
   | rlemax isL t =>
     have e : stepAtHW st pos = 1 := by unfold stepAtHW; rw [htag] <;> rfl
+    have : 11 ≤ hpot g (.rlemax isL t) := by
+      show 11 ≤ 258 + _ + _
+      omega
     omega
   | vals isL t r code done left =>
     have e1 : stepAtH st pos = stepHVals st pos := by unfold stepAtH; rw [htag] <;> rfl
     have e : stepAtHW st pos = stepHValsW st := by unfold stepAtHW; rw [htag] <;> rfl
     rw [e1] at hn
     rw [e]
+    have : 11 ≤ hpot g (.vals isL t r code done left) := by
+      simp only [hpot]
+      split
+      · omega
+      · split <;> omega
     rcases valsW_shape st pos with hW | ⟨-, -, -, -, hs⟩
     · omega
     · exact absurd hs hn
@@ -1529,7 +1543,7 @@ theorem stepAtHW_stop {st : Hd} {g : Gh} {p : HPhase} {pos : USize} (hrel : HRel
     have e : stepAtHW st pos = stepHImtfW st := by unfold stepAtHW; rw [htag] <;> rfl
     rw [e]
     have := wImtf (p' := .np) hrel
-    show _ ≤ imtfTail g isL t + imtfB (mapSize g isL) t vals + _
+    show _ ≤ imtfTail g isL t + imtfB (mapSize g isL) t vals
     unfold imtfTail
     simp only [hcost] at this
     omega
@@ -1543,10 +1557,11 @@ theorem stepAtHW_stop {st : Hd} {g : Gh} {p : HPhase} {pos : USize} (hrel : HRel
       | zero => cases k <;> simp only [hcost, hpot, codesPot, afterD] <;> omega
     omega
 
-/-- A header step that stops: its work is its place's potential, and at most `hdrSlack`. -/
+/-- A header step that stops: its work is within its place's potential. -/
 theorem stepHW_stop {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {st : Hd} {pos : USize} {g : Gh} {p : HPhase}
-    (hrel : HRel st g p) (hp : pos.toNat ≤ stop.toNat) (hn : (stepH a stop hs st pos).status ≠ .next) :
-    stepHW a stop hs st pos + 1 ≤ hpot g p + hdrSlack := by
+    (hrel : HRel st g p) (hb : st.d.arena.size + budH g p ≤ st.d.arenaCap.toNat) (hp : pos.toNat ≤ stop.toNat)
+    (hn : (stepH a stop hs st pos).status ≠ .next) :
+    stepHW a stop hs st pos + 1 ≤ hpot g p := by
   have hp' : pos ≤ stop := USize.le_iff_toNat_le.mpr hp
   have eH : stepH a stop hs st pos = stepAtH { st with
       word := (refill st.word st.count a pos stop hs hp).word
@@ -1562,7 +1577,7 @@ theorem stepHW_stop {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} 
   have hR := refillW_le (word := st.word) (count := st.count) hs hp
   rw [eH] at hn
   rw [eW]
-  have := stepAtHW_stop (hrel.withBits h1) hn
+  have := stepAtHW_stop (hrel.withBits h1) hb hn
   omega
 
 /-! ### A step that runs out of input

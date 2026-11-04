@@ -47,8 +47,8 @@ private theorem arith_pause {W dq ho ph dp hh size u hand po win : Nat} (hu : u 
   omega
 
 private theorem arith_any {W dp hh s size o hand win : Nat} (h1 : s ≤ o) (h2 : o ≤ s + size)
-    (h : W + 22343 * ((s + size - o) * 8) ≤ dp + 22343 * (hh + size * 8) + 284 * hand + win + 13191) :
-    W ≤ dp + 22343 * hh + 178744 * (o - s) + 284 * hand + win + 13191 := by
+    (h : W + 22343 * ((s + size - o) * 8) ≤ dp + 22343 * (hh + size * 8) + 284 * hand + win + 559) :
+    W ≤ dp + 22343 * hh + 178744 * (o - s) + 284 * hand + win + 559 := by
   obtain ⟨d, rfl⟩ : ∃ d, o = s + d := ⟨o - s, by omega⟩
   obtain ⟨e, rfl⟩ : ∃ e, size = d + e := ⟨size - d, by omega⟩
   have g1 : s + (d + e) - (s + d) = e := by omega
@@ -72,7 +72,7 @@ variable {x : List UInt8} {R : Run DState} {c : Call}
 22343 for each bit it takes from what its state holds and each of eight for each byte it uses, 284 for each byte it hands
 out, 282 for each byte it leaves waiting, the window it allocates and 280, less the potential and bits where it pauses.
 Any call is paid for by the potential, 22343 for each bit its state holds and each of eight for each byte it uses, 284 for
-each byte it hands out, the window and 13191. -/
+each byte it hands out, the window and 559. -/
 theorem call_pays (hin : R.read + c.size ≤ x.length) (hfit : c.pre.length + c.size + c.post.length < USize.size) {p : SPhase}
     (hrel : DRel R.state.val p) (hsi : SInv p) (hk : R.state.val.tag ≠ .wbits → 10 ≤ R.state.val.k.toNat) :
     ((R.reply decoder x c).status = .needsInput ∨ (R.reply decoder x c).status = .needsOutput →
@@ -88,7 +88,7 @@ theorem call_pays (hin : R.read + c.size ≤ x.length) (hfit : c.pre.length + c.
     callWork R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.buf.toByteArray c.space c.final ≤
       dpot p R.state.val + 22343 * R.state.val.held.length + 178744 * (R.reply decoder x c).used +
         284 * ((R.reply decoder x c).output.size - c.buf.length) +
-        callWin R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.space + 13191 := by
+        callWin R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.space + 559 := by
   have hg : c.pre.length + c.size ≤ (R.input x c).size ∧ c.pre.length ≤ c.pre.length + c.size ∧ c.pre.length + c.size < USize.size :=
     ⟨by rw [input_size hin]; omega, by omega, by omega⟩
   have hs : (USize.ofNat (c.pre.length + c.size)).toNat ≤ (R.input x c).size := by

@@ -120,6 +120,48 @@ private theorem writeSimple_lens {size : Nat} (hs : size < 2 ^ 32) (r : Rd) (he 
   rw [ite_eq_right e3', ite_eq_right e3]
   exact congrArg _ (((((z.set r.d 3 h4 (by decide)).set r.c 3 h3 (by decide))).set r.b 2 h2 (by decide)).set r.a 1 h1 (by decide)).eq.symm
 
+theorem writeSimple_size (t : ByteArray) (r : Rd) : (writeSimple t r).size = t.size := by
+  unfold writeSimple setLen
+  split
+  · rw [size_setU, size_setU]
+  · split
+    · rw [size_setU, size_setU, size_setU]
+    · split
+      · rw [size_setU, size_setU, size_setU, size_setU]
+      · rw [size_setU, size_setU, size_setU, size_setU]
+
+/-- A simple code that reads: what it leaves holds the rest of the bits, the code is the spec's reading, and its values are
+small. -/
+theorem simple_wit {st : Hd} (hw : (BitBuffer.mk st.word st.count).Wf) (hs : st.size.toNat ≤ 704) (h2 : 2 ≤ st.count)
+    (h1 : (BitBuffer.mk st.word st.count).peek 2 = 1)
+    (hok : (simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2)).status = .ok) :
+    (simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2)).buf.Wf ∧
+    readPrefixCode st.size.toNat (BitBuffer.mk st.word st.count).held =
+      some (simpleValue st.size (simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2)),
+        (simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2)).buf.held) ∧
+    SmallVals (simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2)) := by
+  have hread := read_int (b := ⟨st.word, st.count⟩) (k := 2) [] (by decide) h2
+  have hw1 := drop_wf' hw (k := 2) (by decide) h2
+  rw [h1] at hread
+  generalize (BitBuffer.mk st.word st.count).drop 2 = b1 at hread hw1 hok ⊢
+  obtain ⟨hbits, hbitsLe⟩ := alphabetBitsFast_toNat (size := st.size) (by omega)
+  have R := simpleFast_ok (size := st.size) (bits := alphabetBitsFast st.size) hw1 hbitsLe
+  rw [hbits] at R
+  have hsmall := simpleFast_small st.size (alphabetBitsFast st.size) b1 hbitsLe
+  have hR := R.ok hok
+  generalize simpleFast st.size (alphabetBitsFast st.size) b1 = r at hR hok hsmall ⊢
+  have hN2 := hR.2 []
+  simp only [List.append_nil] at hN2 hread
+  have e2 : (2 : UInt64).toNat = 2 := rfl
+  have e1 : (1 : UInt64).toNat = 1 := rfl
+  rw [e2, e1] at hread
+  refine ⟨hR.1, ?_, hsmall⟩
+  unfold readPrefixCode
+  rw [hread]
+  show (if 1 = 1 then readSimple st.size.toNat b1.held else readComplex st.size.toNat 1 b1.held) = _
+  rw [ite_eq_left rfl, simpleChain_eq]
+  exact hN2
+
 /-- A simple code with two symbols or more has complete lengths, as they are written into the state's array. -/
 theorem simple_complete {st : Hd} (hw : (BitBuffer.mk st.word st.count).Wf) (hs : st.size.toNat ≤ 704) (h2 : 2 ≤ st.count)
     (h1 : (BitBuffer.mk st.word st.count).peek 2 = 1)
@@ -127,26 +169,8 @@ theorem simple_complete {st : Hd} (hw : (BitBuffer.mk st.word st.count).Wf) (hs 
     (he : (simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2)).e.toNat ≠ 0) :
     Complete (.canonical (lensOf (writeSimple (zeroBytes st.size.toNat)
       (simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2))) st.size.toNat)) := by
-  have hread := read_int (b := ⟨st.word, st.count⟩) (k := 2) [] (by decide) h2
-  have hw1 := drop_wf' hw (k := 2) (by decide) h2
-  rw [h1] at hread
-  generalize (BitBuffer.mk st.word st.count).drop 2 = b1 at hread hw1 hok he ⊢
-  obtain ⟨hbits, hbitsLe⟩ := alphabetBitsFast_toNat (size := st.size) (by omega)
-  have R := simpleFast_ok (size := st.size) (bits := alphabetBitsFast st.size) hw1 hbitsLe
-  rw [hbits] at R
-  have hsmall := simpleFast_small st.size (alphabetBitsFast st.size) b1 hbitsLe
-  have hN2 := (R.ok hok).2 []
-  generalize simpleFast st.size (alphabetBitsFast st.size) b1 = r at hN2 hok he hsmall ⊢
-  simp only [List.append_nil] at hN2 hread
-  have e2 : (2 : UInt64).toNat = 2 := rfl
-  have e1 : (1 : UInt64).toNat = 1 := rfl
-  rw [e2, e1] at hread
-  have hwit : readPrefixCode st.size.toNat (BitBuffer.mk st.word st.count).held = some (simpleValue st.size r, r.buf.held) := by
-    unfold readPrefixCode
-    rw [hread]
-    show (if 1 = 1 then readSimple st.size.toNat b1.held else readComplex st.size.toNat 1 b1.held) = _
-    rw [ite_eq_left rfl, simpleChain_eq]
-    exact hN2
+  obtain ⟨-, hwit, hsmall⟩ := simple_wit hw hs h2 h1 hok
+  generalize simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2) = r at hwit hsmall he ⊢
   have hC := readPrefixCode_complete hwit
   have hl := writeSimple_lens (size := st.size.toNat) (by omega) r he hsmall.1 hsmall.2.1 hsmall.2.2.1 hsmall.2.2.2
   unfold simpleValue at hC
@@ -180,6 +204,40 @@ theorem TableDone.toStep {g : Gh} {o : Owner} {c : PrefixCode} {p : HPhase} {st 
     rw [hd] at h3
     exact Or.inl ⟨c, h3, by rw [hcap]; exact h4⟩
   · exact (hne _ (fun e => HStatus.noConfusion e) (fun e => HStatus.noConfusion e) e).elim
+
+/-- What a simple code's table leaves, once the code is read. -/
+theorem simple_done {o : Owner} {size : Nat} {st : Hd} {g : Gh} (pos : USize) {r : Rd} (hrel : HRel st g (.code o size))
+    (hw2 : r.buf.Wf) (hwit : readPrefixCode st.size.toNat (BitBuffer.mk st.word st.count).held = some (simpleValue st.size r, r.buf.held))
+    (hsmall : SmallVals r) :
+    TableDone K g o (simpleValue st.size r) { st with
+        word := r.word, count := r.count, pos := pos, status := .next, lens := writeSimple (zeroBytes st.size.toNat) r }
+      (tableDone { st with
+        word := r.word, count := r.count, pos := pos, status := .next, lens := writeSimple (zeroBytes st.size.toNat) r }
+        (r.e == 0) r.a) := by
+  obtain ⟨_, hu, _, hs, ho⟩ := hrel
+  obtain ⟨hs1, hs2, hs3⟩ := hs
+  have hCc := readPrefixCode_complete hwit
+  have hsy := readPrefixCode_symbols hwit
+  rw [hs1] at hsy
+  have hsn : st.size.toNat < 2 ^ 32 := by omega
+  have hlensEq : (writeSimple (zeroBytes st.size.toNat) r).size = size := by
+    rw [writeSimple_size, zeroBytes_size hsn, hs1]
+  have hsg : (r.e == 0) = true → simpleValue st.size r = .single r.a.toNat := by
+    intro he
+    have he' : r.e = 0 := by simpa using he
+    unfold simpleValue simpleCode
+    rw [he']
+    rfl
+  have hcn : (r.e == 0) = false → simpleValue st.size r = .canonical (lensOf (writeSimple (zeroBytes st.size.toNat) r) size) := by
+    intro he
+    have he' : r.e.toNat ≠ 0 := fun e => by
+      have : r.e = 0 := UInt64.toNat_inj.mp e
+      simp [this] at he
+    have := writeSimple_lens (size := st.size.toNat) hsn r he' hsmall.1 hsmall.2.1 hsmall.2.2.1 hsmall.2.2.2
+    rw [hs1] at this
+    unfold simpleValue
+    rw [hs1, this]
+  exact tableDone_ok K hw2 hu ⟨hs1, hs2, hs3⟩ ho rfl hsg hcn hlensEq hCc hsy
 
 /-! ### The place at a prefix code's first bits -/
 
@@ -290,8 +348,7 @@ theorem stepHCode_ok {o : Owner} {size : Nat} {st : Hd} {g : Gh} {pos : USize} (
         obtain ⟨hw2, hN⟩ := Rok hsr
         have hN2 := (hval hsr).2 []
         simp only [List.append_nil] at hN2
-        generalize hc : simpleValue st.size r = c at hN hN2
-        have hwit : readPrefixCode size (BitBuffer.mk st.word st.count).held = some (c, r.buf.held) := by
+        have hwit : readPrefixCode st.size.toNat (BitBuffer.mk st.word st.count).held = some (simpleValue st.size r, r.buf.held) := by
           have e : readInt 2 ((BitBuffer.mk st.word st.count).held ++ []) = some (1, b1.held ++ []) := by
             have := hread []
             rw [h1'] at this
@@ -299,46 +356,15 @@ theorem stepHCode_ok {o : Owner} {size : Nat} {st : Hd} {g : Gh} {pos : USize} (
           simp only [List.append_nil] at e
           unfold readPrefixCode
           rw [e]
-          show (if 1 = 1 then readSimple size b1.held else readComplex size 1 b1.held) = _
-          rw [ite_eq_left rfl, simpleChain_eq]
+          show (if 1 = 1 then readSimple st.size.toNat b1.held else readComplex st.size.toNat 1 b1.held) = _
+          rw [ite_eq_left rfl, simpleChain_eq, hs1]
           exact hN2
-        have hCc : Complete c := readPrefixCode_complete hwit
-        have hsy : c.Symbols size := readPrefixCode_symbols hwit
-        have hrvals := hsmall
-        have hsn : st.size.toNat < 2 ^ 32 := by omega
-        have hlensEq : (writeSimple (zeroBytes st.size.toNat) r).size = size := by
-          have hz := LensIs.zero hsn
-          have key : ∀ (t : ByteArray) (s l : UInt64), (setLen t s l).size = t.size := fun t s l => size_setU t _ _
-          unfold writeSimple
-          split
-          · rw [key, key, hz.sz, hs1]
-          · split
-            · rw [key, key, key, hz.sz, hs1]
-            · split
-              · rw [key, key, key, key, hz.sz, hs1]
-              · rw [key, key, key, key, hz.sz, hs1]
-        have hsg : (r.e == 0) = true → c = .single r.a.toNat := by
-          intro he
-          have he' : r.e = 0 := by simpa using he
-          rw [← hc]
-          unfold simpleValue simpleCode
-          rw [he']
-          rfl
-        have hcn : (r.e == 0) = false → c = .canonical (lensOf (writeSimple (zeroBytes st.size.toNat) r) size) := by
-          intro he
-          have he' : r.e.toNat ≠ 0 := fun e => by
-            have : r.e = 0 := UInt64.toNat_inj.mp e
-            simp [this] at he
-          have := writeSimple_lens (size := st.size.toNat) hsn r he' hrvals.1 hrvals.2.1 hrvals.2.2.1 hrvals.2.2.2
-          rw [hs1] at this
-          rw [← hc]
-          unfold simpleValue
-          rw [hs1, this]
-        have hdone := tableDone_ok K (st := { st with
-            word := r.word, count := r.count, pos := pos, status := .next
-            lens := writeSimple (zeroBytes st.size.toNat) r }) (single := r.e == 0) (sym := r.a)
-          hw2 hu hs ho rfl hsg hcn hlensEq hCc hsy
-        exact hdone.toStep rfl hp rfl (fun h => ⟨h.fill, by show (writeSimple (zeroBytes st.size.toNat) r).size ≤ _; rw [hlensEq]; exact hs3,
+        have hdone := simple_done (K := K) pos hrel hw2 hwit hsmall
+        generalize hc : simpleValue st.size r = c at hN hdone
+        exact hdone.toStep rfl hp rfl (fun h => ⟨h.fill, by
+            show (writeSimple (zeroBytes st.size.toNat) r).size ≤ _
+            rw [writeSimple_size, zeroBytes_size (by omega), hs1]
+            exact hs3,
             h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase⟩) (fun F => by
           rw [avail_mk, hspec]
           exact hN _) (fun F => by

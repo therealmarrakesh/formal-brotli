@@ -767,6 +767,30 @@ theorem HMove.ofD {st r : Hd} {g g' : Gh} {p p' : HPhase} (hd : r.d = st.d) (hs 
   size := hs
   cap := ⟨by rw [hd], by simpa [tableOf] using hc⟩
 
+/-- A move keeps room in the arena's reservation for the tables still to come. -/
+theorem HMove.bud {st r : Hd} {g g' : Gh} {p p' : HPhase} {oc : Option Hook} (hm : HMove st r g p g' p' oc)
+    (h : st.d.arena.size + budH g p ≤ st.d.arenaCap.toNat) : r.d.arena.size + budH g' p' ≤ r.d.arenaCap.toNat := by
+  have hg := hm.grow
+  have hc := hm.cap
+  match oc with
+  | some (.res g0) =>
+    obtain ⟨c1, c2, _⟩ := hc
+    have e1 : tableOf (some (.res g0)) = 0 := rfl
+    rw [e1] at hg
+    omega
+  | none =>
+    obtain ⟨c1, c2⟩ := hc
+    have e1 : tableOf none = 0 := rfl
+    rw [e1] at hg c2
+    rw [c1]
+    omega
+  | some (.table c) =>
+    obtain ⟨c1, c2⟩ := hc
+    have e1 : tableOf (some (.table c)) = tableBytes c := rfl
+    rw [e1] at hg c2
+    rw [c1]
+    omega
+
 /-- After a category, the categories' codes still to come. -/
 theorem catNext_bud (i : Cat) (g g' : Gh) : budH g' (catNextPhase i) ≤ budH g (.cat i) := by
   cases i <;> simp only [catNextPhase, budH, catN] <;> omega

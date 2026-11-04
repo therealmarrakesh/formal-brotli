@@ -35,7 +35,7 @@ theorem stepDHdr_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {last 
     {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize} (hrel : DRel D (.hdr w st last mlen g p)) (hpos : pos.toNat ≤ stop.toNat) :
     DStepOk S a stop (.hdr w st last mlen g p) D pos (stepDHdr a stop hs D pos) := by
   obtain ⟨tag, cmd, hd, H, k, last', left, limit, pos', status⟩ := D
-  obtain ⟨ht, hall, hl, hleft, hm1, hm2, hR, hp0⟩ := hrel
+  obtain ⟨ht, hall, hl, hleft, hm1, hm2, hR, hp0, hb⟩ := hrel
   have ht' : tag = .hdr := ht
   subst ht'
   have hstep := stepH_ok (K := hdrK w (S.after w last) st mlen) (a := a) (hs := hs) hR hpos
@@ -47,14 +47,14 @@ theorem stepDHdr_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {last 
   cases hst : r.status with
   | next =>
     dsimp only
-    obtain ⟨g', p', oc, hR', h1, h2, h3, h4, _, h5⟩ := hstep.next hst
-    exact ⟨fun _ => ⟨.hdr w st last mlen g' p', ⟨rfl, ⟨hall.win, hall.produced, hall.limit⟩, hl, hleft, hm1, hm2, hR', hp0⟩, h1, h2, (fun t => (h3 _).trans (Wr_id (fun _ _ => rfl) oc _)), h4, ⟨[], rfl, rfl⟩,
+    obtain ⟨g', p', oc, hR', h1, h2, h3, h4, hmv, h5⟩ := hstep.next hst
+    exact ⟨fun _ => ⟨.hdr w st last mlen g' p', ⟨rfl, ⟨hall.win, hall.produced, hall.limit⟩, hl, hleft, hm1, hm2, hR', hp0, hmv.bud hb⟩, h1, h2, (fun t => (h3 _).trans (Wr_id (fun _ _ => rfl) oc _)), h4, ⟨[], rfl, rfl⟩,
       fun t => (sreach_hdr (q := (g, p)) (q' := (g', p')) (Reach.one (h5 _)))⟩,
       fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
   | needsInput =>
     dsimp only
-    obtain ⟨h1, h2, hR', h3, h4, _, h5, h6⟩ := hstep.needsInput hst
-    exact ⟨fun e => DStatus.noConfusion e, fun _ => ⟨h1, h2, .hdr w st last mlen g p, ⟨rfl, ⟨hall.win, hall.produced, hall.limit⟩, hl, hleft, hm1, hm2, hR', hp0⟩,
+    obtain ⟨h1, h2, hR', h3, h4, hmv, h5, h6⟩ := hstep.needsInput hst
+    exact ⟨fun e => DStatus.noConfusion e, fun _ => ⟨h1, h2, .hdr w st last mlen g p, ⟨rfl, ⟨hall.win, hall.produced, hall.limit⟩, hl, hleft, hm1, hm2, hR', hp0, hmv.bud hb⟩,
       (fun t => h3 _), h4, ⟨rfl, rfl⟩, (fun _ _ e => SPhase.noConfusion e), ⟨[], rfl, rfl⟩, (fun t => SReach.ofEq (h5 _)),
       ⟨_, _, .refl _ _, short_hdr h6, rfl⟩⟩, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
   | bad =>
@@ -270,6 +270,13 @@ theorem hdStart_rel {word count limit : UInt64} (hw : (BitBuffer.mk word count).
     HRel (hdStart word count limit) Gh.start (.cat .L) :=
   ⟨hw, Upto.start rfl (u64_lit (by decide)) hl, rfl, rfl⟩
 
+/-- At a header's start, the arena reserves room for the categories' codes. -/
+theorem hdStart_bud (word count limit : UInt64) :
+    (hdStart word count limit).d.arena.size + budH Gh.start (.cat .L) ≤ (hdStart word count limit).d.arenaCap.toNat := by
+  rw [show (hdStart word count limit).d.arenaCap.toNat = smallMax from u64_lit (by decide)]
+  show 0 + catMax * (catN .L + 1) ≤ smallMax
+  decide
+
 theorem whole_bytes {a : ByteArray} {p stop : Nat} (hs : stop ≤ a.size) (t : List UInt8) : (chunkBits a p stop ++ bits t).length % 8 = 0 := by
   rw [List.length_append, chunkBits_length hs, bits_length]
   omega
@@ -451,7 +458,7 @@ theorem stepDMeta_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {a : 
           rfl
     · rw [ite_eq_right hu]
       have hu' : (r.d != 0) = false := by simpa using hu
-      refine ⟨fun _ => ⟨.hdr w st (r.b != 0) r.c.toNat Gh.start (.cat .L), ⟨rfl, ⟨hwin, hprod, hlim⟩, rfl, rfl, hm1, hm2, hdStart_rel hw2 hlim, hz0⟩, r2, r3, (fun t => ?_), trivial, ⟨[], rfl, rfl⟩,
+      refine ⟨fun _ => ⟨.hdr w st (r.b != 0) r.c.toNat Gh.start (.cat .L), ⟨rfl, ⟨hwin, hprod, hlim⟩, rfl, rfl, hm1, hm2, hdStart_rel hw2 hlim, hz0, hdStart_bud _ _ _⟩, r2, r3, (fun t => ?_), trivial, ⟨[], rfl, rfl⟩,
         fun t => (SReach.one ?_)⟩,
         fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
       · rw [hfin]

@@ -179,9 +179,9 @@ def roundCost : Nat := 8
 loop's round, and a round of the call at the next meta-block's start. -/
 def cmdsEnd : Nat := 117 + 772 + 1 + roundCost
 
-/-- What a header's end costs beyond its potential: its last step, `mkHdr`, the loop's round, and what the commands' start
-holds. -/
-def hdrEnd : Nat := hdrSlack + 218924 + 769 + 1 + 271 + cmdsEnd
+/-- What a header's end costs beyond its potential: `mkHdr`, the loop's round, and what the commands' start holds. Its last
+step is within its place's potential. -/
+def hdrEnd : Nat := 218924 + 769 + 1 + 271 + cmdsEnd
 
 /-- What a metadata block's or an uncompressed block's end costs: its last step and the loop's round, and a round of the
 call at the next meta-block's start. -/
@@ -437,7 +437,7 @@ theorem pay_mblock {w : Nat} {st : StreamState} {a : ByteArray} {stop : USize} {
         dsimp only
         omega
       rw [this, hpot_start hrh]
-      unfold hdrEnd hdrSlack cmdsEnd roundCost
+      unfold hdrEnd cmdsEnd roundCost
       omega
     | _ => exact absurd hsd id
   · obtain ⟨b1, b2, p', hR', _, _, hsd, _, hout, hj, _⟩ := hok.needsInput hn
@@ -503,10 +503,11 @@ theorem pay_hdr {w : Nat} {st : StreamState} {last : Bool} {mlen : Nat} {g : Gh}
       (stepDHdrW a stop hs D pos + 1) 0) ∧
     ((stepDHdr a stop hs D pos).status = .needsInput → Pays a stop (.hdr w st last mlen g p) D pos (stepDHdr a stop hs D pos)
       (stepDHdrW a stop hs D pos + 1) 269) ∧
-    ((stepDHdr a stop hs D pos).status ≠ .next → stepDHdrW a stop hs D pos + 1 ≤ hpot g p + hdrSlack) := by
+    ((stepDHdr a stop hs D pos).status = .bad ∨ (stepDHdr a stop hs D pos).status = .memory →
+      stepDHdrW a stop hs D pos + 1 ≤ hpot g p) := by
   have hok := stepDHdr_ok (S := specSem) (hs := hs) hrel hp
   obtain ⟨tag, cmd, hd, H, k, last', left, limit, pos', status⟩ := D
-  obtain ⟨ht, hall, hl, hleft, hm1, hm2, hR, hp0⟩ := hrel
+  obtain ⟨ht, hall, hl, hleft, hm1, hm2, hR, hp0, hb⟩ := hrel
   have ht' : tag = .hdr := ht
   subst ht'
   dsimp only at hR
@@ -519,46 +520,45 @@ theorem pay_hdr {w : Nat} {st : StreamState} {last : Bool} {mlen : Nat} {g : Gh}
   dsimp only at hok ⊢
   cases hst : (stepH a stop hs hd pos).status
   case next =>
-    obtain ⟨g', p', oc, hR', h1, h2, _, _, _, h5⟩ := hstep.next hst
+    obtain ⟨g', p', oc, hR', h1, h2, _, _, hmv, h5⟩ := hstep.next hst
     have hW := stepHW_cost hR hp hst hR' h5
     rw [ite_eq_right (fun e => HStatus.noConfusion e)]
-    refine ⟨fun _ => ⟨.hdr w st last mlen g' p', ⟨rfl, ⟨hall.win, hall.produced, hall.limit⟩, hl, hleft, hm1, hm2, hR', hp0⟩,
+    refine ⟨fun _ => ⟨.hdr w st last mlen g' p', ⟨rfl, ⟨hall.win, hall.produced, hall.limit⟩, hl, hleft, hm1, hm2, hR', hp0, hmv.bud hb⟩,
       ⟨[], rfl, rfl⟩, h1, h2, fun hi => sinv_of_sreach (sreach_hdr (q := (g, p)) (q' := (g', p')) (Reach.one (h5 []))) hi,
-      fun t => ?_⟩, fun e => DStatus.noConfusion e, fun e => absurd rfl e⟩
+      fun t => ?_⟩, fun e => DStatus.noConfusion e, fun e => by rcases e with e | e <;> exact DStatus.noConfusion e⟩
     have hpy := hpay hsz (h5 (bits t))
     simp only [Dec.bits, Dec.word, Dec.count, dpot, spot, clearHd]
     omega
   case needsInput =>
-    obtain ⟨b1, b2, hR', _, _, _, h6, _⟩ := hstep.needsInput hst
+    obtain ⟨b1, b2, hR', _, _, hmv, h6, _⟩ := hstep.needsInput hst
     have hW := stepHW_short (hs := hs) (st := hd) (pos := pos) hst
     rw [ite_eq_right (fun e => HStatus.noConfusion e)]
     refine ⟨fun e => DStatus.noConfusion e, fun _ => ⟨.hdr w st last mlen g p,
-      ⟨rfl, ⟨hall.win, hall.produced, hall.limit⟩, hl, hleft, hm1, hm2, hR', hp0⟩, ⟨[], rfl, rfl⟩,
-      by rw [b1]; exact hp, by rw [b1]; exact Nat.le_refl _, fun hi => hi, fun t => ?_⟩, fun _ => ?_⟩
-    · simp only [Dec.bits, Dec.word, Dec.count, dpot, spot, clearHd]
-      rw [h6]
-      omega
-    · unfold hdrSlack
-      omega
+      ⟨rfl, ⟨hall.win, hall.produced, hall.limit⟩, hl, hleft, hm1, hm2, hR', hp0, hmv.bud hb⟩, ⟨[], rfl, rfl⟩,
+      by rw [b1]; exact hp, by rw [b1]; exact Nat.le_refl _, fun hi => hi, fun t => ?_⟩,
+      fun e => by rcases e with e | e <;> exact DStatus.noConfusion e⟩
+    simp only [Dec.bits, Dec.word, Dec.count, dpot, spot, clearHd]
+    rw [h6]
+    omega
   case bad =>
-    have hW := stepHW_stop hR hp (by rw [hst]; exact fun e => HStatus.noConfusion e)
+    have hW := stepHW_stop hR hb hp (by rw [hst]; exact fun e => HStatus.noConfusion e)
     rw [ite_eq_right (fun e => HStatus.noConfusion e)]
     exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun _ => by omega⟩
   case memory =>
-    have hW := stepHW_stop hR hp (by rw [hst]; exact fun e => HStatus.noConfusion e)
+    have hW := stepHW_stop hR hb hp (by rw [hst]; exact fun e => HStatus.noConfusion e)
     rw [ite_eq_right (fun e => HStatus.noConfusion e)]
     exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun _ => by omega⟩
   case ready =>
     obtain ⟨g', hu, -, -, -, -, -, -, -, -⟩ := hstep.ready hst
     obtain ⟨H', hmk, -, -⟩ := mkHdr_ok hu
-    have hW := stepHW_stop hR hp (by rw [hst]; exact fun e => HStatus.noConfusion e)
+    have hW := stepHW_stop hR hb hp (by rw [hst]; exact fun e => HStatus.noConfusion e)
     have hM := mkHdrW_le hu
     rw [ite_eq_left rfl]
     rw [hst] at hok
     dsimp only at hok
     rw [hmk] at hok ⊢
     dsimp only at hok ⊢
-    refine ⟨fun _ => ?_, fun e => DStatus.noConfusion e, fun e => absurd rfl e⟩
+    refine ⟨fun _ => ?_, fun e => DStatus.noConfusion e, fun e => by rcases e with e | e <;> exact DStatus.noConfusion e⟩
     obtain ⟨p', hR'', h1', h2', _, _, hout, hj⟩ := hok.next rfl
     refine ⟨p', hR'', hout, h1', h2', fun hi => sinv_of_sreach (hj []) hi, fun t => ?_⟩
     have hb := sreach_len (hj t)
@@ -1044,7 +1044,7 @@ theorem stepDHdr_memPend {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.s
 
 /-- A stream step, against the potential: one that goes on is paid for, with the window when it is WBITS's; one that
 pauses costs at most 269 more; one that rejects or reports the limit costs at most the potential, the bits, the bytes it
-decodes first, which are waiting after it, and 12899. -/
+decodes first, which are waiting after it, and 118. -/
 theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {p : SPhase} (hrel : DRel D p)
     (hsi : SInv p) (he : D.tag ≠ .ended) (hp : D.pos.toNat ≤ stop.toNat) :
     ((stepD a stop hs D).status = .next → Pays a stop p D D.pos (stepD a stop hs D) (stepDW a stop hs D + 1)
@@ -1055,7 +1055,7 @@ theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
       D.cmd.pend.toNat + L ≤ (stepD a stop hs D).cmd.pend.toNat ∧
       ((stepD a stop hs D).status = .memory → (stepD a stop hs D).cmd.pend.toNat = 0) ∧ ∀ t : List UInt8,
       stepDW a stop hs D + 1 + hdrRate * ((stop.toNat - (stepD a stop hs D).pos.toNat) * 8) ≤
-        dpot p D + hdrRate * (D.bits a D.pos stop (bits t)).length + 282 * L + 12899) := by
+        dpot p D + hdrRate * (D.bits a D.pos stop (bits t)).length + 282 * L + 118) := by
   have hok := stepD_ok specSem (hs := hs) hrel he hp
   have hpl := stepD_pendLe a stop hs D
   have hmem : (stepD a stop hs D).status = .memory → p = .wbits ∨ ∃ w st last mlen g q, p = .hdr w st last mlen g q :=
@@ -1164,13 +1164,12 @@ theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
         cases p' with
         | hdr w' st' l' ml' g' q' =>
           have e : (stepDHdr a stop hs D D.pos).cmd.pend = D.cmd.pend := hsd.2
-          rw [e, hrel.2.2.2.2.2.2.2] at hne0
+          rw [e, hrel.2.2.2.2.2.2.2.1] at hne0
           exact absurd rfl hne0
         | _ => exact absurd hsd id
-    · have := n3 (by rcases h with h | h <;> rw [h] <;> exact fun e => DStatus.noConfusion e)
+    · have := n3 h
       have hd : dpot (.hdr w st last mlen g q) D = hpot g q + hdrEnd := rfl
-      have hS : hdrSlack = 12899 := rfl
-      have h0 : D.cmd.pend.toNat = 0 := by rw [hrel.2.2.2.2.2.2.2]; rfl
+      have h0 : D.cmd.pend.toNat = 0 := by rw [hrel.2.2.2.2.2.2.2.1]; rfl
       exact ⟨0, by omega, fun hm => by rw [stepDHdr_memPend hm]; exact h0,
         fun t => by have := rate_chunk D hs (hpos h) (bits t); omega⟩
   | cmds w last m q =>
@@ -1438,7 +1437,7 @@ def winD (D r : Dec) : Nat := if D.tag = .wbits ∧ r.tag ≠ .wbits then 2 ^ r.
 
 /-- The decoder's loop, against the potential: its steps are paid for by the potential, 22343 for each bit, 282 for each
 byte and the window, and the step that stops it by at most 270 more, or, when it rejects or reports the limit, by the bits
-and the bytes it may decode first, and 12900. -/
+and the bytes it may decode first, and 119. -/
 theorem pay_runD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} : ∀ (x : RunArg a stop hs) (p : SPhase),
     DRel x.D p → SInv p →
     ((runD a stop hs x.D x.inv).status = .next ∨ (runD a stop hs x.D x.inv).status = .needsInput ∨
@@ -1449,7 +1448,7 @@ theorem pay_runD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} : �
       x.D.cmd.pend.toNat + L ≤ (runD a stop hs x.D x.inv).cmd.pend.toNat ∧
       ((runD a stop hs x.D x.inv).status = .memory → (runD a stop hs x.D x.inv).cmd.pend.toNat = 0) ∧ ∀ t : List UInt8,
       runDW a stop hs x.D x.inv + hdrRate * ((stop.toNat - (runD a stop hs x.D x.inv).pos.toNat) * 8) ≤
-        dpot p x.D + hdrRate * (x.D.bits a x.D.pos stop (bits t)).length + 282 * L + winD x.D (runD a stop hs x.D x.inv) + 12900) := by
+        dpot p x.D + hdrRate * (x.D.bits a x.D.pos stop (bits t)).length + 282 * L + winD x.D (runD a stop hs x.D x.inv) + 119) := by
   intro x
   induction x using (runRel_wf a stop hs).induction with
   | _ x ih =>

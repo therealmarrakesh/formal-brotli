@@ -4,7 +4,7 @@ import Brotli.Decoder.WorkIface
 # The decoder's work, call by call
 
 The work of a run's calls, in the work model, is at most 178744 for each byte the calls use (22343 for each bit), 284 for
-each byte they hand out, one for each byte of the window the stream declares and 272 more, 562 for each call, and 13191.
+each byte they hand out, one for each byte of the window the stream declares and 272 more, 562 for each call, and 559.
 A call pays for its work with the potential of where it starts, which it leaves where it pauses for the next call to use.
 -/
 
@@ -74,8 +74,8 @@ private theorem run_step {W cw dp dq h h' r u e hd pd pd' wp wp' cwin n : Nat}
 
 private theorem run_stop {W cw dp h r u e hd pd wp cwin win n : Nat}
     (hW : W + dp + 22343 * h ≤ 178744 * r + 284 * e + 282 * pd + wp + 280 * n)
-    (hc : cw ≤ dp + 22343 * h + 178744 * u + 284 * hd + cwin + 13191) (hp : pd ≤ n) (hw : wp + cwin ≤ win) :
-    W + cw ≤ 178744 * (r + u) + 284 * (e + hd) + win + 562 * (n + 1) + 13191 := by
+    (hc : cw ≤ dp + 22343 * h + 178744 * u + 284 * hd + cwin + 559) (hp : pd ≤ n) (hw : wp + cwin ≤ win) :
+    W + cw ≤ 178744 * (r + u) + 284 * (e + hd) + win + 562 * (n + 1) + 559 := by
   have hP := Nat.mul_le_mul_left 282 hp
   rw [Nat.mul_add 178744, Nat.mul_add 284, Nat.mul_add 562]
   have e1 : 562 * n = 282 * n + 280 * n := by rw [← Nat.add_mul]
@@ -92,7 +92,7 @@ private theorem run_stop {W cw dp h r u e hd pd wp cwin win n : Nat}
 
 private theorem run_now {W dp h r e pd wp win n : Nat}
     (hW : W + dp + 22343 * h ≤ 178744 * r + 284 * e + 282 * pd + wp + 280 * n) (hp : pd ≤ n) (hw : wp ≤ win) :
-    W ≤ 178744 * r + 284 * e + win + 562 * n + 13191 := by
+    W ≤ 178744 * r + 284 * e + win + 562 * n + 559 := by
   have hP := Nat.mul_le_mul_left 282 hp
   have e1 : 562 * n = 282 * n + 280 * n := by rw [← Nat.add_mul]
   rw [e1]
@@ -112,7 +112,7 @@ theorem work_inv {limit : Nat} {x : List UInt8} {R : Run DState} {W n : Nat} (h 
       R.state.val.cmd.pend.toNat ≤ n ∧
       W + dpot p R.state.val + 22343 * R.state.val.held.length ≤
         178744 * R.read + 284 * R.emitted.length + 282 * R.state.val.cmd.pend.toNat + winPaid x R + 280 * n) ∧
-    (R.status.stopped = true → W ≤ 178744 * R.read + 284 * R.emitted.length + (declaredWindow x + 272) + 562 * n + 13191) := by
+    (R.status.stopped = true → W ≤ 178744 * R.read + 284 * R.emitted.length + (declaredWindow x + 272) + 562 * n + 559) := by
   induction h with
   | start =>
     by_cases hl : limit < fixedCost
@@ -196,7 +196,7 @@ theorem dpot_le {D : Dec} {p : SPhase} (hrel : DRel D p) (hsi : SInv p) : dpot p
     obtain ⟨_, _, _, _, _, _, hh, _⟩ := hrel
     have := hpot_le hh hsi.2.1 hsi.2.2
     show hpot g q + hdrEnd + 0 ≤ _
-    unfold hdrEnd hdrSlack cmdsEnd roundCost
+    unfold hdrEnd cmdsEnd roundCost
     omega
   | cmds w last m q =>
     have := cpot_le q
@@ -234,12 +234,12 @@ theorem decoder_potential {limit : Nat} {x : List UInt8} {R : Run DState} (h : R
 
 /-- The work bound for one call. A call's work, in the work model, is at most the potential it starts with, at most
 `psiMax`, and 178744 for each byte it uses, 284 for each byte it hands out, one for each byte of the window the stream
-declares and 272 more for zero-filling it, and 13191. -/
+declares and 272 more for zero-filling it, and 559. -/
 theorem decoder_callWork {limit : Nat} {x : List UInt8} {R : Run DState} {c : Call} (h : Reaches decoder limit x R)
     (ha : R.Allowed x c) :
     callWork R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.buf.toByteArray c.space c.final ≤
       psiMax + 178744 * (R.reply decoder x c).used + 284 * ((R.reply decoder x c).output.size - c.buf.length) +
-        (declaredWindow x + 272) + 13191 := by
+        (declaredWindow x + 272) + 559 := by
   obtain ⟨W, n, hW⟩ := h.withWork
   obtain ⟨p, hrel, hsi, hk, -, -⟩ := (work_inv hW).1 ha.running
   have hG := (call_pays (x := x) (R := R) (c := c) ha.inside ha.fits hrel hsi hk).2
@@ -251,9 +251,9 @@ theorem decoder_callWork {limit : Nat} {x : List UInt8} {R : Run DState} {c : Ca
 
 /-- The work bound. The work of a run's calls, in the work model, is at most 178744 for each byte they use, 284 for each
 byte they hand out, one for each byte of the window the stream declares and 272 more for zero-filling it, 562 for each
-call, and 13191. -/
+call, and 559. -/
 theorem decoder_work {limit : Nat} {x : List UInt8} {R : Run DState} {W n : Nat} (h : ReachesW limit x R W n) :
-    W ≤ 178744 * R.read + 284 * R.emitted.length + (declaredWindow x + 272) + 562 * n + 13191 := by
+    W ≤ 178744 * R.read + 284 * R.emitted.length + (declaredWindow x + 272) + 562 * n + 559 := by
   obtain ⟨I1, I2⟩ := work_inv h
   cases hst : R.status.stopped with
   | true => exact I2 hst
