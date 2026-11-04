@@ -1573,4 +1573,229 @@ theorem stepHW_stop {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} 
   have := stepAtHW_stop (hrel.withBits h1) hn
   omega
 
+/-! ### A step that runs out of input
+
+Such a step leaves the state at its place, so its work is not paid for by the potential: it is at most a table's check,
+which a block count's step makes before its read. -/
+
+theorem tableDone_ni {st : Hd} {s : Bool} {y : UInt64} (h : st.status = .next) : (tableDone st s y).status ≠ .needsInput := by
+  unfold tableDone
+  dsimp only
+  by_cases hn : st.size.toUSize.toNat ≤ st.lens.size
+  · rw [dite_eq_left hn]
+    cases hr : st.role with
+    | map =>
+      dsimp only
+      unfold mapTableDone
+      generalize (if s = true then buildSingleFast ByteArray.empty y else buildFast ByteArray.empty st.lens st.size.toUSize hn) = t
+      by_cases hf : fitsFast t 0 = true
+      · rw [dite_eq_left hf]
+        show st.status ≠ _
+        rw [h]
+        exact fun e => HStatus.noConfusion e
+      · rw [dite_eq_right hf]
+        exact fun e => HStatus.noConfusion e
+    | type | count | codes =>
+      dsimp only
+      cases s
+      · simp only [Bool.false_eq_true, ↓reduceIte]
+        by_cases c : UInt64.ofNat st.d.arena.size + (planFast st.lens st.size.toUSize hn).bytes ≤ st.d.arenaMax
+        · rw [ite_eq_left c, (installTable_spec _ _).2.2.2.1]
+          show st.status ≠ _
+          rw [h]
+          exact fun e => HStatus.noConfusion e
+        · rw [ite_eq_right c]
+          exact fun e => HStatus.noConfusion e
+      · simp only [↓reduceIte]
+        by_cases c : UInt64.ofNat st.d.arena.size + 1024 ≤ st.d.arenaMax
+        · rw [ite_eq_left c, (installTable_spec _ _).2.2.2.1]
+          show st.status ≠ _
+          rw [h]
+          exact fun e => HStatus.noConfusion e
+        · rw [ite_eq_right c]
+          exact fun e => HStatus.noConfusion e
+  · rw [dite_eq_right hn]
+    exact fun e => HStatus.noConfusion e
+
+theorem clFinish_ni {st : Hd} (h : st.status = .next) : (clFinish st).status ≠ .needsInput := by
+  unfold clFinish
+  dsimp only
+  split
+  · show st.status ≠ _
+    rw [h]
+    exact fun e => HStatus.noConfusion e
+  · exact fun e => HStatus.noConfusion e
+
+theorem ckFinish_ni {st : Hd} (h : st.status = .next) : (ckFinish st).status ≠ .needsInput := by
+  unfold ckFinish
+  dsimp only
+  split
+  · show st.status ≠ _
+    rw [h]
+    exact fun e => HStatus.noConfusion e
+  · show st.status ≠ _
+    rw [h]
+    exact fun e => HStatus.noConfusion e
+  · exact fun e => HStatus.noConfusion e
+
+/-- A header step that runs out of input, once the buffer is refilled, does at most a table's check. -/
+theorem stepAtHW_short {st : Hd} {pos : USize} (h : (stepAtH st pos).status = .needsInput) : stepAtHW st pos ≤ 259 := by
+  unfold stepAtH at h
+  unfold stepAtHW
+  cases ht : st.tag <;> simp only [ht] at h ⊢
+  case cat | modes | rlemax | ready => omega
+  case first => show 259 ≤ 259; exact Nat.le_refl _
+  case code =>
+    unfold stepHCode at h
+    unfold stepHCodeW
+    dsimp only at h ⊢
+    by_cases h2 : 2 ≤ st.count
+    · rw [ite_eq_left h2] at h ⊢
+      by_cases h1 : (BitBuffer.mk st.word st.count).peek 2 = 1
+      · rw [ite_eq_left h1] at h ⊢
+        generalize simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2) = r at h ⊢
+        cases hsr : r.status with
+        | short => dsimp only; omega
+        | bad => dsimp only; omega
+        | ok =>
+          rw [hsr] at h
+          dsimp only at h
+          exact absurd h (tableDone_ni rfl)
+      · rw [ite_eq_right h1] at h
+        exact absurd h (fun e => HStatus.noConfusion e)
+    · rw [ite_eq_right h2]
+      omega
+  case clens =>
+    unfold stepHClens at h
+    unfold stepHClensW
+    dsimp only at h ⊢
+    by_cases h18 : st.clIdx = 18
+    · rw [ite_eq_left h18] at h ⊢
+      by_cases hnz : st.clNz = 1
+      · rw [ite_eq_left hnz] at h
+        exact absurd h (clFinish_ni rfl)
+      · rw [ite_eq_right hnz]
+        omega
+    · rw [ite_eq_right h18] at h ⊢
+      generalize cclFast ⟨st.word, st.count⟩ = r at h ⊢
+      cases hsr : r.status with
+      | short => dsimp only; omega
+      | bad => dsimp only; omega
+      | ok =>
+        rw [hsr] at h
+        dsimp only at h ⊢
+        by_cases h0 : r.a = 0
+        · rw [ite_eq_left h0]
+          omega
+        · rw [ite_eq_right h0] at h ⊢
+          by_cases h32 : st.clSum + ((32 : UInt64) >>> r.a) = 32
+          · rw [ite_eq_left h32] at h
+            exact absurd h (clFinish_ni rfl)
+          · rw [ite_eq_right h32]
+            omega
+  case syms =>
+    unfold stepHSyms at h
+    unfold stepHSymsW
+    by_cases hsum : st.symSum = 32768
+    · rw [ite_eq_left hsum] at h
+      exact absurd h (tableDone_ni rfl)
+    · rw [ite_eq_right hsum] at h ⊢
+      by_cases hln : st.ln = st.size
+      · rw [ite_eq_left hln]
+        omega
+      · rw [ite_eq_right hln] at h ⊢
+        dsimp only at h ⊢
+        generalize lenSymFast st.clt.t (USize.ofNat 0) st.clt.fits st.clt.h32 ⟨st.word, st.count⟩ = r at h ⊢
+        cases hsr : r.status with
+        | short => dsimp only; omega
+        | bad => dsimp only; omega
+        | ok =>
+          rw [hsr] at h
+          dsimp only at h ⊢
+          by_cases h16 : r.a < 16
+          · rw [ite_eq_left h16]
+            omega
+          · rw [ite_eq_right h16] at h ⊢
+            generalize (if st.repCount ≠ 0 ∧ st.repSym = r.a then st.repCount else 0) = old at h ⊢
+            generalize (if r.a = 16 then (4 : UInt64) else 8) = mult at h ⊢
+            generalize (if old = 0 then 3 + r.b else mult * (old - 2) + (3 + r.b)) = new at h ⊢
+            by_cases hover : st.size < st.ln + (new - old)
+            · rw [ite_eq_left hover]
+              omega
+            · rw [ite_eq_right hover] at h ⊢
+              generalize (if (if r.a = 16 then st.prevLen else 0) = 0 then st.symSum
+                else st.symSum + (new - old) * ((32768 : UInt64) >>> (if r.a = 16 then st.prevLen else 0))) = sum at h ⊢
+              by_cases hbig : 32768 < sum
+              · rw [ite_eq_left hbig]
+                omega
+              · rw [ite_eq_right hbig] at h
+                exact absurd h (fun e => HStatus.noConfusion e)
+  case np =>
+    unfold stepHNp at h
+    unfold stepHNpW
+    dsimp only at h ⊢
+    generalize npFast ⟨st.word, st.count⟩ = r at h ⊢
+    cases hsr : r.status with
+    | short => dsimp only; omega
+    | bad => dsimp only; omega
+    | ok =>
+      rw [hsr] at h
+      dsimp only at h
+      exact absurd h (fun e => HStatus.noConfusion e)
+  case trees =>
+    unfold stepHTrees at h
+    unfold stepHTreesW
+    dsimp only at h ⊢
+    generalize varLenFast ⟨st.word, st.count⟩ = r at h ⊢
+    cases hsr : r.status with
+    | short => dsimp only; omega
+    | bad => dsimp only; omega
+    | ok =>
+      rw [hsr] at h
+      dsimp only at h ⊢
+      by_cases ha : r.a < 2
+      · rw [ite_eq_left ha, (mapFinish_spec _ _ _).2.2.2] at h
+        exact absurd h (fun e => HStatus.noConfusion e)
+      · rw [ite_eq_right ha]
+        omega
+  case vals =>
+    rcases valsW_shape st pos with hW | ⟨-, -, -, -, hs⟩
+    · omega
+    · rw [hs] at h
+      exact absurd h (fun e => HStatus.noConfusion e)
+  case imtf =>
+    unfold stepHImtf at h
+    unfold stepHImtfW
+    dsimp only at h ⊢
+    by_cases h1 : 1 ≤ st.count
+    · rw [ite_eq_left h1] at h
+      repeat' split at h
+      all_goals first
+        | exact absurd h (fun e => HStatus.noConfusion e)
+        | (rw [(mapFinish_spec _ _ _).2.2.2] at h; exact absurd h (fun e => HStatus.noConfusion e))
+    · rw [ite_eq_right h1]
+      omega
+  case codes =>
+    unfold stepHCodes at h
+    unfold stepHCodesW
+    by_cases h0 : st.left = 0
+    · rw [ite_eq_left h0] at h
+      exact absurd h (ckFinish_ni rfl)
+    · rw [ite_eq_right h0]
+      omega
+
+/-- A header step that runs out of input does at most a refill and a table's check. -/
+theorem stepHW_short {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {st : Hd} {pos : USize}
+    (h : (stepH a stop hs st pos).status = .needsInput) : stepHW a stop hs st pos ≤ 268 := by
+  unfold stepH at h
+  unfold stepHW
+  by_cases hp : pos ≤ stop
+  · rw [dite_eq_left hp] at h ⊢
+    dsimp only at h ⊢
+    have := refillW_le (word := st.word) (count := st.count) hs (USize.le_iff_toNat_le.mp hp)
+    have := stepAtHW_short h
+    omega
+  · rw [dite_eq_right hp]
+    omega
+
 end Brotli.Decoder
