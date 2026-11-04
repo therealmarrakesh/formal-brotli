@@ -15,43 +15,30 @@ open Brotli.Spec Brotli.Properties
 
 /-! ### Zeros -/
 
-/-- The work of `growZeros`: each round copies the array onto its own end, which copies all of it and the new bytes. -/
-def growZerosW (t : ByteArray) (k : Nat) : Nat :=
-  if _h : t.size = 0 ∨ k ≤ t.size then 1
-  else t.size + min t.size (k - t.size) + 1 + growZerosW (t.copySlice 0 t t.size (min t.size (k - t.size))) k
-termination_by k - t.size
-decreasing_by
-  rw [copy_self_size t (Nat.min_le_left _ _)]
-  omega
+/-- The work of `zeroExtend`: the bytes it copies, and a round for each piece of at most 65536. -/
+def zeroExtendW (n : Nat) : Nat :=
+  if _h : n ≤ 65536 then n + 1 else 65537 + zeroExtendW (n - 65536)
+termination_by n
+decreasing_by omega
 
-theorem growZerosW_le : ∀ (N : Nat) (t : ByteArray) (k : Nat), k - t.size = N → growZerosW t k ≤ 5 * k - 3 * t.size + 1 := by
-  intro N
-  induction N using Nat.strongRecOn with
-  | _ N ih =>
-    intro t k hN
-    rw [growZerosW]
-    by_cases hc : t.size = 0 ∨ k ≤ t.size
-    · rw [dite_eq_left hc]
+theorem zeroExtendW_le : ∀ n : Nat, zeroExtendW n ≤ n + n / 65536 + 1 := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | _ n ih =>
+    rw [zeroExtendW]
+    by_cases h : n ≤ 65536
+    · rw [dite_eq_left h]
       omega
-    · rw [dite_eq_right hc]
-      have hs := copy_self_size t (Nat.min_le_left t.size (k - t.size))
-      by_cases hfin : k - t.size < t.size
-      · -- The last round reaches `k`, and the next is done.
-        have e : growZerosW (t.copySlice 0 t t.size (min t.size (k - t.size))) k = 1 := by
-          rw [growZerosW, dite_eq_left (Or.inr (by rw [hs]; omega))]
-        rw [e]
-        omega
-      · have := ih (k - (t.copySlice 0 t t.size (min t.size (k - t.size))).size) (by rw [hs]; omega)
-          (t.copySlice 0 t t.size (min t.size (k - t.size))) k rfl
-        rw [hs] at this
-        omega
+    · rw [dite_eq_right h]
+      have := ih (n - 65536) (by omega)
+      omega
 
-/-- The work of `zeroBytes`: 64 bytes pushed one at a time, then doubled. -/
-def zbW (k : Nat) : Nat := min k 64 + 1 + growZerosW (pushZeros (ByteArray.emptyWithCapacity k) (USize.ofNat (min k 64))) k
+/-- The work of `zeroBytes`. -/
+def zbW (k : Nat) : Nat := zeroExtendW k
 
 theorem zbW_le (k : Nat) : zbW k ≤ 5 * k + 66 := by
+  have := zeroExtendW_le k
   unfold zbW
-  have := growZerosW_le _ (pushZeros (ByteArray.emptyWithCapacity k) (USize.ofNat (min k 64))) k rfl
   omega
 
 /-! ### Sums over a code's symbols -/
@@ -261,9 +248,9 @@ offsets (256 rounds, 512 zeros). -/
 def planFastW (lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) : Nat :=
   zbW 32 + (n.toNat + 1) + 17 + walkW (fun _ _ => 1) lens n hn (firstCodesOf lens n hn) + zbW 256 + 257 + zbW 512
 
-/-- The work of `fillFast`: the zeros it pushes, a walk writing each code word's slots, and 256 root slots. -/
+/-- The work of `fillFast`: the zeros it adds, a walk writing each code word's slots, and 256 root slots. -/
 def fillFastW (lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) (p : Plan) : Nat :=
-  p.bytes.toUSize.toNat + 1 + walkW (fun l c => fillCntD p.D l c + 3) lens n hn p.nc + 3 * 256 + 1
+  zeroExtendW p.bytes.toNat + walkW (fun l c => fillCntD p.D l c + 3) lens n hn p.nc + 3 * 256 + 1
 
 /-- The work of `buildFast`. -/
 def buildFastW (lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) : Nat :=
@@ -315,13 +302,14 @@ theorem buildFastW_le {lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.size
   -- The zeros the table adds.
   obtain ⟨hb, _⟩ := planFast_bytes (hn := hn) h64 hC
   have hoff := offSum_le hC
-  have hbu : (planFast lens n hn).bytes.toUSize.toNat = (planFast lens n hn).bytes.toNat := word_toUSize (by omega)
+  have hz := zeroExtendW_le (planFast lens n hn).bytes.toNat
+  rw [hb] at hz
   have z1 := zbW_le 32
   have z2 := zbW_le 256
   have z3 := zbW_le 512
   rw [List.length_range] at w1le w2b
   unfold buildFastW planFastW fillFastW walkW
-  rw [w1, w2, hbu, hb]
+  rw [w1, w2, hb]
   omega
 
 end Brotli.Decoder

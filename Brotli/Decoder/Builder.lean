@@ -218,93 +218,51 @@ theorem u16At_set_ne {b : ByteArray} {i : USize} {v : UInt64} {j : Nat} (h : i.t
   dsimp only
   rw [setU_eq, setU_eq, p2 h, p3 h, get_set_ne (by omega), get_set_ne (by omega), get_set_ne (by omega), get_set_ne (by omega)]
 
-/-- `n` zero bytes, added to the end of `t`. -/
-def pushZeros (t : ByteArray) (n : USize) : ByteArray :=
-  if _hn : n = 0 then t else pushZeros (t.push 0) (n - USize.ofNat 1)
-termination_by n.toNat
-decreasing_by
-  have := usize_pred _hn
-  have := usize_ne _hn
+/-- 65536 zero bytes. Arrays are zero-filled by copying from it: a copy into an array that has room writes in place,
+where a copy of an array onto itself copies all of it. -/
+def zeroBlock : ByteArray := ⟨Array.replicate 65536 0⟩
+
+/-- `t` with `n` zero bytes added at its end, copied from `zeroBlock` at most 65536 at a time. -/
+def zeroExtend (t : ByteArray) (n : Nat) : ByteArray :=
+  if _h : n ≤ 65536 then zeroBlock.copySlice 0 t t.size n false
+  else zeroExtend (zeroBlock.copySlice 0 t t.size 65536 false) (n - 65536)
+termination_by n
+decreasing_by omega
+
+theorem zeroBlock_copy (t : ByteArray) {n : Nat} (h : n ≤ 65536) :
+    (zeroBlock.copySlice 0 t t.size n false).data = t.data ++ Array.replicate n 0 := by
+  simp only [ByteArray.copySlice, zeroBlock]
+  rw [Array.extract_eq_self_of_le (by simp),
+    Array.extract_empty_of_size_le_start (start := t.size + min n ((Array.replicate 65536 (0 : UInt8)).size - 0))
+      (by simp only [ByteArray.size_data, Array.size_replicate]; omega),
+    Array.append_empty, Array.extract_replicate]
+  congr 2
   omega
 
-theorem pushZeros_eq : ∀ (N : Nat) (t : ByteArray) (n : USize), n.toNat = N →
-    pushZeros t n = t ++ ByteArray.mk (Array.replicate N 0) := by
-  intro N
-  induction N with
-  | zero =>
-    intro t n hn
-    rw [pushZeros, dite_eq_left (usize_zero hn)]
-    apply ba_ext
-    simp
-  | succ N ih =>
-    intro t n hn
-    have hne : n ≠ 0 := fun e => by rw [e] at hn; exact Nat.succ_ne_zero _ hn.symm
-    rw [pushZeros, dite_eq_right hne, ih _ _ (by rw [usize_pred hne]; omega)]
-    apply ba_ext
-    apply Array.toList_inj.mp
-    simp [List.replicate_succ]
+theorem zeroExtend_data : ∀ (n : Nat) (t : ByteArray), (zeroExtend t n).data = t.data ++ Array.replicate n 0 := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | _ n ih =>
+    intro t
+    rw [zeroExtend]
+    by_cases h : n ≤ 65536
+    · rw [dite_eq_left h]
+      exact zeroBlock_copy t h
+    · rw [dite_eq_right h, ih _ (by omega), zeroBlock_copy t (Nat.le_refl _), Array.append_assoc, Array.replicate_append_replicate,
+        show 65536 + (n - 65536) = n by omega]
 
-/-- An array's first `m` bytes, copied onto its end. -/
-theorem copy_self (t : ByteArray) {m : Nat} (hm : m ≤ t.size) :
-    (t.copySlice 0 t t.size m).data = t.data ++ t.data.extract 0 m := by
-  simp [ByteArray.copySlice]
-  rw [Array.extract_eq_self_of_le (by simp), Array.extract_empty_of_size_le_start (start := t.size + min m t.size) (by rw [ByteArray.size_data]; omega),
-    Array.append_empty]
+theorem zeroExtend_eq (t : ByteArray) (n : Nat) : zeroExtend t n = t ++ ByteArray.mk (Array.replicate n 0) := by
+  apply ByteArray.ext
+  rw [ByteArray.data_append]
+  exact zeroExtend_data n t
 
-theorem copy_self_size (t : ByteArray) {m : Nat} (hm : m ≤ t.size) : (t.copySlice 0 t t.size m).size = t.size + m := by
-  have e := congrArg Array.size (copy_self t hm)
-  simp only [Array.size_append, Array.size_extract, ByteArray.size_data] at e
-  rw [e]
-  omega
+/-- A scratch array of `k` zero bytes, made at its size. -/
+@[inline] def zeroBytes (k : Nat) : ByteArray := zeroExtend (ByteArray.emptyWithCapacity k) k
 
-/-- Doubles the zeros in `t` until there are `k`, each step one `copySlice`. -/
-def growZeros (t : ByteArray) (k : Nat) : ByteArray :=
-  if _h : t.size = 0 ∨ k ≤ t.size then t
-  else growZeros (t.copySlice 0 t t.size (min t.size (k - t.size))) k
-termination_by k - t.size
-decreasing_by
-  rw [copy_self_size t (Nat.min_le_left _ _)]
-  omega
-
-theorem growZeros_data : ∀ (N : Nat) (t : ByteArray) (k : Nat), k - t.size = N → t.data = Array.replicate t.size 0 → 0 < t.size → t.size ≤ k →
-    (growZeros t k).data = Array.replicate k 0 := by
-  intro N
-  induction N using Nat.strongRecOn with
-  | _ N ih =>
-    intro t k hN ht h0 hk
-    rw [growZeros]
-    by_cases hc : t.size = 0 ∨ k ≤ t.size
-    · rw [dite_eq_left hc]
-      have : t.size = k := by omega
-      rw [ht, this]
-    · rw [dite_eq_right hc]
-      have hm : min t.size (k - t.size) ≤ t.size := Nat.min_le_left _ _
-      have e := copy_self t hm
-      rw [ht] at e
-      simp only [Array.extract_replicate, Array.replicate_append_replicate] at e
-      have hs := copy_self_size t hm
-      exact ih _ (by omega) _ k rfl (by rw [e, hs]; congr 1; omega) (by omega) (by omega)
-
-/-- A scratch array of `k` zero bytes: 64 pushed, then doubled. -/
-@[inline] def zeroBytes (k : Nat) : ByteArray := growZeros (pushZeros (ByteArray.emptyWithCapacity k) (USize.ofNat (min k 64))) k
-
-theorem zeroBytes_data {k : Nat} (h : k < 2 ^ 32) : (zeroBytes k).data = Array.replicate k 0 := by
+theorem zeroBytes_data {k : Nat} (_h : k < 2 ^ 32) : (zeroBytes k).data = Array.replicate k 0 := by
   unfold zeroBytes
-  have hb : (pushZeros (ByteArray.emptyWithCapacity k) (USize.ofNat (min k 64))).data = Array.replicate (min k 64) 0 := by
-    rw [pushZeros_eq (min k 64) _ _ (usize_lit' (by omega))]
-    apply Array.toList_inj.mp
-    simp [ByteArray.emptyWithCapacity]
-    rfl
-  generalize pushZeros (ByteArray.emptyWithCapacity k) (USize.ofNat (min k 64)) = t at hb
-  have hs : t.size = min k 64 := by
-    show t.data.size = _
-    rw [hb]
-    simp
-  by_cases hk : k = 0
-  · subst hk
-    rw [growZeros, dite_eq_left (Or.inl (by rw [hs]; rfl)), hb]
-    rfl
-  · exact growZeros_data _ t k rfl (by rw [hb, hs]) (by rw [hs]; omega) (by rw [hs]; omega)
+  rw [zeroExtend_data]
+  exact Array.empty_append
 
 theorem zeroBytes_size {k : Nat} (h : k < 2 ^ 32) : (zeroBytes k).size = k := by
   show (zeroBytes k).data.size = k
@@ -1117,7 +1075,7 @@ def planFast (lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) : Plan 
 /-- Appends a planned table to the arena. Its slots start at `t.size / 4`. -/
 def fillFast (t lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) (p : Plan) : ByteArray :=
   let base := UInt64.ofNat (t.size / 4)
-  let t1 := pushZeros t p.bytes.toUSize
+  let t1 := zeroExtend t p.bytes.toNat
   let t2 := walkCodes (writeCodeFast base p.D p.o.off) lens n hn 0 p.nc t1
   rootsFast base p.D p.o.off 256 0 t2
 
@@ -1203,12 +1161,10 @@ theorem buildFast_eq {t lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.siz
   have hnext : (256 + o.next).toNat = 256 + offSum (depths L) 256 := by
     rw [u64_add' (by rw [show (256 : UInt64).toNat = 256 from rfl, o2]; omega), o2]
     rfl
-  have hspace : ((256 + o.next) * 4).toUSize.toNat = 4 * (256 + offSum (depths L) 256) := by
-    have : ((256 + o.next) * 4).toNat = 4 * (256 + offSum (depths L) 256) := by
-      rw [UInt64.toNat_mul, hnext, show (4 : UInt64).toNat = 4 from rfl, Nat.mod_eq_of_lt (by omega)]
-      omega
-    rw [word_toUSize (by rw [this]; omega), this]
-  rw [pushZeros_eq _ _ _ hspace, oTot]
+  have hspace : ((256 + o.next) * 4).toNat = 4 * (256 + offSum (depths L) 256) := by
+    rw [UInt64.toNat_mul, hnext, show (4 : UInt64).toNat = 4 from rfl, Nat.mod_eq_of_lt (by omega)]
+    omega
+  rw [zeroExtend_eq, hspace, oTot]
   generalize ht1 : t ++ ByteArray.mk (Array.replicate (4 * (256 + offSum (depths L) 256)) 0) = t1
   have hmk : (ByteArray.mk (Array.replicate (4 * (256 + offSum (depths L) 256)) 0)).size =
       4 * (256 + offSum (depths L) 256) := by
@@ -1239,12 +1195,12 @@ theorem buildFast_eq {t lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.siz
 
 /-- Appends a single-symbol code's table. -/
 def buildSingleFast (t : ByteArray) (sym : UInt64) : ByteArray :=
-  fillFrom 0 sym 1 256 (pushZeros t (USize.ofNat 1024)) (UInt64.ofNat (t.size / 4))
+  fillFrom 0 sym 1 256 (zeroExtend t 1024) (UInt64.ofNat (t.size / 4))
 
 theorem buildSingleFast_eq {t : ByteArray} {sym : UInt64} (hsize : t.size + 4 * 256 < 2 ^ 32) :
     buildSingleFast t sym = buildSingle t sym.toNat := by
   unfold buildSingleFast buildSingle
-  rw [pushZeros_eq 1024 _ _ (usize_lit' (by decide))]
+  rw [zeroExtend_eq]
   have hmk : (ByteArray.mk (Array.replicate 1024 0)).size = 1024 := by
     show (Array.replicate _ _).size = _
     simp
