@@ -114,8 +114,8 @@ theorem installTable_nf (st : Hd) (base : UInt64) (hi : InstallOk st.role st.idx
   · rw [installTable_codes hr, installTable_codes (st := { st with pos := 0 }) hr]; rfl
   · rw [installTable_map hr, installTable_map (st := { st with pos := 0 }) hr]
 
-theorem growLens_nf (st : Hd) (lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) (h : LensArgs st.d.arena lens n) :
-    growLens st lens n hn h = { growLens { st with pos := 0 } lens n hn h with pos := st.pos } := rfl
+theorem growLens_nf (st : Hd) (h : ∃ L, BuildArgs st.d.arena st.head st.next L) :
+    growLens st h = { growLens { st with pos := 0 } h with pos := st.pos } := rfl
 
 theorem growSingle_nf (st : Hd) (sym : UInt64) (h : st.d.arena.size + 4096 < 2 ^ 32 ∧ st.d.arena.size % 2 = 0) :
     growSingle st sym h = { growSingle { st with pos := 0 } sym h with pos := st.pos } := rfl
@@ -127,13 +127,19 @@ theorem mapTableDone_nf (st : Hd) (t : ByteArray) (hf : t.size < 2 ^ 32 ∧ Tabl
   repeat' (first | split_all | rfl)
 
 set_option maxRecDepth 8192 in
-theorem tableDone_nf (st : Hd) (single : Bool) (sym : UInt64) (ha : TableArgs st.size st.lens single sym)
+theorem tableDone_nf (st : Hd) (single : Bool) (sym : UInt64) (ha : TableArgs st.size st.head st.next single sym)
     (hi : InstallOk st.role st.idx st.fill) (har : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 4096 < 2 ^ 32) :
     tableDone st single sym ha hi har = { tableDone { st with pos := 0 } single sym ha hi har with pos := st.pos } := by
   unfold tableDone
   cases st
   try dsimp only
   repeat' (first | split_all | exact (installTable_nf _ _ _).trans rfl | exact (mapTableDone_nf _ _ _).trans rfl | rfl)
+
+theorem simpleTable_nf (st : Hd) (r : Rd) (p : USize) (h : SimpleRead st.size r) (he : ¬ r.e = 0) (hi : InstallOk st.role st.idx st.fill)
+    (har : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 4096 < 2 ^ 32) :
+    simpleTable st r p h he hi har = { simpleTable { st with pos := 0 } r 0 h he hi har with pos := p } := by
+  unfold simpleTable
+  exact (tableDone_nf _ _ _ _ _ _).trans rfl
 
 theorem catMoveOn_nf (st : Hd) : catMoveOn st = { catMoveOn { st with pos := 0 } with pos := st.pos } := by
   unfold catMoveOn
@@ -166,6 +172,7 @@ macro "hd_nf" : tactic => `(tactic| ((try unfold markH) <;> (try dsimp only) <;>
     | exact (installTable_nf _ _ _).trans rfl
     | exact (mapTableDone_nf _ _ _).trans rfl
     | exact (tableDone_nf _ _ _ _ _ _).trans rfl
+    | exact (simpleTable_nf _ _ _ _ _ _ _).trans rfl
     | exact (catMoveOn_nf _).trans rfl
     | exact (clFinish_nf _ _).trans rfl
     | exact (mapFinish_nf _ _ _).trans rfl
@@ -197,6 +204,11 @@ theorem stepHSyms_pos (st : Hd) (p : USize) (h : ∃ g p, HRel st g p) (ht : st.
   · rw [dite_eq_left h0, dite_eq_left (show ({ st with pos := 0 } : Hd).symSum = 32768 from h0)]
     exact (tableDone_nf _ _ _ _ _ _).trans rfl
   · rw [dite_eq_right h0, dite_eq_right (show ¬ ({ st with pos := 0 } : Hd).symSum = 32768 from h0)]
+    by_cases h1 : st.ln = st.size
+    · rw [dite_eq_left h1, dite_eq_left (show ({ st with pos := 0 } : Hd).ln = ({ st with pos := 0 } : Hd).size from h1)]
+      rfl
+    rw [dite_eq_right h1, dite_eq_right (show ¬ ({ st with pos := 0 } : Hd).ln = ({ st with pos := 0 } : Hd).size from h1)]
+    unfold symsOk symsRep
     cases st
     hd_nf
 

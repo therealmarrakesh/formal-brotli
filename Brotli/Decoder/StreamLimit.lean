@@ -64,6 +64,30 @@ def HLim (r1 r2 : Hd) : Prop := r1.status = .memory ∨ r2.status = .memory ∨ 
 
 theorem HLim.same {r1 r2 : Hd} {a : UInt64} (h : r1 = hdSet r2 a) : HLim r1 r2 := Or.inr (Or.inr ⟨a, h⟩)
 
+/-- Both sides take the same branch of a dependent `if`. -/
+theorem dite_hd (a : UInt64) {c : Prop} [Decidable c] {x x' : c → Hd} {y y' : ¬ c → Hd} (hx : ∀ h, x h = hdSet (x' h) a)
+    (hy : ∀ h, y h = hdSet (y' h) a) : dite c x y = hdSet (dite c x' y') a := by
+  by_cases h : c
+  · rw [dite_eq_left h, dite_eq_left h]
+    exact hx h
+  · rw [dite_eq_right h, dite_eq_right h]
+    exact hy h
+
+theorem ite_hd (a : UInt64) {c : Prop} [Decidable c] {x x' y y' : Hd} (hx : c → x = hdSet x' a) (hy : ¬ c → y = hdSet y' a) :
+    (if c then x else y) = hdSet (if c then x' else y') a := by
+  by_cases h : c
+  · rw [ite_eq_left h, ite_eq_left h]
+    exact hx h
+  · rw [ite_eq_right h, ite_eq_right h]
+    exact hy h
+
+theorem dite_lim {c : Prop} [Decidable c] {x x' : c → Hd} {y y' : ¬ c → Hd} (hx : ∀ h, HLim (x h) (x' h))
+    (hy : ∀ h, HLim (y h) (y' h)) : HLim (dite c x y) (dite c x' y') := by
+  by_cases h : c
+  · rw [dite_eq_left h, dite_eq_left h]
+    exact hx h
+  · rw [dite_eq_right h, dite_eq_right h]
+    exact hy h
 section
 variable (st : Hd) (a : UInt64) (pos : USize)
 
@@ -101,8 +125,8 @@ theorem growSingle_lim (sym : UInt64) (h1 : (hdSet st a).d.arena.size + 4096 < 2
     growSingle (hdSet st a) sym h1 = hdSet (growSingle st sym h2) a := by
   simp only [growSingle, clearDone, clearArena, hdSet]
 
-theorem growLens_lim (lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) (h1 : LensArgs (hdSet st a).d.arena lens n)
-    (h2 : LensArgs st.d.arena lens n) : growLens (hdSet st a) lens n hn h1 = hdSet (growLens st lens n hn h2) a := by
+theorem growLens_lim (h1 : ∃ L, BuildArgs (hdSet st a).d.arena (hdSet st a).head (hdSet st a).next L)
+    (h2 : ∃ L, BuildArgs st.d.arena st.head st.next L) : growLens (hdSet st a) h1 = hdSet (growLens st h2) a := by
   simp only [growLens, clearDone, clearArena, hdSet]
 
 /-- Two checks of the room that may disagree: the states agree when both pass, and a failed one reports the limit. -/
@@ -131,8 +155,8 @@ theorem installTable_lim' {S S' : Hd} (h : S = hdSet S' a) (base : UInt64) (hi :
   subst h
   exact installTable_lim S' a base hi'
 
-theorem tableDone_lim (single : Bool) (sym : UInt64) (ha1 : TableArgs (hdSet st a).size (hdSet st a).lens single sym)
-    (ha2 : TableArgs st.size st.lens single sym) (hi : InstallOk st.role st.idx st.fill)
+theorem tableDone_lim (single : Bool) (sym : UInt64) (ha1 : TableArgs (hdSet st a).size (hdSet st a).head (hdSet st a).next single sym)
+    (ha2 : TableArgs st.size st.head st.next single sym) (hi : InstallOk st.role st.idx st.fill)
     (har1 : (hdSet st a).d.arena.size % 2 = 0 ∧ (hdSet st a).d.arena.size + 4096 < 2 ^ 32)
     (har2 : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 4096 < 2 ^ 32) :
     tableDone (hdSet st a) single sym ha1 hi har1 = hdSet (tableDone st single sym ha2 hi har2) a := by
@@ -148,7 +172,7 @@ theorem tableDone_lim (single : Bool) (sym : UInt64) (ha1 : TableArgs (hdSet st 
     · rw [dite_eq_left hs, dite_eq_left hs]
       exact installTable_lim' a (growSingle_lim st a sym _ _) _ _ _
     · rw [dite_eq_right hs, dite_eq_right hs]
-      exact installTable_lim' a (growLens_lim st a _ _ _ _ _) _ _ _
+      exact installTable_lim' a (growLens_lim st a _ _) _ _ _
 
 theorem stepHCat_lim : stepHCat (hdSet st a) pos = hdSet (stepHCat st pos) a := by
   simp only [stepHCat, markH, catMoveOn]; lim_tac
@@ -198,8 +222,8 @@ theorem clFinish_lim' {L : Hd} (h : L = hdSet st a) (h1 : ∃ acc, ClDone L acc)
   subst h
   exact clFinish_lim st a h1 h2
 
-theorem tableDone_lim' {L : Hd} (h : L = hdSet st a) (single : Bool) (sym : UInt64) (ha1 : TableArgs L.size L.lens single sym)
-    (ha2 : TableArgs st.size st.lens single sym) (hi1 : InstallOk L.role L.idx L.fill) (hi2 : InstallOk st.role st.idx st.fill)
+theorem tableDone_lim' {L : Hd} (h : L = hdSet st a) (single : Bool) (sym : UInt64) (ha1 : TableArgs L.size L.head L.next single sym)
+    (ha2 : TableArgs st.size st.head st.next single sym) (hi1 : InstallOk L.role L.idx L.fill) (hi2 : InstallOk st.role st.idx st.fill)
     (har1 : L.d.arena.size % 2 = 0 ∧ L.d.arena.size + 4096 < 2 ^ 32)
     (har2 : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 4096 < 2 ^ 32) :
     tableDone L single sym ha1 hi1 har1 = hdSet (tableDone st single sym ha2 hi2 har2) a := by
@@ -212,28 +236,46 @@ theorem stepHClens_lim (h1 : ∃ g p, HRel (hdSet st a) g p) (h2 : ∃ g p, HRel
   simp only [stepHClens, markH, clearClLens]
   (repeat' split) <;> first | exact clFinish_lim' _ a (by rfl) _ _ | rfl | (simp_all [hdSet]; done)
 
+theorem simpleTable_lim {r : Rd} (h1 : SimpleRead (hdSet st a).size r) (h2 : SimpleRead st.size r) (he : ¬ r.e = 0)
+    (hi1 : InstallOk (hdSet st a).role (hdSet st a).idx (hdSet st a).fill) (hi2 : InstallOk st.role st.idx st.fill)
+    (har1 : (hdSet st a).d.arena.size % 2 = 0 ∧ (hdSet st a).d.arena.size + 4096 < 2 ^ 32)
+    (har2 : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 4096 < 2 ^ 32) :
+    simpleTable (hdSet st a) r pos h1 he hi1 har1 = hdSet (simpleTable st r pos h2 he hi2 har2) a := by
+  unfold simpleTable
+  exact tableDone_lim' (simpleLists st r pos h2.fits) a rfl _ _ _ _ _ _ _ _
+
 theorem stepHCode_lim (h1 : ∃ g p, HRel (hdSet st a) g p) (h2 : ∃ g p, HRel st g p) (ht : st.tag = .code) :
     HLim (stepHCode (hdSet st a) pos h1 ht) (stepHCode st pos h2 ht) := by
   show HLim (stepHCode { st with d := { st.d with arenaMax := a } } pos h1 ht) _
   simp only [stepHCode, markH, simpleFastT]
-  (repeat' split) <;> first | exact HLim.same (tableDone_lim' _ a (by rfl) _ _ _ _ _ _ _ _) | exact HLim.same (a := a) (by rfl) | (simp_all [hdSet]; done)
+  (repeat' (first | (refine dite_lim (fun _ => ?_) (fun _ => ?_)) | split)) <;> first
+    | exact HLim.same (tableDone_lim' _ a (by rfl) _ _ _ _ _ _ _ _) | exact HLim.same (a := a) (by rfl)
+    | (refine HLim.same (a := a) ?_; exact simpleTable_lim _ _ _ _ _ _ _ _ _ _) | (simp_all [hdSet]; done)
+
+theorem symsRep_lim {r : Rd} (h1 : ∃ g p, HRel (hdSet st a) g p) (h2 : ∃ g p, HRel st g p) (ht : st.tag = .syms)
+    (hl1 : ¬ (hdSet st a).ln = (hdSet st a).size) (hl2 : ¬ st.ln = st.size) (new old : UInt64) :
+    symsRep (hdSet st a) pos h1 ht hl1 r new old = hdSet (symsRep st pos h2 ht hl2 r new old) a := by
+  unfold symsRep
+  refine dite_hd a (fun _ => rfl) (fun _ => ?_)
+  exact ite_hd a (fun _ => rfl) (fun _ => ite_hd a (fun _ => rfl) (fun _ => rfl))
+
+theorem symsOk_lim {r : Rd} (h1 : ∃ g p, HRel (hdSet st a) g p) (h2 : ∃ g p, HRel st g p) (ht : st.tag = .syms)
+    (hl1 : ¬ (hdSet st a).ln = (hdSet st a).size) (hl2 : ¬ st.ln = st.size) :
+    symsOk (hdSet st a) pos h1 ht hl1 r = hdSet (symsOk st pos h2 ht hl2 r) a := by
+  unfold symsOk
+  refine dite_hd a (fun _ => ?_) (fun _ => symsRep_lim st a pos h1 h2 ht hl1 hl2 _ _)
+  exact ite_hd a (fun _ => rfl) (fun _ => ite_hd a (fun _ => rfl) (fun _ => rfl))
 
 theorem stepHSyms_lim (h1 : ∃ g p, HRel (hdSet st a) g p) (h2 : ∃ g p, HRel st g p) (ht : st.tag = .syms) :
     HLim (stepHSyms (hdSet st a) pos h1 ht) (stepHSyms st pos h2 ht) := by
-  show HLim (stepHSyms { st with d := { st.d with arenaMax := a } } pos h1 ht) _
   unfold stepHSyms
-  by_cases hs0 : st.symSum = 32768
-  · rw [dite_eq_left hs0, dite_eq_left hs0]
-    exact HLim.same (tableDone_lim' _ a (by rfl) _ _ _ _ _ _ _ _)
-  · rw [dite_eq_right hs0, dite_eq_right hs0]
-    clear h1 h2 ht
-    by_cases hl : st.ln = st.size
-    · rw [ite_eq_left hl, ite_eq_left hl]
-      exact HLim.same (a := a) rfl
-    · rw [ite_eq_right hl, ite_eq_right hl]
-      refine HLim.same (a := a) ?_
-      simp only [markH, clearLens]
-      lim_tac
+  refine dite_lim (fun _ => HLim.same (tableDone_lim' _ a (by rfl) _ _ _ _ _ _ _ _)) (fun _ => ?_)
+  refine HLim.same (a := a) (dite_hd a (fun _ => rfl) (fun hl => ?_))
+  have hr : lenSymFast (hdSet st a).clt.t (USize.ofNat 0) (hdSet st a).clt.fits (hdSet st a).clt.h32
+      ⟨(hdSet st a).word, (hdSet st a).count⟩ = lenSymFast st.clt.t (USize.ofNat 0) st.clt.fits st.clt.h32 ⟨st.word, st.count⟩ := rfl
+  dsimp only
+  rw [hr]
+  split <;> rename_i hs <;> simp only [hs] <;> first | rfl | exact symsOk_lim st a pos h1 h2 ht _ _
 
 theorem stepAtH_lim (h1 : ∃ g p, HRel (hdSet st a) g p) (h2 : ∃ g p, HRel st g p) :
     HLim (stepAtH (hdSet st a) pos h1) (stepAtH st pos h2) := by

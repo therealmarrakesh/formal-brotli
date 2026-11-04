@@ -10,53 +10,73 @@ namespace Brotli.Decoder
 
 open Brotli.Spec Brotli.Properties
 
-/-- Writes `v` into `n` bytes from `i`: code lengths. -/
-def fillLens (t : ByteArray) (i n : UInt64) (v : UInt8) : ByteArray :=
-  if _hn : n = 0 then t else fillLens (setU t i.toUSize v) (i + 1) (n - 1) v
-termination_by n.toNat
+/-- Reads length `l`'s link in `head`. -/
+@[inline] def getHead (t : ByteArray) (ht : t.size = 32) (l : UInt64) (hl : l.toNat < 16) : UInt64 :=
+  getSlot t l (by omega) (by omega)
+
+theorem getHead_toNat {t : ByteArray} {ht : t.size = 32} {l : UInt64} {hl : l.toNat < 16} :
+    (getHead t ht l hl).toNat = u16At t l.toNat := by
+  rw [getHead, getSlot_toNat, slotNum_eq_u16At]
+
+/-- Links the symbols from `i` up to `e` in `next`, each to the one before it. -/
+def linkRun (t : ByteArray) (ht : t.size = 1408) (i e : UInt64) (he : e.toNat ≤ 704) : ByteArray :=
+  if hi : i < e then
+    linkRun (setNext t ht i i (by have := UInt64.lt_iff_toNat_lt.mp hi; omega)) setNext_size (i + 1) e he
+  else t
+termination_by e.toNat - i.toNat
 decreasing_by
-  have hne : n.toNat ≠ 0 := fun e => _hn (UInt64.toNat_inj.mp (by rw [e]; rfl))
-  have h1 : (n - 1).toNat = n.toNat - 1 := UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by
-    rw [show (1 : UInt64).toNat = 1 from rfl]
-    omega))
+  have h1 := UInt64.lt_iff_toNat_lt.mp hi
+  have h2 : (i + 1).toNat = i.toNat + 1 := u64_succ (by omega)
   omega
 
-theorem fillLens_spec (v : UInt8) : ∀ (N : Nat) (t : ByteArray) (i n : UInt64), n.toNat = N → i.toNat + N < 2 ^ 32 → i.toNat + N ≤ t.size →
-    (fillLens t i n v).size = t.size ∧ ∀ j, (fillLens t i n v).data[j]?.getD 0 =
-      if i.toNat ≤ j ∧ j < i.toNat + N then v else t.data[j]?.getD 0 := by
+theorem linkRun_spec {e : UInt64} {he : e.toNat ≤ 704} : ∀ (N : Nat) (t : ByteArray) (ht : t.size = 1408) (i : UInt64),
+    e.toNat - i.toNat = N → (linkRun t ht i e he).size = 1408 ∧
+      ∀ j, u16At (linkRun t ht i e he) j = if i.toNat ≤ j ∧ j < e.toNat then j else u16At t j := by
   intro N
   induction N with
   | zero =>
-    intro t i n hn _ _
-    have hz : n = 0 := UInt64.toNat_inj.mp (by rw [hn]; rfl)
-    rw [fillLens, dite_eq_left hz]
-    refine ⟨rfl, fun j => ?_⟩
-    rw [ite_eq_right (by omega)]
+    intro t ht i hN
+    have hi : ¬ i < e := fun h => by have := UInt64.lt_iff_toNat_lt.mp h; omega
+    rw [linkRun, dite_eq_right hi]
+    exact ⟨ht, fun j => by rw [ite_eq_right (by omega)]⟩
   | succ N ih =>
-    intro t i n hn h32 hle
-    have hz : n ≠ 0 := fun e => by rw [e] at hn; exact Nat.succ_ne_zero _ hn.symm
-    have hn1 : (n - 1).toNat = N := by
-      rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by rw [show (1 : UInt64).toNat = 1 from rfl]; omega)), hn]
-      rfl
-    have hi1 : (i + 1).toNat = i.toNat + 1 := by
-      rw [UInt64.toNat_add, show (1 : UInt64).toNat = 1 from rfl]
-      exact Nat.mod_eq_of_lt (by omega)
-    have hus : i.toUSize.toNat = i.toNat := word_toUSize (by omega)
-    rw [fillLens, dite_eq_right hz]
-    have hsz := size_setU t i.toUSize v
-    obtain ⟨h1, h2⟩ := ih (setU t i.toUSize v) (i + 1) (n - 1) hn1 (by rw [hi1]; omega) (by rw [hi1, hsz]; omega)
-    refine ⟨by rw [h1, hsz], fun j => ?_⟩
-    rw [h2 j, hi1]
-    by_cases he : j = i.toNat
-    · subst he
-      rw [ite_eq_right (by omega), ite_eq_left (by omega)]
-      have := setU_get_same (t := t) (i := i.toUSize) (v := v) (by rw [hus]; omega)
-      rwa [hus] at this
-    · have e : (setU t i.toUSize v).data[j]? = t.data[j]? := setU_get_ne (by rw [hus]; exact he)
-      rw [e]
-      by_cases hin : i.toNat + 1 ≤ j ∧ j < i.toNat + 1 + N
+    intro t ht i hN
+    have hi : i < e := UInt64.lt_iff_toNat_lt.mpr (by omega)
+    have hi' := UInt64.lt_iff_toNat_lt.mp hi
+    have h1 : (i + 1).toNat = i.toNat + 1 := u64_succ (by omega)
+    rw [linkRun, dite_eq_left hi]
+    obtain ⟨s, f⟩ := ih _ setNext_size (i + 1) (by omega)
+    refine ⟨s, fun j => ?_⟩
+    rw [f j, u16At_setNext, h1]
+    by_cases hj : j = i.toNat
+    · subst hj
+      rw [ite_eq_right (by omega), ite_eq_left rfl, ite_eq_left (by omega)]
+      omega
+    · rw [ite_eq_right hj]
+      by_cases hin : i.toNat + 1 ≤ j ∧ j < e.toNat
       · rw [ite_eq_left hin, ite_eq_left (by omega)]
       · rw [ite_eq_right hin, ite_eq_right (by omega)]
+
+theorem linkRun_size {t : ByteArray} {ht : t.size = 1408} {i e : UInt64} {he : e.toNat ≤ 704} : (linkRun t ht i e he).size = 1408 :=
+  (linkRun_spec _ t ht i rfl).1
+
+/-- One more symbol `sym`, nonzero, whose list's last symbol was linked from `old`: it goes in front of its length's
+list. -/
+@[inline] def pushSym (st : Hd) (r : Rd) (pos : USize) (sym sum : UInt64) (hl : sym.toNat < 16) (hn : st.ln.toNat < 704)
+    (old : UInt64) : Hd :=
+  { st with
+    word := r.word, count := r.count, pos := pos, status := .next
+    head := setHead st.head st.headSz sym (st.ln + 1) hl, next := setNext st.next st.nextSz st.ln old hn
+    headSz := setHead_size, nextSz := setNext_size, ln := st.ln + 1, prevLen := sym, repCount := 0, symSum := sum }
+
+/-- A run of nonzero length `len` up to symbol `e`, whose list's last symbol was linked from `old`: the run goes in front
+of its length's list, each symbol linked to the one before it. -/
+@[inline] def pushRunAt (st : Hd) (r : Rd) (pos : USize) (len e new sum : UInt64) (hl : len.toNat < 16) (hn : st.ln.toNat < 704)
+    (he : e.toNat ≤ 704) (old : UInt64) : Hd :=
+  { st with
+    word := r.word, count := r.count, pos := pos, status := .next
+    head := setHead st.head st.headSz len e hl, next := linkRun (setNext st.next st.nextSz st.ln old hn) setNext_size (st.ln + 1) e he
+    headSz := setHead_size, nextSz := linkRun_size, ln := e, repSym := r.a, repCount := new, symSum := sum }
 
 /-- What `fillVals` needs for its writes to stay in the array. -/
 def FillPre (t : ByteArray) (i n : UInt64) : Prop := i.toNat + n.toNat < 2 ^ 32 ∧ i.toNat + n.toNat ≤ t.size
@@ -209,23 +229,6 @@ private theorem lenSym_bounds {clc : PrefixCode} {bs r : List Bool} {s e : Nat} 
 private theorem lengthSum_replicate (n l : Nat) : lengthSum (List.replicate n l) = n * (if l = 0 then 0 else 32768 >>> l) := by
   simp only [lengthSum, List.map_replicate, List.sum_replicate_nat]
 
-/-- From a state's lengths to the list `tableDone` needs. -/
-theorem lens_full {t : ByteArray} {A : List Nat} {size : Nat} (hs : t.size = size) (hle : A.length ≤ size)
-    (h1 : ∀ i, i < A.length → A[i]? = some (t.data[i]?.getD 0).toNat) (h2 : ∀ i, A.length ≤ i → t.data[i]?.getD 0 = 0) :
-    lensOf t size = A ++ List.replicate (size - A.length) 0 := by
-  have hl : (lensOf t size).length = size := length_lensOf (by omega)
-  apply List.ext_getElem?
-  intro i
-  by_cases hi : i < size
-  · rw [lensOf_get hi (by omega)]
-    by_cases hA : i < A.length
-    · rw [List.getElem?_append_left hA, h1 i hA]
-    · rw [List.getElem?_append_right (by omega), List.getElem?_replicate, ite_eq_left (by omega), h2 i (by omega)]
-      rfl
-  · rw [List.getElem?_eq_none (by omega), List.getElem?_eq_none (by
-      simp only [List.length_append, List.length_replicate]
-      omega)]
-
 /-- A state at a code's lengths stands for a place there. -/
 theorem syms_ex {st : Hd} (h : ∃ g p, HRel st g p) (ht : st.tag = .syms) :
     ∃ g o size clc ls, HRel st g (.syms o size clc ls) := by
@@ -235,74 +238,117 @@ theorem syms_ex {st : Hd} (h : ∃ g p, HRel st g p) (ht : st.tag = .syms) :
   | np => exact absurd (hr.2.2.symm.trans ht) (fun e => HTag.noConfusion e)
   | _ => exact absurd (hr.2.2.1.symm.trans ht) (fun e => HTag.noConfusion e)
 
-/-- Lengths that fill the code space are a code that was read. -/
-theorem syms_args {st : Hd} (h : ∃ g p, HRel st g p) (ht : st.tag = .syms) (h0 : st.symSum = 32768) :
-    TableArgs st.size st.lens false 0 := by
-  obtain ⟨g, o, size, clc, ls, hrel⟩ := syms_ex h ht
-  obtain ⟨_, _, _, hs, _, hy⟩ := hrel
+/-- Lengths that fill the code space, with zeros after them, are the code that was read. -/
+theorem syms_for {st : Hd} {size : Nat} {ls : LengthState} (hs : SizeOk st size) (hy : ListsIs st.head st.next ls.lens)
+    (hle : ls.lens.length ≤ size) (hsmall : ∀ l ∈ ls.lens, l ≤ 15) (hsum : lengthSum ls.lens = 32768) :
+    TableFor st.size st.head st.next false 0 (.canonical (ls.lens ++ List.replicate (size - ls.lens.length) 0)) := by
   obtain ⟨hs1, _, hs3⟩ := hs
-  have hlenLe := hy.le
-  have hsum : lengthSum ls.lens = 32768 := by
-    rw [← hy.sumOk, h0]
-    rfl
-  have hfullL := lens_full hy.sz hlenLe hy.at_ hy.zero
-  refine ⟨.canonical (ls.lens ++ List.replicate (size - ls.lens.length) 0), size, hs1, hs3, fun e => Bool.noConfusion e,
-    fun _ => by rw [← hfullL], hy.sz, ⟨?_, ?_⟩, ?_⟩
+  have hlen : (ls.lens ++ List.replicate (size - ls.lens.length) 0).length = size := by simp; omega
+  refine ⟨by omega, fun e => Bool.noConfusion e, fun _ => ⟨_, rfl, by rw [hlen, hs1], hy.zeros _⟩,
+    by rw [st.headSz]; decide, by rw [st.nextSz]; decide, ⟨?_, ?_⟩, by rw [hs1]; exact hlen⟩
   · intro l hl
     rcases List.mem_append.mp hl with h | h
-    · exact hy.small l h
+    · exact hsmall l h
     · rw [(List.mem_replicate.mp h).2]
       omega
   · rw [lengthSum_append, lengthSum_replicate_zero, hsum]
-  · show (ls.lens ++ List.replicate (size - ls.lens.length) 0).length = size
-    simp
-    omega
+
+/-- Lengths that fill the code space are a code that was read. -/
+theorem syms_args {st : Hd} (h : ∃ g p, HRel st g p) (ht : st.tag = .syms) (h0 : st.symSum = 32768) :
+    TableArgs st.size st.head st.next false 0 := by
+  obtain ⟨g, o, size, clc, ls, hrel⟩ := syms_ex h ht
+  have hs : SizeOk st size := hrel.2.2.2.1
+  have hy : SymRel st size clc ls := hrel.2.2.2.2.2
+  have hsum : lengthSum ls.lens = 32768 := by
+    rw [← hy.sumOk, h0]
+    rfl
+  exact ⟨_, syms_for hs hy.lists hy.le hy.small hsum⟩
+
+/-- Bounds the reading of a code's lengths needs: the next symbol, when there is one, is below 704. -/
+theorem syms_lnLt {st : Hd} (h : ∃ g p, HRel st g p) (ht : st.tag = .syms) (h1 : ¬ st.ln = st.size) : st.ln.toNat < 704 := by
+  obtain ⟨g, o, size, clc, ls, hrel⟩ := syms_ex h ht
+  have hs : SizeOk st size := hrel.2.2.2.1
+  have hy : SymRel st size clc ls := hrel.2.2.2.2.2
+  have := hy.ln
+  have := hy.le
+  have := hs.1
+  have := hs.2.2
+  have : st.ln.toNat ≠ st.size.toNat := fun e => h1 (UInt64.toNat_inj.mp e)
+  omega
+
+/-- A repeat's length is below 16. -/
+theorem syms_lenLt {st : Hd} (h : ∃ g p, HRel st g p) (ht : st.tag = .syms) (sym : UInt64) :
+    (if sym = 16 then st.prevLen else 0).toNat < 16 := by
+  obtain ⟨g, o, size, clc, ls, hrel⟩ := syms_ex h ht
+  have hy : SymRel st size clc ls := hrel.2.2.2.2.2
+  have := hy.prev
+  have := hy.prevOk
+  split
+  · omega
+  · decide
+
+/-- A run that fits the alphabet ends at 704 or below. -/
+theorem syms_eLe {st : Hd} (h : ∃ g p, HRel st g p) (ht : st.tag = .syms) {e : UInt64} (he : ¬ st.size < e) : e.toNat ≤ 704 := by
+  obtain ⟨g, o, size, clc, ls, hrel⟩ := syms_ex h ht
+  have hs : SizeOk st size := hrel.2.2.2.1
+  have := hs.1
+  have := hs.2.2
+  have : ¬ st.size.toNat < e.toNat := fun e' => he (UInt64.lt_iff_toNat_lt.mpr e')
+  omega
 
 /-- A state at a code's lengths has what `installTable` needs. -/
 theorem syms_install {st : Hd} (h : ∃ g p, HRel st g p) (ht : st.tag = .syms) : InstallOk st.role st.idx st.fill := by
   obtain ⟨g, o, size, clc, ls, hrel⟩ := syms_ex h ht
   exact hrel.2.2.2.2.1.install
 
+/-- A run of the repeat's length, nonzero, up to symbol `e`. -/
+@[inline] def pushRun (st : Hd) (r : Rd) (pos : USize) (h : ∃ g p, HRel st g p) (ht : st.tag = .syms) (e new sum : UInt64)
+    (hn : st.ln.toNat < 704) (he : e.toNat ≤ 704) : Hd :=
+  pushRunAt st r pos (if r.a = 16 then st.prevLen else 0) e new sum (syms_lenLt h ht r.a) hn he
+    (getHead st.head st.headSz (if r.a = 16 then st.prevLen else 0) (syms_lenLt h ht r.a))
+
+/-- A repeat code `r` read, which makes the repeat count `new` from `old`, applied to a code's lengths. -/
+@[inline] def symsRep (st : Hd) (pos : USize) (h : ∃ g p, HRel st g p) (ht : st.tag = .syms) (h1 : ¬ st.ln = st.size) (r : Rd)
+    (new old : UInt64) : Hd :=
+  if he : st.size < st.ln + (new - old) then markH st pos .bad
+  else
+    let len := if r.a = 16 then st.prevLen else 0
+    let sum := if len = 0 then st.symSum else st.symSum + (new - old) * ((32768 : UInt64) >>> len)
+    if 32768 < sum then markH st pos .bad
+    else if len = 0 then
+      { st with
+        word := r.word, count := r.count, pos := pos, status := .next, ln := st.ln + (new - old), repSym := r.a
+        repCount := new, symSum := sum }
+    else
+      pushRun st r pos h ht (st.ln + (new - old)) new sum (syms_lnLt h ht h1) (syms_eLe h ht he)
+
+/-- A code length symbol `r` read, applied to a code's lengths. -/
+@[inline] def symsOk (st : Hd) (pos : USize) (h : ∃ g p, HRel st g p) (ht : st.tag = .syms) (h1 : ¬ st.ln = st.size) (r : Rd) : Hd :=
+      if hlow : r.a < 16 then
+        let sum := if r.a = 0 then st.symSum else st.symSum + ((32768 : UInt64) >>> r.a)
+        if 32768 < sum then markH st pos .bad
+        else if r.a = 0 then { st with word := r.word, count := r.count, pos := pos, status := .next, ln := st.ln + 1, repCount := 0, symSum := sum }
+        else
+          pushSym st r pos r.a sum (UInt64.lt_iff_toNat_lt.mp hlow) (syms_lnLt h ht h1)
+            (getHead st.head st.headSz r.a (UInt64.lt_iff_toNat_lt.mp hlow))
+      else
+        let mult : UInt64 := if r.a = 16 then 4 else 8
+        let old := if st.repCount ≠ 0 ∧ st.repSym = r.a then st.repCount else 0
+        let new := if old = 0 then 3 + r.b else mult * (old - 2) + (3 + r.b)
+        symsRep st pos h ht h1 r new old
+
 /-- The place reading a code's lengths. -/
 def stepHSyms (st : Hd) (pos : USize) (h : ∃ g p, HRel st g p) (ht : st.tag = .syms) : Hd :=
   if h0 : st.symSum = 32768 then
     tableDone { st with pos := pos, status := .next } false 0 (syms_args (st := st) h ht h0) (syms_install (st := st) h ht)
       (hrel_arena (st := st) h)
-  else if st.ln = st.size then markH st pos .bad
+  else if h1 : st.ln = st.size then markH st pos .bad
   else
     let r := lenSymFast st.clt.t (USize.ofNat 0) st.clt.fits st.clt.h32 ⟨st.word, st.count⟩
     match r.status with
     | .short => markH st pos .needsInput
     | .bad => markH st pos .bad
-    | .ok =>
-      let sym := r.a
-      let ln := st.ln
-      if sym < 16 then
-        let sum := if sym = 0 then st.symSum else st.symSum + ((32768 : UInt64) >>> sym)
-        if 32768 < sum then markH st pos .bad
-        else
-          let lens := st.lens
-          let prev := if sym = 0 then st.prevLen else sym
-          let st0 := clearLens st
-          { st0 with
-            word := r.word, count := r.count, pos := pos, status := .next, lens := setLen lens ln sym, ln := ln + 1, prevLen := prev
-            repCount := 0, symSum := sum }
-      else
-        let len := if sym = 16 then st.prevLen else 0
-        let mult : UInt64 := if sym = 16 then 4 else 8
-        let old := if st.repCount ≠ 0 ∧ st.repSym = sym then st.repCount else 0
-        let new := if old = 0 then 3 + r.b else mult * (old - 2) + (3 + r.b)
-        let delta := new - old
-        if st.size < ln + delta then markH st pos .bad
-        else
-          let sum := if len = 0 then st.symSum else st.symSum + delta * ((32768 : UInt64) >>> len)
-          if 32768 < sum then markH st pos .bad
-          else
-            let lens := st.lens
-            let st0 := clearLens st
-            { st0 with
-              word := r.word, count := r.count, pos := pos, status := .next, lens := fillLens lens ln delta len.toUInt8, ln := ln + delta
-              repSym := sym, repCount := new, symSum := sum }
+    | .ok => symsOk st pos h ht h1 r
 
 section
 variable {α : Type} {K : HK α} {a : ByteArray} {stop : USize}
@@ -322,21 +368,8 @@ theorem stepHSyms_ok {o : Owner} {size : Nat} {clc : PrefixCode} {ls : LengthSta
     have hsum : lengthSum ls.lens = 32768 := by
       rw [← hy.sumOk, h0]
       rfl
-    have hfullL := lens_full hy.sz hlenLe hy.at_ hy.zero
-    have hC : Complete (.canonical (ls.lens ++ List.replicate (size - ls.lens.length) 0)) := by
-      refine ⟨?_, ?_⟩
-      · intro l hl
-        rcases List.mem_append.mp hl with h | h
-        · exact hy.small l h
-        · rw [(List.mem_replicate.mp h).2]
-          omega
-      · rw [lengthSum_append, lengthSum_replicate_zero, hsum]
-    have hsy : (PrefixCode.canonical (ls.lens ++ List.replicate (size - ls.lens.length) 0)).Symbols size := by
-      show (ls.lens ++ List.replicate (size - ls.lens.length) 0).length = size
-      simp
-      omega
     have hdone := tableDone_ok K (st := { st with pos := pos, status := .next }) (c := .canonical (ls.lens ++ List.replicate (size - ls.lens.length) 0))
-      (single := false) (sym := 0) hw hu hs ho (fun e => Bool.noConfusion e) (fun _ => by rw [← hfullL]) hy.sz hC hsy hb
+      (single := false) (sym := 0) hw hu hs ho (syms_for (st := { st with pos := pos, status := .next }) hs hy.lists hlenLe hy.small hsum) hb
       (ha := syms_args (st := st) hH hT h0) (hi := syms_install (st := st) hH hT) (har := hrel_arena (st := st) hH)
     exact hdone.toStep rfl hp rfl (fun h => ⟨h.fill, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase, h.work⟩)
       (fun F => hrest_syms_done K g o size clc ls _ hlenLe hsum) (fun F => hStep_syms_done _ hlenLe hsum)
@@ -345,11 +378,11 @@ theorem stepHSyms_ok {o : Owner} {size : Nat} {clc : PrefixCode} {ls : LengthSta
     rw [← hy.sumOk]
     exact fun e => h0 (UInt64.toNat_inj.mp e)
   by_cases h1 : st.ln = st.size
-  · rw [ite_eq_left h1]
+  · rw [dite_eq_left h1]
     have hlen : ls.lens.length = size := by
       rw [← hy.ln, h1, hs1]
     exact HStepOk.ofBad rfl (fun F => hrest_syms_full K g o size clc ls _ hlen hsumNe)
-  rw [ite_eq_right h1]
+  rw [dite_eq_right h1]
   have hlenLt : ls.lens.length < size := by
     have : ls.lens.length ≠ size := by
       rw [← hy.ln, ← hs1]
@@ -373,12 +406,14 @@ theorem stepHSyms_ok {o : Owner} {size : Nat} {clc : PrefixCode} {ls : LengthSta
   | bad => exact HStepOk.ofBad rfl (fun F => Rbad hsr _)
   | ok =>
     dsimp only
+    unfold symsOk
+    dsimp only
     obtain ⟨hw2, hN⟩ := Rok hsr
     obtain ⟨hs18, he8⟩ := lenSym_bounds hy.symbols ((hval hsr).2 [])
     have hsize32 : size < 2 ^ 32 := by omega
     have hln : st.ln.toNat = ls.lens.length := hy.ln
     by_cases hlow : r.a < 16
-    · rw [ite_eq_left hlow]
+    · rw [dite_eq_left hlow]
       have hlow' : r.a.toNat < 16 := UInt64.lt_iff_toNat_lt.mp hlow
       have happly : applyCodeLength ls r.a.toNat r.b.toNat = ⟨ls.lens ++ [r.a.toNat], if r.a.toNat = 0 then ls.prev else r.a.toNat, none⟩ := by
         simp [applyCodeLength, hlow']
@@ -424,83 +459,114 @@ theorem stepHSyms_ok {o : Owner} {size : Nat} {clc : PrefixCode} {ls : LengthSta
         have hln1 : (st.ln + 1).toNat = ls.lens.length + 1 := by
           rw [UInt64.toNat_add, hln, show (1 : UInt64).toNat = 1 from rfl]
           exact Nat.mod_eq_of_lt (by omega)
-        have hus : st.ln.toUSize.toNat = ls.lens.length := by rw [word_toUSize (by omega), hln]
-        have hbyte : r.a.toUInt8.toNat = r.a.toNat := by
-          rw [UInt64.toNat_toUInt8]
-          omega
-        have hnew : SymRel { clearLens st with
-            word := r.word, count := r.count, pos := pos, status := .next, lens := setLen st.lens st.ln r.a, ln := st.ln + 1
-            prevLen := if r.a = 0 then st.prevLen else r.a, repCount := 0, symSum := sum } size clc (applyCodeLength ls r.a.toNat r.b.toNat) := by
-          rw [happly]
-          exact {
-            table := hy.table
-            complete := hy.complete
-            symbols := hy.symbols
-            sz := by
-              show (setU st.lens _ _).size = size
-              rw [size_setU]
-              exact hy.sz
-            ln := by
-              show (st.ln + 1).toNat = _
-              rw [hln1]
-              simp
-            le := by
-              simp
-              omega
-            at_ := by
-              intro i hi
-              simp only [List.length_append, List.length_singleton] at hi
-              show _ = some ((setU st.lens st.ln.toUSize r.a.toUInt8).data[i]?.getD 0).toNat
-              by_cases he : i = ls.lens.length
-              · subst he
-                have := setU_get_same (t := st.lens) (i := st.ln.toUSize) (v := r.a.toUInt8) (by rw [hus, hy.sz]; omega)
-                rw [hus] at this
-                rw [this, hbyte]
-                simp
-              · have hne : i < ls.lens.length := by omega
-                rw [List.getElem?_append_left hne, hy.at_ i hne, setU_get_ne (by rw [hus]; exact he)]
-            zero := by
-              intro i hi
-              simp only [List.length_append, List.length_singleton] at hi
-              show ((setU st.lens st.ln.toUSize r.a.toUInt8).data[i]?.getD 0) = 0
-              rw [setU_get_ne (by rw [hus]; omega)]
-              exact hy.zero i (by omega)
-            small := by
-              intro l hl
-              rcases List.mem_append.mp hl with h | h
-              · exact hy.small l h
-              · rw [List.mem_singleton.mp h]
-                omega
-            prev := by
-              show (if r.a = 0 then st.prevLen else r.a).toNat = _
-              by_cases hz : r.a = 0
-              · have hz' : r.a.toNat = 0 := by rw [hz]; rfl
-                rw [ite_eq_left hz, ite_eq_left hz']
-                exact hy.prev
-              · have hz' : ¬ r.a.toNat = 0 := fun e => hz (UInt64.toNat_inj.mp e)
-                rw [ite_eq_right hz, ite_eq_right hz']
-            prevOk := by
-              have := hy.prevOk
-              show 1 ≤ (if r.a.toNat = 0 then ls.prev else r.a.toNat) ∧ (if r.a.toNat = 0 then ls.prev else r.a.toNat) ≤ 15
-              split <;> omega
-            rep := rfl
-            sumOk := hsumU
-            sumLe := Nat.le_of_not_lt hbig' }
         have hgrow : size + 1 - (applyCodeLength ls r.a.toNat r.b.toNat).lens.length < size + 1 - ls.lens.length := by
           rw [happly]
           simp only [List.length_append, List.length_singleton]
           omega
-        refine HStepOk.ofNext (g' := g) (p' := .syms o size clc (applyCodeLength ls r.a.toNat r.b.toNat))
-          (hd := Or.inr ⟨rfl, Or.inr ⟨rfl, hgrow⟩⟩)
-          (hm := HMove.ofD rfl (fun h => ⟨h.fill, Nat.le_trans (Nat.le_of_eq hnew.sz) hs3, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase, h.work⟩) (Nat.le_refl _)) rfl
-          ⟨hw2, hu, ht, hs, ho, hnew⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
-        · rw [avail_mk, hN]
-          simp only [hlt1, hbig2, ↓reduceIte]
-          rfl
-        · rw [avail_mk, hStep_syms_step _ hlenLt hsumNe, readIn_some ((hval hsr).2 _)]
-          simp only [hlt1, hbig2, ↓reduceIte]
-          rfl
-    · rw [ite_eq_right hlow]
+        have hsmallP : ∀ l ∈ ls.lens ++ [r.a.toNat], l ≤ 15 := by
+          intro l hl
+          rcases List.mem_append.mp hl with h | h
+          · exact hy.small l h
+          · rw [List.mem_singleton.mp h]
+            omega
+        by_cases hz : r.a = 0
+        · rw [ite_eq_left hz]
+          have hz' : r.a.toNat = 0 := by rw [hz]; rfl
+          have hnew : SymRel { st with
+              word := r.word, count := r.count, pos := pos, status := .next, ln := st.ln + 1, repCount := 0, symSum := sum }
+              size clc (applyCodeLength ls r.a.toNat r.b.toNat) := by
+            rw [happly]
+            exact {
+              table := hy.table
+              complete := hy.complete
+              symbols := hy.symbols
+              ln := by
+                show (st.ln + 1).toNat = _
+                rw [hln1]
+                simp
+              le := by
+                simp
+                omega
+              lists := by
+                show ListsIs st.head st.next (ls.lens ++ [r.a.toNat])
+                rw [hz']
+                exact hy.lists.zero
+              small := hsmallP
+              prev := by
+                show st.prevLen.toNat = (if r.a.toNat = 0 then ls.prev else r.a.toNat)
+                rw [ite_eq_left hz']
+                exact hy.prev
+              prevOk := by
+                have := hy.prevOk
+                show 1 ≤ (if r.a.toNat = 0 then ls.prev else r.a.toNat) ∧ (if r.a.toNat = 0 then ls.prev else r.a.toNat) ≤ 15
+                split <;> omega
+              rep := rfl
+              sumOk := hsumU
+              sumLe := Nat.le_of_not_lt hbig' }
+          refine HStepOk.ofNext (g' := g) (p' := .syms o size clc (applyCodeLength ls r.a.toNat r.b.toNat))
+            (hd := Or.inr ⟨rfl, Or.inr ⟨rfl, hgrow⟩⟩)
+            (hm := HMove.ofD rfl (fun h => ⟨h.fill, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase,
+              h.work⟩) (Nat.le_refl _)) rfl
+            ⟨hw2, hu, ht, hs, ho, hnew⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
+          · rw [avail_mk, hN]
+            simp only [hlt1, hbig2, ↓reduceIte]
+            rfl
+          · rw [avail_mk, hStep_syms_step _ hlenLt hsumNe, readIn_some ((hval hsr).2 _)]
+            simp only [hlt1, hbig2, ↓reduceIte]
+            rfl
+        · rw [ite_eq_right hz]
+          have hz' : ¬ r.a.toNat = 0 := fun e => hz (UInt64.toNat_inj.mp e)
+          have hold : (getHead st.head st.headSz r.a hlow').toNat = u16At st.head r.a.toNat := getHead_toNat
+          have hnew : SymRel (pushSym st r pos r.a sum hlow' (syms_lnLt hH hT h1) (getHead st.head st.headSz r.a hlow')) size clc
+              (applyCodeLength ls r.a.toNat r.b.toNat) := by
+            rw [happly]
+            exact {
+              table := hy.table
+              complete := hy.complete
+              symbols := hy.symbols
+              ln := by
+                show (st.ln + 1).toNat = _
+                rw [hln1]
+                simp
+              le := by
+                simp
+                omega
+              lists := ListsIs.run (L := ls.lens) (l := r.a.toNat) (n := 1) hy.lists
+                (head' := setHead st.head st.headSz r.a (st.ln + 1) hlow')
+                (next' := setNext st.next st.nextSz st.ln (getHead st.head st.headSz r.a hlow') (syms_lnLt hH hT h1))
+                (by rw [setNext_size]; omega)
+                (fun j hj => by rw [u16At_setNext, ite_eq_right (by omega)])
+                (fun j hj1 hj2 => by
+                  rw [u16At_setNext, ite_eq_left (show j = st.ln.toNat by omega), ite_eq_left (show j = ls.lens.length by omega), hold,
+                    Nat.mod_eq_of_lt (u16At_lt _ _)])
+                (fun j hj => by rw [u16At_setHead, ite_eq_right hj])
+                (by
+                  rw [u16At_setHead, ite_eq_left rfl, ite_eq_right (by decide), hln1]
+                  exact Nat.mod_eq_of_lt (by omega))
+                (by rw [setHead_size]; omega)
+              small := hsmallP
+              prev := by
+                show r.a.toNat = (if r.a.toNat = 0 then ls.prev else r.a.toNat)
+                rw [ite_eq_right hz']
+              prevOk := by
+                show 1 ≤ (if r.a.toNat = 0 then ls.prev else r.a.toNat) ∧ (if r.a.toNat = 0 then ls.prev else r.a.toNat) ≤ 15
+                rw [ite_eq_right hz']
+                omega
+              rep := rfl
+              sumOk := hsumU
+              sumLe := Nat.le_of_not_lt hbig' }
+          refine HStepOk.ofNext (g' := g) (p' := .syms o size clc (applyCodeLength ls r.a.toNat r.b.toNat))
+            (hd := Or.inr ⟨rfl, Or.inr ⟨rfl, hgrow⟩⟩)
+            (hm := HMove.ofD rfl (fun h => ⟨h.fill, ⟨Nat.le_of_eq (Hd.headSz _), Nat.le_of_eq (Hd.nextSz _)⟩, h.clLens, h.clt, h.mapT, h.modes,
+              h.lMap, h.dMap, h.litBase, h.icBase, h.dBase, h.work⟩) (Nat.le_refl _)) rfl
+            ⟨hw2, hu, ht, hs, ho, hnew⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
+          · rw [avail_mk, hN]
+            simp only [hlt1, hbig2, ↓reduceIte]
+            rfl
+          · rw [avail_mk, hStep_syms_step _ hlenLt hsumNe, readIn_some ((hval hsr).2 _)]
+            simp only [hlt1, hbig2, ↓reduceIte]
+            rfl
+    · rw [dite_eq_right hlow]
       have hhigh : ¬ r.a.toNat < 16 := fun h => hlow (UInt64.lt_iff_toNat_lt.mpr h)
       have hprevOk := hy.prevOk
       generalize hL : (if r.a.toNat = 16 then ls.prev else 0) = Ln
@@ -596,6 +662,8 @@ theorem stepHSyms_ok {o : Owner} {size : Nat} {clc : PrefixCode} {ls : LengthSta
       generalize (if st.repCount ≠ 0 ∧ st.repSym = r.a then st.repCount else 0) = old at hOu hNU ⊢
       generalize (if r.a = 16 then (4 : UInt64) else 8) = mult at hNU ⊢
       generalize (if old = 0 then 3 + r.b else mult * (old - 2) + (3 + r.b)) = new at hNU ⊢
+      unfold symsRep
+      dsimp only
       have hdU : (new - old).toNat = Nn - On := by
         rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by omega)), hNU, hOu]
       have hln2 : (st.ln + (new - old)).toNat = ls.lens.length + (Nn - On) := by
@@ -603,7 +671,7 @@ theorem stepHSyms_ok {o : Owner} {size : Nat} {clc : PrefixCode} {ls : LengthSta
         exact Nat.mod_eq_of_lt (by omega)
       have hlen2 : (ls.lens ++ List.replicate (Nn - On) Ln).length = ls.lens.length + (Nn - On) := by simp
       by_cases hover : st.size < st.ln + (new - old)
-      · rw [ite_eq_left hover]
+      · rw [dite_eq_left hover]
         have hover' : size < (applyCodeLength ls r.a.toNat r.b.toNat).lens.length := by
           rw [happly]
           show size < (ls.lens ++ List.replicate (Nn - On) Ln).length
@@ -612,7 +680,7 @@ theorem stepHSyms_ok {o : Owner} {size : Nat} {clc : PrefixCode} {ls : LengthSta
         refine HStepOk.ofBad rfl (fun F => ?_)
         rw [avail_mk, hN]
         simp only [hover', ↓reduceIte]
-      rw [ite_eq_right hover]
+      rw [dite_eq_right hover]
       have hover' : ¬ size < (applyCodeLength ls r.a.toNat r.b.toNat).lens.length := by
         rw [happly]
         show ¬ size < (ls.lens ++ List.replicate (Nn - On) Ln).length
@@ -669,75 +737,114 @@ theorem stepHSyms_ok {o : Owner} {size : Nat} {clc : PrefixCode} {ls : LengthSta
         have hbig' : ¬ 32768 < lengthSum (applyCodeLength ls r.a.toNat r.b.toNat).lens := by
           rw [happly]
           exact hbigN
-        obtain ⟨fz, fg⟩ := fillLens_spec lenU.toUInt8 (Nn - On) st.lens st.ln (new - old) hdU (by rw [hln]; omega) (by rw [hln, hy.sz]; exact hroom)
-        have hbyte : lenU.toUInt8.toNat = Ln := by
-          rw [UInt64.toNat_toUInt8, hLU]
-          omega
-        have hnew : SymRel { clearLens st with
-            word := r.word, count := r.count, pos := pos, status := .next, lens := fillLens st.lens st.ln (new - old) lenU.toUInt8, ln := st.ln + (new - old)
-            repSym := r.a, repCount := new, symSum := sum } size clc (applyCodeLength ls r.a.toNat r.b.toNat) := by
-          rw [happly]
-          exact {
-            table := hy.table
-            complete := hy.complete
-            symbols := hy.symbols
-            sz := by
-              show (fillLens st.lens st.ln (new - old) lenU.toUInt8).size = size
-              rw [fz]
-              exact hy.sz
-            ln := by
-              show (st.ln + (new - old)).toNat = _
-              rw [hln2, hlen2]
-            le := by
-              show (ls.lens ++ List.replicate (Nn - On) Ln).length ≤ size
-              rw [hlen2]
-              exact hroom
-            at_ := by
-              intro i hi
-              show (ls.lens ++ List.replicate (Nn - On) Ln)[i]? = some ((fillLens st.lens st.ln (new - old) lenU.toUInt8).data[i]?.getD 0).toNat
-              have hi' : i < ls.lens.length + (Nn - On) := by
-                have h : i < (ls.lens ++ List.replicate (Nn - On) Ln).length := hi
-                rwa [hlen2] at h
-              rw [fg i, hln]
-              by_cases hA : i < ls.lens.length
-              · rw [List.getElem?_append_left hA, ite_eq_right (by omega), hy.at_ i hA]
-              · rw [List.getElem?_append_right (by omega), List.getElem?_replicate, ite_eq_left (by omega), ite_eq_left (by omega), hbyte]
-            zero := by
-              intro i hi
-              have hi' : ls.lens.length + (Nn - On) ≤ i := by
-                have h : (ls.lens ++ List.replicate (Nn - On) Ln).length ≤ i := hi
-                rwa [hlen2] at h
-              show (fillLens st.lens st.ln (new - old) lenU.toUInt8).data[i]?.getD 0 = 0
-              rw [fg i, hln, ite_eq_right (by omega)]
-              exact hy.zero i (by omega)
-            small := by
-              intro l hl
-              rcases List.mem_append.mp hl with h | h
-              · exact hy.small l h
-              · rw [(List.mem_replicate.mp h).2]
-                exact hLle
-            prev := hy.prev
-            prevOk := hy.prevOk
-            rep := ⟨rfl, hNU, hgrow.2.2, by
-              show Nn ≤ (ls.lens ++ List.replicate (Nn - On) Ln).length
-              rw [hlen2]
-              omega⟩
-            sumOk := hsumU
-            sumLe := Nat.le_of_not_lt hbigN }
         have hshorter : size + 1 - (applyCodeLength ls r.a.toNat r.b.toNat).lens.length < size + 1 - ls.lens.length := by
           rw [happly]
           simp only [List.length_append, List.length_replicate]
           omega
-        refine HStepOk.ofNext (g' := g) (p' := .syms o size clc (applyCodeLength ls r.a.toNat r.b.toNat))
-          (hd := Or.inr ⟨rfl, Or.inr ⟨rfl, hshorter⟩⟩)
-          (hm := HMove.ofD rfl (fun h => ⟨h.fill, Nat.le_trans (Nat.le_of_eq hnew.sz) hs3, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase, h.work⟩) (Nat.le_refl _)) rfl
-          ⟨hw2, hu, ht, hs, ho, hnew⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
-        · rw [avail_mk, hN]
-          simp only [hover', hbig', ↓reduceIte]
-          rfl
-        · rw [avail_mk, hStep_syms_step _ hlenLt hsumNe, readIn_some ((hval hsr).2 _)]
-          simp only [hover', hbig', ↓reduceIte]
-          rfl
+        have hsmallR : ∀ l ∈ ls.lens ++ List.replicate (Nn - On) Ln, l ≤ 15 := by
+          intro l hl
+          rcases List.mem_append.mp hl with h | h
+          · exact hy.small l h
+          · rw [(List.mem_replicate.mp h).2]
+            exact hLle
+        have hrep : Nn ≤ (ls.lens ++ List.replicate (Nn - On) Ln).length := by
+          rw [hlen2]
+          omega
+        by_cases hz : lenU = 0
+        · rw [ite_eq_left hz]
+          have hz' : Ln = 0 := by rw [← hLU, hz]; rfl
+          have hnew : SymRel { st with
+              word := r.word, count := r.count, pos := pos, status := .next, ln := st.ln + (new - old), repSym := r.a
+              repCount := new, symSum := sum } size clc (applyCodeLength ls r.a.toNat r.b.toNat) := by
+            rw [happly]
+            exact {
+              table := hy.table
+              complete := hy.complete
+              symbols := hy.symbols
+              ln := by
+                show (st.ln + (new - old)).toNat = _
+                rw [hln2, hlen2]
+              le := by
+                show (ls.lens ++ List.replicate (Nn - On) Ln).length ≤ size
+                rw [hlen2]
+                exact hroom
+              lists := by
+                show ListsIs st.head st.next (ls.lens ++ List.replicate (Nn - On) Ln)
+                rw [hz']
+                exact hy.lists.zeros _
+              small := hsmallR
+              prev := hy.prev
+              prevOk := hy.prevOk
+              rep := ⟨rfl, hNU, hgrow.2.2, hrep⟩
+              sumOk := hsumU
+              sumLe := Nat.le_of_not_lt hbigN }
+          refine HStepOk.ofNext (g' := g) (p' := .syms o size clc (applyCodeLength ls r.a.toNat r.b.toNat))
+            (hd := Or.inr ⟨rfl, Or.inr ⟨rfl, hshorter⟩⟩)
+            (hm := HMove.ofD rfl (fun h => ⟨h.fill, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase,
+              h.work⟩) (Nat.le_refl _)) rfl
+            ⟨hw2, hu, ht, hs, ho, hnew⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
+          · rw [avail_mk, hN]
+            simp only [hover', hbig', ↓reduceIte]
+            rfl
+          · rw [avail_mk, hStep_syms_step _ hlenLt hsumNe, readIn_some ((hval hsr).2 _)]
+            simp only [hover', hbig', ↓reduceIte]
+            rfl
+        · rw [ite_eq_right hz]
+          have hz' : ¬ Ln = 0 := fun e => hz (UInt64.toNat_inj.mp (by rw [hLU, e]; rfl))
+          have hLU' : (if r.a = 16 then st.prevLen else 0).toNat = Ln := by rw [hlenU]; exact hLU
+          have hl1 : (st.ln + 1).toNat = ls.lens.length + 1 := by rw [u64_succ (by omega), hln]
+          have hold : (getHead st.head st.headSz (if r.a = 16 then st.prevLen else 0) (syms_lenLt hH hT r.a)).toNat =
+              u16At st.head Ln := by rw [getHead_toNat, hLU']
+          have hnew : SymRel (pushRun st r pos hH hT (st.ln + (new - old)) new sum (syms_lnLt hH hT h1) (syms_eLe hH hT hover)) size clc
+              (applyCodeLength ls r.a.toNat r.b.toNat) := by
+            rw [happly]
+            exact {
+              table := hy.table
+              complete := hy.complete
+              symbols := hy.symbols
+              ln := by
+                show (st.ln + (new - old)).toNat = _
+                rw [hln2, hlen2]
+              le := by
+                show (ls.lens ++ List.replicate (Nn - On) Ln).length ≤ size
+                rw [hlen2]
+                exact hroom
+              lists := ListsIs.run (L := ls.lens) (l := Ln) (n := Nn - On) hy.lists
+                (head' := setHead st.head st.headSz (if r.a = 16 then st.prevLen else 0) (st.ln + (new - old)) (syms_lenLt hH hT r.a))
+                (next' := linkRun (setNext st.next st.nextSz st.ln
+                  (getHead st.head st.headSz (if r.a = 16 then st.prevLen else 0) (syms_lenLt hH hT r.a)) (syms_lnLt hH hT h1))
+                  setNext_size (st.ln + 1) (st.ln + (new - old)) (syms_eLe hH hT hover))
+                (by rw [linkRun_size]; omega)
+                (fun j hj => by
+                  rw [(linkRun_spec _ _ _ _ rfl).2 j, hl1, ite_eq_right (by omega), u16At_setNext, ite_eq_right (by omega)])
+                (fun j hj1 hj2 => by
+                  rw [(linkRun_spec _ _ _ _ rfl).2 j, hl1, hln2]
+                  by_cases hj : j = ls.lens.length
+                  · rw [ite_eq_right (by omega), u16At_setNext, ite_eq_left (show j = st.ln.toNat by omega), ite_eq_left hj, hold,
+                      Nat.mod_eq_of_lt (u16At_lt _ _)]
+                  · rw [ite_eq_left (by omega), ite_eq_right hj])
+                (fun j hj => by rw [u16At_setHead, ite_eq_right (by rw [hLU']; exact hj)])
+                (by
+                  rw [u16At_setHead, ite_eq_left hLU'.symm, ite_eq_right (by omega), hln2]
+                  exact Nat.mod_eq_of_lt (by omega))
+                (by rw [setHead_size]; omega)
+              small := hsmallR
+              prev := hy.prev
+              prevOk := hy.prevOk
+              rep := ⟨rfl, hNU, hgrow.2.2, hrep⟩
+              sumOk := hsumU
+              sumLe := Nat.le_of_not_lt hbigN }
+          refine HStepOk.ofNext (g' := g) (p' := .syms o size clc (applyCodeLength ls r.a.toNat r.b.toNat))
+            (hd := Or.inr ⟨rfl, Or.inr ⟨rfl, hshorter⟩⟩)
+            (hm := HMove.ofD rfl (fun h => ⟨h.fill, ⟨Nat.le_of_eq (Hd.headSz _), Nat.le_of_eq (Hd.nextSz _)⟩, h.clLens, h.clt, h.mapT,
+              h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase, h.work⟩) (Nat.le_refl _)) rfl
+            ⟨hw2, hu, ht, hs, ho, hnew⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
+          · rw [avail_mk, hN]
+            simp only [hover', hbig', ↓reduceIte]
+            rfl
+          · rw [avail_mk, hStep_syms_step _ hlenLt hsumNe, readIn_some ((hval hsr).2 _)]
+            simp only [hover', hbig', ↓reduceIte]
+            rfl
 
 end
 

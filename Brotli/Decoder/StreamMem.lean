@@ -16,7 +16,7 @@ open Brotli.Spec Brotli.Properties
 
 /-- What a state holds besides its window and the groups' tables: the arena's reservation for the categories' codes, the
 bounds `HSize` and `HSmall` give, 768 bytes of block type flags, 38 bytes of a dictionary word, and its fields. -/
-def fixedCost : Nat := 94160
+def fixedCost : Nat := 94896
 
 /-- What a state's fields cost. -/
 def fieldBytes : Nat := 1024
@@ -239,7 +239,7 @@ theorem demand_ceiling : DemandCeiling demand (fixedCost + 16 + resMax) := by
 def Done.holds (d : Done) : Nat := d.arenaCap.toNat + d.modes.size + d.lMap.size + d.dMap.size + d.litBase.size + d.icBase.size + d.dBase.size
 
 /-- The bytes a header's reading holds. -/
-def Hd.holds (h : Hd) : Nat := h.d.holds + h.fill.size + h.lens.size + h.clLens.size + h.clt.t.size + h.mapT.t.size +
+def Hd.holds (h : Hd) : Nat := h.d.holds + h.fill.size + h.head.size + h.next.size + h.clLens.size + h.clt.t.size + h.mapT.t.size +
   h.xf.size + h.mtf.size + h.seenR.size + h.seenX.size
 
 /-- The bytes a meta-block's fast header holds: its arena's reservation, and its arrays. -/
@@ -508,7 +508,7 @@ theorem hsmall_none : HSmall Hdr.none := ⟨Nat.zero_le _, Nat.zero_le _, Nat.ze
 /-- `Hd.none` holds only small tables. -/
 theorem hsize_none : HSize Hd.none where
   fill := Nat.zero_le _
-  lens := Nat.zero_le _
+  lens := ⟨Nat.le_of_eq Hd.none.headSz, Nat.le_of_eq Hd.none.nextSz⟩
   clLens := Nat.zero_le _
   clt := by
     show (zeroBytes 512).size ≤ 788
@@ -714,7 +714,7 @@ structure MetaFacts (a : ByteArray) (stop : USize) (D : Dec) (pos : USize) (r : 
 /-- The header machine's first state holds only small tables. -/
 theorem hsize_start (word count limit : UInt64) : HSize (hdStart word count limit) where
   fill := Nat.zero_le _
-  lens := Nat.zero_le _
+  lens := ⟨Nat.le_of_eq (hdStart word count limit).headSz, Nat.le_of_eq (hdStart word count limit).nextSz⟩
   clLens := Nat.zero_le _
   clt := hsize_none.clt
   mapT := hsize_none.mapT

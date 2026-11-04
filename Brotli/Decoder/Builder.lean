@@ -866,6 +866,164 @@ def ListsIs (head next : ByteArray) (lens : List Nat) : Prop :=
 
 theorem slotNum_eq_u16At (t : ByteArray) (i : Nat) : slotNum t i = u16At t i := rfl
 
+/-- A 16-bit value written with `putSlot` reads back, cut to 16 bits, and the others stay. -/
+theorem u16At_putSlot' {t : ByteArray} {pos v : UInt64} {h : 2 * pos.toNat + 1 < t.size} {h32 : t.size < 2 ^ 32} (j : Nat) :
+    u16At (putSlot t pos v h h32) j = if j = pos.toNat then v.toNat % 65536 else u16At t j := by
+  have e0 := slot2 h32 h (j := 0) (by decide)
+  have e1 := slot2 h32 h (j := 1) (by decide)
+  have h0' : (pos * 2 + 0).toUSize.toNat < t.size := by rw [e0]; show 2 * pos.toNat + 0 < _; omega
+  have h1' : (pos * 2 + 1).toUSize.toNat < (t.uset (pos * 2 + 0).toUSize v.toUInt8 h0').size := by
+    rw [size_uset', e1]
+    show 2 * pos.toNat + 1 < _
+    omega
+  unfold putSlot u16At
+  rw [show (0 : UInt64).toNat = 0 from rfl] at e0
+  rw [show (1 : UInt64).toNat = 1 from rfl] at e1
+  by_cases hj : j = pos.toNat
+  · subst hj
+    rw [ite_eq_left rfl]
+    have g1 := uset_get_same (t := t.uset (pos * 2 + 0).toUSize v.toUInt8 h0') (v := (v >>> 8).toUInt8) h1'
+    rw [e1] at g1
+    have g0 : ((t.uset (pos * 2 + 0).toUSize v.toUInt8 h0').uset (pos * 2 + 1).toUSize (v >>> 8).toUInt8 h1').data[2 * pos.toNat]?.getD 0 =
+        v.toUInt8 := by
+      rw [uset_get_ne h1' (by rw [e1]; omega)]
+      have := uset_get_same (t := t) (v := v.toUInt8) h0'
+      rw [e0, Nat.add_zero] at this
+      rw [Nat.add_zero] at e0
+      exact this
+    rw [g0, g1]
+    have e2 : (v >>> 8).toUInt8.toNat = v.toNat / 256 % 256 := by
+      rw [UInt64.toNat_toUInt8, u64_shr (by decide)]
+      rfl
+    rw [e2, UInt64.toNat_toUInt8]
+    omega
+  · rw [ite_eq_right hj, uset_get_ne h1' (by rw [e1]; omega), uset_get_ne h1' (by rw [e1]; omega),
+      uset_get_ne h0' (by rw [e0]; omega), uset_get_ne h0' (by rw [e0]; omega)]
+/-- A chain stays when `next` keeps its links at the chain's symbols. -/
+theorem ChainIs.frame' {next next' : ByteArray} :
+    ∀ {v : Nat} {ss : List Nat}, ChainIs next v ss → (∀ s ∈ ss, u16At next' s = u16At next s ∧ 2 * s + 1 < next'.size) →
+    ChainIs next' v ss
+  | _, [], h, _ => h
+  | _, s :: ss, ⟨h1, _, h3⟩, hn => by
+    obtain ⟨e, hs⟩ := hn s List.mem_cons_self
+    refine ⟨h1, hs, ?_⟩
+    rw [e]
+    exact ChainIs.frame' h3 fun s' hs' => hn s' (List.mem_cons_of_mem _ hs')
+
+/-- The symbols of a length, with one more length after them. -/
+theorem symsOf_push (L : List Nat) (x l : Nat) :
+    symsOf (L ++ [x]) l = symsOf L l ++ (if x = l then [L.length] else []) := by
+  unfold symsOf
+  rw [List.length_append, List.length_singleton, List.range_succ, List.filter_append]
+  congr 1
+  · apply List.filter_congr
+    intro s hs
+    rw [List.getElem?_append_left (List.mem_range.mp hs)]
+  · by_cases he : x = l <;> simp [he]
+
+/-- The symbols of a length, with a run of `n` more of one length after them. -/
+theorem symsOf_run (L : List Nat) (x l : Nat) : ∀ n,
+    symsOf (L ++ List.replicate n x) l = symsOf L l ++ (if x = l then List.range' L.length n else [])
+  | 0 => by simp
+  | n + 1 => by
+    rw [List.replicate_succ', ← List.append_assoc, symsOf_push, symsOf_run L x l n, List.length_append, List.length_replicate]
+    by_cases he : x = l
+    · simp only [he, ↓reduceIte, List.append_assoc]
+      rw [List.range'_1_concat]
+    · simp [he]
+
+/-- With every length's list empty, the lists are those of no symbols. -/
+theorem ListsIs.empty {head next : ByteArray} (hs : 32 ≤ head.size) (hz : ∀ l, 1 ≤ l → l ≤ 15 → u16At head l = 0) :
+    ListsIs head next [] := by
+  refine ⟨hs, fun l h1 h2 => ?_⟩
+  show ChainIs next (u16At head l) (symsOf [] l).reverse
+  have : symsOf [] l = [] := rfl
+  rw [this, hz l h1 h2]
+  rfl
+
+/-- One more symbol of length 0: the lists stay. -/
+theorem ListsIs.zero {head next : ByteArray} {L : List Nat} (h : ListsIs head next L) : ListsIs head next (L ++ [0]) := by
+  refine ⟨h.1, fun l h1 h2 => ?_⟩
+  rw [symsOf_push, ite_eq_right (by omega), List.append_nil]
+  exact h.2 l h1 h2
+
+/-- One more symbol of length 0, as many times as wanted. -/
+theorem ListsIs.zeros {head next : ByteArray} {L : List Nat} (h : ListsIs head next L) (n : Nat) :
+    ListsIs head next (L ++ List.replicate n 0) := by
+  refine ⟨h.1, fun l h1 h2 => ?_⟩
+  rw [symsOf_run, ite_eq_right (by omega), List.append_nil]
+  exact h.2 l h1 h2
+
+/-- A run of `n` symbols of length `l` after the others: in front of length `l`'s list, each linked to the one before. -/
+theorem ListsIs.run {head next head' next' : ByteArray} {L : List Nat} {l n : Nat} (h : ListsIs head next L)
+    (hroom : 2 * (L.length + n) ≤ next'.size)
+    (hn : ∀ j, j < L.length → u16At next' j = u16At next j)
+    (hrun : ∀ j, L.length ≤ j → j < L.length + n → u16At next' j = if j = L.length then u16At head l else j)
+    (hh : ∀ j, j ≠ l → u16At head' j = u16At head j) (hhl : u16At head' l = if n = 0 then u16At head l else L.length + n)
+    (hhs : 32 ≤ head'.size) : ListsIs head' next' (L ++ List.replicate n l) := by
+  have hsym : ∀ l', ∀ s ∈ symsOf L l', s < L.length := fun l' s hs =>
+    (List.getElem?_eq_some_iff.mp (mem_symsOf.mp hs)).1
+  have hold : ∀ l', 1 ≤ l' → l' ≤ 15 → ChainIs next' (u16At head l') (symsOf L l').reverse := by
+    intro l' h1 h2
+    refine ChainIs.frame' (h.2 l' h1 h2) fun s hs => ?_
+    have hs' := hsym l' s (List.mem_reverse.mp hs)
+    exact ⟨hn s hs', by omega⟩
+  refine ⟨hhs, fun l' h1 h2 => ?_⟩
+  rw [symsOf_run]
+  by_cases he : l = l'
+  · subst he
+    rw [ite_eq_left rfl, List.reverse_append, hhl]
+    -- The run, from its last symbol down to its first, then the old list.
+    have key : ∀ m, m ≤ n → ChainIs next' (if m = 0 then u16At head l else L.length + m)
+        ((List.range' L.length m).reverse ++ (symsOf L l).reverse) := by
+      intro m
+      induction m with
+      | zero => intro _; simpa using hold l h1 h2
+      | succ m ih =>
+        intro hm
+        rw [ite_eq_right (by omega), List.range'_1_concat, List.reverse_append, List.reverse_singleton,
+          List.singleton_append, List.cons_append]
+        refine ⟨by omega, by omega, ?_⟩
+        rw [hrun _ (by omega) (by omega)]
+        have := ih (by omega)
+        by_cases hm0 : m = 0
+        · subst hm0
+          simpa using this
+        · rw [ite_eq_right (by omega)]
+          rw [ite_eq_right hm0] at this
+          exact this
+    exact key n (Nat.le_refl _)
+  · rw [ite_eq_right he, List.append_nil, hh l' (Ne.symm he)]
+    exact hold l' h1 h2
+
+/-- Every length's list emptied: 32 zero bytes over `head`, written in place. -/
+@[inline] def resetHead (head : ByteArray) : ByteArray := zeroBlock.copySlice 0 head 0 32 true
+
+theorem resetHead_data {head : ByteArray} (h : head.size = 32) : (resetHead head).data = Array.replicate 32 0 := by
+  have hs : head.data.size = 32 := h
+  simp only [resetHead, ByteArray.copySlice, zeroBlock]
+  simp [hs, Array.extract_replicate]
+
+theorem resetHead_size {head : ByteArray} (h : head.size = 32) : (resetHead head).size = 32 := by
+  show (resetHead head).data.size = 32
+  rw [resetHead_data h]
+  simp
+
+theorem resetHead_lists {head : ByteArray} (h : head.size = 32) (next : ByteArray) : ListsIs (resetHead head) next [] := by
+  refine ListsIs.empty (by rw [resetHead_size h]; exact Nat.le_refl _) fun l _ _ => ?_
+  unfold u16At
+  rw [resetHead_data h, Array.getElem?_replicate, Array.getElem?_replicate]
+  split <;> split <;> rfl
+
+/-- The lists' arrays a state holds while its own are taken out. -/
+def headNone : ByteArray := zeroBytes 32
+def nextNone : ByteArray := zeroBytes 1408
+
+theorem headNone_size : headNone.size = 32 := zeroBytes_size (by decide)
+theorem nextNone_size : nextNone.size = 1408 := zeroBytes_size (by decide)
+
+attribute [irreducible] headNone nextNone
+
 /-- The symbols of a length increase. -/
 theorem symsOf_lt {lens : List Nat} {l i j : Nat} (hij : i < j) (hj : j < (symsOf lens l).length) :
     (symsOf lens l)[i] < (symsOf lens l)[j] :=

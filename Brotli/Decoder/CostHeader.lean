@@ -81,15 +81,11 @@ theorem refillW_le {word count : UInt64} {a : ByteArray} {pos stop : USize} (hs 
 /-- The work of `tableDone`: the table built, and for a context map's code the map's zeros as read and as transformed, and
 the transform's first list and the flags, each a copy of 256 bytes. -/
 def tableDoneW (st : Hd) (single : Bool) : Nat :=
-  let n := st.size.toUSize
-  let lens := st.lens
-  if hn : n.toNat ≤ lens.size then
-    match st.role with
-    | .map =>
-      (if single then buildSingleW else buildLensW (ByteArray.emptyWithCapacity soloCap) lens n hn) +
-        zbW (mapSizeFast st) + zbW (mapSizeFast st) + 3 * zbW 256
-    | _ => (if single then buildSingleW else buildLensW st.d.arena lens n hn) + 1
-  else 1
+  match st.role with
+  | .map =>
+    (if single then buildSingleW else buildFastW (ByteArray.emptyWithCapacity soloCap) st.head st.next) +
+      zbW (mapSizeFast st) + zbW (mapSizeFast st) + 3 * zbW 256
+  | _ => (if single then buildSingleW else buildFastW st.d.arena st.head st.next) + 1
 
 /-- The work of `clTable`. -/
 def clTableW (st : Hd) : Nat :=
@@ -97,8 +93,8 @@ def clTableW (st : Hd) : Nat :=
   else if hn : (USize.ofNat 18).toNat ≤ st.clLens.size then buildLensW ByteArray.empty st.clLens (USize.ofNat 18) hn
   else 1
 
-/-- The work of `clFinish`: the code length code's table, with nothing checked, and the code's lengths' zeros. -/
-def clFinishW (st : Hd) : Nat := clTableW st + zbW st.size.toNat
+/-- The work of `clFinish`: the code length code's table, with nothing checked, and the lists' links emptied. -/
+def clFinishW (st : Hd) : Nat := clTableW st + zbW 32
 
 /-- The work of `mapFinish`: after the second map, the next group of codes' zeros and the arena's tables copied into its
 reservation. -/
@@ -158,9 +154,10 @@ def stepHCodeW (st : Hd) (pos : USize) : Nat :=
       let r := simpleFast size (alphabetBitsFast size) b1
       match r.status with
       | .ok =>
-        zbW size.toNat + 1 + tableDoneW { st with
-            word := r.word, count := r.count, pos := pos, status := .next
-            lens := writeSimple (zeroBytes size.toNat) r } (r.e == 0)
+        if r.e = 0 then 1 + tableDoneW { st with word := r.word, count := r.count, pos := pos, status := .next } true
+        else if hf : r.a.toNat < 704 ∧ r.b.toNat < 704 ∧ r.c.toNat < 704 ∧ r.d.toNat < 704 then
+          zbW 32 + 1 + tableDoneW (simpleLists st r pos hf) false
+        else 1
       | _ => 1
     else zbW 18 + 1
   else 1
@@ -206,7 +203,7 @@ def stepHSymsW (st : Hd) (pos : USize) : Nat :=
         else
           let len := if sym = 16 then st.prevLen else 0
           let sum := if len = 0 then st.symSum else st.symSum + delta * ((32768 : UInt64) >>> len)
-          if 32768 < sum then 1 else delta.toNat + 2
+          if 32768 < sum then 1 else if len = 0 then 1 else delta.toNat + 1
     | _ => 1
 
 /-- The work of `stepHFirst`: its read, with nothing checked. -/

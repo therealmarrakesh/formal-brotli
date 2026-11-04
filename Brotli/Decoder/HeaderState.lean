@@ -187,7 +187,10 @@ structure Hd where
   rlemax : UInt64
   /-- The array being filled for the modes, a context map or a group of codes' tables. -/
   fill : ByteArray
-  lens : ByteArray
+  /-- The 16-bit link to each length's last symbol so far, 0 for none (`ListsIs`). -/
+  head : ByteArray
+  /-- Each symbol's 16-bit link to the one before it of its length. -/
+  next : ByteArray
   ln : UInt64
   prevLen : UInt64
   repSym : UInt64
@@ -208,6 +211,8 @@ structure Hd where
   seenR : ByteArray
   /-- The values a context map has so far, transformed. -/
   seenX : ByteArray
+  headSz : head.size = 32
+  nextSz : next.size = 1408
 
 /-- A state as a step leaves it. -/
 @[inline] def markH (st : Hd) (pos : USize) (s : HStatus) : Hd := { st with pos := pos, status := s }
@@ -218,9 +223,6 @@ structure Hd where
 /-- Empties a state's context map arrays, so that each is held once while a step writes it. -/
 @[noinline] def clearMap (st : Hd) : Hd :=
   { st with fill := ByteArray.empty, xf := ByteArray.empty, mtf := ByteArray.empty, seenR := ByteArray.empty, seenX := ByteArray.empty }
-
-/-- Empties a state's code lengths, as `clearRing` does its window. -/
-@[noinline] def clearLens (st : Hd) : Hd := { st with lens := ByteArray.empty }
 
 /-- Empties a state's code length code lengths. -/
 @[noinline] def clearClLens (st : Hd) : Hd := { st with clLens := ByteArray.empty }
@@ -417,12 +419,10 @@ structure SymRel (st : Hd) (size : Nat) (clc : PrefixCode) (ls : LengthState) : 
   table : TableOk st.clt.t (USize.ofNat 0).toNat clc
   complete : Complete clc
   symbols : clc.Symbols 18
-  sz : st.lens.size = size
   ln : st.ln.toNat = ls.lens.length
   le : ls.lens.length ≤ size
-  /-- The lengths so far, with zeros after them. -/
-  at_ : ∀ i, i < ls.lens.length → ls.lens[i]? = some (st.lens.data[i]?.getD 0).toNat
-  zero : ∀ i, ls.lens.length ≤ i → st.lens.data[i]?.getD 0 = 0
+  /-- The lengths so far, as lists of each length's symbols. -/
+  lists : ListsIs st.head st.next ls.lens
   small : ∀ l ∈ ls.lens, l ≤ 15
   prev : st.prevLen.toNat = ls.prev
   prevOk : 1 ≤ ls.prev ∧ ls.prev ≤ 15
@@ -651,7 +651,8 @@ theorem tableBytes_le {c : PrefixCode} {size : Nat} (hC : Complete c) (hs : c.Sy
 /-- The bytes a header's reading holds outside the arena, with bounds set by the format. -/
 structure HSize (st : Hd) : Prop where
   fill : st.fill.size ≤ 16384
-  lens : st.lens.size ≤ 704
+  /-- The lists of each length's symbols. -/
+  lens : st.head.size ≤ 32 ∧ st.next.size ≤ 1408
   clLens : st.clLens.size ≤ 18
   /-- `treeMax 18`. -/
   clt : st.clt.t.size ≤ 788
@@ -768,7 +769,7 @@ theorem setBaseC_arrays (d : Done) (i : Cat) (v : USize) : SameArrays (d.setBase
 structure Arr (r st : Hd) : Prop where
   d : SameArrays r.d st.d
   fill : r.fill = st.fill
-  lens : r.lens = st.lens
+  lens : (r.head, r.next) = (st.head, st.next)
   clLens : r.clLens = st.clLens
   clt : r.clt = st.clt
   mapT : r.mapT = st.mapT
@@ -791,7 +792,7 @@ theorem HMove.ofArr {st r : Hd} {g g' : Gh} {p p' : HPhase} (h : Arr r st) (hc :
   grow := by rw [h.d.arena]; rfl
   size hs := {
     fill := by rw [h.fill]; exact hs.fill
-    lens := by rw [h.lens]; exact hs.lens
+    lens := by obtain ⟨e1, e2⟩ := Prod.mk.inj h.lens; rw [e1, e2]; exact hs.lens
     clLens := by rw [h.clLens]; exact hs.clLens
     clt := by rw [h.clt]; exact hs.clt
     mapT := by rw [h.mapT]; exact hs.mapT
@@ -899,7 +900,7 @@ theorem HStepOk.ofShort (hrel : HRel st g p) (hstop : pos = stop) (hn : hrest K 
 structure SameHeld (st1 st : Hd) : Prop where
   d : st1.d = st.d
   fill : st1.fill = st.fill
-  lens : st1.lens = st.lens
+  lens : (st1.head, st1.next) = (st.head, st.next)
   clLens : st1.clLens = st.clLens
   clt : st1.clt = st.clt
   mapT : st1.mapT = st.mapT
@@ -907,7 +908,7 @@ structure SameHeld (st1 st : Hd) : Prop where
 
 theorem HSize.same {st1 st : Hd} (h : HSize st) (he : SameHeld st1 st) : HSize st1 where
   fill := by rw [he.fill]; exact h.fill
-  lens := by rw [he.lens]; exact h.lens
+  lens := by obtain ⟨e1, e2⟩ := Prod.mk.inj he.lens; rw [e1, e2]; exact h.lens
   clLens := by rw [he.clLens]; exact h.clLens
   clt := by rw [he.clt]; exact h.clt
   mapT := by rw [he.mapT]; exact h.mapT

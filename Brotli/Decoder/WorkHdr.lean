@@ -18,18 +18,13 @@ open Brotli.Spec Brotli.Properties
 
 /-- A table's work, with its lengths complete: at most twelve for each symbol and 3735 more, and for a context map's code
 the map's zeros as read and as transformed, and its three lists of 256 bytes. -/
-theorem tableDoneW_le {st : Hd} {single : Bool} (hn : st.size.toNat ≤ 704) (hlens : st.size.toNat ≤ st.lens.size)
-    (hC : single = false → Complete (.canonical (lensOf st.lens st.size.toNat)))
+theorem tableDoneW_le {st : Hd} {single : Bool} {sym : UInt64} (ha : TableArgs st.size st.head st.next single sym)
     (har : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 4096 < 2 ^ 32) :
     tableDoneW st single ≤ 12 * st.size.toNat + 3735 +
       (if st.role = .map then 1028 + zbW (mapSizeFast st) + zbW (mapSizeFast st) else 0) := by
-  have hu : st.size.toUSize.toNat = st.size.toNat := word_toUSize (by omega)
   unfold tableDoneW
-  dsimp only
-  have hnle : st.size.toUSize.toNat ≤ st.lens.size := by rw [hu]; exact hlens
-  rw [dite_eq_left hnle]
   have hb : ∀ t : ByteArray, t.size % 2 = 0 ∧ t.size + 4096 < 2 ^ 32 →
-      (if single then buildSingleW else buildLensW t st.lens st.size.toUSize hnle) ≤ 12 * st.size.toNat + 3734 := by
+      (if single then buildSingleW else buildFastW t st.head st.next) ≤ 12 * st.size.toNat + 3734 := by
     intro t ht
     cases hs : single with
     | true =>
@@ -37,13 +32,14 @@ theorem tableDoneW_le {st : Hd} {single : Bool} (hn : st.size.toNat ≤ 704) (hl
       have := buildSingleW_le
       omega
     | false =>
-      show buildLensW t st.lens st.size.toUSize hnle ≤ _
-      have hC' := hC hs
-      rw [← hu] at hC'
-      have h1 := buildLensW_le (hn := hnle) (⟨hC', by rw [hu]; exact hn, ht.1, ht.2⟩ : LensArgs t st.lens st.size.toUSize)
-      have h2 := longCount_le (lensOf st.lens st.size.toUSize.toNat)
-      rw [lensOf_length hnle, hu] at h2
-      rw [hu] at h1
+      show buildFastW t st.head st.next ≤ _
+      obtain ⟨c, hf⟩ := ha
+      obtain ⟨L, hc, hlen, hl⟩ := hf.canon hs
+      have hC := hf.complete
+      rw [hc] at hC
+      have h704 := hf.small
+      have h1 := buildFastW_le (⟨hC, by omega, hl, hf.hsz, hf.nsz, ht.1, ht.2⟩ : BuildArgs t st.head st.next L)
+      have h2 := longCount_le L
       omega
   cases hr : st.role with
   | map =>
@@ -173,7 +169,7 @@ def hpot (g : Gh) : HPhase → Nat
 def hcost (g : Gh) : HPhase → HPhase → Nat
   | .cat _, _ => 11
   | .code _ _, .clens .. => 30
-  | .code o n, _ => 13 * n + 3747 + ownerX g o
+  | .code o n, _ => 12 * n + 3779 + ownerX g o
   | .clens _ n _ _ _, .syms .. => n + 4220
   | .clens .., _ => 11
   | .syms _ _ _ ls, .syms _ _ _ ls' => ls'.lens.length - ls.lens.length + 12
@@ -291,7 +287,7 @@ theorem hpot_owner_le (g : Gh) (o : Owner) (c : PrefixCode) : hpot g (ownerPlace
       | none => dsimp only; omega
 
 theorem hcost_code_owner (g : Gh) (o : Owner) (n : Nat) (c : PrefixCode) :
-    hcost g (.code o n) (ownerPlace g o c) = 13 * n + 3747 + ownerX g o := by
+    hcost g (.code o n) (ownerPlace g o c) = 12 * n + 3779 + ownerX g o := by
   cases o <;> rfl
 
 theorem hcost_syms_owner (g : Gh) (o : Owner) (n : Nat) (clc : PrefixCode) (ls : LengthState) (c : PrefixCode) :
@@ -597,7 +593,7 @@ theorem hcost_ge (g : Gh) (p p' : HPhase) : 11 ≤ hcost g p p' := by
   | _ => simp only [hcost]; omega
 
 theorem hcost_code (g : Gh) (o : Owner) (n : Nat) (p' : HPhase) :
-    hcost g (.code o n) p' = if ptag p' = .clens then 30 else 13 * n + 3747 + ownerX g o := by
+    hcost g (.code o n) p' = if ptag p' = .clens then 30 else 12 * n + 3779 + ownerX g o := by
   cases p' <;> rfl
 
 theorem hcost_clens (g : Gh) (o : Owner) (n : Nat) (order : List Nat) (acc : List (Nat × Nat)) (sum : Nat) (p' : HPhase) :
@@ -618,12 +614,11 @@ theorem growSingle_role (st : Hd) (sym : UInt64) (h : st.d.arena.size + 4096 < 2
   unfold growSingle clearDone
   rfl
 
-theorem growLens_role (st : Hd) (lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) (h : LensArgs st.d.arena lens n) :
-    (growLens st lens n hn h).role = st.role := by
+theorem growLens_role (st : Hd) (h : ∃ L, BuildArgs st.d.arena st.head st.next L) : (growLens st h).role = st.role := by
   unfold growLens clearDone
   rfl
 
-theorem tableDone_tag {st : Hd} {s : Bool} {y : UInt64} {ha : TableArgs st.size st.lens s y} {hi : InstallOk st.role st.idx st.fill}
+theorem tableDone_tag {st : Hd} {s : Bool} {y : UInt64} {ha : TableArgs st.size st.head st.next s y} {hi : InstallOk st.role st.idx st.fill}
     {har : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 4096 < 2 ^ 32} :
     (tableDone st s y ha hi har).tag ≠ .clens ∧ (tableDone st s y ha hi har).tag ≠ .syms := by
   have key : ∀ (x : Hd) (b : UInt64) (hx : InstallOk x.role x.idx x.fill), x.role ≠ .map →
@@ -898,13 +893,12 @@ theorem wCode {st : Hd} {g : Gh} {o : Owner} {n : Nat} {pos : USize} {g' : Gh} {
     rw [ite_eq_left h2]
     by_cases h1 : (BitBuffer.mk st.word st.count).peek 2 = 1
     · rw [ite_eq_left h1] at htag hn ⊢
-      have hcomp := simple_complete hw (by omega) h2 h1
       generalize hT' : simpleFastT st hH hT h2 = rr at htag hn
       obtain ⟨r, hra⟩ := rr
       have e : r = simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2) := by
         rw [← simpleFastT_val (h := hH) (ht := hT) (h2 := h2), hT']
       clear hT'
-      rw [← e] at hcomp ⊢
+      rw [← e]
       dsimp only at htag hn
       revert htag hn
       split
@@ -916,24 +910,29 @@ theorem wCode {st : Hd} {g : Gh} {o : Owner} {n : Nat} {pos : USize} {g' : Gh} {
         intro htag hn
         try rw [hsr]
         dsimp only
-        have hnc : ptag p' ≠ .clens := by rw [← htag]; exact tableDone_tag.1
-        have hsz : st.size.toNat ≤ (writeSimple (zeroBytes st.size.toNat) r).size := by
-          rw [writeSimple_size, zeroBytes_size (by omega)]
-          exact Nat.le_refl _
-        have hT := tableDoneW_le (st := { st with
-            word := r.word, count := r.count, pos := pos, status := .next
-            lens := writeSimple (zeroBytes st.size.toNat) r }) (single := r.e == 0) (by show st.size.toNat ≤ 704; omega) hsz
-          (fun hsg => hcomp hsr (fun e => by
-            have : r.e = 0 := UInt64.toNat_inj.mp e
-            rw [this] at hsg
-            cases hsg)) hu.arenaOk
-        have hz := zbW_le st.size.toNat
-        rw [hcost_code, ite_eq_right hnc]
-        have hT' : tableDoneW { st with
-            word := r.word, count := r.count, pos := pos, status := .next
-            lens := writeSimple (zeroBytes st.size.toNat) r } (r.e == 0) ≤
-            12 * st.size.toNat + 3735 + (if st.role = .map then 1028 + zbW (mapSizeFast st) + zbW (mapSizeFast st) else 0) := hT
-        omega
+        rw [hcost_code]
+        by_cases he : r.e = 0
+        · rw [dite_eq_left he] at htag
+          rw [ite_eq_left he]
+          have hnc : ptag p' ≠ .clens := by rw [← htag]; exact tableDone_tag.1
+          rw [ite_eq_right hnc]
+          have hT' : tableDoneW { st with word := r.word, count := r.count, pos := pos, status := .next } true ≤
+              12 * st.size.toNat + 3735 + (if st.role = .map then 1028 + zbW (mapSizeFast st) + zbW (mapSizeFast st) else 0) :=
+            tableDoneW_le (st := { st with word := r.word, count := r.count, pos := pos, status := .next })
+              ⟨_, (hra hsr).single he st.headSz st.nextSz⟩ hu.arenaOk
+          omega
+        · rw [dite_eq_right he] at htag
+          have hf : r.a.toNat < 704 ∧ r.b.toNat < 704 ∧ r.c.toNat < 704 ∧ r.d.toNat < 704 := (hra hsr).fits
+          rw [ite_eq_right he, dite_eq_left hf]
+          have hnc : ptag p' ≠ .clens := by
+            rw [← htag]
+            exact tableDone_tag.1
+          rw [ite_eq_right hnc]
+          have hT' : tableDoneW (simpleLists st r pos hf) false ≤
+              12 * st.size.toNat + 3735 + (if st.role = .map then 1028 + zbW (mapSizeFast st) + zbW (mapSizeFast st) else 0) :=
+            tableDoneW_le (st := simpleLists st r pos hf) (simpleLists_args (hra hsr) he) hu.arenaOk
+          have hz := zbW_le 32
+          omega
     · rw [ite_eq_right h1] at htag ⊢
       have hc : ptag p' = .clens := htag.symm
       rw [hcost_code, ite_eq_left hc]
@@ -948,7 +947,7 @@ theorem clFinishW_le {st : Hd} (hC : st.clNz ≠ 1 → Complete (.canonical (len
     clFinishW st ≤ st.size.toNat + st.size.toNat / 65536 + 4209 := by
   unfold clFinishW
   have := clTableW_le hC
-  have := zbW_le st.size.toNat
+  have := zbW_le 32
   omega
 
 theorem wClens {st : Hd} {g : Gh} {o : Owner} {n : Nat} {order : List Nat} {acc : List (Nat × Nat)} {sum : Nat} {pos : USize}
@@ -1070,26 +1069,17 @@ theorem wSyms {st : Hd} {g : Gh} {o : Owner} {n : Nat} {clc : PrefixCode} {ls : 
     rw [ite_eq_left hsum]
     have hns : ptag p' ≠ .syms := by rw [← hr.tag_eq]; exact tableDone_tag.2
     rw [hcost_syms_other g o n clc ls hns]
-    have hC : Complete (.canonical (lensOf st.lens st.size.toNat)) := by
-      rw [hs1, lens_full hy.sz hy.le hy.at_ hy.zero]
-      refine ⟨fun l hl => ?_, ?_⟩
-      · rcases List.mem_append.mp hl with h | h
-        · exact hy.small l h
-        · rw [(List.mem_replicate.mp h).2]
-          omega
-      · rw [lengthSum_append, lengthSum_replicate_zero, Nat.add_zero, ← hy.sumOk, hsum]
-        rfl
-    have hT := tableDoneW_le (st := { st with pos := pos, status := .next }) (single := false) (show st.size.toNat ≤ 704 by omega)
-      (show st.size.toNat ≤ st.lens.size by rw [hy.sz, hs1]; exact Nat.le_refl _) (fun _ => hC) hu.arenaOk
     have hT' : tableDoneW { st with pos := pos, status := .next } false ≤
-        12 * st.size.toNat + 3735 + (if st.role = .map then 1028 + zbW (mapSizeFast st) + zbW (mapSizeFast st) else 0) := hT
+        12 * st.size.toNat + 3735 + (if st.role = .map then 1028 + zbW (mapSizeFast st) + zbW (mapSizeFast st) else 0) :=
+      tableDoneW_le (st := { st with pos := pos, status := .next }) (syms_args (st := st) hH hT hsum) hu.arenaOk
     omega
   · rw [dite_eq_right hsum] at hr hn
     rw [ite_eq_right hsum]
     by_cases hln : st.ln = st.size
     · rw [ite_eq_left hln]
       omega
-    · rw [ite_eq_right hln] at hr hn ⊢
+    · rw [dite_eq_right hln] at hr hn
+      rw [ite_eq_right hln]
       dsimp only at hr hn ⊢
       generalize lenSymFast st.clt.t (USize.ofNat 0) st.clt.fits st.clt.h32 ⟨st.word, st.count⟩ = r at hr hn ⊢
       cases hsr : r.status with
@@ -1098,34 +1088,46 @@ theorem wSyms {st : Hd} {g : Gh} {o : Owner} {n : Nat} {clc : PrefixCode} {ls : 
       | ok =>
         rw [hsr] at hr hn
         dsimp only at hr hn ⊢
+        unfold symsOk at hr hn
         by_cases h16 : r.a < 16
         · rw [ite_eq_left h16]
           omega
-        · rw [ite_eq_right h16] at hr hn ⊢
+        · rw [dite_eq_right h16] at hr hn
+          rw [ite_eq_right h16]
+          dsimp only at hr hn ⊢
           generalize (if st.repCount ≠ 0 ∧ st.repSym = r.a then st.repCount else 0) = old at hr hn ⊢
           generalize (if r.a = 16 then (4 : UInt64) else 8) = mult at hr hn ⊢
           generalize (if old = 0 then 3 + r.b else mult * (old - 2) + (3 + r.b)) = new at hr hn ⊢
+          unfold symsRep at hr hn
           by_cases hover : st.size < st.ln + (new - old)
           · rw [ite_eq_left hover]
             omega
-          · rw [ite_eq_right hover] at hr hn ⊢
+          · rw [dite_eq_right hover] at hr hn
+            rw [ite_eq_right hover]
+            dsimp only at hr hn ⊢
             generalize (if (if r.a = 16 then st.prevLen else 0) = 0 then st.symSum
               else st.symSum + (new - old) * ((32768 : UInt64) >>> (if r.a = 16 then st.prevLen else 0))) = sum at hr hn ⊢
             by_cases hbig : 32768 < sum
             · rw [ite_eq_left hbig] at hn
               exact absurd hn (fun e => HStatus.noConfusion e)
             · rw [ite_eq_right hbig] at hr ⊢
-              have htg : ptag p' = .syms := by rw [← hr.tag_eq]; exact ht
-              cases p' with
-              | syms o' n' clc' ls' =>
-                obtain ⟨_, _, _, _, _, hy'⟩ := hr
-                have hg := syms_grow hj
-                have hl := hy.ln
-                have key := add_grew hy'.ln (by rw [hl]; exact hg)
-                rw [hl] at key
-                show _ + 2 + 10 ≤ ls'.lens.length - ls.lens.length + 12
+              by_cases hz : (if r.a = 16 then st.prevLen else 0) = 0
+              · rw [ite_eq_left hz]
                 omega
-              | _ => cases htg
+              · rw [ite_eq_right hz] at hr ⊢
+                have htg : ptag p' = .syms := by rw [← hr.tag_eq]; exact ht
+                cases p' with
+                | syms o' n' clc' ls' =>
+                  have hy' : SymRel (pushRun st r pos hH hT (st.ln + (new - old)) new sum (syms_lnLt hH hT hln)
+                    (syms_eLe hH hT hover)) n' clc' ls' := hr.2.2.2.2.2
+                  have hg := syms_grow hj
+                  have hl := hy.ln
+                  have hln' : (st.ln + (new - old)).toNat = ls'.lens.length := hy'.ln
+                  have key := add_grew hln' (by rw [hl]; exact hg)
+                  rw [hl] at key
+                  show _ + 1 + 10 ≤ ls'.lens.length - ls.lens.length + 12
+                  omega
+                | _ => cases htg
 
 /-- A header step's work, once the buffer is refilled, by where it goes. -/
 theorem stepAtHW_cost {st : Hd} {g : Gh} {p : HPhase} {pos : USize} {g' : Gh} {p' : HPhase} {a : ByteArray} {stop : USize}
@@ -1282,10 +1284,16 @@ theorem codeW_le {st : Hd} {g : Gh} {o : Owner} {n : Nat} {pos : USize} {hH : �
         (try rw [hsr]); (try dsimp only); omega
       · rename_i hsr
         intro hn
-        obtain ⟨hw2, hw3, hsmall⟩ := hwit hsr
-        have hd := simple_done (K := (⟨fun _ _ => none, fun _ _ => none⟩ : HK Unit)) pos hrel' hw2 hw3 hsmall hb (ha := hra hsr)
-          (hi := code_install hH hT) (har := hrel_arena hH)
-        exact absurd hd.status hn
+        obtain ⟨hw2, _⟩ := hwit hsr
+        by_cases he : r.e = 0
+        · rw [dite_eq_left he] at hn
+          have hd := simple_done1 (K := (⟨fun _ _ => none, fun _ _ => none⟩ : HK Unit)) pos hrel' hw2 (hra hsr) he hb
+            (ha := ⟨_, (hra hsr).single he st.headSz st.nextSz⟩) (hi := code_install hH hT) (har := hrel_arena hH)
+          exact absurd hd.status hn
+        · rw [dite_eq_right he] at hn
+          have hd := simple_done2 (K := (⟨fun _ _ => none, fun _ _ => none⟩ : HK Unit)) pos hrel' hw2 (hra hsr) he hb
+            (ha := simpleLists_args (hra hsr) he) (hi := code_install hH hT) (har := hrel_arena hH)
+          exact absurd hd.status hn
     · rw [ite_eq_right h1] at hn
       exact absurd rfl hn
   · rw [ite_eq_right h2]
@@ -1350,26 +1358,17 @@ theorem symsW_stop {st : Hd} {g : Gh} {o : Owner} {n : Nat} {clc : PrefixCode} {
   unfold stepHSyms at hn
   by_cases hsum : st.symSum = 32768
   · rw [ite_eq_left hsum]
-    have hC : Complete (.canonical (lensOf st.lens st.size.toNat)) := by
-      rw [hs1, lens_full hy.sz hy.le hy.at_ hy.zero]
-      refine ⟨fun l hl => ?_, ?_⟩
-      · rcases List.mem_append.mp hl with h | h
-        · exact hy.small l h
-        · rw [(List.mem_replicate.mp h).2]
-          omega
-      · rw [lengthSum_append, lengthSum_replicate_zero, Nat.add_zero, ← hy.sumOk, hsum]
-        rfl
-    have hT := tableDoneW_le (st := { st with pos := pos, status := .next }) (single := false) (show st.size.toNat ≤ 704 by omega)
-      (show st.size.toNat ≤ st.lens.size by rw [hy.sz, hs1]; exact Nat.le_refl _) (fun _ => hC) hu.arenaOk
     have hT' : tableDoneW { st with pos := pos, status := .next } false ≤
-        12 * st.size.toNat + 3735 + (if st.role = .map then 1028 + zbW (mapSizeFast st) + zbW (mapSizeFast st) else 0) := hT
+        12 * st.size.toNat + 3735 + (if st.role = .map then 1028 + zbW (mapSizeFast st) + zbW (mapSizeFast st) else 0) :=
+      tableDoneW_le (st := { st with pos := pos, status := .next }) (syms_args (st := st) hH hT hsum) hu.arenaOk
     omega
   · rw [dite_eq_right hsum] at hn
     rw [ite_eq_right hsum]
     by_cases hln : st.ln = st.size
     · rw [ite_eq_left hln]
       omega
-    · rw [ite_eq_right hln] at hn ⊢
+    · rw [dite_eq_right hln] at hn
+      rw [ite_eq_right hln]
       dsimp only at hn ⊢
       generalize lenSymFast st.clt.t (USize.ofNat 0) st.clt.fits st.clt.h32 ⟨st.word, st.count⟩ = r at hn ⊢
       cases hsr : r.status with
@@ -1378,24 +1377,34 @@ theorem symsW_stop {st : Hd} {g : Gh} {o : Owner} {n : Nat} {clc : PrefixCode} {
       | ok =>
         rw [hsr] at hn
         dsimp only at hn ⊢
+        unfold symsOk at hn
         by_cases h16 : r.a < 16
         · rw [ite_eq_left h16]
           omega
-        · rw [ite_eq_right h16] at hn ⊢
+        · rw [dite_eq_right h16] at hn
+          rw [ite_eq_right h16]
+          dsimp only at hn ⊢
           generalize (if st.repCount ≠ 0 ∧ st.repSym = r.a then st.repCount else 0) = old at hn ⊢
           generalize (if r.a = 16 then (4 : UInt64) else 8) = mult at hn ⊢
           generalize (if old = 0 then 3 + r.b else mult * (old - 2) + (3 + r.b)) = new at hn ⊢
+          unfold symsRep at hn
           by_cases hover : st.size < st.ln + (new - old)
           · rw [ite_eq_left hover]
             omega
-          · rw [ite_eq_right hover] at hn ⊢
+          · rw [dite_eq_right hover] at hn
+            rw [ite_eq_right hover]
+            dsimp only at hn ⊢
             generalize (if (if r.a = 16 then st.prevLen else 0) = 0 then st.symSum
               else st.symSum + (new - old) * ((32768 : UInt64) >>> (if r.a = 16 then st.prevLen else 0))) = sum at hn ⊢
             by_cases hbig : 32768 < sum
             · rw [ite_eq_left hbig]
               omega
             · rw [ite_eq_right hbig] at hn
-              exact absurd rfl hn
+              by_cases hz : (if r.a = 16 then st.prevLen else 0) = 0
+              · rw [ite_eq_left hz] at hn
+                exact absurd rfl hn
+              · rw [ite_eq_right hz] at hn
+                exact absurd rfl hn
 
 /-- A header step that stops, once the buffer is refilled: its work is within its place's potential. -/
 theorem stepAtHW_stop {st : Hd} {g : Gh} {p : HPhase} {pos : USize} {h : ∃ g p, HRel st g p} (hrel : HRel st g p)
@@ -1530,7 +1539,7 @@ theorem stepHW_stop {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} 
 
 Such a step leaves the state at its place, so its work is not paid for by the potential: it is at most 259. -/
 
-theorem tableDone_ni {st : Hd} {s : Bool} {y : UInt64} {ha : TableArgs st.size st.lens s y} {hi : InstallOk st.role st.idx st.fill}
+theorem tableDone_ni {st : Hd} {s : Bool} {y : UInt64} {ha : TableArgs st.size st.head st.next s y} {hi : InstallOk st.role st.idx st.fill}
     {har : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 4096 < 2 ^ 32}
     (h : st.status = .next) : (tableDone st s y ha hi har).status ≠ .needsInput := by
   unfold tableDone
@@ -1609,7 +1618,11 @@ theorem stepAtHW_short {st : Hd} {pos : USize} {hH : ∃ g p, HRel st g p} (h : 
           intro _
           (try rw [hsr]); (try dsimp only); omega
         · intro h
-          exact absurd h (tableDone_ni rfl)
+          by_cases he : r.e = 0
+          · rw [dite_eq_left he] at h
+            exact absurd h (tableDone_ni rfl)
+          · rw [dite_eq_right he] at h
+            exact absurd h (tableDone_ni rfl)
       · rw [ite_eq_right h1] at h
         exact absurd h (fun e => HStatus.noConfusion e)
     · rw [ite_eq_right h2]
@@ -1660,7 +1673,8 @@ theorem stepAtHW_short {st : Hd} {pos : USize} {hH : ∃ g p, HRel st g p} (h : 
       by_cases hln : st.ln = st.size
       · rw [ite_eq_left hln]
         omega
-      · rw [ite_eq_right hln] at h ⊢
+      · rw [dite_eq_right hln] at h
+        rw [ite_eq_right hln]
         dsimp only at h ⊢
         generalize lenSymFast st.clt.t (USize.ofNat 0) st.clt.fits st.clt.h32 ⟨st.word, st.count⟩ = r at h ⊢
         cases hsr : r.status with
@@ -1669,24 +1683,34 @@ theorem stepAtHW_short {st : Hd} {pos : USize} {hH : ∃ g p, HRel st g p} (h : 
         | ok =>
           rw [hsr] at h
           dsimp only at h ⊢
+          unfold symsOk at h
           by_cases h16 : r.a < 16
           · rw [ite_eq_left h16]
             omega
-          · rw [ite_eq_right h16] at h ⊢
+          · rw [dite_eq_right h16] at h
+            rw [ite_eq_right h16]
+            dsimp only at h ⊢
             generalize (if st.repCount ≠ 0 ∧ st.repSym = r.a then st.repCount else 0) = old at h ⊢
             generalize (if r.a = 16 then (4 : UInt64) else 8) = mult at h ⊢
             generalize (if old = 0 then 3 + r.b else mult * (old - 2) + (3 + r.b)) = new at h ⊢
+            unfold symsRep at h
             by_cases hover : st.size < st.ln + (new - old)
             · rw [ite_eq_left hover]
               omega
-            · rw [ite_eq_right hover] at h ⊢
+            · rw [dite_eq_right hover] at h
+              rw [ite_eq_right hover]
+              dsimp only at h ⊢
               generalize (if (if r.a = 16 then st.prevLen else 0) = 0 then st.symSum
                 else st.symSum + (new - old) * ((32768 : UInt64) >>> (if r.a = 16 then st.prevLen else 0))) = sum at h ⊢
               by_cases hbig : 32768 < sum
               · rw [ite_eq_left hbig]
                 omega
               · rw [ite_eq_right hbig] at h
-                exact absurd h (fun e => HStatus.noConfusion e)
+                by_cases hz : (if r.a = 16 then st.prevLen else 0) = 0
+                · rw [ite_eq_left hz] at h
+                  exact absurd h (fun e => HStatus.noConfusion e)
+                · rw [ite_eq_right hz] at h
+                  exact absurd h (fun e => HStatus.noConfusion e)
   case np =>
     unfold stepHNp at h
     unfold stepHNpW

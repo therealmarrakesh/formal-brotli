@@ -1,4 +1,4 @@
-import Brotli.Decoder.HeaderBuild
+import Brotli.Decoder.SimpleLists
 
 /-!
 # A prefix code's first bits
@@ -26,24 +26,6 @@ theorem LensIs.eq {t : ByteArray} {size : Nat} {P : List (Nat × Nat)} (h : Lens
   · rw [lensOf_get hi (by rw [h.sz]; exact Nat.le_refl _), h.at_ i hi]
     simp [lengthsOf, hi]
   · rw [List.getElem?_eq_none (by omega), List.getElem?_eq_none (by omega)]
-
-theorem LensIs.zero {size : Nat} (h : size < 2 ^ 32) : LensIs (zeroBytes size) size [] :=
-  ⟨zeroBytes_size h, fun i _ => by rw [zeroBytes_get h]; rfl⟩
-
-/-- A length set in front of the others wins. -/
-theorem LensIs.set {t : ByteArray} {size : Nat} {P : List (Nat × Nat)} (h : LensIs t size P) (s l : UInt64) (hs : s.toNat < 2 ^ 32)
-    (hl : l.toNat < 256) : LensIs (setU t s.toUSize l.toUInt8) size ((s.toNat, l.toNat) :: P) := by
-  have hus : s.toUSize.toNat = s.toNat := word_toUSize hs
-  refine ⟨by rw [size_setU]; exact h.sz, fun i hi => ?_⟩
-  by_cases he : i = s.toNat
-  · subst he
-    have := setU_get_same (t := t) (i := s.toUSize) (v := l.toUInt8) (by rw [hus, h.sz]; exact hi)
-    rw [hus] at this
-    rw [this, UInt64.toNat_toUInt8]
-    simp
-    omega
-  · rw [setU_get_ne (by rw [hus]; exact he), h.at_ i hi]
-    simp [Ne.symm he]
 
 /-- A length added at the back of pairs that don't have its symbol. -/
 theorem LensIs.push {t : ByteArray} {size : Nat} {P : List (Nat × Nat)} (h : LensIs t size P) (s l : UInt64) (hs : s.toNat < size)
@@ -82,64 +64,19 @@ theorem LensIs.pushZero {t : ByteArray} {size : Nat} {P : List (Nat × Nat)} (h 
       simp
     · simp [he]
 
-/-! ### Writing a simple code's lengths -/
-
 /-- Sets one code length. -/
 @[inline] def setLen (t : ByteArray) (s l : UInt64) : ByteArray := setU t s.toUSize l.toUInt8
 
-/-- A simple code's lengths, in an array of zeros. -/
-def writeSimple (t : ByteArray) (r : Rd) : ByteArray :=
-  if r.e = 1 then setLen (setLen t r.b 1) r.a 1
-  else if r.e = 2 then setLen (setLen (setLen t r.c 2) r.b 2) r.a 1
-  else if r.e = 3 then setLen (setLen (setLen (setLen t r.d 2) r.c 2) r.b 2) r.a 2
-  else setLen (setLen (setLen (setLen t r.d 3) r.c 3) r.b 2) r.a 1
+/-! ### A simple code -/
 
-private theorem writeSimple_lens {size : Nat} (hs : size < 2 ^ 32) (r : Rd) (he : r.e.toNat ≠ 0) (h1 : r.a.toNat < 2 ^ 32)
-    (h2 : r.b.toNat < 2 ^ 32) (h3 : r.c.toNat < 2 ^ 32) (h4 : r.d.toNat < 2 ^ 32) :
-    simpleCode size r.a.toNat r.b.toNat r.c.toNat r.d.toNat r.e.toNat = .canonical (lensOf (writeSimple (zeroBytes size) r) size) := by
-  have z := LensIs.zero hs
-  unfold simpleCode writeSimple
-  rw [ite_eq_right he]
-  by_cases e1 : r.e = 1
-  · have e1' : r.e.toNat = 1 := by rw [e1]; rfl
-    rw [ite_eq_left e1', ite_eq_left e1]
-    exact congrArg _ ((z.set r.b 1 h2 (by decide)).set r.a 1 h1 (by decide)).eq.symm
-  have e1' : ¬ r.e.toNat = 1 := fun h => e1 (UInt64.toNat_inj.mp h)
-  rw [ite_eq_right e1', ite_eq_right e1]
-  by_cases e2 : r.e = 2
-  · have e2' : r.e.toNat = 2 := by rw [e2]; rfl
-    rw [ite_eq_left e2', ite_eq_left e2]
-    exact congrArg _ (((z.set r.c 2 h3 (by decide)).set r.b 2 h2 (by decide)).set r.a 1 h1 (by decide)).eq.symm
-  have e2' : ¬ r.e.toNat = 2 := fun h => e2 (UInt64.toNat_inj.mp h)
-  rw [ite_eq_right e2', ite_eq_right e2]
-  by_cases e3 : r.e = 3
-  · have e3' : r.e.toNat = 3 := by rw [e3]; rfl
-    rw [ite_eq_left e3', ite_eq_left e3]
-    exact congrArg _ (((((z.set r.d 2 h4 (by decide)).set r.c 2 h3 (by decide))).set r.b 2 h2 (by decide)).set r.a 2 h1 (by decide)).eq.symm
-  have e3' : ¬ r.e.toNat = 3 := fun h => e3 (UInt64.toNat_inj.mp h)
-  rw [ite_eq_right e3', ite_eq_right e3]
-  exact congrArg _ (((((z.set r.d 3 h4 (by decide)).set r.c 3 h3 (by decide))).set r.b 2 h2 (by decide)).set r.a 1 h1 (by decide)).eq.symm
-
-theorem writeSimple_size (t : ByteArray) (r : Rd) : (writeSimple t r).size = t.size := by
-  unfold writeSimple setLen
-  split
-  · rw [size_setU, size_setU]
-  · split
-    · rw [size_setU, size_setU, size_setU]
-    · split
-      · rw [size_setU, size_setU, size_setU, size_setU]
-      · rw [size_setU, size_setU, size_setU, size_setU]
-
-/-- A simple code that reads: what it leaves holds the rest of the bits, the code is the spec's reading, and its values are
-small. -/
+/-- A simple code that reads: what it leaves holds the rest of the bits, and the code is the spec's reading. -/
 theorem simple_wit {st : Hd} (hw : (BitBuffer.mk st.word st.count).Wf) (hs : st.size.toNat ≤ 704) (h2 : 2 ≤ st.count)
     (h1 : (BitBuffer.mk st.word st.count).peek 2 = 1)
     (hok : (simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2)).status = .ok) :
     (simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2)).buf.Wf ∧
     readPrefixCode st.size.toNat (BitBuffer.mk st.word st.count).held =
       some (simpleValue st.size (simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2)),
-        (simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2)).buf.held) ∧
-    SmallVals (simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2)) := by
+        (simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2)).buf.held) := by
   have hread := read_int (b := ⟨st.word, st.count⟩) (k := 2) [] (by decide) h2
   have hw1 := drop_wf' hw (k := 2) (by decide) h2
   rw [h1] at hread
@@ -147,34 +84,48 @@ theorem simple_wit {st : Hd} (hw : (BitBuffer.mk st.word st.count).Wf) (hs : st.
   obtain ⟨hbits, hbitsLe⟩ := alphabetBitsFast_toNat (size := st.size) (by omega)
   have R := simpleFast_ok (size := st.size) (bits := alphabetBitsFast st.size) hw1 hbitsLe
   rw [hbits] at R
-  have hsmall := simpleFast_small st.size (alphabetBitsFast st.size) b1 hbitsLe
   have hR := R.ok hok
-  generalize simpleFast st.size (alphabetBitsFast st.size) b1 = r at hR hok hsmall ⊢
+  generalize simpleFast st.size (alphabetBitsFast st.size) b1 = r at hR hok ⊢
   have hN2 := hR.2 []
   simp only [List.append_nil] at hN2 hread
   have e2 : (2 : UInt64).toNat = 2 := rfl
   have e1 : (1 : UInt64).toNat = 1 := rfl
   rw [e2, e1] at hread
-  refine ⟨hR.1, ?_, hsmall⟩
+  refine ⟨hR.1, ?_⟩
   unfold readPrefixCode
   rw [hread]
   show (if 1 = 1 then readSimple st.size.toNat b1.held else readComplex st.size.toNat 1 b1.held) = _
   rw [ite_eq_left rfl, simpleChain_eq]
   exact hN2
 
-/-- A simple code with two symbols or more has complete lengths, as they are written into the state's array. -/
-theorem simple_complete {st : Hd} (hw : (BitBuffer.mk st.word st.count).Wf) (hs : st.size.toNat ≤ 704) (h2 : 2 ≤ st.count)
-    (h1 : (BitBuffer.mk st.word st.count).peek 2 = 1)
-    (hok : (simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2)).status = .ok)
-    (he : (simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2)).e.toNat ≠ 0) :
-    Complete (.canonical (lensOf (writeSimple (zeroBytes st.size.toNat)
-      (simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2))) st.size.toNat)) := by
-  obtain ⟨-, hwit, hsmall⟩ := simple_wit hw hs h2 h1 hok
-  generalize simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2) = r at hwit hsmall he ⊢
-  have hC := readPrefixCode_complete hwit
-  have hl := writeSimple_lens (size := st.size.toNat) (by omega) r he hsmall.1 hsmall.2.1 hsmall.2.2.1 hsmall.2.2.2
-  unfold simpleValue at hC
-  rwa [hl] at hC
+/-- A simple code that was read: its symbols, and its code complete over an alphabet of at most 704 symbols. -/
+structure SimpleRead (size : UInt64) (r : Rd) : Prop where
+  ok : SimpleOk size r
+  small : size.toNat ≤ 704
+  complete : Complete (simpleValue size r)
+  symbols : (simpleValue size r).Symbols size.toNat
+
+theorem SimpleRead.fits {size : UInt64} {r : Rd} (h : SimpleRead size r) : SimpleFits r := by
+  obtain ⟨h1, h2, h3, h4⟩ := h.ok.lt
+  have := h.small
+  exact ⟨by omega, by omega, by omega, by omega⟩
+
+/-- A simple code with one symbol is its code, read. -/
+theorem SimpleRead.single {size : UInt64} {r : Rd} (h : SimpleRead size r) (he : r.e = 0) {head next : ByteArray}
+    (hh : head.size = 32) (hn : next.size = 1408) : TableFor size head next true r.a (simpleValue size r) := by
+  refine ⟨h.small, fun _ => ?_, fun e => Bool.noConfusion e, by rw [hh]; decide, by rw [hn]; decide, h.complete, h.symbols⟩
+  unfold simpleValue simpleCode
+  rw [he]
+  rfl
+
+/-- A simple code with two symbols or more is its code, read, with the lists `simpleHead` and `simpleNext` write. -/
+theorem SimpleRead.canon {size : UInt64} {r : Rd} (h : SimpleRead size r) (he : ¬ r.e = 0) {head next : ByteArray}
+    (hh : head.size = 32) (hn : next.size = 1408) :
+    TableFor size (simpleHead head hh r) (simpleNext next hn r h.fits) false 0 (simpleValue size r) := by
+  have he' : r.e.toNat ≠ 0 := fun e => he (UInt64.toNat_inj.mp e)
+  obtain ⟨L, hc, hlen, hl⟩ := simple_lists (t := head) (n := next) (ht := hh) (hn := hn) (hf := h.fits) h.ok h.small he'
+  exact ⟨h.small, fun e => Bool.noConfusion e, fun _ => ⟨L, hc, hlen, hl⟩, by rw [simpleHead_size]; decide,
+    by rw [simpleNext_size]; decide, h.complete, h.symbols⟩
 
 section
 variable {α : Type} {K : HK α} {a : ByteArray} {stop : USize}
@@ -200,51 +151,44 @@ theorem TableDone.toStep {g : Gh} {o : Owner} {c : PrefixCode} {p : HPhase} {st 
   · exact (hne _ (fun e => HStatus.noConfusion e) e).elim
   · exact (hne _ (fun e => HStatus.noConfusion e) e).elim
 
-/-- What a simple code's table leaves, once the code is read. -/
-theorem simple_done {o : Owner} {size : Nat} {st : Hd} {g : Gh} (pos : USize) {r : Rd} (hrel : HRel st g (.code o size))
-    (hw2 : r.buf.Wf) (hwit : readPrefixCode st.size.toNat (BitBuffer.mk st.word st.count).held = some (simpleValue st.size r, r.buf.held))
-    (hsmall : SmallVals r) (hb : st.d.arena.size + budO g o ≤ st.d.arenaCap.toNat)
-    {ha : TableArgs st.size (writeSimple (zeroBytes st.size.toNat) r) (r.e == 0) r.a} {hi : InstallOk st.role st.idx st.fill}
+/-- The state a simple code with two symbols or more leaves for its table: its lists written. -/
+@[inline] def simpleLists (st : Hd) (r : Rd) (pos : USize) (hf : SimpleFits r) : Hd :=
+  { st with
+    word := r.word, count := r.count, pos := pos, status := .next
+    head := simpleHead st.head st.headSz r, next := simpleNext st.next st.nextSz r hf
+    headSz := simpleHead_size, nextSz := simpleNext_size }
+
+/-- A simple code with two symbols or more is a code that was read, in the state `simpleLists` leaves. -/
+theorem simpleLists_args {st : Hd} {r : Rd} {pos : USize} (h : SimpleRead st.size r) (he : ¬ r.e = 0) :
+    TableArgs (simpleLists st r pos h.fits).size (simpleLists st r pos h.fits).head (simpleLists st r pos h.fits).next false 0 :=
+  ⟨_, h.canon he st.headSz st.nextSz⟩
+
+/-- The table of a simple code with two symbols or more, from its lists. -/
+def simpleTable (st : Hd) (r : Rd) (pos : USize) (h : SimpleRead st.size r) (he : ¬ r.e = 0) (hi : InstallOk st.role st.idx st.fill)
+    (har : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 4096 < 2 ^ 32) : Hd :=
+  tableDone (simpleLists st r pos h.fits) false 0 (simpleLists_args h he) hi har
+
+/-- What a simple code's table leaves, once the code is read: one symbol. -/
+theorem simple_done1 {o : Owner} {size : Nat} {st : Hd} {g : Gh} (pos : USize) {r : Rd} (hrel : HRel st g (.code o size))
+    (hw2 : r.buf.Wf) (hR : SimpleRead st.size r) (he : r.e = 0) (hb : st.d.arena.size + budO g o ≤ st.d.arenaCap.toNat)
+    {ha : TableArgs st.size st.head st.next true r.a} {hi : InstallOk st.role st.idx st.fill}
     {har : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 4096 < 2 ^ 32} :
-    TableDone K g o (simpleValue st.size r) { st with
-        word := r.word, count := r.count, pos := pos, status := .next, lens := writeSimple (zeroBytes st.size.toNat) r }
-      (tableDone { st with
-        word := r.word, count := r.count, pos := pos, status := .next, lens := writeSimple (zeroBytes st.size.toNat) r }
-        (r.e == 0) r.a ha hi har) := by
+    TableDone K g o (simpleValue st.size r) { st with word := r.word, count := r.count, pos := pos, status := .next }
+      (tableDone { st with word := r.word, count := r.count, pos := pos, status := .next } true r.a ha hi har) := by
   obtain ⟨_, hu, _, hs, ho⟩ := hrel
-  obtain ⟨hs1, hs2, hs3⟩ := hs
-  have hCc := readPrefixCode_complete hwit
-  have hsy := readPrefixCode_symbols hwit
-  rw [hs1] at hsy
-  have hsn : st.size.toNat < 2 ^ 32 := by omega
-  have hlensEq : (writeSimple (zeroBytes st.size.toNat) r).size = size := by
-    rw [writeSimple_size, zeroBytes_size hsn, hs1]
-  have hsg : (r.e == 0) = true → simpleValue st.size r = .single r.a.toNat := by
-    intro he
-    have he' : r.e = 0 := by simpa using he
-    unfold simpleValue simpleCode
-    rw [he']
-    rfl
-  have hcn : (r.e == 0) = false → simpleValue st.size r = .canonical (lensOf (writeSimple (zeroBytes st.size.toNat) r) size) := by
-    intro he
-    have he' : r.e.toNat ≠ 0 := fun e => by
-      have : r.e = 0 := UInt64.toNat_inj.mp e
-      simp [this] at he
-    have := writeSimple_lens (size := st.size.toNat) hsn r he' hsmall.1 hsmall.2.1 hsmall.2.2.1 hsmall.2.2.2
-    rw [hs1] at this
-    unfold simpleValue
-    rw [hs1, this]
-  apply tableDone_ok K (size := size)
-  · exact hw2
-  · exact hu
-  · exact ⟨hs1, hs2, hs3⟩
-  · exact ho
-  · exact hsg
-  · exact hcn
-  · exact hlensEq
-  · exact hCc
-  · exact hsy
-  · exact hb
+  exact tableDone_ok K (st := { st with word := r.word, count := r.count, pos := pos, status := .next }) (size := size) hw2 hu hs ho
+    (hR.single he st.headSz st.nextSz) hb
+
+/-- What a simple code's table leaves, once the code is read: two symbols or more. -/
+theorem simple_done2 {o : Owner} {size : Nat} {st : Hd} {g : Gh} (pos : USize) {r : Rd} (hrel : HRel st g (.code o size))
+    (hw2 : r.buf.Wf) (hR : SimpleRead st.size r) (he : ¬ r.e = 0) (hb : st.d.arena.size + budO g o ≤ st.d.arenaCap.toNat)
+    {ha : TableArgs st.size (simpleLists st r pos hR.fits).head (simpleLists st r pos hR.fits).next false 0}
+    {hi : InstallOk st.role st.idx st.fill} {har : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 4096 < 2 ^ 32} :
+    TableDone K g o (simpleValue st.size r) (simpleLists st r pos hR.fits)
+      (tableDone (simpleLists st r pos hR.fits) false 0 ha hi har) := by
+  have hs : SizeOk st size := hrel.2.2.2.1
+  have ho : OwnerRel st g size o := hrel.2.2.2.2
+  exact tableDone_ok K (st := simpleLists st r pos hR.fits) (size := size) hw2 hrel.2.1 hs ho (hR.canon he st.headSz st.nextSz) hb
 
 /-! ### The place at a prefix code's first bits -/
 
@@ -265,11 +209,9 @@ private theorem readInt_one (bs : List Bool) : readInt 2 (true :: false :: bs) =
   simp [readInt]
 
 /-- A simple code read after the first two bits is a code that was read. -/
-theorem simple_args {st : Hd} (h : ∃ g p, HRel st g p) (ht : st.tag = .code) (h2 : 2 ≤ st.count)
+theorem simple_read {st : Hd} (h : ∃ g p, HRel st g p) (ht : st.tag = .code) (h2 : 2 ≤ st.count)
     (hok : (simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2)).status = .ok) :
-    TableArgs st.size (writeSimple (zeroBytes st.size.toNat) (simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2)))
-      ((simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2)).e == 0)
-      (simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2)).a := by
+    SimpleRead st.size (simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2)) := by
   obtain ⟨g, o, size, hrel⟩ := code_ex h ht
   obtain ⟨hw, _, _, hs, _⟩ := hrel
   obtain ⟨hs1, _, hs3⟩ := hs
@@ -277,8 +219,8 @@ theorem simple_args {st : Hd} (h : ∃ g p, HRel st g p) (ht : st.tag = .code) (
   obtain ⟨hbits, hbitsLe⟩ := alphabetBitsFast_toNat (size := st.size) (by omega)
   have R := simpleFast_ok (size := st.size) (bits := alphabetBitsFast st.size) hw1 hbitsLe
   rw [hbits, hs1] at R
-  have hsmall := simpleFast_small st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2) hbitsLe
-  generalize simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2) = r at R hsmall hok ⊢
+  have hsok := simpleFast_simpleOk st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2) hok
+  generalize simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2) = r at R hsok hok ⊢
   have hN2 := (R.ok hok).2 []
   simp only [List.append_nil] at hN2
   have hwit : readPrefixCode st.size.toNat (true :: false :: ((BitBuffer.mk st.word st.count).drop 2).held) =
@@ -289,29 +231,12 @@ theorem simple_args {st : Hd} (h : ∃ g p, HRel st g p) (ht : st.tag = .code) (
       else readComplex st.size.toNat 1 ((BitBuffer.mk st.word st.count).drop 2).held) = _
     rw [ite_eq_left rfl, simpleChain_eq, hs1]
     exact hN2
-  have hCc := readPrefixCode_complete hwit
-  have hsy := readPrefixCode_symbols hwit
-  rw [hs1] at hsy
-  have hsn : st.size.toNat < 2 ^ 32 := by omega
-  have hlensEq : (writeSimple (zeroBytes st.size.toNat) r).size = size := by
-    rw [writeSimple_size, zeroBytes_size hsn, hs1]
-  refine ⟨simpleValue st.size r, size, hs1, hs3, fun he => ?_, fun he => ?_, hlensEq, hCc, hsy⟩
-  · have he' : r.e = 0 := by simpa using he
-    unfold simpleValue simpleCode
-    rw [he']
-    rfl
-  · have he' : r.e.toNat ≠ 0 := fun e => by
-      have : r.e = 0 := UInt64.toNat_inj.mp e
-      simp [this] at he
-    have := writeSimple_lens (size := st.size.toNat) hsn r he' hsmall.1 hsmall.2.1 hsmall.2.2.1 hsmall.2.2.2
-    rw [hs1] at this
-    unfold simpleValue
-    rw [hs1, this]
+  exact ⟨hsok, by omega, readPrefixCode_complete hwit, readPrefixCode_symbols hwit⟩
 
 /-- A simple code's read, with what a successful one gives. -/
 @[inline] def simpleFastT (st : Hd) (h : ∃ g p, HRel st g p) (ht : st.tag = .code) (h2 : 2 ≤ st.count) :
-    { r : Rd // r.status = .ok → TableArgs st.size (writeSimple (zeroBytes st.size.toNat) r) (r.e == 0) r.a } :=
-  ⟨simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2), simple_args h ht h2⟩
+    { r : Rd // r.status = .ok → SimpleRead st.size r } :=
+  ⟨simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2), simple_read h ht h2⟩
 
 theorem simpleFastT_val {st : Hd} {h : ∃ g p, HRel st g p} {ht : st.tag = .code} {h2 : 2 ≤ st.count} :
     (simpleFastT st h ht h2).1 = simpleFast st.size (alphabetBitsFast st.size) ((BitBuffer.mk st.word st.count).drop 2) := rfl
@@ -329,10 +254,11 @@ def stepHCode (st : Hd) (pos : USize) (h : ∃ g p, HRel st g p) (ht : st.tag = 
       | .short => markH st pos .needsInput
       | .bad => markH st pos .bad
       | .ok =>
-        tableDone { st with
-            word := r.word, count := r.count, pos := pos, status := .next
-            lens := writeSimple (zeroBytes st.size.toNat) r }
-          (r.e == 0) r.a (hr hs) (code_install (st := st) h ht) (hrel_arena (st := st) h)
+        if he : r.e = 0 then
+          tableDone { st with word := r.word, count := r.count, pos := pos, status := .next } true r.a
+            ⟨_, (hr hs).single he st.headSz st.nextSz⟩ (code_install (st := st) h ht) (hrel_arena (st := st) h)
+        else
+          simpleTable st r pos (hr hs) he (code_install (st := st) h ht) (hrel_arena (st := st) h)
     else
       { st with
         word := b1.word, count := b1.count, pos := pos, status := .next, tag := .clens, clIdx := hskip, clSum := 0, clNz := 0, clSym := 0
@@ -411,8 +337,7 @@ theorem stepHCode_ok {o : Owner} {size : Nat} {st : Hd} {g : Gh} {pos : USize} {
         (N := ownerK K g o) (fun bs => rfl)
       have hval := R.ok
       have hsh0 := R.short
-      have hsmall := simpleFast_small st.size (alphabetBitsFast st.size) b1 hbitsLe
-      generalize simpleFast st.size (alphabetBitsFast st.size) b1 = r at Rok Rshort Rbad hval hsmall hsh0 hr ⊢
+      generalize simpleFast st.size (alphabetBitsFast st.size) b1 = r at Rok Rshort Rbad hval hsh0 hr ⊢
       split
       · rename_i hsr
         obtain ⟨_, _, h3, h4⟩ := Rshort hsr
@@ -440,24 +365,31 @@ theorem stepHCode_ok {o : Owner} {size : Nat} {st : Hd} {g : Gh} {pos : USize} {
           show (if 1 = 1 then readSimple st.size.toNat b1.held else readComplex st.size.toNat 1 b1.held) = _
           rw [ite_eq_left rfl, simpleChain_eq, hs1]
           exact hN2
-        have hdone := simple_done (K := K) pos hrel hw2 hwit hsmall hb (ha := hr hsr) (hi := code_install hH hT)
-          (har := hrel_arena hH)
-        generalize hc : simpleValue st.size r = c at hN hdone
-        exact hdone.toStep rfl hp rfl (fun h => ⟨h.fill, by
-            show (writeSimple (zeroBytes st.size.toNat) r).size ≤ _
-            rw [writeSimple_size, zeroBytes_size (by omega), hs1]
-            exact hs3,
-            h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase, h.work⟩) (fun F => by
-          rw [avail_mk, hspec]
-          exact hN _) (fun F => by
+        have hj : ∀ F, hStepP (g, HPhase.code o size) (availBits st.word st.count a pos stop F) =
+            .next (g, ownerPlace g o (simpleValue st.size r)) (availBits r.word r.count a pos stop F) := fun F => by
           rw [avail_mk]
           show readIn 2 (readInt 2) _ _ = _
           rw [readIn_some (show readInt 2 _ = _ from hread _)]
           show (if hskip.toNat = 1 then _ else _) = _
           rw [ite_eq_left h1']
           show readIn 43 (simpleChain size (alphabetBits size)) _ _ = _
-          rw [readIn_some ((hval hsr).2 _), hc]
-          rfl)
+          rw [readIn_some ((hval hsr).2 _)]
+          rfl
+        have heq : ∀ F, hrest K g (.code o size) (availBits st.word st.count a pos stop F) =
+            ownerK K g o (simpleValue st.size r) (availBits r.word r.count a pos stop F) := fun F => by
+          rw [avail_mk, hspec]
+          exact hN _
+        by_cases he : r.e = 0
+        · rw [dite_eq_left he]
+          have hdone := simple_done1 (K := K) pos hrel hw2 (hr hsr) he hb (ha := ⟨_, (hr hsr).single he st.headSz st.nextSz⟩)
+            (hi := code_install hH hT) (har := hrel_arena hH)
+          exact hdone.toStep rfl hp rfl (fun h => ⟨h.fill, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase,
+            h.icBase, h.dBase, h.work⟩) heq hj
+        · rw [dite_eq_right he]
+          have hdone := simple_done2 (K := K) pos hrel hw2 (hr hsr) he hb (ha := ⟨_, (hr hsr).canon he st.headSz st.nextSz⟩)
+            (hi := code_install hH hT) (har := hrel_arena hH)
+          exact hdone.toStep rfl hp rfl (fun h => ⟨h.fill, ⟨Nat.le_of_eq simpleHead_size, Nat.le_of_eq simpleNext_size⟩, h.clLens,
+            h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase, h.work⟩) heq hj
     · rw [ite_eq_right h1]
       have h1' : ¬ hskip.toNat = 1 := fun h => h1 (UInt64.toNat_inj.mp h)
       simp only [h1', ↓reduceIte] at hspec

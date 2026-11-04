@@ -164,11 +164,15 @@ theorem clTable_fits {st : Hd} (h : ∃ acc, ClDone st acc) :
   rw [usize_zero']
   exact ⟨by omega, hB.ok.toTableFits⟩
 
-/-- Goes on from the code length code to a code's lengths. -/
-def clFinish (st : Hd) (h : ∃ acc, ClDone st acc) : Hd :=
+/-- Goes on to a code's lengths with the code length code's table `t`, with every length's list emptied. -/
+@[inline] def clFinishAt (st : Hd) (t : ByteArray) (ht : t.size < 2 ^ 32 ∧ TableFits t (USize.ofNat 0).toNat) : Hd :=
   { st with
-    tag := .syms, lens := zeroBytes st.size.toNat, ln := 0, prevLen := 8, repSym := 0, repCount := 0, symSum := 0
-    clt := ⟨clTable st h, (clTable_fits h).1, (clTable_fits h).2⟩ }
+    tag := .syms, head := resetHead st.head, headSz := resetHead_size st.headSz
+    ln := 0, prevLen := 8, repSym := 0, repCount := 0, symSum := 0, clt := ⟨t, ht.1, ht.2⟩ }
+
+/-- Goes on from the code length code to a code's lengths: its table is built before the lists are emptied, so that they
+are emptied in place. -/
+def clFinish (st : Hd) (h : ∃ acc, ClDone st acc) : Hd := clFinishAt st (clTable st h) (clTable_fits h)
 
 /-- A finished code length code's table. -/
 theorem clFinish_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {acc : List (Nat × Nat)}
@@ -178,22 +182,19 @@ theorem clFinish_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {acc : List (Nat
       (clFinish st h).status = st.status ∧ (clFinish st h).word = st.word ∧ (clFinish st h).count = st.count ∧
       (clFinish st h).pos = st.pos ∧ (clFinish st h).d = st.d ∧ (HSize st → HSize (clFinish st h)) := by
   obtain ⟨hB, hsize, hC, hsy⟩ := clTable_built hd h
-  unfold clFinish
+  unfold clFinish clFinishAt
   dsimp only
   obtain ⟨hs1, hs2, hs3⟩ := hs
-  have hzsize : (zeroBytes st.size.toNat).size = size := by
-    rw [zeroBytes_size (by omega), hs1]
   refine ⟨⟨hw, hu, rfl, ⟨hs1, hs2, hs3⟩, ho, ?_⟩, rfl, rfl, rfl, rfl, rfl, fun h =>
-    ⟨h.fill, by show (zeroBytes st.size.toNat).size ≤ _; rw [hzsize]; exact hs3, h.clLens, hsize, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, h.icBase, h.dBase, h.work⟩⟩
+    ⟨h.fill, ⟨Nat.le_of_eq (resetHead_size st.headSz), Nat.le_of_eq st.nextSz⟩, h.clLens, hsize, h.mapT, h.modes, h.lMap,
+      h.dMap, h.litBase, h.icBase, h.dBase, h.work⟩⟩
   exact {
     table := by rw [usize_zero']; exact hB.ok
     complete := hC
     symbols := hsy
-    sz := hzsize
     ln := rfl
     le := by simp
-    at_ := by simp
-    zero := fun i _ => zeroBytes_get (by omega)
+    lists := resetHead_lists st.headSz st.next
     small := by simp
     prev := rfl
     prevOk := by simp
