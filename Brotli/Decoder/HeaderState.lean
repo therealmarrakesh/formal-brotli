@@ -614,8 +614,10 @@ structure HSize (st : Hd) : Prop where
   fill : st.fill.size ≤ 16384
   lens : st.lens.size ≤ 704
   clLens : st.clLens.size ≤ 18
-  clt : st.clt.t.size ≤ 132096
-  mapT : st.mapT.t.size ≤ 132096
+  /-- `treeMax 18`. -/
+  clt : st.clt.t.size ≤ 1576
+  /-- `treeMax 272`: a context map's alphabet has at most 256 trees and 16 run lengths. -/
+  mapT : st.mapT.t.size ≤ 2592
   modes : st.d.modes.size ≤ 256
   lMap : st.d.lMap.size ≤ 16384
   dMap : st.d.dMap.size ≤ 1024

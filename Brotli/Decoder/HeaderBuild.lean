@@ -390,7 +390,7 @@ theorem tableDone_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {c : PrefixCode
       obtain ⟨_, hi, hn, hr, h2, h256, h16, hsz⟩ := ho
       have hempty : (ByteArray.empty).size = 0 := rfl
       have hbuilt : ∃ t, (if single then buildSingleFast ByteArray.empty sym else buildFast ByteArray.empty st.lens st.size.toUSize hnle) = t ∧
-          Built ByteArray.empty t c ∧ t.size ≤ 132096 := by
+          Built ByteArray.empty t c ∧ t.size ≤ 2592 := by
         cases hb : single with
         | true =>
           simp only [↓reduceIte]
@@ -412,8 +412,12 @@ theorem tableDone_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {c : PrefixCode
           refine ⟨_, rfl, ?_, ?_⟩
           · rw [hc]
             exact h1
-          · rw [h2, hempty]
-            have := (planFast_bytes (hn := hnle) (by omega) hC').2
+          · have hlen : (lensOf st.lens st.size.toUSize.toNat).length = size := by rw [length_lensOf hnle, hun]
+            have htb := tableBytes_le hC' hlen
+            have hsz' : size ≤ 272 := by rw [hsz]; unfold contextMapAlphabetSize; omega
+            unfold treeMax at htb
+            rw [h2, hempty]
+            show 0 + tableBytes (.canonical (lensOf st.lens st.size.toUSize.toNat)) ≤ _
             omega
       obtain ⟨t, ht, hB, hsize⟩ := hbuilt
       rw [ht]

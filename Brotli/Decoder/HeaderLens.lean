@@ -115,7 +115,7 @@ theorem clFinish_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {acc : List (Nat
     (hd : ClDone st acc) : HRel (clFinish st) g (.syms o size (codeLengthCode acc) ⟨[], 8, none⟩) ∧
       (clFinish st).status = st.status ∧ (clFinish st).word = st.word ∧ (clFinish st).count = st.count ∧ (clFinish st).pos = st.pos ∧
       (clFinish st).d = st.d ∧ (HSize st → HSize (clFinish st)) := by
-  have hbuilt : Built ByteArray.empty (clTable st) (codeLengthCode acc) ∧ (clTable st).size ≤ 132096 ∧ Complete (codeLengthCode acc) ∧
+  have hbuilt : Built ByteArray.empty (clTable st) (codeLengthCode acc) ∧ (clTable st).size ≤ 1576 ∧ Complete (codeLengthCode acc) ∧
       (codeLengthCode acc).Symbols 18 := by
     unfold clTable
     by_cases h1 : st.clNz = 1
@@ -151,14 +151,14 @@ theorem clFinish_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {acc : List (Nat
         refine ⟨mem_lengthsOf_le (fun p hp => (hd.small p hp).2), ?_⟩
         rw [lengthSum_lengthsOf_eq 18 acc hd.keys (fun p hp => (hd.small p hp).1), hd.sum h1]
       obtain ⟨b1, b2⟩ := built_canonical (t := ByteArray.empty) (hn := hnle) (by rw [hn]; decide) hC (by decide) (by decide)
-      have hoff := (planFast_bytes (hn := hnle) (by rw [hn]; decide) hC).2
+      have hlen : (lensOf st.clLens (USize.ofNat 18).toNat).length = 18 := by rw [length_lensOf hnle, hn]
+      have ht := tableBytes_le hC (size := 18) hlen
+      unfold treeMax at ht
       rw [hc]
-      refine ⟨b1, ?_, hC, ?_⟩
-      · rw [b2]
-        show 0 + _ ≤ _
-        omega
-      · show (lensOf st.clLens (USize.ofNat 18).toNat).length = 18
-        rw [length_lensOf hnle, hn]
+      refine ⟨b1, ?_, hC, hlen⟩
+      rw [b2]
+      show 0 + tableBytes (.canonical (lensOf st.clLens (USize.ofNat 18).toNat)) ≤ _
+      omega
   obtain ⟨hB, hsize, hC, hsy⟩ := hbuilt
   have hfit : fitsFast (clTable st) 0 = true := fitsFast_iff.mpr ⟨by omega, hB.ok.toTableFits⟩
   unfold clFinish

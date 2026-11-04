@@ -16,7 +16,7 @@ open Brotli.Spec Brotli.Properties
 
 /-- What a state holds besides its window and the groups' tables: the arena's reservation for the categories' codes, the
 bounds `HSize` and `HSmall` give, 768 bytes of block type flags, 38 bytes of a dictionary word, and its fields. -/
-def fixedCost : Nat := 337032
+def fixedCost : Nat := 77008
 
 /-- What a state's fields cost. -/
 def fieldBytes : Nat := 1024
@@ -509,11 +509,11 @@ theorem hsize_none : HSize Hd.none where
   lens := Nat.zero_le _
   clLens := Nat.zero_le _
   clt := by
-    show (zeroBytes 1024).size ≤ 132096
+    show (zeroBytes 1024).size ≤ 1576
     rw [zeroBytes_size (by decide)]
     decide
   mapT := by
-    show (zeroBytes 1024).size ≤ 132096
+    show (zeroBytes 1024).size ≤ 2592
     rw [zeroBytes_size (by decide)]
     decide
   modes := Nat.zero_le _
