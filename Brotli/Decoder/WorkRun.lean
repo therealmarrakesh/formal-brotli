@@ -473,6 +473,90 @@ theorem pay_mblock {w : Nat} {st : StreamState} {a : ByteArray} {stop : USize} {
       omega
     | _ => exact absurd hsd id
 
+/-! ### A header -/
+
+theorem psize_le {st : Hd} {g : Gh} {p : HPhase} (h : HRel st g p) : psize p ≤ 704 := by
+  cases p with
+  | code o n => exact h.2.2.2.1.2.2
+  | clens o n _ _ _ => exact h.2.2.2.1.2.2
+  | syms o n _ _ => exact h.2.2.2.1.2.2
+  | _ => exact Nat.zero_le _
+
+/-- A header's step, against the potential: a step that goes on is paid by the header's potential and bits, the header's
+end by what the header holds for it, and a step that runs out of input costs at most 269. -/
+theorem pay_hdr {w : Nat} {st : StreamState} {last : Bool} {mlen : Nat} {g : Gh} {p : HPhase} {a : ByteArray} {stop : USize}
+    {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize} (hrel : DRel D (.hdr w st last mlen g p)) (hp : pos.toNat ≤ stop.toNat) :
+    ((stepDHdr a stop hs D pos).status = .next → Pays a stop (.hdr w st last mlen g p) D pos (stepDHdr a stop hs D pos)
+      (stepDHdrW a stop hs D pos + 1) 0) ∧
+    ((stepDHdr a stop hs D pos).status = .needsInput → Pays a stop (.hdr w st last mlen g p) D pos (stepDHdr a stop hs D pos)
+      (stepDHdrW a stop hs D pos + 1) 269) ∧
+    ((stepDHdr a stop hs D pos).status ≠ .next → stepDHdrW a stop hs D pos + 1 ≤ hpot g p + hdrSlack) := by
+  have hok := stepDHdr_ok (S := specSem) (hs := hs) hrel hp
+  obtain ⟨tag, cmd, hd, H, k, last', left, limit, pos', status⟩ := D
+  obtain ⟨ht, hall, hl, hleft, hm1, hm2, hR, hp0⟩ := hrel
+  have ht' : tag = .hdr := ht
+  subst ht'
+  dsimp only at hR
+  have hstep := stepH_ok (K := hdrK w (specSem.after w last) st mlen) (a := a) (hs := hs) hR hp
+  have hsz := psize_le hR
+  have eW : stepDHdrW a stop hs ⟨.hdr, cmd, hd, H, k, last', left, limit, pos', status⟩ pos =
+      stepHW a stop hs hd pos + (if (stepH a stop hs hd pos).status = .ready then mkHdrW (stepH a stop hs hd pos).d + 769 else 0) := rfl
+  rw [eW]
+  unfold stepDHdr takeHd at hok ⊢
+  dsimp only at hok ⊢
+  cases hst : (stepH a stop hs hd pos).status
+  case next =>
+    obtain ⟨g', p', oc, hR', h1, h2, _, _, _, h5⟩ := hstep.next hst
+    have hW := stepHW_cost hR hp hst hR' h5
+    rw [ite_eq_right (fun e => HStatus.noConfusion e)]
+    refine ⟨fun _ => ⟨.hdr w st last mlen g' p', ⟨rfl, ⟨hall.win, hall.produced, hall.limit⟩, hl, hleft, hm1, hm2, hR', hp0⟩,
+      ⟨[], rfl, rfl⟩, h1, h2, fun t => ?_⟩, fun e => DStatus.noConfusion e, fun e => absurd rfl e⟩
+    have hpy := hpay hsz (h5 (bits t))
+    simp only [Dec.bits, Dec.word, Dec.count, dpot, spot, clearHd]
+    omega
+  case needsInput =>
+    obtain ⟨b1, b2, hR', _, _, _, h6, _⟩ := hstep.needsInput hst
+    have hW := stepHW_short (hs := hs) (st := hd) (pos := pos) hst
+    rw [ite_eq_right (fun e => HStatus.noConfusion e)]
+    refine ⟨fun e => DStatus.noConfusion e, fun _ => ⟨.hdr w st last mlen g p,
+      ⟨rfl, ⟨hall.win, hall.produced, hall.limit⟩, hl, hleft, hm1, hm2, hR', hp0⟩, ⟨[], rfl, rfl⟩,
+      by rw [b1]; exact hp, by rw [b1]; exact Nat.le_refl _, fun t => ?_⟩, fun _ => ?_⟩
+    · simp only [Dec.bits, Dec.word, Dec.count, dpot, spot, clearHd]
+      rw [h6]
+      omega
+    · unfold hdrSlack
+      omega
+  case bad =>
+    have hW := stepHW_stop hR hp (by rw [hst]; exact fun e => HStatus.noConfusion e)
+    rw [ite_eq_right (fun e => HStatus.noConfusion e)]
+    exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun _ => by omega⟩
+  case memory =>
+    have hW := stepHW_stop hR hp (by rw [hst]; exact fun e => HStatus.noConfusion e)
+    rw [ite_eq_right (fun e => HStatus.noConfusion e)]
+    exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun _ => by omega⟩
+  case ready =>
+    obtain ⟨g', hu, -, -, -, -, -, -, -, -⟩ := hstep.ready hst
+    obtain ⟨H', hmk, -, -⟩ := mkHdr_ok hu
+    have hW := stepHW_stop hR hp (by rw [hst]; exact fun e => HStatus.noConfusion e)
+    have hM := mkHdrW_le hu
+    rw [ite_eq_left rfl]
+    rw [hst] at hok
+    dsimp only at hok
+    rw [hmk] at hok ⊢
+    dsimp only at hok ⊢
+    refine ⟨fun _ => ?_, fun e => DStatus.noConfusion e, fun e => absurd rfl e⟩
+    obtain ⟨p', hR'', h1', h2', _, _, hout, hj⟩ := hok.next rfl
+    refine ⟨p', hR'', hout, h1', h2', fun t => ?_⟩
+    have hb := sreach_len (hj t)
+    cases p' with
+    | cmds w' l' m' cp =>
+      have := cpot_le cp
+      simp only [Dec.bits, Dec.word, Dec.count, dpot, spot] at hb ⊢
+      unfold hdrEnd
+      rw [hdrRate_eq]
+      omega
+    | _ => exact absurd hR''.1 (fun e => DTag.noConfusion e)
+
 /-! ### Metadata and uncompressed data -/
 
 /-- A step in metadata, against the potential: a byte read for each one skipped, and the potential for the last step. -/
