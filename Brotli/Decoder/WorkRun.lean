@@ -473,4 +473,190 @@ theorem pay_mblock {w : Nat} {st : StreamState} {a : ByteArray} {stop : USize} {
       omega
     | _ => exact absurd hsd id
 
+/-! ### Metadata and uncompressed data -/
+
+/-- A step in metadata, against the potential: a byte read for each one skipped, and the potential for the last step. -/
+theorem pay_skip {w : Nat} {st : StreamState} {last : Bool} {n : Nat} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size}
+    {D : Dec} {pos : USize} (hrel : DRel D (.skip w st last n)) (hp : pos.toNat ≤ stop.toNat) :
+    ((stepDSkip stop D pos).status = .next → Pays a stop (.skip w st last n) D pos (stepDSkip stop D pos) 2 0) ∧
+    ((stepDSkip stop D pos).status = .needsInput → Pays a stop (.skip w st last n) D pos (stepDSkip stop D pos) 2 2) ∧
+    ((stepDSkip stop D pos).status = .needsOutput → Pays a stop (.skip w st last n) D pos (stepDSkip stop D pos) 2 2) := by
+  have hok := stepDSkip_ok (S := specSem) hs hrel hp
+  have hR : hdrRate = 22343 := rfl
+  have hd : dpot (.skip w st last n) D = 10 := rfl
+  refine ⟨fun hn => ?_, fun hn => ?_, fun hn => ?_⟩
+  · obtain ⟨p', hR', h1, h2, _, hsd, hout, hj⟩ := hok.next hn
+    refine ⟨p', hR', hout, h1, h2, fun t => ?_⟩
+    have hb := sreach_len (hj t)
+    rw [hd, hR]
+    cases p' with
+    | skip w' st' l n' =>
+      have hlt : n' < n := hsd
+      obtain ⟨m, rfl⟩ : ∃ m, n = m + 1 := ⟨n - 1, by omega⟩
+      have hne : SPhase.skip w' st' l n' ≠ .skip w st last (m + 1) := fun e => by cases e; omega
+      have h8 := sreach_byte (hj t) hne (Or.inl ⟨w, st, last, m, rfl⟩)
+      have : dpot (.skip w' st' l n') (stepDSkip stop D pos) = 10 := rfl
+      omega
+    | mblock w' st' =>
+      have := dpot_mblock_le w' st' (stepDSkip stop D pos)
+      unfold roundCost at this
+      omega
+    | ended st' =>
+      have : dpot (.ended st') (stepDSkip stop D pos) = 0 := rfl
+      omega
+    | _ => exact absurd hsd id
+  · obtain ⟨b1, b2, p', hR', _, _, hsd, _, hout, hj, _⟩ := hok.needsInput hn
+    refine ⟨p', hR', hout, by rw [b1]; exact hp, by rw [b1]; exact Nat.le_refl _, fun t => ?_⟩
+    have hb := sreach_len (hj t)
+    rw [hd, hR]
+    cases p' with
+    | skip w' st' l n' =>
+      have : dpot (.skip w' st' l n') (stepDSkip stop D pos) = 10 := rfl
+      omega
+    | _ => exact absurd hsd id
+  · obtain ⟨p', hR', h1, h2, _, _, hsd, _, hout, hj⟩ := hok.needsOutput hn
+    refine ⟨p', hR', hout, h1, h2, fun t => ?_⟩
+    have hb := sreach_len (hj t)
+    rw [hd, hR]
+    cases p' with
+    | skip w' st' l n' =>
+      have : dpot (.skip w' st' l n') (stepDSkip stop D pos) = 10 := rfl
+      omega
+    | _ => exact absurd hsd id
+
+theorem rawRunW_pos (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (mask : USize) (k : Nat) (hk : k ≤ 24)
+    (hmask : mask.toNat = 2 ^ k - 1) (n : USize) (word count : UInt64) (pos : USize) (ring : ByteArray) (wpos : USize)
+    (p1 p2 : UInt8) (hp : pos.toNat ≤ stop.toNat) (hsize : ring.size = 2 ^ k) (hwp : wpos.toNat < 2 ^ k) :
+    1 ≤ rawRunW a stop hs mask k hk hmask n word count pos ring wpos p1 p2 hp hsize hwp := by
+  rw [rawRunW]
+  split
+  · omega
+  · dsimp only
+    split
+    · omega
+    · split <;> omega
+
+/-- A step in uncompressed data: ten for each byte it moves into the window, and twelve, with the loop's round. -/
+theorem rawW_le {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize} :
+    stepDRawW a stop hs D pos + 1 ≤ 10 * ((stepDRaw a stop hs D pos).cmd.pend.toNat - D.cmd.pend.toNat) + 12 := by
+  unfold stepDRawW stepDRaw
+  dsimp only
+  by_cases h0 : D.left = 0
+  · rw [ite_eq_left h0, ite_eq_left h0]
+    omega
+  · rw [ite_eq_right h0, ite_eq_right h0]
+    by_cases hc : winCheck D.k D.cmd.wpos D.cmd.ring = true ∧ pos ≤ stop
+    · rw [dite_eq_left hc, dite_eq_left hc]
+      by_cases hr : room D.k D.cmd.cap ≤ D.cmd.pend
+      · rw [ite_eq_left hr, ite_eq_left hr]
+        omega
+      · rw [ite_eq_right hr, ite_eq_right hr]
+        unfold takeRing rawFinish
+        dsimp only
+        have hk := winCheck_k hc.1
+        have h1 := room_lt hr
+        have h2 := room_le (cap := D.cmd.cap) hk
+        have h3 : (2 : Nat) ^ D.k.toNat ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
+        have hsub : (room D.k D.cmd.cap - D.cmd.pend).toNat = (room D.k D.cmd.cap).toNat - D.cmd.pend.toNat := room_sub' (by omega)
+        have hn : (usmin D.left.toUSize (room D.k D.cmd.cap - D.cmd.pend)).toNat ≤ (room D.k D.cmd.cap).toNat - D.cmd.pend.toNat := by
+          rw [usmin_toNat, hsub]
+          omega
+        generalize usmin D.left.toUSize (room D.k D.cmd.cap - D.cmd.pend) = n at hn ⊢
+        have hW := rawRunW_le a stop hs (ringMask D.k) D.k.toNat (winCheck_k hc.1) (ringMask_toNat (winCheck_k hc.1)) _ n
+          D.cmd.word D.cmd.count pos D.cmd.ring D.cmd.wpos D.cmd.p1 D.cmd.p2 (USize.le_iff_toNat_le.mp hc.2) (winCheck_size hc.1)
+          (winCheck_pos hc.1) rfl
+        have hW1 := rawRunW_pos a stop hs (ringMask D.k) D.k.toNat (winCheck_k hc.1) (ringMask_toNat (winCheck_k hc.1)) n
+          D.cmd.word D.cmd.count pos D.cmd.ring D.cmd.wpos D.cmd.p1 D.cmd.p2 (USize.le_iff_toNat_le.mp hc.2) (winCheck_size hc.1)
+          (winCheck_pos hc.1)
+        generalize (rawRun a stop hs (ringMask D.k) D.k.toNat (winCheck_k hc.1) (ringMask_toNat (winCheck_k hc.1)) n
+          D.cmd.word D.cmd.count pos D.cmd.ring D.cmd.wpos D.cmd.p1 D.cmd.p2 (USize.le_iff_toNat_le.mp hc.2) (winCheck_size hc.1)
+          (winCheck_pos hc.1)).left = left at hW ⊢
+        have hl : left.toNat ≤ n.toNat := by omega
+        have hm : (n - left).toNat = n.toNat - left.toNat := USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr hl)
+        show _ + 1 + 1 ≤ 10 * ((D.cmd.pend + (n - left)).toNat - D.cmd.pend.toNat) + 12
+        rw [pend_add (by rw [hm]; omega), hm]
+        omega
+    · rw [dite_eq_right hc, dite_eq_right hc]
+      omega
+
+/-- A step in uncompressed data, against the potential: its bytes, a byte read for each, and the potential for the last
+step. -/
+theorem pay_raw {w : Nat} {st : StreamState} {last : Bool} {n : Nat} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size}
+    {D : Dec} {pos : USize} (hrel : DRel D (.raw w st last n)) (hp : pos.toNat ≤ stop.toNat) :
+    ((stepDRaw a stop hs D pos).status = .next → Pays a stop (.raw w st last n) D pos (stepDRaw a stop hs D pos)
+      (stepDRawW a stop hs D pos + 1) 0) ∧
+    ((stepDRaw a stop hs D pos).status = .needsInput → Pays a stop (.raw w st last n) D pos (stepDRaw a stop hs D pos)
+      (stepDRawW a stop hs D pos + 1) 12) ∧
+    ((stepDRaw a stop hs D pos).status = .needsOutput → Pays a stop (.raw w st last n) D pos (stepDRaw a stop hs D pos)
+      (stepDRawW a stop hs D pos + 1) 12) ∧
+    stepDRawW a stop hs D pos + 1 ≤ 12 + 10 * ((stepDRaw a stop hs D pos).cmd.pend.toNat - D.cmd.pend.toNat) := by
+  have hok := stepDRaw_ok (S := specSem) (hs := hs) hrel hp
+  have hR : hdrRate = 22343 := rfl
+  have hd : dpot (.raw w st last n) D = 10 := rfl
+  have hW := rawW_le (hs := hs) (D := D) (pos := pos)
+  refine ⟨fun hn => ?_, fun hn => ?_, fun hn => ?_, by omega⟩
+  · obtain ⟨p', hR', h1, h2, _, hsd, hout, hj⟩ := hok.next hn
+    refine ⟨p', hR', hout, h1, h2, fun t => ?_⟩
+    obtain ⟨l, hl1, hl2⟩ := hout
+    have hlo : p'.out.length - (SPhase.raw w st last n).out.length = l.length := by rw [hl1, List.length_append]; omega
+    rw [hl2] at hW
+    have hb := sreach_len (hj t)
+    rw [hd, hR, hlo]
+    cases p' with
+    | raw w' st' l' n' =>
+      have hlt : n' < n := hsd
+      obtain ⟨m, rfl⟩ : ∃ m, n = m + 1 := ⟨n - 1, by omega⟩
+      have hne : SPhase.raw w' st' l' n' ≠ .raw w st last (m + 1) := fun e => by cases e; omega
+      have h8 := sreach_byte (hj t) hne (Or.inr ⟨w, st, last, m, rfl⟩)
+      have : dpot (.raw w' st' l' n') (stepDRaw a stop hs D pos) = 10 := rfl
+      omega
+    | mblock w' st' =>
+      have := dpot_mblock_le w' st' (stepDRaw a stop hs D pos)
+      unfold roundCost at this
+      cases n with
+      | zero =>
+        have hl0 : D.left = 0 := UInt64.toNat_inj.mp (by rw [hrel.2.2.2.2.1]; rfl)
+        have hw2 : stepDRawW a stop hs D pos = 1 := by unfold stepDRawW; rw [ite_eq_left hl0]
+        omega
+      | succ m =>
+        have hne : SPhase.mblock w' st' ≠ .raw w st last (m + 1) := fun e => SPhase.noConfusion e
+        have h8 := sreach_byte (hj t) hne (Or.inr ⟨w, st, last, m, rfl⟩)
+        omega
+    | ended st' =>
+      have : dpot (.ended st') (stepDRaw a stop hs D pos) = 0 := rfl
+      cases n with
+      | zero =>
+        have hl0 : D.left = 0 := UInt64.toNat_inj.mp (by rw [hrel.2.2.2.2.1]; rfl)
+        have hw2 : stepDRawW a stop hs D pos = 1 := by unfold stepDRawW; rw [ite_eq_left hl0]
+        omega
+      | succ m =>
+        have hne : SPhase.ended st' ≠ .raw w st last (m + 1) := fun e => SPhase.noConfusion e
+        have h8 := sreach_byte (hj t) hne (Or.inr ⟨w, st, last, m, rfl⟩)
+        omega
+    | _ => exact absurd hsd id
+  · obtain ⟨b1, b2, p', hR', _, _, hsd, _, hout, hj, _⟩ := hok.needsInput hn
+    refine ⟨p', hR', hout, by rw [b1]; exact hp, by rw [b1]; exact Nat.le_refl _, fun t => ?_⟩
+    obtain ⟨l, hl1, hl2⟩ := hout
+    have hlo : p'.out.length - (SPhase.raw w st last n).out.length = l.length := by rw [hl1, List.length_append]; omega
+    rw [hl2] at hW
+    have hb := sreach_len (hj t)
+    rw [hd, hR, hlo]
+    cases p' with
+    | raw w' st' l' n' =>
+      have : dpot (.raw w' st' l' n') (stepDRaw a stop hs D pos) = 10 := rfl
+      omega
+    | _ => exact absurd hsd id
+  · obtain ⟨p', hR', h1, h2, _, _, hsd, _, hout, hj⟩ := hok.needsOutput hn
+    refine ⟨p', hR', hout, h1, h2, fun t => ?_⟩
+    obtain ⟨l, hl1, hl2⟩ := hout
+    have hlo : p'.out.length - (SPhase.raw w st last n).out.length = l.length := by rw [hl1, List.length_append]; omega
+    rw [hl2] at hW
+    have hb := sreach_len (hj t)
+    rw [hd, hR, hlo]
+    cases p' with
+    | raw w' st' l' n' =>
+      have : dpot (.raw w' st' l' n') (stepDRaw a stop hs D pos) = 10 := rfl
+      omega
+    | _ => exact absurd hsd id
+
 end Brotli.Decoder
