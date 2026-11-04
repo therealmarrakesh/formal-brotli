@@ -227,12 +227,19 @@ theorem stepHRlemax_pos (st : Hd) (p : USize) : stepHRlemax st p = { stepHRlemax
   cases st
   hd_nf
 
-theorem stepHVals_pos (st : Hd) (p : USize) : stepHVals st p = { stepHVals { st with pos := 0 } 0 with pos := p } := by
+theorem stepHVals_pos (st : Hd) (p : USize) (h : ∃ g p, HRel st g p) (ht : st.tag = .vals) :
+    stepHVals st p h ht = { stepHVals { st with pos := 0 } 0 (hrel_pos0 h) ht with pos := p } := by
+  have e : mapSymFastT { st with pos := 0 } (hrel_pos0 h) ht = mapSymFastT st h ht := rfl
   unfold stepHVals
+  rw [e]
+  generalize mapSymFastT st h ht = rr
+  obtain ⟨⟨rs, rw, rc, ra, rb, rcc, rd, re⟩, hr⟩ := rr
   cases st
-  hd_nf
+  cases rs <;> (try unfold markH) <;> (try dsimp only) <;>
+    repeat' (first | split_all | contradiction | rfl | (simp only [clearMap]; done))
 
-theorem stepHImtf_pos (st : Hd) (p : USize) : stepHImtf st p = { stepHImtf { st with pos := 0 } 0 with pos := p } := by
+theorem stepHImtf_pos (st : Hd) (p : USize) (h : ∃ g p, HRel st g p) (ht : st.tag = .imtf) :
+    stepHImtf st p h ht = { stepHImtf { st with pos := 0 } 0 (hrel_pos0 h) ht with pos := p } := by
   unfold stepHImtf
   cases st
   hd_nf
@@ -257,8 +264,8 @@ theorem stepAtH_pos (st : Hd) (p : USize) (h : ∃ g p, HRel st g p) :
   · exact (stepHModes_pos _ _ _ _).trans rfl
   · exact (stepHTrees_pos _ _).trans rfl
   · exact (stepHRlemax_pos _ _).trans rfl
-  · exact (stepHVals_pos _ _).trans rfl
-  · exact (stepHImtf_pos _ _).trans rfl
+  · exact (stepHVals_pos _ _ _ _).trans rfl
+  · exact (stepHImtf_pos _ _ _ _).trans rfl
   · exact (stepHCodes_pos _ _).trans rfl
   · rfl
 

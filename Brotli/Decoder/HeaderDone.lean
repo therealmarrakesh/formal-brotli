@@ -26,8 +26,8 @@ def stepAtH (st : Hd) (pos : USize) (h : ∃ g p, HRel st g p) : Hd :=
   | .modes => stepHModes st pos h ht
   | .trees => stepHTrees st pos
   | .rlemax => stepHRlemax st pos
-  | .vals => stepHVals st pos
-  | .imtf => stepHImtf st pos
+  | .vals => stepHVals st pos h ht
+  | .imtf => stepHImtf st pos h ht
   | .codes => stepHCodes st pos
   | .ready => markH st pos .ready
 
@@ -47,8 +47,8 @@ theorem stepAtH_np (ht : st.tag = .np) : stepAtH st pos h = stepHNp st pos := by
 theorem stepAtH_modes (ht : st.tag = .modes) : stepAtH st pos h = stepHModes st pos h ht := by stepAtH_tag ht
 theorem stepAtH_trees (ht : st.tag = .trees) : stepAtH st pos h = stepHTrees st pos := by stepAtH_tag ht
 theorem stepAtH_rlemax (ht : st.tag = .rlemax) : stepAtH st pos h = stepHRlemax st pos := by stepAtH_tag ht
-theorem stepAtH_vals (ht : st.tag = .vals) : stepAtH st pos h = stepHVals st pos := by stepAtH_tag ht
-theorem stepAtH_imtf (ht : st.tag = .imtf) : stepAtH st pos h = stepHImtf st pos := by stepAtH_tag ht
+theorem stepAtH_vals (ht : st.tag = .vals) : stepAtH st pos h = stepHVals st pos h ht := by stepAtH_tag ht
+theorem stepAtH_imtf (ht : st.tag = .imtf) : stepAtH st pos h = stepHImtf st pos h ht := by stepAtH_tag ht
 theorem stepAtH_codes (ht : st.tag = .codes) : stepAtH st pos h = stepHCodes st pos := by stepAtH_tag ht
 theorem stepAtH_ready (ht : st.tag = .ready) : stepAtH st pos h = markH st pos .ready := by stepAtH_tag ht
 

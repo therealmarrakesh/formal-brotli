@@ -740,37 +740,44 @@ theorem wNp {st : Hd} {g : Gh} {p' : HPhase} (hrel : HRel st g .np) : stepHNpW s
   split <;> omega
 
 /-- A context map's values: a step that does not go on is one round. -/
-theorem valsW_stop (st : Hd) (pos : USize) (h : (stepHVals st pos).status ≠ .next) : stepHValsW st ≤ 1 := by
+theorem valsW_stop (st : Hd) (pos : USize) {hH : ∃ g p, HRel st g p} {hT : st.tag = .vals}
+    (h : (stepHVals st pos hH hT).status ≠ .next) : stepHValsW st ≤ 1 := by
   unfold stepHValsW
   unfold stepHVals at h
   dsimp only at h ⊢
   by_cases hl : st.left = 0
-  · rw [ite_eq_left hl] at h
+  · rw [dite_eq_left hl] at h
     exact absurd rfl h
-  rw [ite_eq_right hl] at h ⊢
-  generalize mapSymFast st.mapT.t (USize.ofNat 0) st.mapT.fits st.mapT.h32 st.rlemax ⟨st.word, st.count⟩ = r at h ⊢
-  cases hs : r.status with
+  rw [dite_eq_right hl] at h
+  rw [ite_eq_right hl]
+  generalize hT' : mapSymFastT st hH hT = rr at h
+  obtain ⟨r, hr⟩ := rr
+  have e : r = mapSymFast st.mapT.t (USize.ofNat 0) st.mapT.fits st.mapT.h32 st.rlemax ⟨st.word, st.count⟩ := by
+    rw [← mapSymFastT_val (h := hH) (ht := hT), hT']
+  clear hT'
+  rw [← e]
+  dsimp only at h
+  obtain ⟨rs, rw', rc, ra, rb, rcc, rd, re⟩ := r
+  cases rs with
   | short => dsimp only; omega
   | bad => dsimp only; omega
   | ok =>
-    rw [hs] at h
     dsimp only at h ⊢
-    by_cases h1 : st.left < r.b
+    by_cases h1 : st.left < rb
     · rw [ite_eq_left h1]
       omega
-    · rw [ite_eq_right h1] at h
+    · rw [dite_eq_right h1] at h
       exfalso
       apply h
-      split
-      · rfl
-      · split <;> rfl
+      repeat' (first | rfl | split)
 
 /-- A context map's values: a step's work is its run, its value and a few rounds, with a code that reads no bits twice its
 values left and the trees. -/
 theorem wVals {st : Hd} {g : Gh} {isL : Bool} {t r : Nat} {code : PrefixCode} {done : List Nat} {left : Nat} {pos : USize}
-    {g' : Gh} {p' : HPhase} {a : ByteArray} {stop : USize} {F : List Bool} (hrel : HRel st g (.vals isL t r code done left))
+    {g' : Gh} {p' : HPhase} {a : ByteArray} {stop : USize} {F : List Bool} {hH : ∃ g p, HRel st g p} {hT : st.tag = .vals}
+    (hrel : HRel st g (.vals isL t r code done left))
     (hj : hStepP (g, .vals isL t r code done left) (availBits st.word st.count a pos stop F) =
-      .next (g', p') (availBits (stepHVals st pos).word (stepHVals st pos).count a (stepHVals st pos).pos stop F)) :
+      .next (g', p') (availBits (stepHVals st pos hH hT).word (stepHVals st pos hH hT).count a (stepHVals st pos hH hT).pos stop F)) :
     stepHValsW st + 10 ≤ hcost g (.vals isL t r code done left) p' := by
   obtain ⟨hw, hu, ht, hi, hn, hr, h2, h256, h16, hok, hC, hsy, hidx, hleft, hlen, hsz, hlt, hat, hzero, hx⟩ := hrel
   have hge := hcost_ge g (.vals isL t r code done left) p'
@@ -1154,7 +1161,7 @@ theorem stepAtHW_cost {st : Hd} {g : Gh} {p : HPhase} {pos : USize} {g' : Gh} {p
     have e : stepAtHW st pos = 1 := by unfold stepAtHW; rw [htag] <;> rfl
     omega
   | vals isL t r code done left =>
-    have e1 : stepAtH st pos h = stepHVals st pos := stepAtH_vals htag
+    have e1 : stepAtH st pos h = stepHVals st pos h htag := stepAtH_vals htag
     have e2 : stepAtHW st pos = stepHValsW st := by unfold stepAtHW; rw [htag] <;> rfl
     rw [e1] at hj
     rw [e2]
@@ -1447,7 +1454,7 @@ theorem stepAtHW_stop {st : Hd} {g : Gh} {p : HPhase} {pos : USize} {h : ∃ g p
       omega
     omega
   | vals isL t r code done left =>
-    have e1 : stepAtH st pos h = stepHVals st pos := stepAtH_vals htag
+    have e1 : stepAtH st pos h = stepHVals st pos h htag := stepAtH_vals htag
     have e : stepAtHW st pos = stepHValsW st := by unfold stepAtHW; rw [htag] <;> rfl
     rw [e1] at hn
     rw [e]
@@ -1689,7 +1696,7 @@ theorem stepAtHW_short {st : Hd} {pos : USize} {hH : ∃ g p, HRel st g p} (h : 
       · rw [ite_eq_right ha]
         omega
   case vals =>
-    have := valsW_stop st pos (by rw [h]; exact fun e => HStatus.noConfusion e)
+    have := valsW_stop st pos (hH := hH) (hT := ht) (by rw [h]; exact fun e => HStatus.noConfusion e)
     omega
   case imtf =>
     unfold stepHImtf at h

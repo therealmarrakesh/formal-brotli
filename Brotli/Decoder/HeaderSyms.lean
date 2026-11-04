@@ -10,7 +10,7 @@ namespace Brotli.Decoder
 
 open Brotli.Spec Brotli.Properties
 
-/-- Writes `v` into `n` bytes from `i`: code lengths, or a context map's values. -/
+/-- Writes `v` into `n` bytes from `i`: code lengths. -/
 def fillLens (t : ByteArray) (i n : UInt64) (v : UInt8) : ByteArray :=
   if _hn : n = 0 then t else fillLens (setU t i.toUSize v) (i + 1) (n - 1) v
 termination_by n.toNat
@@ -53,6 +53,75 @@ theorem fillLens_spec (v : UInt8) : ∀ (N : Nat) (t : ByteArray) (i n : UInt64)
       have := setU_get_same (t := t) (i := i.toUSize) (v := v) (by rw [hus]; omega)
       rwa [hus] at this
     · have e : (setU t i.toUSize v).data[j]? = t.data[j]? := setU_get_ne (by rw [hus]; exact he)
+      rw [e]
+      by_cases hin : i.toNat + 1 ≤ j ∧ j < i.toNat + 1 + N
+      · rw [ite_eq_left hin, ite_eq_left (by omega)]
+      · rw [ite_eq_right hin, ite_eq_right (by omega)]
+
+/-- What `fillVals` needs for its writes to stay in the array. -/
+def FillPre (t : ByteArray) (i n : UInt64) : Prop := i.toNat + n.toNat < 2 ^ 32 ∧ i.toNat + n.toNat ≤ t.size
+
+theorem FillPre.at {t : ByteArray} {i n : UInt64} (h : FillPre t i n) (hn : ¬ n = 0) : i.toUSize.toNat < t.size := by
+  obtain ⟨h1, h2⟩ := h
+  have : n.toNat ≠ 0 := fun e => hn (UInt64.toNat_inj.mp (by rw [e]; rfl))
+  rw [word_toUSize (by omega)]
+  omega
+
+theorem FillPre.next {t : ByteArray} {i n : UInt64} (h : FillPre t i n) (hn : ¬ n = 0) {t' : ByteArray} (hs : t'.size = t.size) :
+    FillPre t' (i + 1) (n - 1) := by
+  obtain ⟨h1, h2⟩ := h
+  have : n.toNat ≠ 0 := fun e => hn (UInt64.toNat_inj.mp (by rw [e]; rfl))
+  have hn1 : (n - 1).toNat = n.toNat - 1 :=
+    UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by rw [show (1 : UInt64).toNat = 1 from rfl]; omega))
+  have hi1 : (i + 1).toNat = i.toNat + 1 := by
+    rw [UInt64.toNat_add, show (1 : UInt64).toNat = 1 from rfl]
+    exact Nat.mod_eq_of_lt (by omega)
+  exact ⟨by rw [hi1, hn1]; omega, by rw [hi1, hn1, hs]; omega⟩
+
+/-- Writes `v` into `n` bytes from `i`, which are in the array: a context map's values. -/
+def fillVals (t : ByteArray) (i n : UInt64) (v : UInt8) (h : FillPre t i n) : ByteArray :=
+  if hn : n = 0 then t else fillVals (t.uset i.toUSize v (h.at hn)) (i + 1) (n - 1) v (h.next hn (size_uset' _ _ _ _))
+termination_by n.toNat
+decreasing_by
+  have hne : n.toNat ≠ 0 := fun e => hn (UInt64.toNat_inj.mp (by rw [e]; rfl))
+  have h1 : (n - 1).toNat = n.toNat - 1 := UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by
+    rw [show (1 : UInt64).toNat = 1 from rfl]
+    omega))
+  omega
+
+theorem fillVals_spec (v : UInt8) : ∀ (N : Nat) (t : ByteArray) (i n : UInt64) (h : FillPre t i n), n.toNat = N →
+    (fillVals t i n v h).size = t.size ∧ ∀ j, (fillVals t i n v h).data[j]?.getD 0 =
+      if i.toNat ≤ j ∧ j < i.toNat + N then v else t.data[j]?.getD 0 := by
+  intro N
+  induction N with
+  | zero =>
+    intro t i n h hn
+    have hz : n = 0 := UInt64.toNat_inj.mp (by rw [hn]; rfl)
+    rw [fillVals, dite_eq_left hz]
+    refine ⟨rfl, fun j => ?_⟩
+    rw [ite_eq_right (by omega)]
+  | succ N ih =>
+    intro t i n h hn
+    obtain ⟨h32, hle⟩ := id h
+    have hz : n ≠ 0 := fun e => by rw [e] at hn; exact Nat.succ_ne_zero _ hn.symm
+    have hn1 : (n - 1).toNat = N := by
+      rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by rw [show (1 : UInt64).toNat = 1 from rfl]; omega)), hn]
+      rfl
+    have hi1 : (i + 1).toNat = i.toNat + 1 := by
+      rw [UInt64.toNat_add, show (1 : UInt64).toNat = 1 from rfl]
+      exact Nat.mod_eq_of_lt (by omega)
+    have hus : i.toUSize.toNat = i.toNat := word_toUSize (by omega)
+    rw [fillVals, dite_eq_right hz]
+    have hsz := size_uset' t i.toUSize v (h.at hz)
+    obtain ⟨h1, h2⟩ := ih (t.uset i.toUSize v (h.at hz)) (i + 1) (n - 1) (h.next hz hsz) hn1
+    refine ⟨by rw [h1, hsz], fun j => ?_⟩
+    rw [h2 j, hi1]
+    by_cases he : j = i.toNat
+    · subst he
+      rw [ite_eq_right (by omega), ite_eq_left (by omega)]
+      have := uset_get_same (t := t) (i := i.toUSize) (v := v) (h.at hz)
+      rwa [hus] at this
+    · have e : (t.uset i.toUSize v (h.at hz)).data[j]? = t.data[j]? := uset_get_ne (h.at hz) (by rw [hus]; exact he)
       rw [e]
       by_cases hin : i.toNat + 1 ≤ j ∧ j < i.toNat + 1 + N
       · rw [ite_eq_left hin, ite_eq_left (by omega)]

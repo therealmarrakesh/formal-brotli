@@ -85,6 +85,54 @@ theorem cmdStart_rel {c : Cmd} {d : Done} {g : Gh} {w k : Nat} {st : StreamState
 
 /-! ### The check at the end of the commands -/
 
+/-- Checks `n` flags from `t`. -/
+def allMarked (flags : ByteArray) (t n : UInt64) : Bool :=
+  if _hn : n = 0 then true
+  else if getU flags t.toUSize = 0 then false else allMarked flags (t + 1) (n - 1)
+termination_by n.toNat
+decreasing_by
+  have hne : n.toNat ≠ 0 := fun e => _hn (UInt64.toNat_inj.mp (by rw [e]; rfl))
+  have h1 : (n - 1).toNat = n.toNat - 1 := UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by
+    rw [show (1 : UInt64).toNat = 1 from rfl]
+    omega))
+  omega
+
+theorem allMarked_iff (flags : ByteArray) : ∀ (N : Nat) (t n : UInt64), n.toNat = N → t.toNat + N < 2 ^ 32 →
+    (allMarked flags t n = true ↔ ∀ k, t.toNat ≤ k → k < t.toNat + N → flags.data[k]?.getD 0 ≠ 0) := by
+  intro N
+  induction N with
+  | zero =>
+    intro t n hn _
+    have hz : n = 0 := UInt64.toNat_inj.mp (by rw [hn]; rfl)
+    rw [allMarked, dite_eq_left hz]
+    exact ⟨fun _ k h1 h2 => absurd h2 (by omega), fun _ => rfl⟩
+  | succ N ih =>
+    intro t n hn h32
+    have hz : n ≠ 0 := fun e => by rw [e] at hn; exact Nat.succ_ne_zero _ hn.symm
+    have hn1 : (n - 1).toNat = N := by
+      rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by rw [show (1 : UInt64).toNat = 1 from rfl]; omega)), hn]
+      rfl
+    have hi1 : (t + 1).toNat = t.toNat + 1 := by
+      rw [UInt64.toNat_add, show (1 : UInt64).toNat = 1 from rfl]
+      exact Nat.mod_eq_of_lt (by omega)
+    have hus : t.toUSize.toNat = t.toNat := word_toUSize (by omega)
+    have hget : getU flags t.toUSize = flags.data[t.toNat]?.getD 0 := by
+      apply UInt8.toNat_inj.mp
+      rw [getU_toNat, hus]
+    rw [allMarked, dite_eq_right hz, hget]
+    by_cases hc : flags.data[t.toNat]?.getD 0 = 0
+    · rw [ite_eq_left hc]
+      exact ⟨fun h => Bool.noConfusion h, fun h => absurd hc (h t.toNat (Nat.le_refl _) (by omega))⟩
+    · rw [ite_eq_right hc, ih (t + 1) (n - 1) hn1 (by rw [hi1]; omega), hi1]
+      constructor
+      · intro h k h1 h2
+        by_cases he : k = t.toNat
+        · rw [he]
+          exact hc
+        · exact h k (by omega) (by omega)
+      · intro h k h1 h2
+        exact h k (by omega) (by omega)
+
 /-- A meta-block's end check: every block type occurred. -/
 @[inline] def seenOk (seen : ByteArray) (nL nI nD : UInt64) : Bool :=
   allMarked seen 0 nL && allMarked seen 256 nI && allMarked seen 512 nD

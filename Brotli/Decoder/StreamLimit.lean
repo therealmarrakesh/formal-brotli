@@ -172,11 +172,19 @@ theorem stepHTrees_lim : HLim (stepHTrees (hdSet st a) pos) (stepHTrees st pos) 
 theorem stepHRlemax_lim : stepHRlemax (hdSet st a) pos = hdSet (stepHRlemax st pos) a := by
   simp only [stepHRlemax, markH]; lim_tac
 
-theorem stepHVals_lim : stepHVals (hdSet st a) pos = hdSet (stepHVals st pos) a := by
-  simp only [stepHVals, markH, clearMap]; lim_tac
+theorem stepHVals_lim (h1 : ∃ g p, HRel (hdSet st a) g p) (h2 : ∃ g p, HRel st g p) (ht : st.tag = .vals) :
+    stepHVals (hdSet st a) pos h1 ht = hdSet (stepHVals st pos h2 ht) a := by
+  show stepHVals { st with d := { st.d with arenaMax := a } } pos h1 ht = _
+  have e : mapSymFastT { st with d := { st.d with arenaMax := a } } h1 ht = mapSymFastT st h2 ht := rfl
+  unfold stepHVals
+  rw [e]
+  generalize mapSymFastT st h2 ht = rr
+  obtain ⟨⟨rs, rw, rc, ra, rb, rcc, rd, re⟩, hr⟩ := rr
+  cases rs <;> (try simp only [markH, clearMap]) <;> lim_tac
 
-theorem stepHImtf_lim : HLim (stepHImtf (hdSet st a) pos) (stepHImtf st pos) := by
-  show HLim (stepHImtf { st with d := { st.d with arenaMax := a } } pos) _
+theorem stepHImtf_lim (h1 : ∃ g p, HRel (hdSet st a) g p) (h2 : ∃ g p, HRel st g p) (ht : st.tag = .imtf) :
+    HLim (stepHImtf (hdSet st a) pos h1 ht) (stepHImtf st pos h2 ht) := by
+  show HLim (stepHImtf { st with d := { st.d with arenaMax := a } } pos h1 ht) _
   simp only [stepHImtf, markH, clearMap]
   (repeat' split) <;> first | exact mapFinish_lim' _ a (by rfl) _ _ _ (by rfl) | exact HLim.same (a := a) (by rfl) | contradiction | (simp_all [hdSet]; done)
 
@@ -235,8 +243,8 @@ theorem stepAtH_lim (h1 : ∃ g p, HRel (hdSet st a) g p) (h2 : ∃ g p, HRel st
   | modes => rw [stepAtH_modes (st := hdSet st a) ht, stepAtH_modes ht]; exact HLim.same (stepHModes_lim st a pos h1 h2 ht)
   | trees => rw [stepAtH_trees (st := hdSet st a) ht, stepAtH_trees ht]; exact stepHTrees_lim st a pos
   | rlemax => rw [stepAtH_rlemax (st := hdSet st a) ht, stepAtH_rlemax ht]; exact HLim.same (stepHRlemax_lim st a pos)
-  | vals => rw [stepAtH_vals (st := hdSet st a) ht, stepAtH_vals ht]; exact HLim.same (stepHVals_lim st a pos)
-  | imtf => rw [stepAtH_imtf (st := hdSet st a) ht, stepAtH_imtf ht]; exact stepHImtf_lim st a pos
+  | vals => rw [stepAtH_vals (st := hdSet st a) ht, stepAtH_vals ht]; exact HLim.same (stepHVals_lim st a pos h1 h2 ht)
+  | imtf => rw [stepAtH_imtf (st := hdSet st a) ht, stepAtH_imtf ht]; exact stepHImtf_lim st a pos h1 h2 ht
   | codes => rw [stepAtH_codes (st := hdSet st a) ht, stepAtH_codes ht]; exact HLim.same (stepHCodes_lim st a pos)
   | ready => rw [stepAtH_ready (st := hdSet st a) ht, stepAtH_ready ht]; exact HLim.same (a := a) rfl
 
