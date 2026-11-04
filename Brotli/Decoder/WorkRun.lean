@@ -564,6 +564,161 @@ theorem pay_hdr {w : Nat} {st : StreamState} {last : Bool} {mlen : Nat} {g : Gh}
       omega
     | _ => exact absurd hR''.1 (fun e => DTag.noConfusion e)
 
+/-! ### A meta-block's commands -/
+
+theorem avail_len (word count : UInt64) (a : ByteArray) (pos stop : USize) (F : List Bool) :
+    (availBits word count a pos stop F).length = (availBits word count a pos stop []).length + F.length := by
+  simp only [availBits, List.length_append, List.append_nil]
+  omega
+
+theorem cpot_end {s : CommandState} (h0 : s.remaining = 0) : cpot (.command s) = 0 := by
+  simp [cpot, crank, cstage, h0]
+
+/-- The commands' step, against the potential: the command loop's work is paid for by the commands' potential, their
+bits and bytes, and the commands' end by what they hold for it. A loop that runs out of its budget has read or produced
+enough to pay for its round. -/
+theorem pay_cmds {w : Nat} {last : Bool} {m : MetaBlockHeader} {q0 : Phase} {a : ByteArray} {stop : USize}
+    {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize} (hrel : DRel D (.cmds w last m q0)) (hsi : SInv (.cmds w last m q0))
+    (hp : pos.toNat ≤ stop.toNat) :
+    ((stepDCmds a stop hs D pos).status = .next → Pays a stop (.cmds w last m q0) D pos (stepDCmds a stop hs D pos)
+      (stepDCmdsW a stop hs D pos + 1) 0) ∧
+    ((stepDCmds a stop hs D pos).status = .needsInput ∨ (stepDCmds a stop hs D pos).status = .needsOutput →
+      Pays a stop (.cmds w last m q0) D pos (stepDCmds a stop hs D pos) (stepDCmdsW a stop hs D pos + 1) 118) ∧
+    ((stepDCmds a stop hs D pos).status = .bad → ∃ L, L ≤ capE D.cmd.cap ∧ ∀ t : List UInt8,
+      stepDCmdsW a stop hs D pos + 1 ≤ dpot (.cmds w last m q0) D + hdrRate * (D.bits a pos stop (bits t)).length + 282 * L + 118) := by
+  obtain ⟨tag, cmd, hd, H, k, last', left, limit, pos', status⟩ := D
+  obtain ⟨ht, hl, hlim, hH, hR⟩ := hrel
+  have ht' : tag = .cmds := ht
+  subst ht'
+  have hl0 : last' = last := hl
+  subst hl0
+  obtain ⟨hm, hci⟩ := hsi
+  dsimp only at hR
+  obtain ⟨c, q, st', pos'', hq, hciq, o1, l1, g1, g2, hr, g3, g4, g5, g6⟩ :=
+    runCmdW_count (w := w) (k := k) (hs := hs) hm hH _ cmdBudget cmd q0 pos rfl hR hci hp []
+  obtain ⟨-, c1, c2, c3, c4⟩ := creach hm hr hci
+  have hq8 := crank_le q
+  have hp8 := crank_le q0
+  have hcp := cpot_le q0
+  have hb65 : cmdBudget.toNat = 65536 := usize_ofNat' (by decide)
+  obtain ⟨l, hl1, hl2⟩ := o1
+  have hlo : q.out.length - q0.out.length = l.length := by rw [hl1, List.length_append]; omega
+  have hL : l.length ≤ capE cmd.cap := by
+    have := l1.2
+    omega
+  have hRate : hdrRate = 22343 := rfl
+  have eW : stepDCmdsW a stop hs ⟨.cmds, cmd, hd, H, k, last', left, limit, pos', status⟩ pos =
+      runCmdW H k a stop hs cmdBudget cmd pos + (if (runCmd H k a stop hs cmdBudget cmd pos).status = .done then 772 else 0) := rfl
+  simp only [stateBits] at g3 c1 c3
+  rw [eW]
+  unfold stepDCmds takeCmd
+  dsimp only
+  generalize runCmd H k a stop hs cmdBudget cmd pos = rc at g3 g4 g5 g6 ⊢
+  cases hst : rc.status with
+  | next =>
+    obtain ⟨e1, e2⟩ := g4 (by rw [hst]; decide)
+    subst e1
+    subst e2
+    have hc := g6 hst
+    have he : cmdEnd st' = 1 := by unfold cmdEnd; rw [hst]; rfl
+    rw [he] at g3
+    rw [ite_eq_right (fun e => StepStatus.noConfusion e)]
+    refine ⟨fun _ => ?_, fun e => ?_, fun e => ?_⟩
+    · refine ⟨.cmds w last' m q, ⟨rfl, rfl, hlim, hH, hq⟩, ⟨l, hl1, hl2⟩, g1, g2, fun _ => ⟨hm, hciq⟩, fun t => ?_⟩
+      simp only [Dec.bits, Dec.word, Dec.count, clearCmd, dpot, spot, SPhase.out]
+      rw [avail_len st'.word st'.count a st'.pos stop (bits t), avail_len cmd.word cmd.count a pos stop (bits t), hRate, hlo]
+      rw [hlo] at c3
+      omega
+    · rcases e with e | e <;> cases e
+    · cases e
+  | needsInput =>
+    obtain ⟨e1, e2⟩ := g4 (by rw [hst]; decide)
+    subst e1
+    subst e2
+    have he : cmdEnd st' = 117 := by unfold cmdEnd; rw [hst]; rfl
+    rw [he] at g3
+    rw [ite_eq_right (fun e => StepStatus.noConfusion e)]
+    refine ⟨fun e => ?_, fun _ => ?_, fun e => ?_⟩
+    · cases e
+    · refine ⟨.cmds w last' m q, ⟨rfl, rfl, hlim, hH, hq⟩, ⟨l, hl1, hl2⟩, g1, g2, fun _ => ⟨hm, hciq⟩, fun t => ?_⟩
+      simp only [Dec.bits, Dec.word, Dec.count, clearCmd, dpot, spot, SPhase.out]
+      rw [avail_len st'.word st'.count a st'.pos stop (bits t), avail_len cmd.word cmd.count a pos stop (bits t), hRate, hlo]
+      omega
+    · cases e
+  | needsOutput =>
+    obtain ⟨e1, e2⟩ := g4 (by rw [hst]; decide)
+    subst e1
+    subst e2
+    have he : cmdEnd st' = 117 := by unfold cmdEnd; rw [hst]; rfl
+    rw [he] at g3
+    rw [ite_eq_right (fun e => StepStatus.noConfusion e)]
+    refine ⟨fun e => ?_, fun _ => ?_, fun e => ?_⟩
+    · cases e
+    · refine ⟨.cmds w last' m q, ⟨rfl, rfl, hlim, hH, hq⟩, ⟨l, hl1, hl2⟩, g1, g2, fun _ => ⟨hm, hciq⟩, fun t => ?_⟩
+      simp only [Dec.bits, Dec.word, Dec.count, clearCmd, dpot, spot, SPhase.out]
+      rw [avail_len st'.word st'.count a st'.pos stop (bits t), avail_len cmd.word cmd.count a pos stop (bits t), hRate, hlo]
+      omega
+    · cases e
+  | bad =>
+    have he : cmdEnd rc = 117 := by unfold cmdEnd; rw [hst]; rfl
+    rw [he] at g3
+    rw [ite_eq_right (fun e => StepStatus.noConfusion e)]
+    refine ⟨fun e => ?_, fun e => ?_, fun _ => ⟨l.length, hL, fun t => ?_⟩⟩
+    · cases e
+    · rcases e with e | e <;> cases e
+    · simp only [Dec.bits, Dec.word, Dec.count, dpot, spot]
+      rw [avail_len cmd.word cmd.count a pos stop (bits t), hRate]
+      rw [hlo] at g3
+      omega
+  | done =>
+    obtain ⟨e1, e2⟩ := g4 (by rw [hst]; decide)
+    subst e1
+    subst e2
+    obtain ⟨s, rfl, h0⟩ := g5 hst
+    have he : cmdEnd st' = 117 := by unfold cmdEnd; rw [hst]; rfl
+    rw [he, cpot_end h0] at g3
+    rw [ite_eq_left rfl]
+    have hcheck := seenOk_iff hH hq
+    have hq' := hq
+    obtain ⟨hC, htg, hprod⟩ := hq'
+    have hwin := hC.toWin
+    by_cases hsee : seenOk st'.seen H.nL H.nI H.nD = true
+    · rw [ite_eq_left hsee]
+      refine ⟨fun _ => ?_, fun e => ?_, fun e => ?_⟩
+      rotate_left
+      · rcases e with e | e <;> cases e
+      · cases e
+      cases last' with
+      | true =>
+        refine ⟨.ended ⟨s.output, s.produced, s.distances⟩, ⟨rfl, hC.wf, w, ⟨hwin, hprod, hlim⟩⟩, ⟨l, hl1, hl2⟩, g1, g2,
+          fun _ => trivial, fun t => ?_⟩
+        simp only [Dec.bits, Dec.word, Dec.count, dpot, spot, SPhase.out, ↓reduceIte]
+        rw [avail_len st'.word st'.count a st'.pos stop (bits t), avail_len cmd.word cmd.count a pos stop (bits t), hRate]
+        have hlo' : s.output.length - q0.out.length = l.length := hlo
+        try rw [hlo] at g3
+        rw [hlo']
+        unfold cmdsEnd roundCost
+        omega
+      | false =>
+        refine ⟨.mblock w ⟨s.output, s.produced, s.distances⟩, ⟨rfl, hC.wf, ⟨hwin, hprod, hlim⟩⟩, ⟨l, hl1, hl2⟩, g1, g2,
+          fun _ => hciq, fun t => ?_⟩
+        simp only [Dec.bits, Dec.word, Dec.count, dpot, spot, SPhase.out, Bool.false_eq_true, ↓reduceIte]
+        rw [avail_len st'.word st'.count a st'.pos stop (bits t), avail_len cmd.word cmd.count a pos stop (bits t), hRate]
+        have hlo' : s.output.length - q0.out.length = l.length := hlo
+        try rw [hlo] at g3
+        rw [hlo']
+        unfold cmdsEnd roundCost
+        split <;> omega
+    · rw [ite_eq_right hsee]
+      refine ⟨fun e => ?_, fun e => ?_, fun _ => ⟨l.length, hL, fun t => ?_⟩⟩
+      · cases e
+      · rcases e with e | e <;> cases e
+      simp only [Dec.bits, Dec.word, Dec.count, dpot, spot]
+      rw [avail_len cmd.word cmd.count a pos stop (bits t), hRate]
+      rw [hlo] at g3
+      unfold cmdsEnd roundCost
+      omega
+
 /-! ### Metadata and uncompressed data -/
 
 /-- A step in metadata, against the potential: a byte read for each one skipped, and the potential for the last step. -/
