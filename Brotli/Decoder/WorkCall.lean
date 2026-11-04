@@ -87,8 +87,8 @@ theorem runD_k10' {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} (x
 
 /-- A call's work against the potential. A call that pauses leaves the potential of where it pauses and its bits to pay
 later, at most one more byte waiting than it found, and pays 22343 for each bit it reads, 284 for each byte it hands out,
-282 for each byte it leaves waiting, the window, and 280. Any call pays at most 282 for each byte of its space, and 1
-more, for what it may decode and not hand out, and 23760. -/
+282 for each byte it leaves waiting, the window, and 280. Any call pays at most the potential, 22343 for each bit, 284 for
+each byte it hands out, the window, and 24042: it decodes at most one byte more than it hands out. -/
 theorem pay_callD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {final : Bool} :
     ∀ (space : Nat) (D : Dec) (h : DInv stop D) (p : SPhase) (buf : ByteArray), DRel D p → SInv p →
     (D.tag ≠ .wbits → 10 ≤ D.k.toNat) →
@@ -107,8 +107,8 @@ theorem pay_callD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {f
             282 * (callD a stop hs final D h buf space).D.cmd.pend.toNat +
             winD D (runD a stop hs (withCap D space) (h.withCap space)) + 280) ∧
     (∀ t : List UInt8, callDW a stop hs final D h buf space ≤ dpot p D + hdrRate * (D.bits a D.pos stop (bits t)).length +
-      284 * ((callD a stop hs final D h buf space).buf.size - buf.size) + 282 * (space + 1) +
-      winD D (runD a stop hs (withCap D space) (h.withCap space)) + 23760) := by
+      284 * ((callD a stop hs final D h buf space).buf.size - buf.size) +
+      winD D (runD a stop hs (withCap D space) (h.withCap space)) + 24042) := by
   intro space
   induction space using Nat.strongRecOn with
   | _ space ih =>
@@ -284,23 +284,33 @@ theorem pay_callD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {f
       cases hst : (runD a stop hs (withCap D space) (h.withCap space)).status with
       | needsOutput => exact absurd hst hO
       | bad =>
-        obtain ⟨L, hL, hb⟩ := P2 (Or.inl hst)
-        refine ⟨Nat.le_refl _, fun hs' => ?_, fun t => ?_⟩
+        obtain ⟨L, hL, -, hb⟩ := P2 (Or.inl hst)
+        have hwo := runD_badWin ⟨withCap D space, h.withCap space⟩ p hrel' hst
+        dsimp only at hwo
+        have hfw := flushW_win hwo buf space
+        obtain ⟨len, f1, f2, -, -, f5, n, f6, f7⟩ := flushD_win hwo buf space
+        have hbs := buf_size_of f6
+        rw [f7] at hbs
+        have hmin : min (runD a stop hs (withCap D space) (h.withCap space)).cmd.pend.toNat space ≤ len := by
+          by_cases hc : (runD a stop hs (withCap D space) (h.withCap space)).cmd.pend.toNat - len = 0
+          · omega
+          · have := f5 hc
+            omega
+        have hL' : D.cmd.pend.toNat + L ≤ (runD a stop hs (withCap D space) (h.withCap space)).cmd.pend.toNat := hL
+        refine ⟨by dsimp only; omega, fun hs' => ?_, fun t => ?_⟩
         · rcases hs' with e | e <;> cases e
         · have i := hb t
           rw [ed, eb, ew] at i
-          have : capE (withCap D space).cmd.cap = min space 16777216 + 1 := hcap
-          rw [this] at hL
           dsimp only
           omega
       | memory =>
-        obtain ⟨L, hL, hb⟩ := P2 (Or.inr hst)
+        obtain ⟨L, hL, hm, hb⟩ := P2 (Or.inr hst)
+        have hL' : D.cmd.pend.toNat + L ≤ (runD a stop hs (withCap D space) (h.withCap space)).cmd.pend.toNat := hL
+        have hm' := hm hst
         refine ⟨Nat.le_refl _, fun hs' => ?_, fun t => ?_⟩
         · rcases hs' with e | e <;> cases e
         · have i := hb t
           rw [ed, eb, ew] at i
-          have : capE (withCap D space).cmd.cap = min space 16777216 + 1 := hcap
-          rw [this] at hL
           dsimp only
           omega
       | needsInput =>

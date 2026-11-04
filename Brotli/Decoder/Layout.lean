@@ -614,7 +614,7 @@ theorem afterRun_same {a1 a2 : ByteArray} {e1 e2 : USize} {r1 r2 : Dec} (he : r1
       exact ⟨f1, hf, rfl, L, f5, f6⟩
   · exact ⟨he, h, rfl, [], by simp, by simp⟩
   · exact ⟨rfl, h, rfl, [], by simp, by simp⟩
-  · exact ⟨rfl, h, rfl, [], by simp, by simp⟩
+  · exact ⟨rfl, h, rfl, L, f5, f6⟩
 
 theorem withCap_er (D : Dec) (space : Nat) :
     (withCap D space).er = { D.er with cmd := { D.er.cmd with cap := capFor space } } := rfl

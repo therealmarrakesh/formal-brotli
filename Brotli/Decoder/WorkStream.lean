@@ -130,6 +130,7 @@ def afterRunW (r : Dec) (buf : ByteArray) (space : Nat) : Nat :=
   match r.status with
   | .needsInput => flushAllW r.k r.cmd buf space + 1
   | .next => flushAllW r.k r.cmd buf space + 2
+  | .bad => flushAllW r.k r.cmd buf space + 1
   | _ => 1
 
 /-- The work of a call: its rounds of the loop and of handing bytes out. -/

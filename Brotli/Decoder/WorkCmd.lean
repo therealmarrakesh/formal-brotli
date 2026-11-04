@@ -949,6 +949,7 @@ theorem runCmdW_count {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a :
           cpot p + 366 * (stateBits st a pos stop F).length + 281 * (q.out.length - p.out.length) +
             cmdEnd (runCmd H k a stop hs n st pos) ∧
         ((runCmd H k a stop hs n st pos).status ≠ .bad → st' = runCmd H k a stop hs n st pos ∧ pos' = (runCmd H k a stop hs n st pos).pos) ∧
+        ((runCmd H k a stop hs n st pos).status = .bad → (runCmd H k a stop hs n st pos).WinSame st') ∧
         ((runCmd H k a stop hs n st pos).status = .done → ∃ s, q = .command s ∧ s.remaining = 0) ∧
         ((runCmd H k a stop hs n st pos).status = .next → n.toNat ≤ c) := by
   intro N
@@ -959,7 +960,7 @@ theorem runCmdW_count {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a :
     have e : runCmd H k a stop hs n st pos = markStep st pos .next := by rw [runCmd, dite_eq_left hz]
     rw [e]
     refine ⟨0, p, markStep st pos .next, pos, hrel.mark _ _, hci, ⟨[], rfl, rfl⟩, PendLe.keep rfl rfl, Nat.le_refl _, hp, .refl _ _, ?_,
-      fun _ => ⟨rfl, rfl⟩, fun h => StepStatus.noConfusion h, fun _ => by omega⟩
+      fun _ => ⟨rfl, rfl⟩, fun h => StepStatus.noConfusion h, fun h => StepStatus.noConfusion h, fun _ => by omega⟩
     rw [runCmdW, dite_eq_left hz]
     show 1 + cpot p + 366 * (stateBits st a pos stop F).length ≤ _ + cmdEnd (markStep st pos .next)
     have : cmdEnd (markStep st pos .next) = 1 := rfl
@@ -984,7 +985,7 @@ theorem runCmdW_count {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a :
     case next =>
       obtain ⟨p1, hR1, o1, hci1, h2, h1, hj1⟩ := stepCmd_pot (hs := hs) hm hH hrel hci hp hst
       obtain ⟨n1, hn1, hr1, hw1⟩ := hj1 F
-      obtain ⟨c2, q, st', pos', hq, hciq, o2, l2, g1, g2, hr2, g3, g4, g5, g6⟩ :=
+      obtain ⟨c2, q, st', pos', hq, hciq, o2, l2, g1, g2, hr2, g3, g4, gb, g5, g6⟩ :=
         ih (n - USize.ofNat 1) _ p1 _ (by omega) hR1 hci1 h2 F
       have ho1 : p.out.length ≤ p1.out.length := by
         obtain ⟨l, e1, -⟩ := o1
@@ -995,7 +996,7 @@ theorem runCmdW_count {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a :
         rw [e1, List.length_append]
         omega
       refine ⟨n1 + c2, q, st', pos', hq, hciq, o1.trans o2, (stepCmd_pendLe H k a stop hs st pos).trans l2, by omega, g2,
-        hr1.trans hr2, ?_, g4, g5, fun h => by have := g6 h; omega⟩
+        hr1.trans hr2, ?_, g4, gb, g5, fun h => by have := g6 h; omega⟩
       show stepCmdW H k a stop hs st pos + 1 + runCmdW H k a stop hs (n - USize.ofNat 1) (stepCmd H k a stop hs st pos)
         (stepCmd H k a stop hs st pos).pos + cpot q + 366 * (stateBits st' a pos' stop F).length ≤
         _ + cmdEnd (runCmd H k a stop hs (n - USize.ofNat 1) (stepCmd H k a stop hs st pos) (stepCmd H k a stop hs st pos).pos)
@@ -1010,7 +1011,8 @@ theorem runCmdW_count {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a :
       have he : cmdEnd (stepCmd H k a stop hs st pos) = 117 := by unfold cmdEnd; rw [hst]; rfl
       refine ⟨c0, p', _, _, hR', hci', ⟨l, hl1, hl2⟩, stepCmd_pendLe H k a stop hs st pos, by rw [b1]; exact hp,
         by rw [b1]; exact Nat.le_refl _, hc0, ?_,
-        fun _ => ⟨rfl, rfl⟩, (fun h => absurd (hst.symm.trans h) (by decide)), (fun h => absurd (hst.symm.trans h) (by decide))⟩
+        fun _ => ⟨rfl, rfl⟩, (fun h => absurd (hst.symm.trans h) (by decide)), (fun h => absurd (hst.symm.trans h) (by decide)),
+        (fun h => absurd (hst.symm.trans h) (by decide))⟩
       show stepCmdW H k a stop hs st pos + 1 + 0 + cpot p' + _ ≤ _ + cmdEnd (stepCmd H k a stop hs st pos)
       omega
     case needsOutput =>
@@ -1022,7 +1024,8 @@ theorem runCmdW_count {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a :
       have hw := stopRound_pay (H := H) (k := k) (a := a) (hs := hs) (st := st) (pos := pos) hm hk hp (fun _ => hl2) hci hc0 hlo
       have he : cmdEnd (stepCmd H k a stop hs st pos) = 117 := by unfold cmdEnd; rw [hst]; rfl
       refine ⟨c0, p', _, _, hR', hci', ⟨l, hl1, hl2⟩, stepCmd_pendLe H k a stop hs st pos, b1, b2, hc0, ?_, fun _ => ⟨rfl, rfl⟩,
-        (fun h => absurd (hst.symm.trans h) (by decide)), (fun h => absurd (hst.symm.trans h) (by decide))⟩
+        (fun h => absurd (hst.symm.trans h) (by decide)), (fun h => absurd (hst.symm.trans h) (by decide)),
+        (fun h => absurd (hst.symm.trans h) (by decide))⟩
       show stepCmdW H k a stop hs st pos + 1 + 0 + cpot p' + _ ≤ _ + cmdEnd (stepCmd H k a stop hs st pos)
       omega
     case done =>
@@ -1036,7 +1039,7 @@ theorem runCmdW_count {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a :
       exact ⟨c0, .command s, _, _, hR', hci', ⟨l, hl1, hl2⟩, stepCmd_pendLe H k a stop hs st pos, b1, b2, hc0, by
           show stepCmdW H k a stop hs st pos + 1 + 0 + cpot (.command s) + _ ≤ _ + cmdEnd (stepCmd H k a stop hs st pos)
           omega,
-        fun _ => ⟨rfl, rfl⟩, fun _ => ⟨s, rfl, h0⟩,
+        fun _ => ⟨rfl, rfl⟩, (fun h => absurd (hst.symm.trans h) (by decide)), fun _ => ⟨s, rfl, h0⟩,
         (fun h => absurd (hst.symm.trans h) (by decide))⟩
     case bad =>
       have hw := stopRound_pay (H := H) (k := k) (a := a) (hs := hs) (st := st) (pos := pos) (L := 0) hm hk hp (fun h => absurd hst h)
@@ -1045,7 +1048,7 @@ theorem runCmdW_count {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a :
       exact ⟨0, p, st, pos, hrel, hci, ⟨[], rfl, rfl⟩, PendLe.rfl' _, Nat.le_refl _, hp, .refl _ _, by
           show stepCmdW H k a stop hs st pos + 1 + 0 + cpot p + _ ≤ _ + cmdEnd (stepCmd H k a stop hs st pos)
           omega,
-        fun e => absurd hst e,
+        fun e => absurd hst e, fun _ => stepCmd_badWin hst,
         (fun h => absurd (hst.symm.trans h) (by decide)), (fun h => absurd (hst.symm.trans h) (by decide))⟩
 
 end Brotli.Decoder

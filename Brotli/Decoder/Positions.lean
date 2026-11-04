@@ -381,6 +381,84 @@ theorem runCmd_bad (hK : ∀ s bs, s.remaining ≠ 0 → K s bs = readCommand w 
     | needsOutput => rw [hst] at hb; exact absurd (hst.symm.trans hb) (fun e => StepStatus.noConfusion e)
     | done => rw [hst] at hb; exact absurd (hst.symm.trans hb) (fun e => StepStatus.noConfusion e)
 
+/-- The window and the bytes waiting of a command loop state. -/
+def Cmd.WinSame (r st : Cmd) : Prop := r.ring = st.ring ∧ r.wpos = st.wpos ∧ r.pend = st.pend
+
+/-- Closes the goals a step's rejecting branches leave. -/
+macro "badWin_tac" : tactic => `(tactic| ((try dsimp only) <;> repeat' (first | split_all | (intro _; exact ⟨rfl, rfl, rfl⟩) | (intro _; exact ⟨trivial, trivial, trivial⟩) | (intro h; exact absurd h (fun e => StepStatus.noConfusion e)))))
+
+/-- A command loop step, once the buffer is refilled, rejects only with its window and bytes waiting as they were. -/
+theorem stepAt_badWin {st : Cmd} {pos : USize} :
+    (stepAt H k a stop hs st pos).status = .bad → (stepAt H k a stop hs st pos).WinSame st := by
+  unfold stepAt Cmd.WinSame
+  cases ht : st.tag <;> dsimp only
+  · unfold stepCommand markStep clearSeen
+    badWin_tac
+  · unfold stepInsertCopy insertStep markStep
+    badWin_tac
+  · unfold stepCopyLength markStep
+    badWin_tac
+  · unfold stepLiterals literalsRun finishLiterals markStep clearSeen clearRing
+    badWin_tac
+  · unfold stepDistance applyDistance applyWord applyBuilt markStep clearSeen
+    badWin_tac
+  · unfold stepDistanceSymbol
+    by_cases hd : st.dCur < H.nD
+    · rw [dite_eq_left hd]
+      unfold distanceThrough distanceStep applyDistance applyWord applyBuilt markStep
+      badWin_tac
+    · rw [dite_eq_right hd]
+      intro _
+      exact ⟨rfl, rfl, rfl⟩
+  · unfold stepCopy finishCopy markStep clearRing
+    badWin_tac
+  · unfold stepWord finishWord markStep clearRing
+    badWin_tac
+
+/-- A command loop step rejects only with its window and bytes waiting as they were. -/
+theorem stepCmd_badWin {st : Cmd} {pos : USize} (h : (stepCmd H k a stop hs st pos).status = .bad) :
+    (stepCmd H k a stop hs st pos).WinSame st := by
+  unfold stepCmd at h ⊢
+  by_cases hp : pos ≤ stop
+  · rw [dite_eq_left hp] at h ⊢
+    exact stepAt_badWin h
+  · rw [dite_eq_right hp]
+    exact ⟨rfl, rfl, rfl⟩
+
+/-- A run of the command loop that rejects leaves the window and the bytes waiting of a state at a place the reading in
+order reaches. -/
+theorem runCmd_badWin (hK : ∀ s bs, s.remaining ≠ 0 → K s bs = readCommand w m s bs >>= fun (s1, b) => K s1 b) (hH : HdrRel H m) :
+    ∀ (N : Nat) (n : USize) (p : Phase) (st : Cmd) (pos : USize), n.toNat = N → Rel w k.toNat m st p → pos.toNat ≤ stop.toNat →
+      (runCmd H k a stop hs n st pos).status = .bad →
+      ∃ (p1 : Phase) (st1 : Cmd), Rel w k.toNat m st1 p1 ∧ (runCmd H k a stop hs n st pos).WinSame st1 := by
+  intro N
+  induction N with
+  | zero =>
+    intro n p st pos hN _ _ hb
+    rw [runCmd, dite_eq_left (usize_zero hN)] at hb
+    exact absurd hb (fun e => StepStatus.noConfusion e)
+  | succ N ih =>
+    intro n p st pos hN hrel hp hb
+    have hn : n ≠ 0 := fun e => by rw [e] at hN; exact Nat.succ_ne_zero _ hN.symm
+    have hpred := usize_pred hn
+    have hstep := stepCmd_ok (hs := hs) (K := K) (a := a) hK hH hrel hp
+    have hbad := stepCmd_badWin (H := H) (k := k) (a := a) (hs := hs) (st := st) (pos := pos)
+    rw [runCmd, dite_eq_right hn] at hb ⊢
+    dsimp only at hb ⊢
+    generalize stepCmd H k a stop hs st pos = r at hstep hbad hb ⊢
+    cases hst : r.status with
+    | next =>
+      rw [hst] at hb
+      dsimp only at hb ⊢
+      obtain ⟨p', hR, _, h2, _, _, _, _⟩ := hstep.next hst
+      exact ih _ p' r r.pos (by omega) hR h2 hb
+    | bad =>
+      dsimp only
+      exact ⟨p, st, hrel, hbad hst⟩
+    | needsInput => rw [hst] at hb; exact absurd (hst.symm.trans hb) (fun e => StepStatus.noConfusion e)
+    | needsOutput => rw [hst] at hb; exact absurd (hst.symm.trans hb) (fun e => StepStatus.noConfusion e)
+    | done => rw [hst] at hb; exact absurd (hst.symm.trans hb) (fun e => StepStatus.noConfusion e)
+
 end
 
 /-! ### Where a header step that stops decides -/

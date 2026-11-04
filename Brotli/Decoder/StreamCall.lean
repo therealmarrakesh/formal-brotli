@@ -381,6 +381,122 @@ theorem flushD_inv {stop : USize} {D : Dec} (h : DInv stop D) (buf : ByteArray) 
   obtain ⟨_, _, _, _, a1, _, _, _, a2, _⟩ := flushD_spec hrel buf space
   exact ⟨⟨p, a1⟩, by rw [a2]; exact hp⟩
 
+/-- A state at a place can hand out its bytes. -/
+theorem DRel.winOk {D : Dec} {p : SPhase} (h : DRel D p) : WinOk D :=
+  h.window.imp id fun h => ⟨p.out, h⟩
+
+/-- What handing out the bytes of a state that can hand them out does. -/
+theorem flushD_win {D : Dec} (h : WinOk D) (buf : ByteArray) (space : Nat) :
+    ∃ len, len ≤ D.cmd.pend.toNat ∧ len ≤ space ∧ (flushD D buf space).space = space - len ∧
+      (flushD D buf space).D.cmd.pend.toNat = D.cmd.pend.toNat - len ∧ (D.cmd.pend.toNat - len ≠ 0 → space - len = 0) ∧
+      ∃ n : List Nat, (flushD D buf space).buf.data.toList.map UInt8.toNat = buf.data.toList.map UInt8.toNat ++ n ∧ n.length = len := by
+  rcases h with h0 | ⟨out, hring, hle, hout, hk⟩
+  · have hN : D.cmd.pend.toNat = 0 := by rw [h0]; rfl
+    have hf : flushAll D.k D.cmd buf space = ⟨D.cmd, buf, space⟩ := by
+      rw [flushAll]
+      dsimp only
+      rw [ite_eq_left (Or.inl h0)]
+    have e : flushD D buf space = ⟨{ D with cmd := D.cmd }, buf, space⟩ := by
+      unfold flushD
+      rw [hf]
+    rw [e]
+    exact ⟨0, Nat.zero_le _, Nat.zero_le _, rfl, by simp only [Nat.sub_zero], fun h1 => by omega, [], by simp, rfl⟩
+  · obtain ⟨len, a1, a2, a3, a4, a5, a6, a7⟩ := flushAll_spec hk _ D.cmd buf space rfl hring hle hout
+    unfold flushD
+    dsimp only
+    generalize flushAll D.k D.cmd buf space = f at a3 a4 a5 a7
+    refine ⟨len, a1, a2, a3, a5, a6, _, a7, ?_⟩
+    simp only [List.length_take, List.length_reverse]
+    omega
+
+/-- Closes the goals a stream step's rejecting branches leave. -/
+macro "badWinD_tac" : tactic => `(tactic| ((try dsimp only) <;> repeat' (first | split_all | (intro _; exact ⟨⟨rfl, rfl, rfl⟩, rfl⟩) | (intro _; exact ⟨⟨trivial, trivial, trivial⟩, trivial⟩) | (intro _; exact ⟨⟨rfl, rfl, rfl⟩, trivial⟩) | (intro h; exact absurd h (fun e => DStatus.noConfusion e)))))
+
+section
+variable {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize}
+
+theorem stepDWbits_badWin : (stepDWbits a stop hs D pos).status = .bad →
+    (stepDWbits a stop hs D pos).cmd.WinSame D.cmd ∧ (stepDWbits a stop hs D pos).k = D.k := by
+  unfold stepDWbits winStart
+  badWinD_tac
+
+theorem stepDMeta_badWin : (stepDMeta a stop hs D pos).status = .bad →
+    (stepDMeta a stop hs D pos).cmd.WinSame D.cmd ∧ (stepDMeta a stop hs D pos).k = D.k := by
+  unfold stepDMeta metaGo
+  badWinD_tac
+
+theorem stepDSkip_badWin : (stepDSkip stop D pos).status = .bad →
+    (stepDSkip stop D pos).cmd.WinSame D.cmd ∧ (stepDSkip stop D pos).k = D.k := by
+  unfold stepDSkip moveOn
+  badWinD_tac
+
+theorem stepDRaw_badWin : (stepDRaw a stop hs D pos).status = .bad →
+    (stepDRaw a stop hs D pos).cmd.WinSame D.cmd ∧ (stepDRaw a stop hs D pos).k = D.k := by
+  unfold stepDRaw takeRing moveOn rawFinish clearCmd clearRing
+  badWinD_tac
+
+theorem stepDHdr_badWin : (stepDHdr a stop hs D pos).status = .bad →
+    (stepDHdr a stop hs D pos).cmd.WinSame D.cmd ∧ (stepDHdr a stop hs D pos).k = D.k := by
+  unfold stepDHdr takeHd clearHd cmdStart
+  badWinD_tac
+
+end
+
+/-- A stream step that rejects can hand out its bytes. -/
+theorem stepD_badWin {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {p : SPhase} (hrel : DRel D p)
+    (hp : D.pos.toNat ≤ stop.toNat) (hb : (stepD a stop hs D).status = .bad) : WinOk (stepD a stop hs D) := by
+  have hw := hrel.winOk
+  unfold stepD at hb ⊢
+  cases p with
+  | wbits =>
+    rw [hrel.1] at hb ⊢
+    obtain ⟨h1, h2⟩ := stepDWbits_badWin hb
+    exact hw.same h1 h2
+  | mblock =>
+    rw [hrel.1] at hb ⊢
+    obtain ⟨h1, h2⟩ := stepDMeta_badWin hb
+    exact hw.same h1 h2
+  | skip =>
+    rw [hrel.1] at hb ⊢
+    obtain ⟨h1, h2⟩ := stepDSkip_badWin hb
+    exact hw.same h1 h2
+  | raw =>
+    rw [hrel.1] at hb ⊢
+    obtain ⟨h1, h2⟩ := stepDRaw_badWin hb
+    exact hw.same h1 h2
+  | hdr =>
+    rw [hrel.1] at hb ⊢
+    obtain ⟨h1, h2⟩ := stepDHdr_badWin hb
+    exact hw.same h1 h2
+  | cmds =>
+    rw [hrel.1] at hb ⊢
+    exact stepDCmds_badWin hrel hp hb
+  | ended =>
+    rw [hrel.1]
+    exact hw
+
+/-- The loop, when it rejects, can hand out its bytes. -/
+theorem runD_badWin {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} : ∀ (x : RunArg a stop hs) (p : SPhase), DRel x.D p →
+    (runD a stop hs x.D x.inv).status = .bad → WinOk (runD a stop hs x.D x.inv) := by
+  intro x
+  induction x using (runRel_wf a stop hs).induction with
+  | _ x ih =>
+    intro p hrel
+    obtain ⟨D, hinv⟩ := x
+    dsimp only at hrel ih ⊢
+    rw [runD]
+    by_cases he : D.tag = .ended
+    · rw [dite_eq_left he]
+      exact fun e => DStatus.noConfusion e
+    · rw [dite_eq_right he]
+      dsimp only
+      by_cases hn : (stepD a stop hs D).status = .next
+      · rw [dite_eq_left hn]
+        obtain ⟨p', hR, -⟩ := (stepD_ok specSem (a := a) (hs := hs) hrel he hinv.2).next hn
+        exact ih ⟨stepD a stop hs D, hinv.step he hn⟩ ⟨he, hn, rfl⟩ p' hR
+      · rw [dite_eq_right hn]
+        exact stepD_badWin hrel hinv.2
+
 /-! ### A call -/
 
 /-- What a call leaves. -/
@@ -405,10 +521,12 @@ def endCheck (D : Dec) (stop : USize) (final : Bool) (buf : ByteArray) : Out :=
   else ⟨deadD, buf, D.pos, .rejected⟩
 
 /-- What a call does with what the loop left, unless that needs more room. A rejection or the limit reports the input as
-used up to where the loop decided it. -/
+used up to where the loop decided it; a rejection hands out the bytes waiting first, as many as there is room for. -/
 def afterRun (r : Dec) (stop : USize) (final : Bool) (buf : ByteArray) (space : Nat) : Out :=
   match r.status with
-  | .bad => ⟨deadD, buf, r.pos, .rejected⟩
+  | .bad =>
+    let f := flushD r buf space
+    ⟨deadD, f.buf, r.pos, .rejected⟩
   | .memory => ⟨deadD, buf, r.pos, .memoryLimit⟩
   | .needsInput =>
     let f := flushD r buf space
@@ -751,6 +869,17 @@ private theorem callOk_stop {a : ByteArray} {stop : USize} {final : Bool} {p : S
   ⟨hq1, hq2, ⟨_, deadD_rel⟩, ⟨[], by simp, Nat.zero_le _, fun e => absurd e h1, fun e => absurd e h2, fun e => absurd e h3, hr,
     fun e => ⟨fun t y hy => by rw [List.append_nil]; exact hE.prefix (srest_out hy), by rw [List.append_nil]; exact hm e⟩⟩, hd⟩
 
+/-- A call that rejected, after handing out some bytes. -/
+private theorem callOk_rej {a : ByteArray} {stop : USize} {final : Bool} {p : SPhase} {D : Dec} {E : List Nat} {buf buf' : ByteArray}
+    {space : Nat} {n : List Nat} {q : USize} (hq1 : D.pos.toNat ≤ q.toNat) (hq2 : q.toNat ≤ stop.toNat)
+    (hb : buf'.data.toList.map UInt8.toNat = buf.data.toList.map UInt8.toNat ++ n) (hn : n.length ≤ space)
+    (hr : ∀ t : List UInt8, (final = true → t = []) → srest specSem p (D.bits a D.pos stop (bits t)) = none)
+    (hd : (final = true ∧ q = stop) ∨
+      DecidedAt a stop p (fun t => D.bits a D.pos stop (bits t)) D.pos q (fun p1 bs => srest specSem p1 bs = none)) :
+    CallOk a stop final p D E buf space ⟨deadD, buf', q, .rejected⟩ :=
+  ⟨hq1, hq2, ⟨_, deadD_rel⟩, ⟨n, hb, hn, fun e => Status.noConfusion e, fun e => Status.noConfusion e, fun e => Status.noConfusion e,
+    fun _ => hr, fun e => Status.noConfusion e⟩, fun _ => hd⟩
+
 /-- A call that paused for room after handing out what it could. -/
 private theorem callOk_full {a : ByteArray} {stop : USize} {final : Bool} {p p' : SPhase} {D r : Dec} {E : List Nat} {buf : ByteArray} {space : Nat}
     (hp : D.pos.toNat ≤ r.pos.toNat) (hps : r.pos.toNat ≤ stop.toNat) (hR : DRel r p') (hE : Pend p' r E)
@@ -775,7 +904,8 @@ private theorem callOk_full {a : ByteArray} {stop : USize} {final : Bool} {p p' 
 
 /-- What a call does with what the loop left. -/
 theorem afterRun_ok {a : ByteArray} {stop : USize} (hs : stop.toNat ≤ a.size) {final : Bool} {p : SPhase} {D r : Dec} {E : List Nat} (hE : Pend p D E)
-    (hr : RunD a stop p D r) (hn : r.status ≠ .needsOutput) (buf : ByteArray) (space : Nat) : CallOk a stop final p D E buf space (afterRun r stop final buf space) := by
+    (hr : RunD a stop p D r) (hn : r.status ≠ .needsOutput) (hw : r.status = .bad → WinOk r) (buf : ByteArray) (space : Nat) :
+    CallOk a stop final p D E buf space (afterRun r stop final buf space) := by
   unfold afterRun
   cases hst : r.status with
   | needsOutput => exact absurd hst hn
@@ -783,8 +913,8 @@ theorem afterRun_ok {a : ByteArray} {stop : USize} (hs : stop.toNat ≤ a.size) 
     obtain ⟨hold, hdec⟩ := hr.bad hst
     have hdec' := hdec
     obtain ⟨_, _, _, d1, d2, d3, _⟩ := hdec'
-    exact callOk_stop (Nat.le_trans d1 d2) d3 hE (fun _ t _ => hold t) (fun _ => Or.inr hdec) (fun e => Status.noConfusion e)
-      (fun e => Status.noConfusion e) (fun e => Status.noConfusion e) (fun e => Status.noConfusion e)
+    obtain ⟨len, -, a2, -, -, -, n, a7, a8⟩ := flushD_win (hw hst) buf space
+    exact callOk_rej (Nat.le_trans d1 d2) d3 a7 (by omega) (fun t _ => hold t) (Or.inr hdec)
   | memory =>
     obtain ⟨m1, m2, p', D', b1, b2, b3, b4, b5, b6, b7⟩ := hr.memory hst
     exact callOk_stop m1 m2 hE (fun e => Status.noConfusion e) (fun e => Status.noConfusion e) (fun e => Status.noConfusion e)
@@ -942,7 +1072,7 @@ theorem callD_ok {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {fi
       · rw [ite_eq_right hz]
         exact callOk_full b1 b2 hR hE' heq hj hz
     · rw [dite_eq_right hO]
-      exact afterRun_ok hs hE hr hO buf space
+      exact afterRun_ok hs hE hr hO (runD_badWin ⟨withCap D space, h.withCap space⟩ p (hrel.withCap _)) buf space
 
 /-! ### What a call does to the measure -/
 

@@ -264,4 +264,50 @@ theorem stepDCmds_ok {α : Type} {S : Sem α} {w : Nat} {last : Bool} {m : MetaB
         show 8 * r.pos.toNat + r.count.toNat ≤ 8 * r.pos.toNat + 64
         exact Nat.add_le_add_left hcl _
 
+/-- What handing out a state's bytes needs: none waiting, or a window holding them. -/
+def WinOk (D : Dec) : Prop :=
+  D.cmd.pend = 0 ∨ ∃ out : List Nat, RingOk D.cmd.ring D.k.toNat D.cmd.wpos.toNat out ∧ D.cmd.pend.toNat ≤ 2 ^ D.k.toNat ∧
+    D.cmd.pend.toNat ≤ out.length ∧ D.k.toNat ≤ 24
+
+/-- A state whose command loop state stands for a place can hand out its bytes. -/
+theorem Rel.winOk {w : Nat} {m : MetaBlockHeader} {D : Dec} {p : Phase} (h : Rel w D.k.toNat m D.cmd p) : WinOk D :=
+  Or.inr ⟨p.out, h.window⟩
+
+/-- The same window and bytes waiting, with the same window size, can still be handed out. -/
+theorem WinOk.same {D r : Dec} (h : WinOk D) (hc : r.cmd.WinSame D.cmd) (hk : r.k = D.k) : WinOk r := by
+  obtain ⟨e1, e2, e3⟩ := hc
+  unfold WinOk at h ⊢
+  rw [e1, e2, e3, hk]
+  exact h
+
+/-- The commands, when they reject, can hand out their bytes. -/
+theorem stepDCmds_badWin {w : Nat} {last : Bool} {m : MetaBlockHeader} {p : Phase} {a : ByteArray} {stop : USize}
+    {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize} (hrel : DRel D (.cmds w last m p)) (hp : pos.toNat ≤ stop.toNat) :
+    (stepDCmds a stop hs D pos).status = .bad → WinOk (stepDCmds a stop hs D pos) := by
+  obtain ⟨tag, cmd, hd, H, k, last', left, limit, pos', status⟩ := D
+  obtain ⟨ht, hl, hlim, hH, hR⟩ := hrel
+  have ht' : tag = .cmds := ht
+  subst ht'
+  have hstep := runCmd_ok (hs := hs) (K := cmdK w (specSem.after w last') m) (a := a) (fun s bs h0 => cmdK_step s bs h0) hH _ cmdBudget p cmd pos rfl hR hp
+  have hbad := runCmd_badWin (hs := hs) (K := cmdK w (specSem.after w last') m) (a := a) (fun s bs h0 => cmdK_step s bs h0) hH _ cmdBudget p cmd pos rfl hR hp
+  unfold stepDCmds takeCmd
+  dsimp only
+  generalize runCmd H k a stop hs cmdBudget cmd pos = r at hstep hbad
+  cases hst : r.status with
+  | bad =>
+    intro _
+    obtain ⟨p1, st1, h1, h2⟩ := hbad hst
+    exact WinOk.same (D := ⟨.cmds, st1, hd, H, k, last', left, limit, pos', status⟩) (Rel.winOk h1) h2 rfl
+  | done =>
+    obtain ⟨s, hR', -⟩ := hstep.done hst
+    dsimp only
+    split
+    · intro e
+      cases e
+    · intro _
+      exact Rel.winOk (D := ⟨.cmds, r, hd, H, k, last', left, limit, pos', status⟩) hR'
+  | next => intro e; cases e
+  | needsInput => intro e; cases e
+  | needsOutput => intro e; cases e
+
 end Brotli.Decoder

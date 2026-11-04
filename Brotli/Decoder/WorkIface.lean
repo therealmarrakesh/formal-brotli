@@ -1,5 +1,4 @@
 import Brotli.Decoder.WorkCall
-import Brotli.Decoder.WorkTop
 
 /-!
 # The decoder's work at its interface
@@ -46,16 +45,15 @@ private theorem arith_pause {W dq ho ph dp hh size u hand po win : Nat} (hu : u 
   generalize 178744 * d = E at h
   omega
 
-private theorem arith_any {W dp hh size hand sp win : Nat}
-    (h : W ≤ dp + 22343 * (hh + size * 8) + 284 * hand + 282 * (sp + 1) + win + 23760) :
-    W ≤ dp + 22343 * hh + 178744 * size + 284 * hand + 282 * (sp + 1) + win + 23760 := by
+private theorem arith_any {W dp hh size hand win : Nat}
+    (h : W ≤ dp + 22343 * (hh + size * 8) + 284 * hand + win + 24042) :
+    W ≤ dp + 22343 * hh + 178744 * size + 284 * hand + win + 24042 := by
   have e : 22343 * (hh + size * 8) = 22343 * hh + 178744 * size := by
     rw [Nat.mul_add, Nat.mul_comm size 8, ← Nat.mul_assoc]
   rw [e] at h
   generalize 22343 * hh = B at h ⊢
   generalize 178744 * size = C at h ⊢
   generalize 284 * hand = D at h ⊢
-  generalize 282 * (sp + 1) = F at h ⊢
   omega
 
 section
@@ -64,8 +62,8 @@ variable {x : List UInt8} {R : Run DState} {c : Call}
 /-- One call of the decoder, against the potential: a call that pauses is paid for by the potential of where it starts,
 22343 for each bit it takes from what its state holds and each of eight for each byte it uses, 284 for each byte it hands
 out, 282 for each byte it leaves waiting, the window it allocates and 280, less the potential and bits where it pauses.
-Any call is paid for by the potential, the bits its state holds and its chunk's, 284 for each byte it hands out, 282 for
-each byte of its space and one, the window and 23760. -/
+Any call is paid for by the potential, the bits its state holds and its chunk's, 284 for each byte it hands out, the window
+and 24042. -/
 theorem call_pays (hin : R.read + c.size ≤ x.length) (hfit : c.pre.length + c.size + c.post.length < USize.size) {p : SPhase}
     (hrel : DRel R.state.val p) (hsi : SInv p) (hk : R.state.val.tag ≠ .wbits → 10 ≤ R.state.val.k.toNat) :
     ((R.reply decoder x c).status = .needsInput ∨ (R.reply decoder x c).status = .needsOutput →
@@ -80,8 +78,8 @@ theorem call_pays (hin : R.read + c.size ≤ x.length) (hfit : c.pre.length + c.
             callWin R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.space + 280) ∧
     callWork R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.buf.toByteArray c.space c.final ≤
       dpot p R.state.val + 22343 * R.state.val.held.length + 178744 * c.size +
-        284 * ((R.reply decoder x c).output.size - c.buf.length) + 282 * (c.space + 1) +
-        callWin R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.space + 23760 := by
+        284 * ((R.reply decoder x c).output.size - c.buf.length) +
+        callWin R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.space + 24042 := by
   have hg : c.pre.length + c.size ≤ (R.input x c).size ∧ c.pre.length ≤ c.pre.length + c.size ∧ c.pre.length + c.size < USize.size :=
     ⟨by rw [input_size hin]; omega, by omega, by omega⟩
   have hs : (USize.ofNat (c.pre.length + c.size)).toNat ≤ (R.input x c).size := by
