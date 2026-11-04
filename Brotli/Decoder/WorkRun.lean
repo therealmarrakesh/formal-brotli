@@ -1044,7 +1044,7 @@ theorem stepDHdr_memPend {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.s
 
 /-- A stream step, against the potential: one that goes on is paid for, with the window when it is WBITS's; one that
 pauses costs at most 269 more; one that rejects or reports the limit costs at most the potential, the bits, the bytes it
-decodes first, which are waiting after it, and 23750. -/
+decodes first, which are waiting after it, and 12899. -/
 theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {p : SPhase} (hrel : DRel D p)
     (hsi : SInv p) (he : D.tag ≠ .ended) (hp : D.pos.toNat ≤ stop.toNat) :
     ((stepD a stop hs D).status = .next → Pays a stop p D D.pos (stepD a stop hs D) (stepDW a stop hs D + 1)
@@ -1055,7 +1055,7 @@ theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
       D.cmd.pend.toNat + L ≤ (stepD a stop hs D).cmd.pend.toNat ∧
       ((stepD a stop hs D).status = .memory → (stepD a stop hs D).cmd.pend.toNat = 0) ∧ ∀ t : List UInt8,
       stepDW a stop hs D + 1 + hdrRate * ((stop.toNat - (stepD a stop hs D).pos.toNat) * 8) ≤
-        dpot p D + hdrRate * (D.bits a D.pos stop (bits t)).length + 282 * L + 23750) := by
+        dpot p D + hdrRate * (D.bits a D.pos stop (bits t)).length + 282 * L + 12899) := by
   have hok := stepD_ok specSem (hs := hs) hrel he hp
   have hpl := stepD_pendLe a stop hs D
   have hmem : (stepD a stop hs D).status = .memory → p = .wbits ∨ ∃ w st last mlen g q, p = .hdr w st last mlen g q :=
@@ -1169,7 +1169,7 @@ theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
         | _ => exact absurd hsd id
     · have := n3 (by rcases h with h | h <;> rw [h] <;> exact fun e => DStatus.noConfusion e)
       have hd : dpot (.hdr w st last mlen g q) D = hpot g q + hdrEnd := rfl
-      have hS : hdrSlack = 23750 := rfl
+      have hS : hdrSlack = 12899 := rfl
       have h0 : D.cmd.pend.toNat = 0 := by rw [hrel.2.2.2.2.2.2.2]; rfl
       exact ⟨0, by omega, fun hm => by rw [stepDHdr_memPend hm]; exact h0,
         fun t => by have := rate_chunk D hs (hpos h) (bits t); omega⟩
@@ -1438,7 +1438,7 @@ def winD (D r : Dec) : Nat := if D.tag = .wbits ∧ r.tag ≠ .wbits then 2 ^ r.
 
 /-- The decoder's loop, against the potential: its steps are paid for by the potential, 22343 for each bit, 282 for each
 byte and the window, and the step that stops it by at most 270 more, or, when it rejects or reports the limit, by the bits
-and the bytes it may decode first, and 23751. -/
+and the bytes it may decode first, and 12900. -/
 theorem pay_runD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} : ∀ (x : RunArg a stop hs) (p : SPhase),
     DRel x.D p → SInv p →
     ((runD a stop hs x.D x.inv).status = .next ∨ (runD a stop hs x.D x.inv).status = .needsInput ∨
@@ -1449,7 +1449,7 @@ theorem pay_runD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} : �
       x.D.cmd.pend.toNat + L ≤ (runD a stop hs x.D x.inv).cmd.pend.toNat ∧
       ((runD a stop hs x.D x.inv).status = .memory → (runD a stop hs x.D x.inv).cmd.pend.toNat = 0) ∧ ∀ t : List UInt8,
       runDW a stop hs x.D x.inv + hdrRate * ((stop.toNat - (runD a stop hs x.D x.inv).pos.toNat) * 8) ≤
-        dpot p x.D + hdrRate * (x.D.bits a x.D.pos stop (bits t)).length + 282 * L + winD x.D (runD a stop hs x.D x.inv) + 23751) := by
+        dpot p x.D + hdrRate * (x.D.bits a x.D.pos stop (bits t)).length + 282 * L + winD x.D (runD a stop hs x.D x.inv) + 12900) := by
   intro x
   induction x using (runRel_wf a stop hs).induction with
   | _ x ih =>

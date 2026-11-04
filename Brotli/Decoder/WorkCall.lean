@@ -173,7 +173,7 @@ theorem callD_tag {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {f
 /-- A call's work against the potential. A call that pauses leaves the potential of where it pauses and its bits to pay
 later, at most one more byte waiting than it found, and pays 22343 for each bit it reads, 284 for each byte it hands out,
 282 for each byte it leaves waiting, the window, and 280. Any call pays at most the potential, 22343 for each bit, 284 for
-each byte it hands out, the window, and 24042: it decodes at most one byte more than it hands out. -/
+each byte it hands out, the window, and 13191: it decodes at most one byte more than it hands out. -/
 theorem pay_callD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {final : Bool} :
     ∀ (space : Nat) (D : Dec) (h : DInv stop D) (p : SPhase) (buf : ByteArray), DRel D p → SInv p →
     (D.tag ≠ .wbits → 10 ≤ D.k.toNat) →
@@ -193,7 +193,7 @@ theorem pay_callD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {f
             winD D (runD a stop hs (withCap D space) (h.withCap space)) + 280) ∧
     (∀ t : List UInt8, callDW a stop hs final D h buf space + hdrRate * ((stop.toNat - (callD a stop hs final D h buf space).pos.toNat) * 8) ≤
       dpot p D + hdrRate * (D.bits a D.pos stop (bits t)).length + 284 * ((callD a stop hs final D h buf space).buf.size - buf.size) +
-      winD D (runD a stop hs (withCap D space) (h.withCap space)) + 24042) := by
+      winD D (runD a stop hs (withCap D space) (h.withCap space)) + 13191) := by
   intro space
   induction space using Nat.strongRecOn with
   | _ space ih =>

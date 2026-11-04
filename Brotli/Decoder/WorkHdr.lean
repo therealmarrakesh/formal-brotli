@@ -16,17 +16,17 @@ open Brotli.Spec Brotli.Properties
 
 /-! ### Tables -/
 
-/-- A table's work, with its lengths complete: thirteen for each symbol and 11000 more, and for a context map's code its
+/-- A table's work, with its lengths complete: twelve for each symbol and 3735 more, and for a context map's code its
 check and the map's zeros. -/
 theorem tableDoneW_le {st : Hd} {single : Bool} (hn : st.size.toNat ≤ 704) (hlens : st.size.toNat ≤ st.lens.size)
     (hC : single = false → Complete (.canonical (lensOf st.lens st.size.toNat))) :
-    tableDoneW st single ≤ 13 * st.size.toNat + 11001 + (if st.role = .map then 257 + zbW (mapSizeFast st) else 0) := by
+    tableDoneW st single ≤ 12 * st.size.toNat + 3735 + (if st.role = .map then 257 + zbW (mapSizeFast st) else 0) := by
   have hu : st.size.toUSize.toNat = st.size.toNat := word_toUSize (by omega)
   unfold tableDoneW
   dsimp only
   have hnle : st.size.toUSize.toNat ≤ st.lens.size := by rw [hu]; exact hlens
   rw [dite_eq_left hnle]
-  have hb : (if single then buildSingleW else buildFastW st.lens st.size.toUSize hnle) ≤ 13 * st.size.toNat + 11000 := by
+  have hb : (if single then buildSingleW else buildFastW st.lens st.size.toUSize hnle) ≤ 12 * st.size.toNat + 3734 := by
     cases hs : single with
     | true => show buildSingleW ≤ _; unfold buildSingleW; omega
     | false =>
@@ -48,7 +48,7 @@ theorem tableDoneW_le {st : Hd} {single : Bool} (hn : st.size.toNat ≤ 704) (hl
   | codes => simp only [reduceCtorEq, ↓reduceIte]; omega
 
 /-- The code length code's table's work, with its lengths complete when it has two symbols or more. -/
-theorem clTableW_le {st : Hd} (hC : st.clNz ≠ 1 → Complete (.canonical (lensOf st.clLens 18))) : clTableW st ≤ 11234 := by
+theorem clTableW_le {st : Hd} (hC : st.clNz ≠ 1 → Complete (.canonical (lensOf st.clLens 18))) : clTableW st ≤ 3950 := by
   have h18 : (USize.ofNat 18).toNat = 18 := usize_ofNat' (by decide)
   unfold clTableW
   by_cases h1 : st.clNz = 1
@@ -231,8 +231,8 @@ def ownerPot (g : Gh) : Owner → Nat
 def hpot (g : Gh) : HPhase → Nat
   | .cat i => catPot g i 0
   | .code o _ => ownerX g o + ownerPot g o
-  | .clens o n _ _ _ => 31 * n + 22581 + ownerX g o + ownerPot g o
-  | .syms o n _ ls => 13 * (n - ls.lens.length) + 13 * n + 11012 + ownerX g o + ownerPot g o
+  | .clens o n _ _ _ => 26 * n + 7966 + ownerX g o + ownerPot g o
+  | .syms o n _ ls => 13 * (n - ls.lens.length) + 12 * n + 3746 + ownerX g o + ownerPot g o
   | .first i n _ _ => catPot g i n
   | .np => beforeMaps g.m.literal.n g.m.insertCopy.n g.m.distance.n
   | .modes _ _ => beforeMaps g.m.literal.n g.m.insertCopy.n g.m.distance.n
@@ -249,12 +249,12 @@ def hpot (g : Gh) : HPhase → Nat
 /-- A bound on a header step's work, with its refill and its round of the stream's loop, by where it goes. -/
 def hcost (g : Gh) : HPhase → HPhase → Nat
   | .cat _, _ => 11
-  | .code _ _, .clens .. => 167
-  | .code o n, _ => 18 * n + 11078 + ownerX g o
-  | .clens _ n _ _ _, .syms .. => 5 * n + 11569
+  | .code _ _, .clens .. => 30
+  | .code o n, _ => 13 * n + 3747 + ownerX g o
+  | .clens _ n _ _ _, .syms .. => n + 4220
   | .clens .., _ => 11
   | .syms _ _ _ ls, .syms _ _ _ ls' => ls'.lens.length - ls.lens.length + 12
-  | .syms o n _ _, _ => 13 * n + 11012 + ownerX g o
+  | .syms o n _ _, _ => 12 * n + 3746 + ownerX g o
   | .first .., _ => 269
   | .np, _ => 1357
   | .modes .., _ => 11
@@ -379,11 +379,11 @@ theorem hpot_owner_le (g : Gh) (o : Owner) (c : PrefixCode) : hpot g (ownerPlace
         omega
 
 theorem hcost_code_owner (g : Gh) (o : Owner) (n : Nat) (c : PrefixCode) :
-    hcost g (.code o n) (ownerPlace g o c) = 18 * n + 11078 + ownerX g o := by
+    hcost g (.code o n) (ownerPlace g o c) = 13 * n + 3747 + ownerX g o := by
   cases o <;> rfl
 
 theorem hcost_syms_owner (g : Gh) (o : Owner) (n : Nat) (clc : PrefixCode) (ls : LengthState) (c : PrefixCode) :
-    hcost g (.syms o n clc ls) (ownerPlace g o c) = 13 * n + 11012 + ownerX g o := by
+    hcost g (.syms o n clc ls) (ownerPlace g o c) = 12 * n + 3746 + ownerX g o := by
   cases o <;> rfl
 
 private theorem grow_aux (old e mult : Nat) (hm : mult = 4 ∨ mult = 8) :
@@ -471,11 +471,11 @@ theorem hpay {g : Gh} {p : HPhase} {bs c : List Bool} {g' : Gh} {p' : HPhase} (h
       rw [hcost_code_owner]
       omega
     · cases e2
-      show 167 + (31 * n + 22581 + ownerX g o + ownerPot g o) + _ ≤ _
+      show 30 + (26 * n + 7966 + ownerX g o + ownerPot g o) + _ ≤ _
       omega
   | clens o n order acc sum =>
-    have e0 : hpot g (.clens o n order acc sum) = 31 * n + 22581 + ownerX g o + ownerPot g o := rfl
-    have es : ∀ clc, hpot g (.syms o n clc ⟨[], 8, none⟩) = 13 * n + 13 * n + 11012 + ownerX g o + ownerPot g o :=
+    have e0 : hpot g (.clens o n order acc sum) = 26 * n + 7966 + ownerX g o + ownerPot g o := rfl
+    have es : ∀ clc, hpot g (.syms o n clc ⟨[], 8, none⟩) = 13 * n + 12 * n + 3746 + ownerX g o + ownerPot g o :=
       fun _ => by show 13 * (n - 0) + _ + _ + _ + _ = _; rw [Nat.sub_zero]
     rw [e0]
     cases order with
@@ -484,27 +484,27 @@ theorem hpay {g : Gh} {p : HPhase} {bs c : List Bool} {g' : Gh} {p' : HPhase} (h
           else .bad) = .next (g', p') c := h
       split at h' <;> cases h'
       rw [es]
-      show 5 * n + 11569 + _ + _ ≤ _
+      show n + 4220 + _ + _ ≤ _
       omega
     | cons x rest =>
       obtain ⟨v, b, e1, e2⟩ := readIn_next' (show hStep g (.clens o n (x :: rest) acc sum) bs = _ from h)
       have hl := takes_one faith_readCodeLengthCodeLength rfl e1
       split at e2
       · cases e2
-        show 11 + (31 * n + 22581 + ownerX g o + ownerPot g o) + _ ≤ _
+        show 11 + (26 * n + 7966 + ownerX g o + ownerPot g o) + _ ≤ _
         omega
       · split at e2
         · cases e2
           rw [es]
-          show 5 * n + 11569 + _ + _ ≤ _
+          show n + 4220 + _ + _ ≤ _
           omega
         · split at e2
           · cases e2
           · cases e2
-            show 11 + (31 * n + 22581 + ownerX g o + ownerPot g o) + _ ≤ _
+            show 11 + (26 * n + 7966 + ownerX g o + ownerPot g o) + _ ≤ _
             omega
   | syms o n clc ls =>
-    have e0 : hpot g (.syms o n clc ls) = 13 * (n - ls.lens.length) + 13 * n + 11012 + ownerX g o + ownerPot g o := rfl
+    have e0 : hpot g (.syms o n clc ls) = 13 * (n - ls.lens.length) + 12 * n + 3746 + ownerX g o + ownerPot g o := rfl
     rw [e0]
     have h' : (if n < ls.lens.length then ORes.bad
         else if lengthSum ls.lens = 32768 then
@@ -533,7 +533,7 @@ theorem hpay {g : Gh} {p : HPhase} {bs c : List Bool} {g' : Gh} {p' : HPhase} (h
               rename_i hle _
               obtain ⟨l, hl, hl1⟩ := applyCodeLength_grow ls v.1 v.2
               show (applyCodeLength ls v.1 v.2).lens.length - ls.lens.length + 12 +
-                (13 * (n - (applyCodeLength ls v.1 v.2).lens.length) + 13 * n + 11012 + ownerX g o + ownerPot g o) + _ ≤ _
+                (13 * (n - (applyCodeLength ls v.1 v.2).lens.length) + 12 * n + 3746 + ownerX g o + ownerPot g o) + _ ≤ _
               rw [hl] at hle ⊢
               rw [List.length_append] at hle ⊢
               omega
@@ -715,11 +715,11 @@ theorem hcost_ge (g : Gh) (p p' : HPhase) : 11 ≤ hcost g p p' := by
   | _ => simp only [hcost]; omega
 
 theorem hcost_code (g : Gh) (o : Owner) (n : Nat) (p' : HPhase) :
-    hcost g (.code o n) p' = if ptag p' = .clens then 167 else 18 * n + 11078 + ownerX g o := by
+    hcost g (.code o n) p' = if ptag p' = .clens then 30 else 13 * n + 3747 + ownerX g o := by
   cases p' <;> rfl
 
 theorem hcost_clens (g : Gh) (o : Owner) (n : Nat) (order : List Nat) (acc : List (Nat × Nat)) (sum : Nat) (p' : HPhase) :
-    hcost g (.clens o n order acc sum) p' = if ptag p' = .syms then 5 * n + 11569 else 11 := by
+    hcost g (.clens o n order acc sum) p' = if ptag p' = .syms then n + 4220 else 11 := by
   cases p' <;> rfl
 
 theorem hcost_trees (g : Gh) (isL : Bool) (p' : HPhase) :
@@ -727,7 +727,7 @@ theorem hcost_trees (g : Gh) (isL : Bool) (p' : HPhase) :
   cases p' <;> rfl
 
 theorem hcost_syms_other (g : Gh) (o : Owner) (n : Nat) (clc : PrefixCode) (ls : LengthState) {p' : HPhase}
-    (h : ptag p' ≠ .syms) : hcost g (.syms o n clc ls) p' = 13 * n + 11012 + ownerX g o := by
+    (h : ptag p' ≠ .syms) : hcost g (.syms o n clc ls) p' = 12 * n + 3746 + ownerX g o := by
   cases p' <;> first | rfl | exact absurd rfl h
 
 /-- Where a finished table's step goes, when it goes on. -/
@@ -1017,7 +1017,7 @@ theorem wCode {st : Hd} {g : Gh} {o : Owner} {n : Nat} {pos : USize} {g' : Gh} {
         have hT' : tableDoneW { st with
             word := r.word, count := r.count, pos := pos, status := .next
             lens := writeSimple (zeroBytes st.size.toNat) r } (r.e == 0) ≤
-            13 * st.size.toNat + 11001 + (if st.role = .map then 257 + zbW (mapSizeFast st) else 0) := hT
+            12 * st.size.toNat + 3735 + (if st.role = .map then 257 + zbW (mapSizeFast st) else 0) := hT
         omega
     · rw [ite_eq_right h1] at htag ⊢
       have hc : ptag p' = .clens := htag.symm
@@ -1037,7 +1037,7 @@ theorem clFinish_tag {st : Hd} (h : (clFinish st).status = .next) : (clFinish st
     exact absurd h (fun e => HStatus.noConfusion e)
 
 theorem clFinishW_le {st : Hd} (hC : st.clNz ≠ 1 → Complete (.canonical (lensOf st.clLens 18))) :
-    clFinishW st ≤ 5 * st.size.toNat + 11558 := by
+    clFinishW st ≤ st.size.toNat + st.size.toNat / 65536 + 4209 := by
   unfold clFinishW fitsW
   have := clTableW_le hC
   have := zbW_le st.size.toNat
@@ -1162,7 +1162,7 @@ theorem wSyms {st : Hd} {g : Gh} {o : Owner} {n : Nat} {clc : PrefixCode} {ls : 
     have hT := tableDoneW_le (st := { st with pos := pos, status := .next }) (single := false) (show st.size.toNat ≤ 704 by omega)
       (show st.size.toNat ≤ st.lens.size by rw [hy.sz, hs1]; exact Nat.le_refl _) (fun _ => hC)
     have hT' : tableDoneW { st with pos := pos, status := .next } false ≤
-        13 * st.size.toNat + 11001 + (if st.role = .map then 257 + zbW (mapSizeFast st) else 0) := hT
+        12 * st.size.toNat + 3735 + (if st.role = .map then 257 + zbW (mapSizeFast st) else 0) := hT
     omega
   · rw [ite_eq_right hsum] at hr hn ⊢
     by_cases hln : st.ln = st.size
@@ -1310,7 +1310,7 @@ A step that needs input, rejects, runs out of memory or finishes the header stop
 what the potential holds and at most a simple code's table more. -/
 
 /-- The most a step that stops does beyond its place's potential. -/
-def hdrSlack : Nat := 23750
+def hdrSlack : Nat := 12899
 
 theorem codeW_le {st : Hd} {g : Gh} {o : Owner} {n : Nat} {pos : USize} (hrel : HRel st g (.code o n)) :
     stepHCodeW st pos + 10 ≤ hpot g (.code o n) + hdrSlack := by
@@ -1345,7 +1345,7 @@ theorem codeW_le {st : Hd} {g : Gh} {o : Owner} {n : Nat} {pos : USize} (hrel : 
         have hT' : tableDoneW { st with
             word := r.word, count := r.count, pos := pos, status := .next
             lens := writeSimple (zeroBytes st.size.toNat) r } (r.e == 0) ≤
-            13 * st.size.toNat + 11001 + (if st.role = .map then 257 + zbW (mapSizeFast st) else 0) := hT
+            12 * st.size.toNat + 3735 + (if st.role = .map then 257 + zbW (mapSizeFast st) else 0) := hT
         have hz := zbW_le st.size.toNat
         omega
     · rw [ite_eq_right h1]
@@ -1358,7 +1358,7 @@ theorem clensW_le {st : Hd} {g : Gh} {o : Owner} {n : Nat} {order : List Nat} {a
     (hrel : HRel st g (.clens o n order acc sum)) : stepHClensW st pos + 10 ≤ hpot g (.clens o n order acc sum) := by
   obtain ⟨hw, hu, ht, hs, ho, hc⟩ := hrel
   obtain ⟨hs1, hs2, hs3⟩ := hs
-  have e0 : hpot g (.clens o n order acc sum) = 31 * n + 22581 + ownerX g o + ownerPot g o := rfl
+  have e0 : hpot g (.clens o n order acc sum) = 26 * n + 7966 + ownerX g o + ownerPot g o := rfl
   rw [e0]
   unfold stepHClensW
   dsimp only
@@ -1406,7 +1406,7 @@ theorem symsW_stop {st : Hd} {g : Gh} {o : Owner} {n : Nat} {clc : PrefixCode} {
   obtain ⟨hw, hu, ht, hs, ho, hy⟩ := hrel
   obtain ⟨hs1, hs2, hs3⟩ := hs
   have hX := ownerX_ge ho hu
-  have e0 : hpot g (.syms o n clc ls) = 13 * (n - ls.lens.length) + 13 * n + 11012 + ownerX g o + ownerPot g o := rfl
+  have e0 : hpot g (.syms o n clc ls) = 13 * (n - ls.lens.length) + 12 * n + 3746 + ownerX g o + ownerPot g o := rfl
   rw [e0]
   unfold stepHSymsW
   unfold stepHSyms at hn
@@ -1424,7 +1424,7 @@ theorem symsW_stop {st : Hd} {g : Gh} {o : Owner} {n : Nat} {clc : PrefixCode} {
     have hT := tableDoneW_le (st := { st with pos := pos, status := .next }) (single := false) (show st.size.toNat ≤ 704 by omega)
       (show st.size.toNat ≤ st.lens.size by rw [hy.sz, hs1]; exact Nat.le_refl _) (fun _ => hC)
     have hT' : tableDoneW { st with pos := pos, status := .next } false ≤
-        13 * st.size.toNat + 11001 + (if st.role = .map then 257 + zbW (mapSizeFast st) else 0) := hT
+        12 * st.size.toNat + 3735 + (if st.role = .map then 257 + zbW (mapSizeFast st) else 0) := hT
     omega
   · rw [ite_eq_right hsum] at hn ⊢
     by_cases hln : st.ln = st.size
@@ -1462,7 +1462,7 @@ theorem symsW_stop {st : Hd} {g : Gh} {o : Owner} {n : Nat} {clc : PrefixCode} {
 theorem stepAtHW_stop {st : Hd} {g : Gh} {p : HPhase} {pos : USize} (hrel : HRel st g p) (hn : (stepAtH st pos).status ≠ .next) :
     stepAtHW st pos + 10 ≤ hpot g p + hdrSlack := by
   have htag := hrel.tag_eq
-  have hS : hdrSlack = 23750 := rfl
+  have hS : hdrSlack = 12899 := rfl
   cases p with
   | cat i =>
     have e : stepAtHW st pos = 1 := by unfold stepAtHW; rw [htag] <;> rfl
@@ -1486,7 +1486,7 @@ theorem stepAtHW_stop {st : Hd} {g : Gh} {p : HPhase} {pos : USize} (hrel : HRel
   | first i n tc cc =>
     have e : stepAtHW st pos = stepHFirstW := by unfold stepAtHW; rw [htag] <;> rfl
     rw [e]
-    show 259 + 10 ≤ _ + 23750
+    show 259 + 10 ≤ _ + 12899
     omega
   | np =>
     have e : stepAtHW st pos = stepHNpW st := by unfold stepAtHW; rw [htag] <;> rfl
@@ -1911,14 +1911,14 @@ theorem hpot_le {st : Hd} {g : Gh} {p : HPhase} (hrel : HRel st g p) (hg : GOk g
     have := ownerX_le hg o
     have := ownerPot_le ho hu hg
     have hn := hp.1
-    show 31 * n + 22581 + ownerX g o + ownerPot g o ≤ _
+    show 26 * n + 7966 + ownerX g o + ownerPot g o ≤ _
     omega
   | syms o n clc ls =>
     obtain ⟨_, _, ho, _⟩ := hm
     have := ownerX_le hg o
     have := ownerPot_le ho hu hg
     have hn := hp.1
-    show 13 * (n - ls.lens.length) + 13 * n + 11012 + ownerX g o + ownerPot g o ≤ _
+    show 13 * (n - ls.lens.length) + 12 * n + 3746 + ownerX g o + ownerPot g o ≤ _
     omega
   | first i n tc cc =>
     refine Nat.le_trans (catPot_most (i := i) (n := n) hg.1 (fun e => hI ?_) hp) (by omega)
