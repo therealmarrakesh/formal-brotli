@@ -321,7 +321,8 @@ structure MemD (Ws : Option Nat) (X L : Nat) (D : Dec) (B : List Bool) : Prop wh
   block : D.tag = .mblock → headerTables B ≤ X
   hdr : D.tag = .hdr → ∃ g q, HRel D.hd g q ∧ D.hd.d.arenaCap.toNat + (hrest tableK g q B).getD 0 ≤ smallMax + X ∧
     D.hd.d.arenaMax = D.limit ∧ D.hd.d.arena.size + budH g q ≤ D.hd.d.arenaCap.toNat
-  cmds : D.tag = .cmds → D.H.arenaCap.toNat ≤ smallMax + X ∧ D.H.arenaCap.toNat ≤ smallMax + D.limit.toNat
+  cmds : D.tag = .cmds → D.H.arenaCap.toNat ≤ smallMax + X ∧ D.H.arenaCap.toNat ≤ smallMax + D.limit.toNat ∧
+    D.H.arena.size ≤ D.H.arenaCap.toNat
   hdOut : D.tag ≠ .hdr → D.hd = Hd.none
   HOut : D.tag ≠ .cmds → D.H = Hdr.none
   hd : HSize D.hd
@@ -409,7 +410,7 @@ theorem MemD.holds_le {Ws : Option Nat} {X L : Nat} {D : Dec} {B : List Bool} (M
         omega
       · have h3 : D.hd.d.arenaCap.toNat = 0 := by rw [M.hdOut t1]; rfl
         by_cases t2 : D.tag = .cmds
-        · obtain ⟨c1, c2⟩ := M.cmds t2
+        · obtain ⟨c1, c2, -⟩ := M.cmds t2
           omega
         · have h4 : D.H.arenaCap.toNat = 0 := by rw [M.HOut t2]; rfl
           omega
@@ -510,7 +511,8 @@ theorem MemD.withCap {Ws : Option Nat} {X L : Nat} {D : Dec} {B : List Bool} (M 
 /-- A state past WBITS and outside a header, moved to another such state. -/
 theorem MemD.keep {Ws : Option Nat} {X L : Nat} {D r : Dec} {B B' : List Bool} (M : MemD Ws X L D B) (hne : D.tag ≠ .wbits) (hnh : D.tag ≠ .hdr)
     (ek : r.k = D.k) (el : r.limit = D.limit) (ed : r.hd = D.hd) (hr : r.tag ≠ .wbits) (hrh : r.tag ≠ .hdr) (hH : HSmall r.H)
-    (hc : r.tag = .cmds → r.H.arenaCap.toNat ≤ smallMax + X ∧ r.H.arenaCap.toNat ≤ smallMax + r.limit.toNat)
+    (hc : r.tag = .cmds → r.H.arenaCap.toNat ≤ smallMax + X ∧ r.H.arenaCap.toNat ≤ smallMax + r.limit.toNat ∧
+      r.H.arena.size ≤ r.H.arenaCap.toNat)
     (hO : r.tag ≠ .cmds → r.H = Hdr.none)
     (hp : ∃ p, DRel r p ∧ (sLeave demandSem p B').getD 0 ≤ X) (hb : r.tag = .mblock → headerTables B' ≤ X) : MemD Ws X L r B' := by
   refine ⟨hp, hb, fun e => absurd e hrh, hc, fun _ => by rw [ed]; exact M.hdOut hnh, hO, by rw [ed]; exact M.hd, hH, Or.inr ⟨hr, ?_⟩⟩
@@ -1126,7 +1128,7 @@ theorem hdr_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs
       have hT := congrArg (Option.getD · 0) (a3 (bits t))
       have hk0 : (tableK.k g'.m (availBits r.word r.count a r.pos stop (bits t))).getD 0 = 0 := rfl
       rw [hk0] at hT
-      refine ⟨hA, hB, fun e => DTag.noConfusion e, fun _ => ⟨?_, ?_⟩, fun _ => rfl, fun e => absurd rfl e, hsize_none,
+      refine ⟨hA, hB, fun e => DTag.noConfusion e, fun _ => ⟨?_, ?_, ?_⟩, fun _ => rfl, fun e => absurd rfl e, hsize_none,
         ⟨hS.litBase, hS.lMap, hS.icBase, hS.dBase, hS.dMap, hS.modes⟩,
         Or.inr ⟨fun e => DTag.noConfusion e, w0, g1, g2, g3⟩⟩
       · show r.d.arenaCap.toNat ≤ smallMax + X
@@ -1135,6 +1137,8 @@ theorem hdr_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs
       · show r.d.arenaCap.toNat ≤ smallMax + D.limit.toNat
         rw [← h2, ← hmax]
         exact hle
+      · show r.d.arena.size ≤ r.d.arenaCap.toNat
+        exact hu.le
 
 /-! ### The loop and a call -/
 

@@ -233,17 +233,17 @@ theorem decoder_potential {limit : Nat} {x : List UInt8} {R : Run DState} (h : R
   exact ⟨p, hrel, hsi, by unfold psiMax; omega⟩
 
 /-- The work bound for one call. A call's work, in the work model, is at most the potential it starts with, at most
-`psiMax`, and 23841 for each byte it uses, 33 for each byte it hands out, one for each byte of the window the stream
-declares and 272 more for zero-filling it, and 132. -/
+`psiMax`, and 23841 for each byte it uses, 33 for each byte it hands out, the window it allocates, and 132. The window
+it allocates, `callWin`, is the window the stream declares and 272 more for zero-filling it for the call that gets past
+WBITS (`callWin_le`), and nothing for any call that starts past it (`callWin_zero`). -/
 theorem decoder_callWork {limit : Nat} {x : List UInt8} {R : Run DState} {c : Call} (h : Reaches decoder limit x R)
     (ha : R.Allowed x c) :
     callWork R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.buf.toByteArray c.space c.final ≤
       psiMax + 23841 * (R.reply decoder x c).used + 33 * ((R.reply decoder x c).output.size - c.buf.length) +
-        (declaredWindow x + 272) + 132 := by
+        callWin R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.space + 132 := by
   obtain ⟨W, n, hW⟩ := h.withWork
   obtain ⟨p, hrel, hsi, hk, -, -⟩ := (work_inv hW).1 ha.running
   have hG := (call_pays (x := x) (R := R) (c := c) ha.inside ha.fits hrel hsi hk).2
-  have hwin := callWin_le h ha
   have := dpot_le hrel hsi
   have := Nat.mul_le_mul_left 2980 hrel.held_le
   unfold psiMax
