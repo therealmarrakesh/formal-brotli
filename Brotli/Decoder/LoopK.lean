@@ -509,16 +509,21 @@ def kcase {α : Type} (cont : KCont α) (exit : Cmd → α) (r : Cmd) : α :=
           (hr.wrote hri.1 hri.2 (written_usmin hr.k24 hr.k16 _) (word_next hr.tagged (room k cap - pend)))
 
 /-- `runCmd` on the fields: up to `n` steps, each ending in a jump to the next. -/
-def runCmdK (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (n : USize) (cell : RunOut)
-    (word count : UInt64) (ring : ByteArray) (wpos pend cap written : USize) (p1 p2 : UInt8)
-    (remaining iCount lCount dCount : UInt64) (flags : Flags)
-    (iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist : UInt64)
-    (wordBuf : ByteArray) (wordPos : USize) (tag : Tag) (left : UInt64) (pos : USize)
-    (hinv : KInv H k stop word count ring wpos written iCur iPrev lCur lPrev dCur dPrev copyBits dist wordBuf wordPos tag pos) : Cmd :=
+def runCmdK (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (n : USize) :
+    (cell : RunOut) → (word count : UInt64) → (ring : ByteArray) → (wpos pend cap written : USize) → (p1 p2 : UInt8) →
+    (remaining iCount lCount dCount : UInt64) → (flags : Flags) →
+    (iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist : UInt64) →
+    (wordBuf : ByteArray) → (wordPos : USize) → (tag : Tag) → (left : UInt64) → (pos : USize) →
+    KInv H k stop word count ring wpos written iCur iPrev lCur lPrev dCur dPrev copyBits dist wordBuf wordPos tag pos →
+    Cmd :=
   if _hn : n = 0 then
+    fun _ word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur
+        dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos _ =>
     mkCmd word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev
       d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos .next
   else
+    fun cell word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur
+        dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos hinv =>
     kstep H k a stop hs
       (fun cell word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur
           dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos h =>
@@ -633,7 +638,7 @@ theorem kstep_insertCopy (hcont : Drops H k stop contC g)
     fun _ _ _ _ h => ic_sym hinv.hdr hinv.iCur h
   simp only [mkCmd, stepAt, stepInsertCopy, insertStep, markStep, Cmd.iCur, hI, ↓reduceDIte]
   -- `stepCmd`'s symbol test failing is ruled out by the table's code
-  ksplitT (exact absurd (hsym _ _ _ _ (by assumption)) (by assumption))
+  ksplitT with_reducible exact absurd (hsym _ _ _ _ (by assumption)) (by assumption)
 
 theorem kstep_copyLength (hcont : Drops H k stop contC g)
     (hinv : KInv H k stop word count ring wpos written iCur iPrev lCur lPrev dCur dPrev copyBits dist wordBuf wordPos _ pos) :
@@ -705,7 +710,7 @@ theorem kstep_distanceSymbol (hcont : Drops H k stop contC g)
   -- `stepCmd`'s extra-bits test failing is ruled out by the table's code (where the symbol is known to be 0, by the
   -- extra bits of symbol 0)
   ksplitT
-    first
+    with_reducible first
     | exact absurd (hbits _ _ _ _ _ _ (by assumption)) (by assumption)
     | exact absurd h0 (by assumption)
 
