@@ -165,14 +165,14 @@ theorem simpleLists_args {st : Hd} {r : Rd} {pos : USize} (h : SimpleRead st.siz
 
 /-- The table of a simple code with two symbols or more, from its lists. -/
 def simpleTable (st : Hd) (r : Rd) (pos : USize) (h : SimpleRead st.size r) (he : ¬ r.e = 0) (hi : InstallOk st.role st.idx st.fill)
-    (har : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 4096 < 2 ^ 32) : Hd :=
+    (har : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 2672 < 2 ^ 32) : Hd :=
   tableDone (simpleLists st r pos h.fits) false 0 (simpleLists_args h he) hi har
 
 /-- What a simple code's table leaves, once the code is read: one symbol. -/
 theorem simple_done1 {o : Owner} {size : Nat} {st : Hd} {g : Gh} (pos : USize) {r : Rd} (hrel : HRel st g (.code o size))
     (hw2 : r.buf.Wf) (hR : SimpleRead st.size r) (he : r.e = 0) (hb : st.d.arena.size + budO g o ≤ st.d.arenaCap.toNat)
     {ha : TableArgs st.size st.head st.next true r.a} {hi : InstallOk st.role st.idx st.fill}
-    {har : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 4096 < 2 ^ 32} :
+    {har : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 2672 < 2 ^ 32} :
     TableDone K g o (simpleValue st.size r) { st with word := r.word, count := r.count, pos := pos, status := .next }
       (tableDone { st with word := r.word, count := r.count, pos := pos, status := .next } true r.a ha hi har) := by
   obtain ⟨_, hu, _, hs, ho⟩ := hrel
@@ -183,7 +183,7 @@ theorem simple_done1 {o : Owner} {size : Nat} {st : Hd} {g : Gh} (pos : USize) {
 theorem simple_done2 {o : Owner} {size : Nat} {st : Hd} {g : Gh} (pos : USize) {r : Rd} (hrel : HRel st g (.code o size))
     (hw2 : r.buf.Wf) (hR : SimpleRead st.size r) (he : ¬ r.e = 0) (hb : st.d.arena.size + budO g o ≤ st.d.arenaCap.toNat)
     {ha : TableArgs st.size (simpleLists st r pos hR.fits).head (simpleLists st r pos hR.fits).next false 0}
-    {hi : InstallOk st.role st.idx st.fill} {har : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 4096 < 2 ^ 32} :
+    {hi : InstallOk st.role st.idx st.fill} {har : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 2672 < 2 ^ 32} :
     TableDone K g o (simpleValue st.size r) (simpleLists st r pos hR.fits)
       (tableDone (simpleLists st r pos hR.fits) false 0 ha hi har) := by
   have hs : SizeOk st size := hrel.2.2.2.1

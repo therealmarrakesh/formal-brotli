@@ -247,7 +247,7 @@ theorem smallMax_eq : smallMax = 6216 := rfl
 
 /-- Nothing is settled at a header's start, and the arena has reserved room for the categories' codes. -/
 theorem Upto.start {d : Done} {g : Gh} (h0 : d.arena.size = 0) (hc : d.arenaCap.toNat = smallMax)
-    (hl : d.arenaMax.toNat + 144528 < 2 ^ 32) : Upto d g 0 where
+    (hl : d.arenaMax.toNat + 8888 < 2 ^ 32) : Upto d g 0 where
   four := by rw [h0]
   le := by rw [h0]; exact Nat.zero_le _
   max := by
@@ -265,7 +265,7 @@ theorem Upto.start {d : Done} {g : Gh} (h0 : d.arena.size = 0) (hc : d.arenaCap.
   dmap h := absurd h (by decide)
   codes _ h := absurd h (by omega)
 
-theorem hdStart_rel {word count limit : UInt64} (hw : (BitBuffer.mk word count).Wf) (hl : limit.toNat + 144528 < 2 ^ 32) :
+theorem hdStart_rel {word count limit : UInt64} (hw : (BitBuffer.mk word count).Wf) (hl : limit.toNat + 8888 < 2 ^ 32) :
     HRel (hdStart word count limit) Gh.start (.cat .L) :=
   ⟨hw, Upto.start rfl (u64_lit (by decide)) hl, rfl, rfl⟩
 
@@ -612,8 +612,8 @@ theorem stepDWbits_ok {α : Type} {S : Sem α} {a : ByteArray} {stop : USize} {h
       · show WinRel _ r.a.toUSize.toNat _ _ _
         rw [hus]
         exact hwin
-      · show (limit - (1 : UInt64) <<< r.a).toNat + 144528 < 2 ^ 32
-        have hlim' : limit.toNat + 144528 < 2 ^ 32 := hlim
+      · show (limit - (1 : UInt64) <<< r.a).toNat + 8888 < 2 ^ 32
+        have hlim' : limit.toNat + 8888 < 2 ^ 32 := hlim
         rw [UInt64.toNat_sub_of_le _ _ hc, hneed]
         omega
       · rw [hsrc, hN]
@@ -893,7 +893,7 @@ def stepDRaw (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : De
 
 theorem rawFinish_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {last : Bool} {left : Nat} {a : ByteArray} {stop : USize} {cmd : Cmd} {hd : Hd} {H : Hdr} {k : USize}
     {left' limit : UInt64} {pos' pos : USize} {status : DStatus} {n : USize} {moved : List Nat} {r : RawRun}
-    (hw : WinRel w k.toNat cmd st.output st.distances) (hprod : st.produced = st.output.length) (hlim : limit.toNat + 144528 < 2 ^ 32)
+    (hw : WinRel w k.toNat cmd st.output st.distances) (hprod : st.produced = st.output.length) (hlim : limit.toNat + 8888 < 2 ^ 32)
     (hleft : left'.toNat = left) (hl32 : left < 2 ^ 32) (hnl : n.toNat ≤ left) (hn0 : n.toNat ≠ 0) (hnp : cmd.pend.toNat + n.toNat ≤ 2 ^ k.toNat)
     (hm : RawOk a stop k.toNat cmd.word cmd.count pos st.output n.toNat moved r) :
     DStepOk S a stop (.raw w st last left) ⟨.raw, cmd, hd, H, k, last, left', limit, pos', status⟩ pos

@@ -965,13 +965,13 @@ theorem hd_top {limit : Nat} {x : List UInt8} {R : Run DState} (h : Reaches deco
 /-! ### The limit, truthfully -/
 
 /-- The limit, when the window WBITS declares doesn't fit. -/
-private theorem limit_wbits {limit kv X : Nat} (hlim : fixedCost ≤ limit) (h : min (limit - fixedCost) 4294822767 < 2 ^ kv)
+private theorem limit_wbits {limit kv X : Nat} (hlim : fixedCost ≤ limit) (h : min (limit - fixedCost) 4294958407 < 2 ^ kv)
     (hpw : 2 ^ kv ≤ 2 ^ 24) : limit < fixedCost + 2 ^ kv + X := by
   have h224 : (2 : Nat) ^ 24 = 16777216 := rfl
   omega
 
 /-- The limit, when a header's groups' tables don't fit with the window. -/
-private theorem limit_hdr {limit lim K A R H B F kv : Nat} (hlim : fixedCost ≤ limit) (hroom : lim + K = min (limit - fixedCost) 4294822767)
+private theorem limit_hdr {limit lim K A R H B F kv : Nat} (hlim : fixedCost ≤ limit) (hroom : lim + K = min (limit - fixedCost) 4294958407)
     (hbind : lim < R) (hT : H = A + R) (hht : H ≤ B) (hdr : B ≤ F) (hmax : H ≤ resMax) (hK : 2 ^ kv = K)
     (hpw : 2 ^ kv ≤ 2 ^ 24) : limit < fixedCost + 2 ^ kv + F := by
   have h224 : (2 : Nat) ^ 24 = 16777216 := rfl
@@ -1044,7 +1044,7 @@ theorem decoder_limitAt {limit : Nat} {x : List UInt8} {R : Run DState} (h : Rea
         rw [← bits_append, List.take_append_drop]
       exact reach_restrict nfaith_sStep hz _ _ _ hxs1 rfl (by rw [bits_length]; omega)
     refine ⟨?_, R0.read + k1, p1, D1.held, by omega, htight, by omega⟩
-    have hroom : roomOf limit = min (limit - fixedCost) 4294822767 := rfl
+    have hroom : roomOf limit = min (limit - fixedCost) 4294958407 := rfl
     rcases hB with ⟨htw, hbw⟩ | ⟨hth, w, g1, g2, g3, g4⟩
     · -- At WBITS: the window the stream declares doesn't fit.
       have hp1w : p1 = .wbits := by
@@ -1120,7 +1120,7 @@ theorem decoder_limitAt {limit : Nat} {x : List UInt8} {R : Run DState} (h : Rea
       exact limit_hdr hlim g3 hbind hT hht hdr hmax hK hpw
 
 /-- The demand of bytes before where the limit binds, within the limit. -/
-private theorem limit_tight_arith {limit lim K W T : Nat} (hlim : fixedCost ≤ limit) (hroom : lim + K = min (limit - fixedCost) 4294822767)
+private theorem limit_tight_arith {limit lim K W T : Nat} (hlim : fixedCost ≤ limit) (hroom : lim + K = min (limit - fixedCost) 4294958407)
     (hW : W ≤ K) (hT : T ≤ lim) : fixedCost + W + T ≤ limit := by
   omega
 

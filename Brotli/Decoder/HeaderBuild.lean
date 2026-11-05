@@ -29,24 +29,24 @@ theorem built_canonical {t lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.
   rw [h4]
   simp only [tableSlots, tableBytes]
 
-theorem built_single {t : ByteArray} {sym : UInt64} (hsym : sym.toNat < 4096) (h : t.size + 4096 < 2 ^ 32 ∧ t.size % 2 = 0) :
+theorem built_single {t : ByteArray} {sym : UInt64} (hsym : sym.toNat < 4096) (h : t.size + 2672 < 2 ^ 32 ∧ t.size % 2 = 0) :
     Built t (buildSingleFast t sym h) (.single sym.toNat) ∧ (buildSingleFast t sym h).size = t.size + 512 := by
   rw [buildSingleFast_eq h hsym]
   obtain ⟨h1, h2, h3, h4⟩ := buildSingle_spec (t := t) (sym := sym.toNat) h.2 hsym
   exact ⟨⟨h1, ⟨h.2, by omega, h3⟩, h2⟩, h4⟩
 
 /-- What is settled has an arena of whole slots with room for a table. -/
-theorem Upto.arenaOk {d : Done} {g : Gh} {n : Nat} (hu : Upto d g n) : d.arena.size % 2 = 0 ∧ d.arena.size + 4096 < 2 ^ 32 := by
+theorem Upto.arenaOk {d : Done} {g : Gh} {n : Nat} (hu : Upto d g n) : d.arena.size % 2 = 0 ∧ d.arena.size + 2672 < 2 ^ 32 := by
   have := hu.le
   have := hu.max
   exact ⟨hu.four, by omega⟩
 
 /-- The arena a header's reading holds has whole slots and room for a table. -/
 theorem HRel.arenaOk {st : Hd} {g : Gh} {p : HPhase} (h : HRel st g p) :
-    st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 4096 < 2 ^ 32 :=
+    st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 2672 < 2 ^ 32 :=
   h.2.1.arenaOk
 
-theorem hrel_arena {st : Hd} (h : ∃ g p, HRel st g p) : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 4096 < 2 ^ 32 := by
+theorem hrel_arena {st : Hd} (h : ∃ g p, HRel st g p) : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 2672 < 2 ^ 32 := by
   obtain ⟨_, _, hr⟩ := h
   exact hr.arenaOk
 
@@ -218,7 +218,7 @@ def Done.none : Done := ⟨ByteArray.empty, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
   { st0 with d := { d0 with arena := buildFast arena st0.head st0.next h } }
 
 /-- Appends a single symbol's table to the arena. -/
-@[inline] def growSingle (st : Hd) (sym : UInt64) (h : st.d.arena.size + 4096 < 2 ^ 32 ∧ st.d.arena.size % 2 = 0) : Hd :=
+@[inline] def growSingle (st : Hd) (sym : UInt64) (h : st.d.arena.size + 2672 < 2 ^ 32 ∧ st.d.arena.size % 2 = 0) : Hd :=
   let d := st.d
   let st0 := clearDone st Done.none
   let arena := d.arena
@@ -227,7 +227,7 @@ def Done.none : Done := ⟨ByteArray.empty, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
 
 /-- Growing the arena keeps what `installTable` needs. Stated apart, so that no check compares the grown state with the old
 one, which would compute the table. -/
-theorem growSingle_ok {st : Hd} {sym : UInt64} {h : st.d.arena.size + 4096 < 2 ^ 32 ∧ st.d.arena.size % 2 = 0}
+theorem growSingle_ok {st : Hd} {sym : UInt64} {h : st.d.arena.size + 2672 < 2 ^ 32 ∧ st.d.arena.size % 2 = 0}
     (hi : InstallOk st.role st.idx st.fill) :
     InstallOk (growSingle st sym h).role (growSingle st sym h).idx (growSingle st sym h).fill := by
   unfold growSingle clearDone
@@ -241,7 +241,7 @@ theorem growLens_ok {st : Hd} {h : ∃ L, BuildArgs st.d.arena st.head st.next L
 theorem growLens_eq (st : Hd) (h : ∃ L, BuildArgs st.d.arena st.head st.next L) :
     growLens st h = { st with d := { st.d with arena := buildFast st.d.arena st.head st.next h } } := rfl
 
-theorem growSingle_eq (st : Hd) (sym : UInt64) (h : st.d.arena.size + 4096 < 2 ^ 32 ∧ st.d.arena.size % 2 = 0) :
+theorem growSingle_eq (st : Hd) (sym : UInt64) (h : st.d.arena.size + 2672 < 2 ^ 32 ∧ st.d.arena.size % 2 = 0) :
     growSingle st sym h = { st with d := { st.d with arena := buildSingleFast st.d.arena sym h } } := rfl
 
 /-- The transform's first list. -/
@@ -301,7 +301,7 @@ theorem tableArgs_sym {size : UInt64} {head next : ByteArray} {single : Bool} {s
 /-- A canonical code that was read can be built on an arena of whole slots with room. -/
 theorem tableArgs_build {size : UInt64} {head next : ByteArray} {single : Bool} {sym : UInt64}
     (ha : TableArgs size head next single sym) (hs : ¬ single = true) {t : ByteArray}
-    (ht : t.size % 2 = 0 ∧ t.size + 4096 < 2 ^ 32) : ∃ L, BuildArgs t head next L := by
+    (ht : t.size % 2 = 0 ∧ t.size + 2672 < 2 ^ 32) : ∃ L, BuildArgs t head next L := by
   obtain ⟨c, hf⟩ := ha
   obtain ⟨L, hc, hlen, hl⟩ := hf.canon (by cases single <;> simp_all)
   have hC := hf.complete
@@ -314,8 +314,8 @@ def soloCap : Nat := treeMax 272
 /-- The table of a code that was read, on its own, built in an array with room for it. -/
 @[inline] def soloTable (head next : ByteArray) (single : Bool) (sym : UInt64) (size : UInt64)
     (ha : TableArgs size head next single sym) : ByteArray :=
-  if hs : single = true then buildSingleFast (ByteArray.emptyWithCapacity soloCap) sym (by show 0 + 4096 < _ ∧ 0 % 2 = 0; decide)
-  else buildFast (ByteArray.emptyWithCapacity soloCap) head next (tableArgs_build ha hs (by show 0 % 2 = 0 ∧ 0 + 4096 < _; decide))
+  if hs : single = true then buildSingleFast (ByteArray.emptyWithCapacity soloCap) sym (by show 0 + 2672 < _ ∧ 0 % 2 = 0; decide)
+  else buildFast (ByteArray.emptyWithCapacity soloCap) head next (tableArgs_build ha hs (by show 0 % 2 = 0 ∧ 0 + 2672 < _; decide))
 
 /-- A canonical table built from lists is the code's, and takes its `tableBytes`. -/
 theorem built_fast {t head next : ByteArray} {L : List Nat} (ha : BuildArgs t head next L) (h : ∃ L, BuildArgs t head next L) :
@@ -338,7 +338,7 @@ theorem soloTable_built {size : UInt64} {head next : ByteArray} {single : Bool} 
   · rw [dite_eq_left hb]
     have hc := hf.one hb
     obtain ⟨b1, b2⟩ := built_single (t := ByteArray.emptyWithCapacity soloCap) (tableArgs_sym ha hb)
-      (by show 0 + 4096 < _ ∧ 0 % 2 = 0; decide)
+      (by show 0 + 2672 < _ ∧ 0 % 2 = 0; decide)
     rw [hc]
     refine ⟨b1, ?_⟩
     rw [b2, h0]
@@ -373,7 +373,7 @@ theorem soloTable_fits {size : UInt64} {head next : ByteArray} {single : Bool} {
 are in the state's `head` and `next`. The arena's reservation always has room for the table (`budH`), so nothing is
 checked. -/
 def tableDone (st : Hd) (single : Bool) (sym : UInt64) (ha : TableArgs st.size st.head st.next single sym)
-    (hi : InstallOk st.role st.idx st.fill) (har : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 4096 < 2 ^ 32) : Hd :=
+    (hi : InstallOk st.role st.idx st.fill) (har : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 2672 < 2 ^ 32) : Hd :=
   match st.role with
   | .map => mapTableDone st (soloTable st.head st.next single sym st.size ha) (soloTable_fits ha)
   | _ =>
@@ -549,13 +549,13 @@ theorem tableDone_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {c : PrefixCode
     (hw : (BitBuffer.mk st.word st.count).Wf) (hu : Upto st.d g (ownerStage o)) (hs : SizeOk st size) (ho : OwnerRel st g size o)
     (hf : TableFor st.size st.head st.next single sym c) (hb : st.d.arena.size + budO g o ≤ st.d.arenaCap.toNat)
     {ha : TableArgs st.size st.head st.next single sym} {hi : InstallOk st.role st.idx st.fill}
-    {har : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 4096 < 2 ^ 32} :
+    {har : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 2672 < 2 ^ 32} :
     TableDone K g o c st (tableDone st single sym ha hi har) := by
   obtain ⟨hs1, hs2, hs3⟩ := hs
   have hs : SizeOk st size := ⟨hs1, hs2, hs3⟩
   have hC := hf.complete
   have hsy : c.Symbols size := by rw [← hs1]; exact hf.symbols
-  have hsmall : st.d.arena.size + 132096 < 2 ^ 32 := by
+  have hsmall : st.d.arena.size + 2672 < 2 ^ 32 := by
     have := hu.le
     have := hu.max
     omega

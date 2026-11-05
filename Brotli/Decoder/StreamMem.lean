@@ -16,7 +16,7 @@ open Brotli.Spec Brotli.Properties
 
 /-- What a state holds besides its window and the groups' tables: the arena's reservation for the categories' codes, the
 bounds `HSize` and `HSmall` give, 768 bytes of block type flags, 38 bytes of a dictionary word, and its fields. -/
-def fixedCost : Nat := 94896
+def fixedCost : Nat := 86596
 
 /-- What a state's fields cost. -/
 def fieldBytes : Nat := 1024
@@ -258,7 +258,7 @@ structure HSmall (H : Hdr) : Prop where
   modes : H.modes.size ≤ 256
 
 /-- Why a stream's memory limit was reached: `L` is below what it needs, and not because it was clipped. -/
-def MemWhy (Ws : Option Nat) (X L : Nat) : Prop := L < Ws.elim 0 (· + 16) + X ∧ L < 4294822767
+def MemWhy (Ws : Option Nat) (X L : Nat) : Prop := L < Ws.elim 0 (· + 16) + X ∧ L < 4294958407
 
 /-- What a state holds, for a stream whose window's worth is `Ws`, whose tables' worth is `X`, and with `L` left for the window and
 the tables. `B` is the bits still to be read. In a header, the arena's reservation and what the rest of the header reserves
@@ -732,7 +732,7 @@ theorem stepDMeta_facts {w : Nat} {st : StreamState} {a : ByteArray} {stop : USi
   obtain ⟨ht, hw, hall⟩ := hrel
   have ht' : tag = .mblock := ht
   subst ht'
-  have hlim : limit.toNat + 144528 < 2 ^ 32 := hall.limit
+  have hlim : limit.toNat + 8888 < 2 ^ 32 := hall.limit
   have hdec : (DTag.mblock ≠ DTag.wbits) ∧ (DTag.mblock ≠ DTag.cmds) := by decide
   have hnh : DTag.mblock ≠ DTag.hdr := by decide
   unfold stepDMeta

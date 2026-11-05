@@ -19,11 +19,11 @@ open Brotli.Spec Brotli.Properties
 /-- A table's work, with its lengths complete: at most seven for each symbol and 1265 more, and for a context map's code
 the map's zeros as read and as transformed, and its three lists of 256 bytes. -/
 theorem tableDoneW_le {st : Hd} {single : Bool} {sym : UInt64} (ha : TableArgs st.size st.head st.next single sym)
-    (har : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 4096 < 2 ^ 32) :
+    (har : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 2672 < 2 ^ 32) :
     tableDoneW st single ≤ 7 * st.size.toNat + 1265 +
       (if st.role = .map then 770 + zbW (mapSizeFast st) + zbW (mapSizeFast st) else 0) := by
   unfold tableDoneW
-  have hb : ∀ t : ByteArray, t.size % 2 = 0 ∧ t.size + 4096 < 2 ^ 32 →
+  have hb : ∀ t : ByteArray, t.size % 2 = 0 ∧ t.size + 2672 < 2 ^ 32 →
       (if single then buildSingleW else buildFastW t st.head st.next) ≤ 7 * st.size.toNat + 1264 := by
     intro t ht
     cases hs : single with
@@ -858,7 +858,7 @@ theorem hcost_syms_other (g : Gh) (o : Owner) (n : Nat) (clc : PrefixCode) (ls :
   cases p' <;> first | rfl | exact absurd rfl h
 
 /-- Where a finished table's step goes. -/
-theorem growSingle_role (st : Hd) (sym : UInt64) (h : st.d.arena.size + 4096 < 2 ^ 32 ∧ st.d.arena.size % 2 = 0) :
+theorem growSingle_role (st : Hd) (sym : UInt64) (h : st.d.arena.size + 2672 < 2 ^ 32 ∧ st.d.arena.size % 2 = 0) :
     (growSingle st sym h).role = st.role := by
   unfold growSingle clearDone
   rfl
@@ -868,7 +868,7 @@ theorem growLens_role (st : Hd) (h : ∃ L, BuildArgs st.d.arena st.head st.next
   rfl
 
 theorem tableDone_tag {st : Hd} {s : Bool} {y : UInt64} {ha : TableArgs st.size st.head st.next s y} {hi : InstallOk st.role st.idx st.fill}
-    {har : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 4096 < 2 ^ 32} :
+    {har : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 2672 < 2 ^ 32} :
     (tableDone st s y ha hi har).tag ≠ .clens ∧ (tableDone st s y ha hi har).tag ≠ .syms := by
   have key : ∀ (x : Hd) (b : UInt64) (hx : InstallOk x.role x.idx x.fill), x.role ≠ .map →
       (installTable x b hx).tag ≠ .clens ∧ (installTable x b hx).tag ≠ .syms := by
@@ -1781,7 +1781,7 @@ theorem stepHW_stop {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} 
 Such a step leaves the state at its place, so its work is not paid for by the potential: it is at most 259. -/
 
 theorem tableDone_ni {st : Hd} {s : Bool} {y : UInt64} {ha : TableArgs st.size st.head st.next s y} {hi : InstallOk st.role st.idx st.fill}
-    {har : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 4096 < 2 ^ 32}
+    {har : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 2672 < 2 ^ 32}
     (h : st.status = .next) : (tableDone st s y ha hi har).status ≠ .needsInput := by
   unfold tableDone
   dsimp only

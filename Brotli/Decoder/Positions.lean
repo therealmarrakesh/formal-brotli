@@ -117,7 +117,7 @@ theorem installTable_nf (st : Hd) (base : UInt64) (hi : InstallOk st.role st.idx
 theorem growLens_nf (st : Hd) (h : ∃ L, BuildArgs st.d.arena st.head st.next L) :
     growLens st h = { growLens { st with pos := 0 } h with pos := st.pos } := rfl
 
-theorem growSingle_nf (st : Hd) (sym : UInt64) (h : st.d.arena.size + 4096 < 2 ^ 32 ∧ st.d.arena.size % 2 = 0) :
+theorem growSingle_nf (st : Hd) (sym : UInt64) (h : st.d.arena.size + 2672 < 2 ^ 32 ∧ st.d.arena.size % 2 = 0) :
     growSingle st sym h = { growSingle { st with pos := 0 } sym h with pos := st.pos } := rfl
 
 theorem mapTableDone_nf (st : Hd) (t : ByteArray) (hf : t.size < 2 ^ 32 ∧ TableFits t (USize.ofNat 0).toNat) :
@@ -128,7 +128,7 @@ theorem mapTableDone_nf (st : Hd) (t : ByteArray) (hf : t.size < 2 ^ 32 ∧ Tabl
 
 set_option maxRecDepth 8192 in
 theorem tableDone_nf (st : Hd) (single : Bool) (sym : UInt64) (ha : TableArgs st.size st.head st.next single sym)
-    (hi : InstallOk st.role st.idx st.fill) (har : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 4096 < 2 ^ 32) :
+    (hi : InstallOk st.role st.idx st.fill) (har : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 2672 < 2 ^ 32) :
     tableDone st single sym ha hi har = { tableDone { st with pos := 0 } single sym ha hi har with pos := st.pos } := by
   unfold tableDone
   cases st
@@ -136,7 +136,7 @@ theorem tableDone_nf (st : Hd) (single : Bool) (sym : UInt64) (ha : TableArgs st
   repeat' (first | split_all | exact (installTable_nf _ _ _).trans rfl | exact (mapTableDone_nf _ _ _).trans rfl | rfl)
 
 theorem simpleTable_nf (st : Hd) (r : Rd) (p : USize) (h : SimpleRead st.size r) (he : ¬ r.e = 0) (hi : InstallOk st.role st.idx st.fill)
-    (har : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 4096 < 2 ^ 32) :
+    (har : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 2672 < 2 ^ 32) :
     simpleTable st r p h he hi har = { simpleTable { st with pos := 0 } r 0 h he hi har with pos := p } := by
   unfold simpleTable
   exact (tableDone_nf _ _ _ _ _ _).trans rfl

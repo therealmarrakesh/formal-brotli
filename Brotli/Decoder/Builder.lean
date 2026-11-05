@@ -834,7 +834,7 @@ theorem stepFast_eq {baseU : UInt64} {t : ByteArray} {s lU cU : UInt64} {base l 
 deep as the code word, in the array. -/
 theorem DownInv.stepOk {lens : List Nat} (hC : Complete (.canonical lens)) {t0 t : ByteArray} {base : Nat}
     {done ops : List Nat} {o : Nat → Nat} (h : DownInv lens t0 base done t ops o) (hlen : lens.length ≤ 704)
-    (hbase : 2 * base + 4096 < 2 ^ 32) {s l c : Nat} (hs : lens[s]? = some l) (h0 : l ≠ 0) (hc : code lens s = some c) :
+    (hbase : 2 * base + 2672 < 2 ^ 32) {s l c : Nat} (hs : lens[s]? = some l) (h0 : l ≠ 0) (hc : code lens s = some c) :
     BuildOk t base l c := by
   have hl15 : l ≤ 15 := hC.1 l (List.mem_of_getElem? hs)
   have hsize := h.size
@@ -1038,7 +1038,7 @@ structure WalkAt (lens : List Nat) (t0 head next : ByteArray) (base : Nat) (t : 
   lists : ListsIs head next lens
   hsz : head.size < 2 ^ 32
   nsz : next.size < 2 ^ 32
-  room : 2 * base + 4096 < 2 ^ 32
+  room : 2 * base + 2672 < 2 ^ 32
   lrange : 1 ≤ l ∧ l ≤ 15
   kle : k ≤ (symsOf lens l).length
   chain : ChainIs next v ((symsOf lens l).reverse.drop k)
@@ -1358,9 +1358,9 @@ theorem walkFast_eq (head next : ByteArray) (baseU : UInt64) : ∀ (N : Nat) (t 
 arena of whole slots with room for the table. -/
 def BuildArgs (t head next : ByteArray) (lens : List Nat) : Prop :=
   Complete (.canonical lens) ∧ lens.length ≤ 704 ∧ ListsIs head next lens ∧ head.size < 2 ^ 32 ∧ next.size < 2 ^ 32 ∧
-    t.size % 2 = 0 ∧ t.size + 4096 < 2 ^ 32
+    t.size % 2 = 0 ∧ t.size + 2672 < 2 ^ 32
 
-theorem half_toNat {t : ByteArray} (h : t.size + 4096 < 2 ^ 32) : (t.size.toUInt64 >>> 1).toNat = t.size / 2 := by
+theorem half_toNat {t : ByteArray} (h : t.size + 2672 < 2 ^ 32) : (t.size.toUInt64 >>> 1).toNat = t.size / 2 := by
   rw [u64_shr (by decide), Nat.toUInt64_eq, u64_lit (by omega)]
   rfl
 
@@ -1528,7 +1528,7 @@ theorem listsOf_spec {lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.size}
 /-- What `buildLens` needs: a complete code over the `n` code lengths in `lens`, at most 704, and an arena of whole
 slots with room for the table. -/
 def LensArgs (t lens : ByteArray) (n : USize) : Prop :=
-  Complete (.canonical (lensOf lens n.toNat)) ∧ n.toNat ≤ 704 ∧ t.size % 2 = 0 ∧ t.size + 4096 < 2 ^ 32
+  Complete (.canonical (lensOf lens n.toNat)) ∧ n.toNat ≤ 704 ∧ t.size % 2 = 0 ∧ t.size + 2672 < 2 ^ 32
 
 theorem lens_build {t lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.size} (h : LensArgs t lens n) :
     BuildArgs t (listsOf lens n hn).1 (listsOf lens n hn).2 (lensOf lens n.toNat) := by
@@ -1555,7 +1555,7 @@ theorem buildLens_eq {t lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.siz
   exact buildFast_eq this _
 
 /-- Appends a single-symbol code's table. -/
-def buildSingleFast (t : ByteArray) (sym : UInt64) (h : t.size + 4096 < 2 ^ 32 ∧ t.size % 2 = 0) : ByteArray :=
+def buildSingleFast (t : ByteArray) (sym : UInt64) (h : t.size + 2672 < 2 ^ 32 ∧ t.size % 2 = 0) : ByteArray :=
   fillRun (sym <<< 4) 1 (zeroExtend t 512) (t.size.toUInt64 >>> 1) 256 (by rw [size_zeroExtend]; omega) (by
     intro k hk
     have hk' : k < 256 := hk
@@ -1563,7 +1563,7 @@ def buildSingleFast (t : ByteArray) (sym : UInt64) (h : t.size + 4096 < 2 ^ 32 �
     show 2 * (t.size / 2 + k * 1) + 1 < _
     omega)
 
-theorem buildSingleFast_eq {t : ByteArray} {sym : UInt64} (h : t.size + 4096 < 2 ^ 32 ∧ t.size % 2 = 0)
+theorem buildSingleFast_eq {t : ByteArray} {sym : UInt64} (h : t.size + 2672 < 2 ^ 32 ∧ t.size % 2 = 0)
     (hsym : sym.toNat < 4096) : buildSingleFast t sym h = buildSingle t sym.toNat := by
   have hv : (sym <<< 4).toNat = 0 + 16 * sym.toNat := by
     rw [u64_shl (by decide) (by rw [show (4 : UInt64).toNat = 4 from rfl]; omega), show (4 : UInt64).toNat = 4 from rfl]

@@ -303,9 +303,9 @@ after, also for the groups'. -/
 structure Upto (d : Done) (g : Gh) (n : Nat) : Prop where
   four : d.arena.size % 2 = 0
   le : d.arena.size ≤ d.arenaCap.toNat
-  max : d.arenaCap.toNat + 132096 < 2 ^ 32
+  max : d.arenaCap.toNat + 2672 < 2 ^ 32
   capLe : d.arenaCap.toNat ≤ smallMax + d.arenaMax.toNat
-  room : d.arenaMax.toNat + smallMax + 132096 < 2 ^ 32
+  room : d.arenaMax.toNat + smallMax + 2672 < 2 ^ 32
   small : n ≤ 6 → d.arenaCap.toNat = smallMax
   cat : ∀ i, catIdx i < n → CatOk d i (g.catOf i)
   np : 3 < n → d.npostfix.toNat = g.m.npostfix ∧ d.ndirect.toNat = g.m.ndirect ∧ g.m.npostfix ≤ 3 ∧ g.m.ndirect ≤ 120

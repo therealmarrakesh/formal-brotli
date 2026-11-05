@@ -162,7 +162,7 @@ theorem Upto.dmapRes {d : Done} {g : Gh} (h : Upto d g 6) {b : ByteArray} {n : U
   le := hc1
   max := by
     have := h.room
-    show cap.toNat + 132096 < 2 ^ 32
+    show cap.toNat + 2672 < 2 ^ 32
     omega
   capLe := hc2
   room := h.room

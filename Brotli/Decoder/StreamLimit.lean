@@ -120,8 +120,8 @@ theorem mapTableDone_lim (t : ByteArray) (hf : t.size < 2 ^ 32 ∧ TableFits t (
     mapTableDone (hdSet st a) t hf = hdSet (mapTableDone st t hf) a := by
   simp only [mapTableDone, mapSizeFast]; lim_tac
 
-theorem growSingle_lim (sym : UInt64) (h1 : (hdSet st a).d.arena.size + 4096 < 2 ^ 32 ∧ (hdSet st a).d.arena.size % 2 = 0)
-    (h2 : st.d.arena.size + 4096 < 2 ^ 32 ∧ st.d.arena.size % 2 = 0) :
+theorem growSingle_lim (sym : UInt64) (h1 : (hdSet st a).d.arena.size + 2672 < 2 ^ 32 ∧ (hdSet st a).d.arena.size % 2 = 0)
+    (h2 : st.d.arena.size + 2672 < 2 ^ 32 ∧ st.d.arena.size % 2 = 0) :
     growSingle (hdSet st a) sym h1 = hdSet (growSingle st sym h2) a := by
   simp only [growSingle, clearDone, clearArena, hdSet]
 
@@ -157,8 +157,8 @@ theorem installTable_lim' {S S' : Hd} (h : S = hdSet S' a) (base : UInt64) (hi :
 
 theorem tableDone_lim (single : Bool) (sym : UInt64) (ha1 : TableArgs (hdSet st a).size (hdSet st a).head (hdSet st a).next single sym)
     (ha2 : TableArgs st.size st.head st.next single sym) (hi : InstallOk st.role st.idx st.fill)
-    (har1 : (hdSet st a).d.arena.size % 2 = 0 ∧ (hdSet st a).d.arena.size + 4096 < 2 ^ 32)
-    (har2 : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 4096 < 2 ^ 32) :
+    (har1 : (hdSet st a).d.arena.size % 2 = 0 ∧ (hdSet st a).d.arena.size + 2672 < 2 ^ 32)
+    (har2 : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 2672 < 2 ^ 32) :
     tableDone (hdSet st a) single sym ha1 hi har1 = hdSet (tableDone st single sym ha2 hi har2) a := by
   unfold tableDone
   have er : (hdSet st a).role = st.role := rfl
@@ -224,8 +224,8 @@ theorem clFinish_lim' {L : Hd} (h : L = hdSet st a) (h1 : ∃ acc, ClDone L acc)
 
 theorem tableDone_lim' {L : Hd} (h : L = hdSet st a) (single : Bool) (sym : UInt64) (ha1 : TableArgs L.size L.head L.next single sym)
     (ha2 : TableArgs st.size st.head st.next single sym) (hi1 : InstallOk L.role L.idx L.fill) (hi2 : InstallOk st.role st.idx st.fill)
-    (har1 : L.d.arena.size % 2 = 0 ∧ L.d.arena.size + 4096 < 2 ^ 32)
-    (har2 : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 4096 < 2 ^ 32) :
+    (har1 : L.d.arena.size % 2 = 0 ∧ L.d.arena.size + 2672 < 2 ^ 32)
+    (har2 : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 2672 < 2 ^ 32) :
     tableDone L single sym ha1 hi1 har1 = hdSet (tableDone st single sym ha2 hi2 har2) a := by
   subst h
   exact tableDone_lim st a single sym ha1 ha2 hi2 har1 har2
@@ -238,8 +238,8 @@ theorem stepHClens_lim (h1 : ∃ g p, HRel (hdSet st a) g p) (h2 : ∃ g p, HRel
 
 theorem simpleTable_lim {r : Rd} (h1 : SimpleRead (hdSet st a).size r) (h2 : SimpleRead st.size r) (he : ¬ r.e = 0)
     (hi1 : InstallOk (hdSet st a).role (hdSet st a).idx (hdSet st a).fill) (hi2 : InstallOk st.role st.idx st.fill)
-    (har1 : (hdSet st a).d.arena.size % 2 = 0 ∧ (hdSet st a).d.arena.size + 4096 < 2 ^ 32)
-    (har2 : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 4096 < 2 ^ 32) :
+    (har1 : (hdSet st a).d.arena.size % 2 = 0 ∧ (hdSet st a).d.arena.size + 2672 < 2 ^ 32)
+    (har2 : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 2672 < 2 ^ 32) :
     simpleTable (hdSet st a) r pos h1 he hi1 har1 = hdSet (simpleTable st r pos h2 he hi2 har2) a := by
   unfold simpleTable
   exact tableDone_lim' (simpleLists st r pos h2.fits) a rfl _ _ _ _ _ _ _ _

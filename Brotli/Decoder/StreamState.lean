@@ -185,11 +185,11 @@ theorem Core.toWin {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {out : List Nat}
 structure WinAll (D : Dec) (w : Nat) (st : StreamState) : Prop where
   win : WinRel w D.k.toNat D.cmd st.output st.distances
   produced : st.produced = st.output.length
-  limit : D.limit.toNat + 144528 < 2 ^ 32
+  limit : D.limit.toNat + 8888 < 2 ^ 32
 
 /-- A state stands for a place in a stream. -/
 def DRel (D : Dec) : SPhase → Prop
-  | .wbits => D.tag = .wbits ∧ (BitBuffer.mk D.cmd.word D.cmd.count).Wf ∧ D.limit.toNat + 144528 < 2 ^ 32 ∧ D.cmd.pend = 0
+  | .wbits => D.tag = .wbits ∧ (BitBuffer.mk D.cmd.word D.cmd.count).Wf ∧ D.limit.toNat + 8888 < 2 ^ 32 ∧ D.cmd.pend = 0
   | .mblock w st => D.tag = .mblock ∧ (BitBuffer.mk D.cmd.word D.cmd.count).Wf ∧ WinAll D w st
   | .skip w st last n => D.tag = .skip ∧ (BitBuffer.mk D.cmd.word D.cmd.count).Wf ∧ WinAll D w st ∧ D.last = last ∧ D.left.toNat = n ∧
     D.cmd.count.toNat % 8 = 0 ∧ n < 2 ^ 32
@@ -197,7 +197,7 @@ def DRel (D : Dec) : SPhase → Prop
     n < 2 ^ 32
   | .hdr w st last mlen g p => D.tag = .hdr ∧ WinAll D w st ∧ D.last = last ∧ D.left.toNat = mlen ∧ 1 ≤ mlen ∧ mlen ≤ 16777216 ∧ HRel D.hd g p ∧
     D.cmd.pend = 0 ∧ D.hd.d.arena.size + budH g p ≤ D.hd.d.arenaCap.toNat
-  | .cmds w last m p => D.tag = .cmds ∧ D.last = last ∧ D.limit.toNat + 144528 < 2 ^ 32 ∧ HdrRel D.H m ∧ Rel w D.k.toNat m D.cmd p
+  | .cmds w last m p => D.tag = .cmds ∧ D.last = last ∧ D.limit.toNat + 8888 < 2 ^ 32 ∧ HdrRel D.H m ∧ Rel w D.k.toNat m D.cmd p
   | .ended st => D.tag = .ended ∧ (BitBuffer.mk D.cmd.word D.cmd.count).Wf ∧ ∃ w, WinAll D w st
 
 /-- The stream's bits at a state and position, with what follows. -/
