@@ -312,15 +312,21 @@ def zeroExtend (t : ByteArray) (n : Nat) : ByteArray :=
 termination_by n
 decreasing_by omega
 
-theorem zeroBlock_copy (t : ByteArray) {n : Nat} (h : n ≤ 65536) :
-    (zeroBlock.copySlice 0 t t.size n true).data = t.data ++ Array.replicate n 0 := by
-  simp only [ByteArray.copySlice, zeroBlock_data]
+/-- `zeroBlock_copy` for any array of `N` zeros: stated for a variable `N`, so that the kernel never works with the
+literal 65536. -/
+private theorem zeros_copy (z t : ByteArray) {N n : Nat} (hz : z.data = Array.replicate N 0) (h : n ≤ N) :
+    (z.copySlice 0 t t.size n true).data = t.data ++ Array.replicate n 0 := by
+  simp only [ByteArray.copySlice, hz]
   rw [Array.extract_eq_self_of_le (by simp),
-    Array.extract_empty_of_size_le_start (start := t.size + min n ((Array.replicate 65536 (0 : UInt8)).size - 0))
+    Array.extract_empty_of_size_le_start (start := t.size + min n ((Array.replicate N (0 : UInt8)).size - 0))
       (by simp only [ByteArray.size_data, Array.size_replicate]; omega),
     Array.append_empty, Array.extract_replicate]
   congr 2
   omega
+
+theorem zeroBlock_copy (t : ByteArray) {n : Nat} (h : n ≤ 65536) :
+    (zeroBlock.copySlice 0 t t.size n true).data = t.data ++ Array.replicate n 0 :=
+  zeros_copy zeroBlock t zeroBlock_data h
 
 theorem zeroExtend_data : ∀ (n : Nat) (t : ByteArray), (zeroExtend t n).data = t.data ++ Array.replicate n 0 := by
   intro n
@@ -1052,10 +1058,15 @@ theorem ListsIs.run {head next head' next' : ByteArray} {L : List Nat} {l n : Na
 /-- Every length's list emptied: 32 zero bytes over `head`, written in place. -/
 @[inline] def resetHead (head : ByteArray) : ByteArray := zeroBlock.copySlice 0 head 0 32 true
 
-theorem resetHead_data {head : ByteArray} (h : head.size = 32) : (resetHead head).data = Array.replicate 32 0 := by
+/-- `resetHead_data` for any array of `N ≥ 32` zeros, as for `zeros_copy`. -/
+private theorem zeros_over (z head : ByteArray) {N : Nat} (hz : z.data = Array.replicate N 0) (hN : 32 ≤ N)
+    (h : head.size = 32) : (z.copySlice 0 head 0 32 true).data = Array.replicate 32 0 := by
   have hs : head.data.size = 32 := h
-  simp only [resetHead, ByteArray.copySlice, zeroBlock_data]
-  simp [hs, Array.extract_replicate]
+  simp only [ByteArray.copySlice, hz]
+  simp [hs, Array.extract_replicate, Nat.min_eq_left hN]
+
+theorem resetHead_data {head : ByteArray} (h : head.size = 32) : (resetHead head).data = Array.replicate 32 0 :=
+  zeros_over zeroBlock head zeroBlock_data (by decide) h
 
 theorem resetHead_size {head : ByteArray} (h : head.size = 32) : (resetHead head).size = 32 := by
   show (resetHead head).data.size = 32

@@ -98,9 +98,21 @@ theorem applyDistance_pendLe (st : Cmd) (p : USize) (dcode d : UInt64) : PendLe 
 
 set_option maxRecDepth 65536 in
 theorem distanceStep_pendLe (H : Hdr) (st : Cmd) (p : USize) (v : UInt64) : PendLe st (distanceStep H st p v) := by
-  unfold distanceStep markStep
-  try dsimp only
-  repeat' (first | split_all | exact (PendLe.keep (r := setBits st _ _) rfl rfl).trans (applyDistance_pendLe _ _ _ _) | exact PendLe.keep rfl rfl)
+  -- the five branches by hand: a closer tried where it doesn't fit unfolds `applyDistance` before failing
+  unfold distanceStep
+  split
+  · dsimp only
+    split
+    · split
+      · split
+        · exact PendLe.keep rfl rfl
+        · -- the middle state from `applyDistance_pendLe`: elaborated from `keep`'s `rfl`s first, it came out as
+          -- `setBits st st.word st.count`, and checking that against the real one took 7 s
+          refine PendLe.trans ?_ (applyDistance_pendLe _ _ _ _)
+          exact PendLe.keep rfl rfl
+      · exact PendLe.keep rfl rfl
+    · exact PendLe.keep rfl rfl
+  · exact PendLe.keep rfl rfl
 
 theorem stepDistance_pendLe (H : Hdr) (st : Cmd) (p : USize) : PendLe st (stepDistance H st p) := by
   unfold stepDistance markStep
