@@ -27,6 +27,7 @@ import Brotli.Decoder.StepLiterals
 import Brotli.Decoder.DictBytes
 import Brotli.Decoder.StepDistance
 import Brotli.Decoder.Loop
+import Brotli.Decoder.LoopK
 import Brotli.Decoder.HeaderRest
 import Brotli.Decoder.HeaderOrder
 import Brotli.Decoder.HeaderState

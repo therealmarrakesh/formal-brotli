@@ -1,5 +1,6 @@
 import Brotli.Decoder.StreamState
 import Brotli.Decoder.Positions
+import Brotli.Decoder.LoopK
 
 /-!
 # From a header to its commands, and on
