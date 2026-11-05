@@ -82,8 +82,8 @@ theorem nextTypeFast_toNat {n prev cur sym : UInt64} (hn : n.toNat < 2 ^ 16) (hc
     else ⟨.short, word, count, cur, 0⟩
   else ⟨.bad, word, count, cur, 0⟩
 
-/-- Reads a block switch's type and count. -/
-def blockSwitch (arena : ByteArray) (h32 : arena.size < 2 ^ 32) (tBase cBase : USize) (hT : TableFits arena tBase.toNat)
+/-- Reads a block switch's type and count. Inlined, so that its result is read as it is built and never allocated. -/
+@[inline] def blockSwitch (arena : ByteArray) (h32 : arena.size < 2 ^ 32) (tBase cBase : USize) (hT : TableFits arena tBase.toNat)
     (hC : TableFits arena cBase.toNat) (n cur prev word count : UInt64) : Switched :=
   let b0 : BitBuffer := ⟨word, count⟩
   let v1 := lookup arena tBase word hT h32
