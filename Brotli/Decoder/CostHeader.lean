@@ -60,7 +60,7 @@ def refillW (word count : UInt64) (a : ByteArray) (pos stop : USize) (hs : stop.
   else fillSlowW a stop hs word count pos
 
 theorem refillW_le {word count : UInt64} {a : ByteArray} {pos stop : USize} (hs : stop.toNat ≤ a.size)
-    (hp : pos.toNat ≤ stop.toNat) : refillW word count a pos stop hs ≤ 9 := by
+    (hp : pos.toNat ≤ stop.toNat) : refillW word count a pos stop hs ≤ 8 := by
   unfold refillW
   split
   · omega

@@ -160,8 +160,8 @@ private theorem base_plus {id : USize} (hid : id.toNat < 121) (j : Nat) (hj : j 
   rw [USize.toNat_add, hmul, ej, ← USize.size_eq_two_pow]
   exact Nat.mod_eq_of_lt (by omega)
 
-/-- A dictionary word's building: at most 93 rounds. -/
-theorem dictBuildW_le (clen wordId : UInt64) (h : dictValid clen wordId) : dictBuildW clen wordId h ≤ 93 := by
+/-- A dictionary word's building: at most 78 rounds. -/
+theorem dictBuildW_le (clen wordId : UInt64) (h : dictValid clen wordId) : dictBuildW clen wordId h ≤ 78 := by
   obtain ⟨hc, ht⟩ := h
   have hid : (dictTid (lenRow clen (lt25 hc)) wordId).toUSize.toNat < 121 := by
     rw [word_toUSize (by have := lt121 ht; omega)]

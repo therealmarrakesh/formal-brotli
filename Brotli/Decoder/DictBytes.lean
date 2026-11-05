@@ -389,7 +389,7 @@ def rowBytes (t : WordTransform) : List UInt8 := (rowNat t).map Nat.toUInt8
 def transLut : ByteArray := (transforms.flatMap rowBytes).toByteArray
 
 private theorem rows_ok : ∀ t ∈ transforms,
-    (bytes t.prefixString).length + (bytes t.suffixString).length ≤ 28 ∧ (∀ x ∈ rowNat t, x < 256) := by
+    (bytes t.prefixString).length + (bytes t.suffixString).length ≤ 13 ∧ (∀ x ∈ rowNat t, x < 256) := by
   decide +kernel
 
 theorem transforms_length : transforms.length = 121 := by
@@ -476,9 +476,9 @@ private theorem row_byte {id j : Nat} {t : WordTransform} (h : transforms[id]? =
   rw [← this, List.getD_eq_getElem?_getD, List.getElem?_eq_getElem (by omega)]
   rfl
 
-/-- A transform's prefix and suffix are 28 bytes at most together. -/
+/-- A transform's prefix and suffix are 13 bytes at most together. -/
 theorem affix_le {id : Nat} (hid : id < 121) :
-    (transLut.data[32 * id + 2]?.getD 0).toNat + (transLut.data[32 * id + 3]?.getD 0).toNat ≤ 28 := by
+    (transLut.data[32 * id + 2]?.getD 0).toNat + (transLut.data[32 * id + 3]?.getD 0).toNat ≤ 13 := by
   have hl := transforms_length
   obtain ⟨t, ht⟩ : ∃ t, transforms[id]? = some t := ⟨transforms[id]'(by omega), List.getElem?_eq_getElem (by omega)⟩
   have hsz := transLut_size
