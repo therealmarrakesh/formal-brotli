@@ -53,6 +53,28 @@ theorem fillSlowW_le {a : ByteArray} {stop : USize} (hs : stop.toNat ≤ a.size)
       omega
     · omega
 
+/-- `fillSlow`'s work is a round for each byte it takes, and one. -/
+theorem fillSlowW_take {a : ByteArray} {stop : USize} (hs : stop.toNat ≤ a.size) : ∀ (N : Nat) (word count : UInt64) (p : USize),
+    stop.toNat - p.toNat = N → fillSlowW a stop hs word count p ≤ 1 + ((BitBuffer.fillSlow a stop hs word count p).pos.toNat - p.toNat) ∧
+      p.toNat ≤ (BitBuffer.fillSlow a stop hs word count p).pos.toNat := by
+  intro N
+  induction N using Nat.strongRecOn with
+  | _ N ih =>
+    intro word count p hN
+    rw [fillSlowW, BitBuffer.fillSlow]
+    split
+    · rename_i h
+      have hlt := USize.lt_iff_toNat_lt.mp h.2
+      have hnext : (p + USize.ofNat 1).toNat = p.toNat + 1 :=
+        cusize_add (by decide) (Nat.lt_of_le_of_lt (by omega) stop.toNat_lt_size)
+      dsimp only
+      generalize ((BitBuffer.mk word count).push (a.uget p (by omega))).word = w
+      generalize ((BitBuffer.mk word count).push (a.uget p (by omega))).count = c
+      obtain ⟨i1, i2⟩ := ih _ (by omega) w c (p + USize.ofNat 1) rfl
+      rw [hnext] at i1 i2
+      omega
+    · exact ⟨by omega, Nat.le_refl _⟩
+
 /-- The work of `refill`: one load, or a round for each of the fewer than eight bytes left. -/
 def refillW (word count : UInt64) (a : ByteArray) (pos stop : USize) (hs : stop.toNat ≤ a.size) : Nat :=
   if 56 < count then 1
@@ -75,6 +97,17 @@ theorem refillW_le {word count : UInt64} {a : ByteArray} {pos stop : USize} (hs 
         exact e
       have := fillSlowW_le hs _ word count pos rfl
       omega
+
+/-- A refill's work is one, and a round for each byte it takes. -/
+theorem refillW_take {word count : UInt64} {a : ByteArray} {pos stop : USize} (hs : stop.toNat ≤ a.size)
+    (hp : pos.toNat ≤ stop.toNat) :
+    refillW word count a pos stop hs ≤ 1 + ((refill word count a pos stop hs hp).pos.toNat - pos.toNat) := by
+  unfold refillW refill
+  split
+  · omega
+  · split
+    · omega
+    · exact (fillSlowW_take hs _ word count pos rfl).1
 
 /-! ### Tables -/
 

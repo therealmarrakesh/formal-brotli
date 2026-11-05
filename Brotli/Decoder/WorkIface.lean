@@ -30,35 +30,44 @@ def callWin (s : DState) (a : ByteArray) (start stop : Nat) (space : Nat) : Nat 
       ((atPos_inv s h.2.1 h.2.2).withCap space))
   else 0
 
-private theorem arith_pause {W dq ho ph dp hh size u hand po win : Nat} (hu : u ≤ size)
-    (h : W + dq + 4470 * (ho + (size - u) * 8) + 282 * ph ≤ dp + 4470 * (hh + size * 8) + 284 * hand + 282 * po + win + 126) :
-    W + dq + 4470 * ho + 282 * ph ≤ dp + 4470 * hh + 35760 * u + 284 * hand + 282 * po + win + 126 := by
+private theorem arith_pause {W dq ho ph dp hh size u hand po win P0 P1 : Nat} (hu : u ≤ size) (h0 : P0 = size)
+    (h1 : P1 = size - u)
+    (h : W + dq + 4470 * (ho + (size - u) * 8) + P1 + 282 * ph ≤
+      dp + 4470 * (hh + size * 8) + P0 + 284 * hand + 282 * po + win + 126) :
+    W + dq + 4470 * ho + 282 * ph ≤ dp + 4470 * hh + 35761 * u + 284 * hand + 282 * po + win + 126 := by
   obtain ⟨d, rfl⟩ : ∃ d, size = u + d := ⟨size - u, by omega⟩
-  rw [Nat.add_sub_cancel_left] at h
+  rw [Nat.add_sub_cancel_left] at h h1
+  rw [h0, h1] at h
   have e1 : 4470 * (ho + d * 8) = 4470 * ho + 35760 * d := by
     rw [Nat.mul_add, Nat.mul_comm d 8, ← Nat.mul_assoc]
   have e2 : 4470 * (hh + (u + d) * 8) = 4470 * hh + 35760 * u + 35760 * d := by
     rw [Nat.mul_add, Nat.mul_comm (u + d) 8, ← Nat.mul_assoc, Nat.mul_add, Nat.add_assoc]
+  have e3 : 35761 * u = 35760 * u + u := by rw [Nat.succ_mul, Nat.mul_comm]
   rw [e1, e2] at h
+  rw [e3]
   generalize 4470 * ho = A at h ⊢
   generalize 4470 * hh = B at h ⊢
   generalize 35760 * u = C at h ⊢
   generalize 35760 * d = E at h
   omega
 
-private theorem arith_any {W dp hh s size o hand win : Nat} (h1 : s ≤ o) (h2 : o ≤ s + size)
-    (h : W + 4470 * ((s + size - o) * 8) ≤ dp + 4470 * (hh + size * 8) + 284 * hand + win + 408) :
-    W ≤ dp + 4470 * hh + 35760 * (o - s) + 284 * hand + win + 408 := by
+private theorem arith_any {W dp hh s size o hand win P0 P1 : Nat} (h1 : s ≤ o) (h2 : o ≤ s + size) (h3 : P0 = size)
+    (h4 : P1 = s + size - o)
+    (h : W + 4470 * ((s + size - o) * 8) + P1 ≤ dp + 4470 * (hh + size * 8) + P0 + 284 * hand + win + 408) :
+    W ≤ dp + 4470 * hh + 35761 * (o - s) + 284 * hand + win + 408 := by
   obtain ⟨d, rfl⟩ : ∃ d, o = s + d := ⟨o - s, by omega⟩
   obtain ⟨e, rfl⟩ : ∃ e, size = d + e := ⟨size - d, by omega⟩
   have g1 : s + (d + e) - (s + d) = e := by omega
-  rw [g1] at h
+  rw [g1] at h h4
+  rw [h3, h4] at h
   rw [Nat.add_sub_cancel_left]
   have e1 : 4470 * (e * 8) = 35760 * e := by
     rw [Nat.mul_comm e 8, ← Nat.mul_assoc]
   have e2 : 4470 * (hh + (d + e) * 8) = 4470 * hh + 35760 * d + 35760 * e := by
     rw [Nat.mul_add, Nat.mul_comm (d + e) 8, ← Nat.mul_assoc, Nat.mul_add, Nat.add_assoc]
+  have e3 : 35761 * d = 35760 * d + d := by rw [Nat.succ_mul, Nat.mul_comm]
   rw [e1, e2] at h
+  rw [e3]
   generalize 4470 * hh = B at h ⊢
   generalize 35760 * d = C at h ⊢
   generalize 35760 * e = E at h
@@ -69,10 +78,10 @@ section
 variable {x : List UInt8} {R : Run DState} {c : Call}
 
 /-- One call of the decoder, against the potential: a call that pauses is paid for by the potential of where it starts,
-4470 for each bit it takes from what its state holds and each of eight for each byte it uses, 284 for each byte it hands
-out, 282 for each byte it leaves waiting, the window it allocates and 126, less the potential and bits where it pauses.
-Any call is paid for by the potential, 4470 for each bit its state holds and each of eight for each byte it uses, 284 for
-each byte it hands out, the window and 408. -/
+4470 for each bit it takes from what its state holds and each of eight for each byte it uses and one more for taking the
+byte, 284 for each byte it hands out, 282 for each byte it leaves waiting, the window it allocates and 126, less the
+potential and bits where it pauses. Any call is paid for by the potential, 4470 for each bit its state holds, 35761 for
+each byte it uses, 284 for each byte it hands out, the window and 408. -/
 theorem call_pays (hin : R.read + c.size ≤ x.length) (hfit : c.pre.length + c.size + c.post.length < USize.size) {p : SPhase}
     (hrel : DRel R.state.val p) (hsi : SInv p) (hk : R.state.val.tag ≠ .wbits → 10 ≤ R.state.val.k.toNat) :
     ((R.reply decoder x c).status = .needsInput ∨ (R.reply decoder x c).status = .needsOutput →
@@ -82,11 +91,11 @@ theorem call_pays (hin : R.read + c.size ≤ x.length) (hfit : c.pre.length + c.
         callWork R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.buf.toByteArray c.space c.final +
           dpot q (R.reply decoder x c).state.val + 4470 * (R.reply decoder x c).state.val.held.length +
           282 * R.state.val.cmd.pend.toNat ≤
-          dpot p R.state.val + 4470 * R.state.val.held.length + 35760 * (R.reply decoder x c).used +
+          dpot p R.state.val + 4470 * R.state.val.held.length + 35761 * (R.reply decoder x c).used +
             284 * ((R.reply decoder x c).output.size - c.buf.length) + 282 * (R.reply decoder x c).state.val.cmd.pend.toNat +
             callWin R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.space + 126) ∧
     callWork R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.buf.toByteArray c.space c.final ≤
-      dpot p R.state.val + 4470 * R.state.val.held.length + 35760 * (R.reply decoder x c).used +
+      dpot p R.state.val + 4470 * R.state.val.held.length + 35761 * (R.reply decoder x c).used +
         284 * ((R.reply decoder x c).output.size - c.buf.length) +
         callWin R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.space + 408 := by
   have hg : c.pre.length + c.size ≤ (R.input x c).size ∧ c.pre.length ≤ c.pre.length + c.size ∧ c.pre.length + c.size < USize.size :=
@@ -154,7 +163,7 @@ theorem call_pays (hin : R.read + c.size ≤ x.length) (hfit : c.pre.length + c.
     rw [hb0, hb1, e0, e1, e2, hR] at i
     simp only [List.length_append, bits_length, List.length_drop, take_length hin, List.append_nil] at i
     refine ⟨q, d1, d2, d3, d7, ?_⟩
-    exact arith_pause (by omega) i
+    exact arith_pause (by omega) (by omega) (by omega) i
   · have i := C2 []
     rw [hb0, e0, e2, hR, hstop] at i
     simp only [List.length_append, bits_length, List.length_drop, take_length hin, List.append_nil] at i
@@ -164,7 +173,7 @@ theorem call_pays (hin : R.read + c.size ≤ x.length) (hfit : c.pre.length + c.
     have h2 := hc.posStop
     rw [hpos0] at h1
     rw [hstop] at h2
-    exact arith_any (by omega) h2 i
+    exact arith_any (by omega) h2 (by omega) (by omega) i
 
 /-- The window a call allocates is the one the stream declares: a call that starts at WBITS and gets past it allocates
 the window its WBITS gives, and any other call allocates none. Zero-filling the window takes a round for each byte and
