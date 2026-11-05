@@ -15,8 +15,10 @@ open Brotli.Spec Brotli.Properties
 /-! ### The demand -/
 
 /-- What a state holds besides its window and the groups' tables: the arena's reservation for the categories' codes, the
-bounds `HSize` and `HSmall` give, 768 bytes of block type flags, 38 bytes of a dictionary word, and its fields. -/
-def fixedCost : Nat := 86596
+bounds `HSize` gives, which are more than an empty header reading and the bounds `HSmall` give, since a header's reading
+and a meta-block's fast header are never held together, 768 bytes of block type flags, 38 bytes of a dictionary word,
+and its fields. -/
+def fixedCost : Nat := 65860
 
 /-- What a state's fields cost. -/
 def fieldBytes : Nat := 1024
@@ -269,8 +271,8 @@ structure MemD (Ws : Option Nat) (X L : Nat) (D : Dec) (B : List Bool) : Prop wh
   hdr : D.tag = .hdr → ∃ g q, HRel D.hd g q ∧ D.hd.d.arenaCap.toNat + (hrest tableK g q B).getD 0 ≤ smallMax + X ∧
     D.hd.d.arenaMax = D.limit ∧ D.hd.d.arena.size + budH g q ≤ D.hd.d.arenaCap.toNat
   cmds : D.tag = .cmds → D.H.arenaCap.toNat ≤ smallMax + X ∧ D.H.arenaCap.toNat ≤ smallMax + D.limit.toNat
-  hdOut : D.tag ≠ .hdr → D.hd.d.arenaCap.toNat = 0
-  HOut : D.tag ≠ .cmds → D.H.arenaCap.toNat = 0
+  hdOut : D.tag ≠ .hdr → D.hd = Hd.none
+  HOut : D.tag ≠ .cmds → D.H = Hdr.none
   hd : HSize D.hd
   H : HSmall D.H
   win : (D.tag = .wbits ∧ D.cmd.ring.size = 0 ∧ D.cmd.seen.size = 0 ∧ D.cmd.wordBuf.size = 0 ∧ D.limit.toNat = L ∧ winSem.first B = Ws) ∨
@@ -291,6 +293,19 @@ theorem DRel.arrays {D : Dec} {p : SPhase} (h : DRel D p) (ht : D.tag ≠ .wbits
   | ended =>
     obtain ⟨_, _, _, a⟩ := h
     exact hwin a
+
+/-- An empty header reading holds its two lists and two empty tables. -/
+theorem hdNone_holds : Hd.none.holds = 2464 := by
+  have h1 : Hd.none.head.size = 32 := headNone_size
+  have h2 : Hd.none.next.size = 1408 := nextNone_size
+  have h3 : Hd.none.clt.t.size = 512 := by show (zeroBytes 512).size = 512; exact zeroBytes_size (by decide)
+  have h4 : Hd.none.mapT.t.size = 512 := by show (zeroBytes 512).size = 512; exact zeroBytes_size (by decide)
+  unfold Hd.holds Done.holds
+  rw [h1, h2, h3, h4]
+  rfl
+
+/-- An empty fast header holds nothing. -/
+theorem hdrNone_holds : Hdr.none.holds = 0 := rfl
 
 /-- What a state holds is within what the stream demands and what's left of the limit. -/
 theorem MemD.holds_le {Ws : Option Nat} {X L : Nat} {D : Dec} {B : List Bool} (M : MemD Ws X L D B) :
@@ -315,10 +330,20 @@ theorem MemD.holds_le {Ws : Option Nat} {X L : Nat} {D : Dec} {B : List Bool} (M
   have b5 := M.H.dMap
   have b6 := M.H.modes
   have hsm : smallMax = 6216 := rfl
-  unfold Dec.holds Hd.holds Done.holds Hdr.holds fixedCost fieldBytes
+  have hhd : D.hd.holds ≤ D.hd.d.arenaCap.toNat + 57814 := by unfold Hd.holds Done.holds; omega
+  have hHH : D.H.holds ≤ D.H.arenaCap.toNat + 20736 := by unfold Hdr.holds; omega
+  have h0 : Hd.none.d.arenaCap.toNat = 0 := rfl
+  have h0' : Hdr.none.arenaCap.toNat = 0 := rfl
+  -- A header's reading and a meta-block's fast header are never held together.
+  have hex : D.hd.holds + D.H.holds ≤ D.hd.d.arenaCap.toNat + D.H.arenaCap.toNat + 57814 := by
+    by_cases t1 : D.tag = .hdr
+    · rw [M.HOut (by rw [t1]; decide), hdrNone_holds]
+      omega
+    · rw [M.hdOut t1, hdNone_holds]
+      omega
+  unfold Dec.holds fixedCost fieldBytes
   rcases M.win with ⟨ht, r0, s0, w0, hl, _⟩ | ⟨ht, w, hw, hk, hl⟩
-  · have e1 := M.hdOut (by rw [ht]; decide)
-    have e2 := M.HOut (by rw [ht]; decide)
+  · rw [M.hdOut (by rw [ht]; decide), M.HOut (by rw [ht]; decide), hdNone_holds, hdrNone_holds]
     omega
   · obtain ⟨r1, _, s1, w1⟩ := hrel.arrays ht
     have he : (some w : Option Nat).elim 0 (· + 16) = w + 16 := rfl
@@ -327,15 +352,15 @@ theorem MemD.holds_le {Ws : Option Nat} {X L : Nat} {D : Dec} {B : List Bool} (M
         D.hd.d.arenaCap.toNat + D.H.arenaCap.toNat ≤ smallMax + D.limit.toNat := by
       by_cases t1 : D.tag = .hdr
       · obtain ⟨g, q, hR, h1, h2, _⟩ := M.hdr t1
-        have h3 := M.HOut (by rw [t1]; decide)
+        have h3 : D.H.arenaCap.toNat = 0 := by rw [M.HOut (by rw [t1]; decide)]; rfl
         have hle := hR.2.1.capLe
         rw [h2] at hle
         omega
-      · have h3 := M.hdOut t1
+      · have h3 : D.hd.d.arenaCap.toNat = 0 := by rw [M.hdOut t1]; rfl
         by_cases t2 : D.tag = .cmds
         · obtain ⟨c1, c2⟩ := M.cmds t2
           omega
-        · have h4 := M.HOut t2
+        · have h4 : D.H.arenaCap.toNat = 0 := by rw [M.HOut t2]; rfl
           omega
     omega
 
@@ -435,7 +460,7 @@ theorem MemD.withCap {Ws : Option Nat} {X L : Nat} {D : Dec} {B : List Bool} (M 
 theorem MemD.keep {Ws : Option Nat} {X L : Nat} {D r : Dec} {B B' : List Bool} (M : MemD Ws X L D B) (hne : D.tag ≠ .wbits) (hnh : D.tag ≠ .hdr)
     (ek : r.k = D.k) (el : r.limit = D.limit) (ed : r.hd = D.hd) (hr : r.tag ≠ .wbits) (hrh : r.tag ≠ .hdr) (hH : HSmall r.H)
     (hc : r.tag = .cmds → r.H.arenaCap.toNat ≤ smallMax + X ∧ r.H.arenaCap.toNat ≤ smallMax + r.limit.toNat)
-    (hO : r.tag ≠ .cmds → r.H.arenaCap.toNat = 0)
+    (hO : r.tag ≠ .cmds → r.H = Hdr.none)
     (hp : ∃ p, DRel r p ∧ (sLeave demandSem p B').getD 0 ≤ X) (hb : r.tag = .mblock → headerTables B' ≤ X) : MemD Ws X L r B' := by
   refine ⟨hp, hb, fun e => absurd e hrh, hc, fun _ => by rw [ed]; exact M.hdOut hnh, hO, by rw [ed]; exact M.hd, hH, Or.inr ⟨hr, ?_⟩⟩
   rcases M.win with ⟨ht, _⟩ | ⟨_, w, h1, h2, h3⟩
@@ -628,8 +653,8 @@ theorem wbits_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {
   refine ⟨fun h0 h1 => ?_, fun e => ?_⟩
   · have hpaused : r.status ≠ .next → r.tag = D.tag := fun e => (hF.paused e).1
     obtain ⟨hA, hB⟩ := placed hrel hD hw (fun e => absurd (ht.symm.trans e) (by decide)) h0 h1 hpaused
-    have hHO : D.H.arenaCap.toNat = 0 := M.HOut (by rw [ht]; decide)
-    have hdO : D.hd.d.arenaCap.toNat = 0 := M.hdOut (by rw [ht]; decide)
+    have hHO : D.H = Hdr.none := M.HOut (by rw [ht]; decide)
+    have hdO : D.hd = Hd.none := M.hdOut (by rw [ht]; decide)
     by_cases hn : r.status = .next
     · obtain ⟨g1, g2⟩ := hF.next hn
       obtain ⟨p', hR, _, _, heq, hdown, _⟩ := hW.next hn
@@ -838,8 +863,7 @@ theorem mblock_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} 
     generalize stepDMeta a stop hs D D.pos = r at hF hD
     refine ⟨fun h0 h1 => ?_, fun e => absurd e hF.status⟩
     obtain ⟨hA, hB⟩ := placed hrel hD hw M.block h0 h1 hF.paused
-    have hHO : D.H.arenaCap.toNat = 0 := M.HOut (by rw [ht]; decide)
-    have hdO : D.hd.d.arenaCap.toNat = 0 := M.hdOut (by rw [ht]; decide)
+    have hHO : D.H = Hdr.none := M.HOut (by rw [ht]; decide)
     have hRwin : r.tag ≠ .wbits ∧ _ := hF.tag
     by_cases hth : r.tag = .hdr
     · obtain ⟨_, s2, s3, s4, s4', s5, s6⟩ := hF.start hth
@@ -923,7 +947,7 @@ theorem cmds_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {h
       rw [← t1] at ht
       exact M.keep (by rw [t1] at ht; rw [ht]; decide) (by rw [t1] at ht; rw [ht]; decide) k1 k2 k3 (by rw [ht]; decide) (by rw [ht]; decide) (by rw [t2]; exact M.H)
         (fun _ => by rw [t2, k2]; exact hc) (fun e => absurd ht e) hA hB
-    · exact M.keep (by rw [ht]; decide) (by rw [ht]; decide) k1 k2 k3 t1 t2 (by rw [t4]; exact hsmall_none) (fun e => absurd e t3) (fun _ => by rw [t4]; rfl) hA hB
+    · exact M.keep (by rw [ht]; decide) (by rw [ht]; decide) k1 k2 k3 t1 t2 (by rw [t4]; exact hsmall_none) (fun e => absurd e t3) (fun _ => t4) hA hB
 
 /-! ### A header -/
 
@@ -977,7 +1001,7 @@ theorem hdr_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs
     · exact h
   obtain ⟨w0, g1, g2, g3⟩ := hWinr
   obtain ⟨p, hrel, hw⟩ := M.place
-  have hHO : D.H.arenaCap.toNat = 0 := M.HOut (by rw [ht]; decide)
+  have hHO : D.H = Hdr.none := M.HOut (by rw [ht]; decide)
   obtain ⟨_, hk24, _, _⟩ := hrel.arrays (by rw [ht]; decide)
   cases p with
   | wbits => exact absurd (hrel.1.symm.trans ht) (by decide)

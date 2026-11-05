@@ -813,17 +813,16 @@ structure MemTop (limit : Nat) (x : List UInt8) (R : Run DState) : Prop where
   why : R.status = .memoryLimit → limit < demand x
   fine : R.status ≠ .memoryLimit → fixedCost ≤ limit
 
-/-- A state with no window and no tables holds no more than the fixed cost. -/
+/-- A state with no window, no header's reading and no fast header holds no more than the fixed cost. -/
 private theorem holds_small {D : Dec} (c1 : D.cmd.ring.size = 0) (c2 : D.cmd.seen.size = 0) (c3 : D.cmd.wordBuf.size = 0)
-    (h1 : D.hd.d.arenaCap.toNat = 0) (h2 : D.H.arenaCap.toNat = 0) (s : HSize D.hd) (s2 : HSmall D.H) : D.holds ≤ fixedCost := by
-  obtain ⟨a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11⟩ := s
-  obtain ⟨b1, b2, b3, b4, b5, b6⟩ := s2
-  unfold Dec.holds Hd.holds Done.holds Hdr.holds fixedCost fieldBytes
+    (h1 : D.hd = Hd.none) (h2 : D.H = Hdr.none) : D.holds ≤ fixedCost := by
+  unfold Dec.holds fixedCost fieldBytes
+  rw [h1, h2, hdNone_holds, hdrNone_holds]
   omega
 
 /-- A state with nothing in it holds no more than the fixed cost. -/
 theorem deadD_holds : deadD.holds ≤ fixedCost :=
-  holds_small rfl rfl rfl rfl rfl hsize_none hsmall_none
+  holds_small rfl rfl rfl rfl rfl
 
 /-- A state at a stream's start. -/
 theorem liveD_mem (limit : Nat) (x : List UInt8) :
