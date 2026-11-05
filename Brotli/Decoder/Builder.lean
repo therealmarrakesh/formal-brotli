@@ -269,9 +269,14 @@ theorem u16At_set_ne {b : ByteArray} {i : USize} {v : UInt64} {j : Nat} (h : i.t
   dsimp only
   rw [setU_eq, setU_eq, p2 h, p3 h, get_set_ne (by omega), get_set_ne (by omega), get_set_ne (by omega), get_set_ne (by omega)]
 
+/-- `n` zero bytes, made at each call: as a constant, the array of `n` boxed bytes it is made from would be kept too. -/
+@[noinline, never_extract] def zerosOf (n : Nat) : ByteArray := ⟨Array.replicate n 0⟩
+
 /-- 65536 zero bytes. Arrays are zero-filled by copying from it: a copy into an array that has room writes in place,
 where a copy of an array onto itself copies all of it. -/
-def zeroBlock : ByteArray := ⟨Array.replicate 65536 0⟩
+def zeroBlock : ByteArray := zerosOf 65536
+
+theorem zeroBlock_data : zeroBlock.data = Array.replicate 65536 0 := rfl
 
 /-- `t` with `n` zero bytes added at its end, copied from `zeroBlock` at most 65536 at a time. Into an array with room
 for them the copy writes in place; into one without, as for a small table built from an empty array, it makes an array of
@@ -284,7 +289,7 @@ decreasing_by omega
 
 theorem zeroBlock_copy (t : ByteArray) {n : Nat} (h : n ≤ 65536) :
     (zeroBlock.copySlice 0 t t.size n true).data = t.data ++ Array.replicate n 0 := by
-  simp only [ByteArray.copySlice, zeroBlock]
+  simp only [ByteArray.copySlice, zeroBlock_data]
   rw [Array.extract_eq_self_of_le (by simp),
     Array.extract_empty_of_size_le_start (start := t.size + min n ((Array.replicate 65536 (0 : UInt8)).size - 0))
       (by simp only [ByteArray.size_data, Array.size_replicate]; omega),
@@ -316,7 +321,7 @@ theorem size_zeroExtend (t : ByteArray) (n : Nat) : (zeroExtend t n).size = t.si
   rw [zeroExtend_zeros, ByteArray.size_append, size_zeros]
 
 /-- A scratch array of `k` zero bytes, made at its size. -/
-@[inline] def zeroBytes (k : Nat) : ByteArray := zeroExtend (ByteArray.emptyWithCapacity k) k
+@[inline] def zeroBytes (k : Nat) : ByteArray := zeroExtend (freshBytes k) k
 
 theorem zeroBytes_data {k : Nat} (_h : k < 2 ^ 32) : (zeroBytes k).data = Array.replicate k 0 := by
   unfold zeroBytes
@@ -1024,7 +1029,7 @@ theorem ListsIs.run {head next head' next' : ByteArray} {L : List Nat} {l n : Na
 
 theorem resetHead_data {head : ByteArray} (h : head.size = 32) : (resetHead head).data = Array.replicate 32 0 := by
   have hs : head.data.size = 32 := h
-  simp only [resetHead, ByteArray.copySlice, zeroBlock]
+  simp only [resetHead, ByteArray.copySlice, zeroBlock_data]
   simp [hs, Array.extract_replicate]
 
 theorem resetHead_size {head : ByteArray} (h : head.size = 32) : (resetHead head).size = 32 := by

@@ -9,6 +9,10 @@ most recent byte first. Bytes waiting to go out are just the newest window bytes
 
 namespace Brotli.Decoder
 
+/-- A new empty array with room for `n` bytes, made at each call: with constant arguments, an allocation written in place
+would otherwise be made once for the whole program and shared, so that its first write copies it. -/
+@[noinline, never_extract] def freshBytes (n : Nat) : ByteArray := ByteArray.emptyWithCapacity n
+
 /-- Where the ring holds the byte `d` back from the newest, with `pos` the next position to write. -/
 def ringIdx (R pos d : Nat) : Nat :=
   if d < pos then pos - 1 - d else pos + R - 1 - d

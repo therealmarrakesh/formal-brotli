@@ -314,8 +314,8 @@ def soloCap : Nat := treeMax 272
 /-- The table of a code that was read, on its own, built in an array with room for it. -/
 @[inline] def soloTable (head next : ByteArray) (single : Bool) (sym : UInt64) (size : UInt64)
     (ha : TableArgs size head next single sym) : ByteArray :=
-  if hs : single = true then buildSingleFast (ByteArray.emptyWithCapacity soloCap) sym (by show 0 + 2672 < _ ∧ 0 % 2 = 0; decide)
-  else buildFast (ByteArray.emptyWithCapacity soloCap) head next (tableArgs_build ha hs (by show 0 % 2 = 0 ∧ 0 + 2672 < _; decide))
+  if hs : single = true then buildSingleFast (freshBytes soloCap) sym (by show 0 + 2672 < _ ∧ 0 % 2 = 0; decide)
+  else buildFast (freshBytes soloCap) head next (tableArgs_build ha hs (by show 0 % 2 = 0 ∧ 0 + 2672 < _; decide))
 
 /-- A canonical table built from lists is the code's, and takes its `tableBytes`. -/
 theorem built_fast {t head next : ByteArray} {L : List Nat} (ha : BuildArgs t head next L) (h : ∃ L, BuildArgs t head next L) :
@@ -332,12 +332,12 @@ theorem soloTable_built {size : UInt64} {head next : ByteArray} {single : Bool} 
     (hf : TableFor size head next single sym c) (ha : TableArgs size head next single sym) :
     Built ByteArray.empty (soloTable head next single sym size ha) c ∧
       (soloTable head next single sym size ha).size ≤ treeMax size.toNat := by
-  have h0 : (ByteArray.emptyWithCapacity soloCap).size = 0 := rfl
+  have h0 : (freshBytes soloCap).size = 0 := rfl
   unfold soloTable
   by_cases hb : single = true
   · rw [dite_eq_left hb]
     have hc := hf.one hb
-    obtain ⟨b1, b2⟩ := built_single (t := ByteArray.emptyWithCapacity soloCap) (tableArgs_sym ha hb)
+    obtain ⟨b1, b2⟩ := built_single (t := freshBytes soloCap) (tableArgs_sym ha hb)
       (by show 0 + 2672 < _ ∧ 0 % 2 = 0; decide)
     rw [hc]
     refine ⟨b1, ?_⟩
@@ -348,7 +348,7 @@ theorem soloTable_built {size : UInt64} {head next : ByteArray} {single : Bool} 
     obtain ⟨L, hc, hlen, hl⟩ := hf.canon (by cases single <;> simp_all)
     have hC := hf.complete
     rw [hc] at hC
-    obtain ⟨b1, b2⟩ := built_fast (t := ByteArray.emptyWithCapacity soloCap)
+    obtain ⟨b1, b2⟩ := built_fast (t := freshBytes soloCap)
       ⟨hC, by have := hf.small; omega, hl, hf.hsz, hf.nsz, rfl, by decide⟩ _
     refine ⟨by rw [hc]; exact b1, ?_⟩
     have htb := tableBytes_le hC (show PrefixCode.Symbols size.toNat (.canonical L) from hlen)

@@ -212,7 +212,7 @@ theorem metaStart_ok {bs r : List Bool} {v : MetaStart} (h : metaStart bs = some
 def hdStart (word count : UInt64) (limit : UInt64) : Hd :=
   { Hd.none with
     word := word, count := count
-    d := { Done.none with arena := ByteArray.emptyWithCapacity smallMax, arenaMax := limit, arenaCap := UInt64.ofNat smallMax } }
+    d := { Done.none with arena := freshBytes smallMax, arenaMax := limit, arenaCap := UInt64.ofNat smallMax } }
 
 /-- A meta-block's start, read. -/
 def metaGo (D : Dec) (c : Cmd) (r : Rd) (pos : USize) : Dec :=

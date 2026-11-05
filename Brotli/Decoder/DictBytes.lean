@@ -622,7 +622,7 @@ def buildWord (id off len : USize) (hid : id.toNat < 121) (h : off.toNat + len.t
   let k := transLut.uget (base + USize.ofNat 1) h1
   let pl := transLut.uget (base + USize.ofNat 2) h2
   let sl := transLut.uget (base + USize.ofNat 3) h3
-  let b0 := emitRun transLut (ByteArray.emptyWithCapacity 38) (base + USize.ofNat 4).toNat pl.toNat
+  let b0 := emitRun transLut (freshBytes 38) (base + USize.ofNat 4).toNat pl.toNat
   let b1 := elementStep dictBytes hs kind k off len b0 h
   emitRun transLut b1 (base + USize.ofNat 4 + pl.toUSize).toNat sl.toNat
 
@@ -664,7 +664,7 @@ theorem buildWord_spec {id off len : USize} {hid : id.toNat < 121} {h : off.toNa
   have hfour := hplus 4 (by decide)
   rw [emit_slice _ _ (by rw [hplU, hsz]; omega), hplU, elementStep_spec h hkind.symm hk.symm,
     emit_slice _ _ (by rw [hfour, hsz]; omega), hfour]
-  have hempty : (ByteArray.emptyWithCapacity 38).data.toList.map UInt8.toNat = [] := rfl
+  have hempty : (freshBytes 38).data.toList.map UInt8.toNat = [] := rfl
   rw [hempty, List.nil_append, row_slice ht 4 pl.toNat (by omega), row_slice ht (4 + pl.toNat) sl.toNat (by omega), hpl, hsl,
     row_prefix, row_suffix]
   rfl
