@@ -196,7 +196,20 @@ theorem stepHClens_pos (st : Hd) (p : USize) (h : ∃ g p, HRel st g p) (ht : st
   cases st
   hd_nf
 
-set_option maxHeartbeats 2000000 in
+theorem symsRep_pos (st : Hd) (p : USize) (h : ∃ g p, HRel st g p) (ht : st.tag = .syms) (h1 : ¬ st.ln = st.size)
+    (r : Rd) (new old : UInt64) :
+    symsRep st p h ht h1 r new old = { symsRep { st with pos := 0 } 0 (hrel_pos0 h) ht h1 r new old with pos := p } := by
+  unfold symsRep
+  cases st
+  hd_nf
+
+theorem symsOk_pos (st : Hd) (p : USize) (h : ∃ g p, HRel st g p) (ht : st.tag = .syms) (h1 : ¬ st.ln = st.size)
+    (r : Rd) : symsOk st p h ht h1 r = { symsOk { st with pos := 0 } 0 (hrel_pos0 h) ht h1 r with pos := p } := by
+  unfold symsOk
+  rw [symsRep_pos st p]
+  cases st
+  hd_nf
+
 theorem stepHSyms_pos (st : Hd) (p : USize) (h : ∃ g p, HRel st g p) (ht : st.tag = .syms) :
     stepHSyms st p h ht = { stepHSyms { st with pos := 0 } 0 (hrel_pos0 h) ht with pos := p } := by
   unfold stepHSyms
@@ -208,7 +221,7 @@ theorem stepHSyms_pos (st : Hd) (p : USize) (h : ∃ g p, HRel st g p) (ht : st.
     · rw [dite_eq_left h1, dite_eq_left (show ({ st with pos := 0 } : Hd).ln = ({ st with pos := 0 } : Hd).size from h1)]
       rfl
     rw [dite_eq_right h1, dite_eq_right (show ¬ ({ st with pos := 0 } : Hd).ln = ({ st with pos := 0 } : Hd).size from h1)]
-    unfold symsOk symsRep
+    simp only [symsOk_pos st p]
     cases st
     hd_nf
 
