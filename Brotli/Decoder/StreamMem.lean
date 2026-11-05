@@ -346,15 +346,30 @@ theorem DRel.arrays {D : Dec} {p : SPhase} (h : DRel D p) (ht : D.tag ≠ .wbits
     obtain ⟨_, _, _, a⟩ := h
     exact hwin a
 
-/-- An empty header reading holds its two lists and two empty tables. -/
+/-- What a header reading holds, for any reading. -/
+private theorem holds_eq (h : Hd) : h.holds = h.d.holds + h.fill.size + h.head.size + h.next.size + h.clLens.size +
+    h.clt.t.size + h.mapT.t.size + h.xf.size + h.mtf.size + h.seenR.size + h.seenX.size := rfl
+
+private theorem dholds_eq (d : Done) : d.holds = d.arenaCap.toNat + d.modes.size + d.lMap.size + d.dMap.size +
+    d.litBase.size + d.icBase.size + d.dBase.size := rfl
+
+/-- An empty header reading holds its two lists and two empty tables. Proved field by field: unfolding `Hd.holds` at
+`Hd.none` directly cost the kernel 66 s, as it unfolded the constant first (lean-facts). -/
 theorem hdNone_holds : Hd.none.holds = 2464 := by
   have h1 : Hd.none.head.size = 32 := headNone_size
   have h2 : Hd.none.next.size = 1408 := nextNone_size
   have h3 : Hd.none.clt.t.size = 512 := by show (zeroBytes 512).size = 512; exact zeroBytes_size (by decide)
   have h4 : Hd.none.mapT.t.size = 512 := by show (zeroBytes 512).size = 512; exact zeroBytes_size (by decide)
-  unfold Hd.holds Done.holds
-  rw [h1, h2, h3, h4]
-  rfl
+  have f0 : Hd.none.fill.size = 0 := rfl
+  have c0 : Hd.none.clLens.size = 0 := rfl
+  have x0 : Hd.none.xf.size = 0 := rfl
+  have m0 : Hd.none.mtf.size = 0 := rfl
+  have r0 : Hd.none.seenR.size = 0 := rfl
+  have s0 : Hd.none.seenX.size = 0 := rfl
+  have d0 : Hd.none.d.holds = 0 := by
+    rw [dholds_eq]
+    rfl
+  rw [holds_eq, h1, h2, h3, h4, f0, c0, x0, m0, r0, s0, d0]
 
 /-- An empty fast header holds nothing. -/
 theorem hdrNone_holds : Hdr.none.holds = 0 := rfl
