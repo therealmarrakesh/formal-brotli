@@ -554,8 +554,8 @@ theorem subSize_reach {lens : List Nat} (hC : Complete (.canonical lens)) {r : N
 /-- The code words longer than 8 bits. -/
 def longCount (lens : List Nat) : Nat := sumR (fun j => blCount lens (j + 9)) 7
 
-/-- At most one length for each symbol is longer than eight. -/
-theorem longCount_le (L : List Nat) : longCount L ≤ L.length := by
+/-- The code words longer than 8 bits are the lengths from 9 to 15. -/
+theorem longCount_eq (L : List Nat) : longCount L = L.countP (fun l => 9 ≤ l && l < 16) := by
   have hs := countP_split (fun l => 9 ≤ l && l < 16) (fun l => l - 9) 7 L (fun a _ h => by
     simp only [Bool.and_eq_true, decide_eq_true_eq] at h
     omega)
@@ -570,7 +570,19 @@ theorem longCount_le (L : List Nat) : longCount L ≤ L.length := by
     simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq]
     omega
   rw [← he, ← hs]
+
+/-- At most one length for each symbol is longer than eight. -/
+theorem longCount_le (L : List Nat) : longCount L ≤ L.length := by
+  rw [longCount_eq]
   exact List.countP_le_length
+
+/-- With no length longer than eight, there are no long code words. -/
+theorem longCount_short {L : List Nat} (h : ∀ l ∈ L, l ≤ 8) : longCount L = 0 := by
+  rw [longCount_eq, List.countP_eq_zero]
+  intro a ha
+  have := h a ha
+  simp only [Bool.and_eq_true, decide_eq_true_eq]
+  omega
 
 theorem offSum_eq (D : Array Nat) : ∀ n, offSum D n = sumR (fun i => subSize (D.getD i 0)) n
   | 0 => rfl

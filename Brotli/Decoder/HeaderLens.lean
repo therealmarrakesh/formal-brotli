@@ -91,7 +91,7 @@ theorem ClDone.len18 {st : Hd} {acc : List (Nat × Nat)} (hd : ClDone st acc) (h
   rw [usize18, (hd.lens h1).sz]
   exact Nat.le_refl _
 
-private theorem mem_lengthsOf_le {size : Nat} {P : List (Nat × Nat)} (h : ∀ p ∈ P, p.2 ≤ 5) : ∀ l ∈ lengthsOf size P, l ≤ 15 := by
+private theorem mem_lengthsOf_five {size : Nat} {P : List (Nat × Nat)} (h : ∀ p ∈ P, p.2 ≤ 5) : ∀ l ∈ lengthsOf size P, l ≤ 5 := by
   intro l hl
   simp only [lengthsOf, List.mem_map] at hl
   obtain ⟨n, _, e⟩ := hl
@@ -102,6 +102,15 @@ private theorem mem_lengthsOf_le {size : Nat} {P : List (Nat × Nat)} (h : ∀ p
     have := h p (List.mem_of_find?_eq_some hf)
     simp only [Option.map_some, Option.getD_some]
     omega
+
+private theorem mem_lengthsOf_le {size : Nat} {P : List (Nat × Nat)} (h : ∀ p ∈ P, p.2 ≤ 5) : ∀ l ∈ lengthsOf size P, l ≤ 15 :=
+  fun l hl => Nat.le_trans (mem_lengthsOf_five h l hl) (by decide)
+
+/-- A finished code length code with more than one symbol has no length over five. -/
+theorem ClDone.short {st : Hd} {acc : List (Nat × Nat)} (hd : ClDone st acc) (h1 : st.clNz ≠ 1) :
+    ∀ l ∈ lensOf st.clLens (USize.ofNat 18).toNat, l ≤ 5 := by
+  rw [usize18, (hd.lens h1).eq]
+  exact mem_lengthsOf_five (fun p hp => (hd.small p hp).2)
 
 /-- A finished code length code with more than one symbol is a complete code over its lengths. -/
 theorem ClDone.complete {st : Hd} {acc : List (Nat × Nat)} (hd : ClDone st acc) (h1 : st.clNz ≠ 1) :
