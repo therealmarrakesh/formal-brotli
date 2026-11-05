@@ -272,6 +272,27 @@ theorem u16At_set_ne {b : ByteArray} {i : USize} {v : UInt64} {j : Nat} (h : i.t
 /-- `n` zero bytes, made at each call: as a constant, the array of `n` boxed bytes it is made from would be kept too. -/
 @[noinline, never_extract] def zerosOf (n : Nat) : ByteArray := ⟨Array.replicate n 0⟩
 
+/-- `t` with `k` zero bytes pushed. -/
+def pushZeros (t : ByteArray) : Nat → ByteArray
+  | 0 => t
+  | k + 1 => pushZeros (t.push 0) k
+
+theorem pushZeros_data : ∀ (k : Nat) (t : ByteArray), (pushZeros t k).data = t.data ++ Array.replicate k 0
+  | 0, t => by simp [pushZeros]
+  | k + 1, t => by
+    rw [pushZeros, pushZeros_data k, ByteArray.data_push, Array.push_eq_append, Array.append_assoc,
+      ← Array.replicate_succ']
+
+/-- `zerosOf`, pushed byte by byte into an array with room for them, so that no array of boxed bytes is made. -/
+@[noinline, never_extract] def zerosPushed (n : Nat) : ByteArray := pushZeros (freshBytes n) n
+
+/-- The compiled code makes `zerosOf` by pushing. -/
+@[csimp] theorem zerosOf_eq_pushed : @zerosOf = @zerosPushed := by
+  funext n
+  apply ByteArray.ext
+  rw [zerosPushed, pushZeros_data, show (freshBytes n).data = #[] from rfl, Array.empty_append]
+  rfl
+
 /-- 65536 zero bytes. Arrays are zero-filled by copying from it: a copy into an array that has room writes in place,
 where a copy of an array onto itself copies all of it. -/
 def zeroBlock : ByteArray := zerosOf 65536

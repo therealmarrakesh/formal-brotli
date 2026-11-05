@@ -16,8 +16,60 @@ open Brotli.Spec Brotli.Properties
 
 /-- What a state holds besides its window and the groups' tables: the arena's reservation for the categories' codes, the
 bounds `HSize` gives, which are more than an empty header reading and the bounds `HSmall` give, since a header's reading
-and a meta-block's fast header are never held together, 38 bytes of a dictionary word, and its fields. -/
-def fixedCost : Nat := 65092
+and a meta-block's fast header are never held together, 38 bytes of a dictionary word, and its fields; and `smallMax`
+more, for an array a step still holds while it builds the array that replaces it: the categories' arena, which the
+groups' reservation copies (`arena_reserve_le`), a context map's table, or the code length code's table and its lists
+(`HSize.replaced_le`), or a dictionary word. The decoder's constant arrays, 202558 bytes (`constArrays_size`), are the
+program's and are not counted. -/
+def fixedCost : Nat := 71308
+
+/-- At a place of stage at most 6, which a context map's place is, the categories' arena is at most `smallMax`. -/
+theorem arena_reserve_le {d : Done} {g : Gh} {n : Nat} (hu : Upto d g n) (hn : n ≤ 6) : d.arena.size ≤ smallMax :=
+  Nat.le_trans hu.le (Nat.le_of_eq (hu.small hn))
+
+/-- A context map's table, and the code length code's table with its lists' 68 bytes, are each at most `smallMax`. -/
+theorem HSize.replaced_le {st : Hd} (h : HSize st) : st.mapT.t.size ≤ smallMax ∧ st.clt.t.size + 68 ≤ smallMax := by
+  have h1 := h.mapT
+  have h2 := h.clt
+  have hs : smallMax = 6216 := rfl
+  omega
+
+/-- The decoder's constant arrays: the dictionary, the zero block, the lookup tables, and the arrays an empty state holds. -/
+theorem constArrays_size : dictBytes.size + zeroBlock.size + cmdLut.size + transLut.size + contextLut.size + nextNone.size +
+    Tab.none.t.size + rev8Lut.size + mtfInitLut.size + countLut.size + lenLut.size + headNone.size + clOrderLut.size =
+      202558 := by
+  have h1 : zeroBlock.size = 65536 := by
+    show zeroBlock.data.size = _
+    rw [zeroBlock_data, Array.size_replicate]
+  have h2 : Tab.none.t.size = 512 := by
+    show (zeroBytes 512).size = 512
+    exact zeroBytes_size (by decide)
+  have h3 := dictBytes_size
+  have h4 := cmdLut_size
+  have h5 := transLut_size
+  have h6 := contextLut_size
+  have h7 := nextNone_size
+  have h8 := rev8Lut_size
+  have h9 := mtfInit_is.sz
+  have h10 := countLut_size
+  have h11 := lenLut_size
+  have h12 := headNone_size
+  have h13 := clOrderLut_size
+  generalize dictBytes.size = a1 at h3 ⊢
+  generalize zeroBlock.size = a2 at h1 ⊢
+  generalize cmdLut.size = a3 at h4 ⊢
+  generalize transLut.size = a4 at h5 ⊢
+  generalize contextLut.size = a5 at h6 ⊢
+  generalize nextNone.size = a6 at h7 ⊢
+  generalize Tab.none.t.size = a7 at h2 ⊢
+  generalize rev8Lut.size = a8 at h8 ⊢
+  generalize mtfInitLut.size = a9 at h9 ⊢
+  generalize countLut.size = a10 at h10 ⊢
+  generalize lenLut.size = a11 at h11 ⊢
+  generalize headNone.size = a12 at h12 ⊢
+  generalize clOrderLut.size = a13 at h13 ⊢
+  subst h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13
+  rfl
 
 /-- What a state's fields cost. -/
 def fieldBytes : Nat := 1024

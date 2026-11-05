@@ -939,7 +939,8 @@ private theorem mem_offered {limit : Nat} {x : List UInt8} {R : Run DState} (h :
     exact mem_top h
 
 /-- Memory usage correctness: what the state holds stays within what the stream so far demands, and within the limit unless the limit was reported, which happens only
-when the demand exceeds it. -/
+when the demand exceeds it. What a state holds is `Dec.holds`, with `fixedCost` in the demand; the decoder's constant
+arrays (`constArrays_size`) are the program's and are not counted. -/
 theorem decoder_streams : Streams decoder (fun s => s.val.holds) demand where
   within_demand {limit x R} h := by
     have hT := mem_offered h
@@ -973,7 +974,8 @@ theorem decoder_streams : Streams decoder (fun s => s.val.holds) demand where
   honest_stream h hs := (mem_top h).why hs
 
 /-- What the state holds stays within the window the stream declares plus a constant: the fixed cost, the ring's 16 bytes
-beyond the window, and the most a header reserves for its groups' tables. -/
+beyond the window, and the most a header reserves for its groups' tables. The decoder's constant arrays
+(`constArrays_size`) are not counted. -/
 theorem decoder_ceiling : DemandCeiling demand (fixedCost + 16 + resMax) := demand_ceiling
 
 /-! ### The limit changes nothing but whether the decoder stops -/
