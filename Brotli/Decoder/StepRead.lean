@@ -124,7 +124,7 @@ def stepCommand (H : Hdr) (st : Cmd) (pos : USize) : Cmd :=
       match r.status with
       | .ok =>
         { st with
-          word := r.word, count := r.count, iCur := r.cur, iPrev := st.iCur, iCount := r.blockCount - 1
+          word := r.word, count := r.count, iCount := r.blockCount - 1, ext := { st.ext with iCur := r.cur, iPrev := st.iCur }
           flags := { st.flags with
             fI0 := markWord st.flags.fI0 r.cur 0, fI1 := markWord st.flags.fI1 r.cur 1, fI2 := markWord st.flags.fI2 r.cur 2
             fI3 := markWord st.flags.fI3 r.cur 3 }
@@ -298,8 +298,9 @@ theorem tableBase_toNat {t : ByteArray} {i : UInt64} (h : 4 * i.toNat + 4 ≤ t.
         let b2 := b1.drop (rowBits row)
         let cr := copyRow (wordSym v) (lt704 hc)
         { st with
-          word := b2.word, count := b2.count, code := wordSym v
-          ilen := rowBase row + b1.peek (rowBits row), copyBits := rowBits cr, copyBase := rowBase cr
+          word := b2.word, count := b2.count
+          ext := { st.ext with
+            code := wordSym v, ilen := rowBase row + b1.peek (rowBits row), copyBits := rowBits cr, copyBase := rowBase cr }
           tag := .copyLength, pos := pos, status := .next }
       else markStep st pos .needsInput
     else markStep st pos .bad
@@ -360,7 +361,8 @@ private theorem insertCopy_next {α : Type} {w k : Nat} {m : MetaBlockHeader} {K
       .next (.copyLength s ic sym ilenN copyBitsN copyBaseN) (b2.held ++ (chunkBits a pos.toNat stop.toNat ++ F))) :
     StepOk w k m K a stop (.insertCopy s ic) st pos
       { st with
-        word := b2.word, count := b2.count, code := code, ilen := ilen, copyBits := copyBits, copyBase := copyBase
+        word := b2.word, count := b2.count
+        ext := { st.ext with code := code, ilen := ilen, copyBits := copyBits, copyBase := copyBase }
         tag := .copyLength, pos := pos, status := .next } :=
   StepOk.ofNext (p' := .copyLength s ic sym ilenN copyBitsN copyBaseN) rfl
     ⟨{ hC with wf := hw }, rfl, hprod, h1, h2, h3, h4, h5, h6⟩ (Nat.le_refl _) hp hrest (fun F => Reach.one (hj F))
@@ -468,7 +470,7 @@ def stepCopyLength (st : Cmd) (pos : USize) : Cmd :=
     let b := (BitBuffer.mk st.word st.count)
     let b1 := b.drop st.copyBits
     { st with
-      word := b1.word, count := b1.count, clen := st.copyBase + b.peek st.copyBits, left := st.ilen
+      word := b1.word, count := b1.count, left := st.ilen, ext := { st.ext with clen := st.copyBase + b.peek st.copyBits }
       tag := .literals, pos := pos, status := .next }
   else markStep st pos .needsInput
 

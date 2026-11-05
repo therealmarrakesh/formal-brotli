@@ -14,8 +14,9 @@ open Brotli.Spec
 /-- The command loop's state at the start of a meta-block: in each category, only type 0 has occurred. -/
 def cmdStart (c : Cmd) (d : Done) (word count mlen : UInt64) : Cmd :=
   { c with
-    word := word, count := count, remaining := mlen, iCur := 0, iPrev := 1, iCount := d.countI, lCur := 0, lPrev := 1, lCount := d.countL
-    dCur := 0, dPrev := 1, dCount := d.countD, flags := ⟨1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0⟩, tag := .command }
+    word := word, count := count, remaining := mlen, iCount := d.countI, lCount := d.countL, dCount := d.countD
+    flags := ⟨1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0⟩, tag := .command
+    ext := { c.ext with iCur := 0, iPrev := 1, lCur := 0, lPrev := 1, dCur := 0, dPrev := 1 } }
 
 private theorem flagOf_start : ∀ t, t < 256 → flagOf 1 0 0 0 t = decide (t = 0) := by
   decide +kernel
@@ -228,8 +229,9 @@ theorem seenOk_iff {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {st : Cmd} {s : C
 /-! ### Steps -/
 
 /-- A command loop's state with nothing in it, to hold a state's place while the real one is written. -/
-def Cmd.none : Cmd := ⟨0, 0, ByteArray.empty, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  ⟨0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0⟩, .command, 0, 0, 0, 0, 0, 0, 0, ByteArray.empty, 0, 0, .next⟩
+def Cmd.none : Cmd := ⟨0, 0, ByteArray.empty, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  ⟨0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0⟩,
+  ⟨0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ByteArray.empty, 0⟩, .command, 0, 0, .next⟩
 
 /-- A header machine's state with nothing in it. -/
 def Hd.none : Hd := ⟨0, 0, 0, .next, .cat, Done.none, .L, .type, true, .L, 0, 0, 0, 0, 0, ByteArray.empty, headNone, nextNone, 0, 0, 0, 0, 0,

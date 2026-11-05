@@ -56,8 +56,33 @@ structure Flags where
   fD2 : UInt64
   fD3 : UInt64
 
+/-- The loop's state that a step rarely changes: the categories' current and previous block types, the last distances,
+the element's fields, and a dictionary word's bytes. It is held apart from the loop's state because an update of a
+structure loads every field of it, so every step's update stays small; the steps that change these fields update this
+record too. -/
+structure CmdExt where
+  iCur : UInt64
+  iPrev : UInt64
+  lCur : UInt64
+  lPrev : UInt64
+  dCur : UInt64
+  dPrev : UInt64
+  d0 : UInt64
+  d1 : UInt64
+  d2 : UInt64
+  d3 : UInt64
+  code : UInt64
+  ilen : UInt64
+  clen : UInt64
+  copyBits : UInt64
+  copyBase : UInt64
+  dist : UInt64
+  wordBuf : ByteArray
+  wordPos : USize
+
 /-- The loop's state between steps. A step returns it with the input position and how the step ended, so that a step
-updates it in place and returns nothing else. -/
+updates it in place and returns nothing else. The fields every step touches are here; the rest are in `ext`, read
+through the accessors below. -/
 structure Cmd where
   word : UInt64
   count : UInt64
@@ -72,34 +97,44 @@ structure Cmd where
   written : USize
   p1 : UInt8
   p2 : UInt8
-  d0 : UInt64
-  d1 : UInt64
-  d2 : UInt64
-  d3 : UInt64
   remaining : UInt64
-  iCur : UInt64
-  iPrev : UInt64
   iCount : UInt64
-  lCur : UInt64
-  lPrev : UInt64
   lCount : UInt64
-  dCur : UInt64
-  dPrev : UInt64
   dCount : UInt64
   /-- The block types that occurred. -/
   flags : Flags
+  /-- The fields a step rarely changes. -/
+  ext : CmdExt
   tag : Tag
-  code : UInt64
-  ilen : UInt64
-  clen : UInt64
   left : UInt64
-  copyBits : UInt64
-  copyBase : UInt64
-  dist : UInt64
-  wordBuf : ByteArray
-  wordPos : USize
   pos : USize
   status : StepStatus
+
+namespace Cmd
+
+/-! Accessors for the fields in `ext`. They are reducible, so that unification sees `{ st with … }.d0` as
+`st.ext.d0`, as it saw a field. -/
+
+abbrev iCur (st : Cmd) : UInt64 := st.ext.iCur
+abbrev iPrev (st : Cmd) : UInt64 := st.ext.iPrev
+abbrev lCur (st : Cmd) : UInt64 := st.ext.lCur
+abbrev lPrev (st : Cmd) : UInt64 := st.ext.lPrev
+abbrev dCur (st : Cmd) : UInt64 := st.ext.dCur
+abbrev dPrev (st : Cmd) : UInt64 := st.ext.dPrev
+abbrev d0 (st : Cmd) : UInt64 := st.ext.d0
+abbrev d1 (st : Cmd) : UInt64 := st.ext.d1
+abbrev d2 (st : Cmd) : UInt64 := st.ext.d2
+abbrev d3 (st : Cmd) : UInt64 := st.ext.d3
+abbrev code (st : Cmd) : UInt64 := st.ext.code
+abbrev ilen (st : Cmd) : UInt64 := st.ext.ilen
+abbrev clen (st : Cmd) : UInt64 := st.ext.clen
+abbrev copyBits (st : Cmd) : UInt64 := st.ext.copyBits
+abbrev copyBase (st : Cmd) : UInt64 := st.ext.copyBase
+abbrev dist (st : Cmd) : UInt64 := st.ext.dist
+abbrev wordBuf (st : Cmd) : ByteArray := st.ext.wordBuf
+abbrev wordPos (st : Cmd) : USize := st.ext.wordPos
+
+end Cmd
 
 /-- A meta-block's fast header. -/
 structure Hdr where

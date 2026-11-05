@@ -475,7 +475,7 @@ theorem stepDMeta_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {a : 
 def winStart (c : Cmd) (word count need : UInt64) : Cmd :=
   { c with
     word := word, count := count, ring := zeroBytes need.toNat, wpos := 0, pend := 0, written := 0, p1 := 0, p2 := 0
-    d0 := 4, d1 := 11, d2 := 15, d3 := 16, wordBuf := ByteArray.empty }
+    ext := { c.ext with d0 := 4, d1 := 11, d2 := 15, d3 := 16, wordBuf := ByteArray.empty } }
 
 /-- The place at the stream's first bits. -/
 def stepDWbits (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize) : Dec :=

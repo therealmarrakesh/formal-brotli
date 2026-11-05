@@ -121,7 +121,7 @@ def stepLiterals (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop
       match r.status with
       | .ok =>
         { st with
-          word := r.word, count := r.count, lCur := r.cur, lPrev := st.lCur, lCount := r.blockCount
+          word := r.word, count := r.count, lCount := r.blockCount, ext := { st.ext with lCur := r.cur, lPrev := st.lCur }
           flags := { st.flags with
             fL0 := markWord st.flags.fL0 r.cur 0, fL1 := markWord st.flags.fL1 r.cur 1, fL2 := markWord st.flags.fL2 r.cur 2
             fL3 := markWord st.flags.fL3 r.cur 3 }

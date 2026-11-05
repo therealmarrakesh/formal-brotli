@@ -362,7 +362,7 @@ theorem stepCopy_ok {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeader} {K :
 @[noinline] def finishWord (st0 : Cmd) (r : CopyRun) (run size pos : USize) : Cmd :=
   { st0 with
     ring := r.ring, wpos := r.wpos, p1 := r.p1, p2 := r.p2
-    wordPos := st0.wordPos + run
+    ext := { st0.ext with wordPos := st0.wordPos + run }
     pend := st0.pend + run
     written := usmin (size - USize.ofNat 16) (st0.written + run)
     pos := pos, status := .next }

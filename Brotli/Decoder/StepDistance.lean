@@ -17,7 +17,7 @@ def applyBuilt (st : Cmd) (pos : USize) (word : ByteArray) : Cmd :=
   if st.remaining < word.usize.toUInt64 then markStep st pos .bad
   else
     { st with
-      remaining := st.remaining - word.usize.toUInt64, wordBuf := word, wordPos := 0
+      remaining := st.remaining - word.usize.toUInt64, ext := { st.ext with wordBuf := word, wordPos := 0 }
       tag := .word, pos := pos, status := .next }
 
 /-- Begins the dictionary word a distance selects. -/
@@ -30,11 +30,13 @@ def applyDistance (st : Cmd) (pos : USize) (dcode d : UInt64) : Cmd :=
   if st.written.toUInt64 < d then applyWord st pos (d - (st.written.toUInt64 + 1))
   else if st.remaining < st.clen then markStep st pos .bad
   else if dcode = 0 then
-    { st with remaining := st.remaining - st.clen, left := st.clen, dist := d, tag := .copy, pos := pos, status := .next }
+    { st with
+      remaining := st.remaining - st.clen, left := st.clen, tag := .copy, pos := pos, status := .next
+      ext := { st.ext with dist := d } }
   else
     { st with
-      remaining := st.remaining - st.clen, left := st.clen, dist := d, tag := .copy, pos := pos, status := .next
-      d0 := d, d1 := st.d0, d2 := st.d1, d3 := st.d2 }
+      remaining := st.remaining - st.clen, left := st.clen, tag := .copy, pos := pos, status := .next
+      ext := { st.ext with dist := d, d0 := d, d1 := st.d0, d2 := st.d1, d3 := st.d2 } }
 
 /-- A built word, in the terms of `copyPhase`. -/
 private theorem word_cases {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {s : CommandState} {pos : USize} {wb : ByteArray}
@@ -253,7 +255,7 @@ def stepDistance (H : Hdr) (st : Cmd) (pos : USize) : Cmd :=
       match r.status with
       | .ok =>
         { st with
-          word := r.word, count := r.count, dCur := r.cur, dPrev := st.dCur, dCount := r.blockCount - 1
+          word := r.word, count := r.count, dCount := r.blockCount - 1, ext := { st.ext with dCur := r.cur, dPrev := st.dCur }
           flags := { st.flags with
             fD0 := markWord st.flags.fD0 r.cur 0, fD1 := markWord st.flags.fD1 r.cur 1, fD2 := markWord st.flags.fD2 r.cur 2
             fD3 := markWord st.flags.fD3 r.cur 3 }
