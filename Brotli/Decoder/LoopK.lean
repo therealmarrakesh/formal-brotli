@@ -1,11 +1,13 @@
-import Brotli.Decoder.Loop
+import Brotli.Decoder.LoopInv
 
 /-!
 # The compiled command loop
 
 `runCmdE` is `runCmd` as the compiler runs it: one loop with the whole command state in local variables, so that no
 step rebuilds a record. It does exactly what `runCmd` does, step for step: the same refills, reads and writes, in the
-same order (AGENTS.md, design rule 1). `runCmd_csimp` proves the two equal, and every proof is about `runCmd`.
+same order (AGENTS.md, design rule 1). It takes what the stream's relation gives of the state (`KInv`, `LoopInv.lean`)
+and carries it through every step as a proof, so that it tests none of it at run time. `runCmdP` is `runCmd` taking
+that proof, `runCmdP_csimp` proves `runCmdE` equal to it, and every proof is about `runCmd`.
 
 `kstep` is one step, ending in a continuation: `contC` takes the record the next literal run builds its result in and
 the state's fields, and goes on; `exit` takes the state as a record and stops. It is inlined into `runCmdK`, whose
@@ -142,6 +144,23 @@ theorem literalRunC_eq (cell : RunOut) {nTrees : Nat} {arena litBase lMap : Byte
   literalRunC_eq' cell C a stop hs mapBase modeOff mask k hmb hm hd hmask hk _ n word count pos wpos ring p1 p2 hp hw
     hsize hwp rfl
 
+/-- What a literal run on a record leaves: the window's size, the write position in it, the bits well formed and the
+position within the chunk. -/
+def LitInvC (k : Nat) (stop : USize) (r : RunOut) : Prop :=
+  r.ring.size = 2 ^ k ∧ r.wpos.toNat < 2 ^ k ∧ (BitBuffer.mk r.word r.count).Wf ∧ r.pos.toNat ≤ stop.toNat
+
+theorem literalRunC_inv (cell : RunOut) {nTrees : Nat} {arena litBase lMap : ByteArray}
+    (C : LitChecked arena litBase lMap nTrees) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size)
+    (mapBase modeOff mask : USize) (k : Nat) (hmb : mapBase.toNat + 64 ≤ lMap.size) (hm : modeOff.toNat + 512 ≤ 2048)
+    (hd : modeOff.toNat % 512 = 0) (hmask : mask.toNat = 2 ^ k - 1) (hk : k ≤ 24) (n : USize) (word count : UInt64)
+    (pos wpos : USize) (ring : ByteArray) (p1 p2 : UInt8) (hp : pos.toNat ≤ stop.toNat)
+    (hw : (BitBuffer.mk word count).Wf) (hsize : ring.size = 2 ^ k) (hwp : wpos.toNat < 2 ^ k) :
+    LitInvC k stop (literalRunC cell C a stop hs mapBase modeOff mask k hmb hm hd hmask hk n word count pos wpos ring p1
+      p2 hp hw hsize hwp) := by
+  rw [literalRunC_eq]
+  exact literalRun_inv C a stop hs mapBase modeOff mask k hmb hm hd hmask hk n word count pos wpos ring p1 p2 hp hw hsize
+    hwp
+
 /-- The command state from its fields. -/
 def mkCmd (word count : UInt64) (ring : ByteArray) (wpos pend cap written : USize) (p1 p2 : UInt8)
     (remaining iCount lCount dCount : UInt64) (flags : Flags)
@@ -157,8 +176,16 @@ abbrev KCont (α : Type) : Type :=
     Flags → UInt64 → UInt64 → UInt64 → UInt64 → UInt64 → UInt64 → UInt64 → UInt64 → UInt64 → UInt64 → UInt64 →
     UInt64 → UInt64 → UInt64 → UInt64 → UInt64 → ByteArray → USize → Tag → UInt64 → USize → α
 
-/-- A step's continuation in the loop, which also takes the record the next run builds its result in. -/
-abbrev KContC (α : Type) : Type := RunOut → KCont α
+/-- A step's continuation in the loop: the state's fields, the position, and what the loop knows of them. -/
+abbrev KContP (H : Hdr) (k stop : USize) (α : Type) : Type :=
+  (word count : UInt64) → (ring : ByteArray) → (wpos pend cap written : USize) → (p1 p2 : UInt8) →
+    (remaining iCount lCount dCount : UInt64) → (flags : Flags) →
+    (iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist : UInt64) →
+    (wordBuf : ByteArray) → (wordPos : USize) → (tag : Tag) → (left : UInt64) → (pos : USize) →
+    KInv H k stop word count ring wpos iCur iPrev lCur lPrev dCur dPrev copyBits tag pos → α
+
+/-- A step's continuation in the loop, which also takes the record the next literal run builds its result in. -/
+abbrev KContC (H : Hdr) (k stop : USize) (α : Type) : Type := RunOut → KContP H k stop α
 
 /-- How a step's result goes on: with the record's fields if it moved on, otherwise with the record. -/
 def kcase {α : Type} (cont : KCont α) (exit : Cmd → α) (r : Cmd) : α :=
@@ -170,11 +197,12 @@ def kcase {α : Type} (cont : KCont α) (exit : Cmd → α) (r : Cmd) : α :=
   else exit r
 
 /-- `applyDistance` on the fields. -/
-@[inline] def kapply {α : Type} (cont : KCont α) (exit : Cmd → α)
+@[inline] def kapply {α : Type} {H : Hdr} {k stop : USize} (cont : KContP H k stop α) (exit : Cmd → α)
     (word count : UInt64) (ring : ByteArray) (wpos pend cap written : USize) (p1 p2 : UInt8)
     (remaining iCount lCount dCount : UInt64) (flags : Flags)
     (iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist : UInt64)
-    (wordBuf : ByteArray) (wordPos : USize) (tag : Tag) (left : UInt64) (pos : USize) (dcode d : UInt64) : α :=
+    (wordBuf : ByteArray) (wordPos : USize) (tag : Tag) (left : UInt64) (pos : USize) (dcode d : UInt64)
+    (hki : KInv H k stop word count ring wpos iCur iPrev lCur lPrev dCur dPrev copyBits tag pos) : α :=
   if written.toUInt64 < d then
     if h : dictValid clen (d - (written.toUInt64 + 1)) then
       let wb := dictBuild clen (d - (written.toUInt64 + 1)) h
@@ -184,6 +212,7 @@ def kcase {α : Type} (cont : KCont α) (exit : Cmd → α) (r : Cmd) : α :=
       else
         cont word count ring wpos pend cap written p1 p2 (remaining - wb.usize.toUInt64) iCount lCount dCount flags iCur
           iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wb 0 .word left pos
+          (hki.retag Tag.word_ne)
     else
       exit (mkCmd word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
         dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos .bad)
@@ -192,24 +221,25 @@ def kcase {α : Type} (cont : KCont α) (exit : Cmd → α) (r : Cmd) : α :=
       dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos .bad)
   else if dcode = 0 then
     cont word count ring wpos pend cap written p1 p2 (remaining - clen) iCount lCount dCount flags iCur iPrev lCur lPrev
-      dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase d wordBuf wordPos .copy clen pos
+      dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase d wordBuf wordPos .copy clen pos (hki.retag Tag.copy_ne)
   else
     cont word count ring wpos pend cap written p1 p2 (remaining - clen) iCount lCount dCount flags iCur iPrev lCur lPrev
-      dCur dPrev d d0 d1 d2 code ilen clen copyBits copyBase d wordBuf wordPos .copy clen pos
+      dCur dPrev d d0 d1 d2 code ilen clen copyBits copyBase d wordBuf wordPos .copy clen pos (hki.retag Tag.copy_ne)
 
 /-- One step of the command loop on the fields: `stepCmd`, ending in a continuation. -/
 @[inline] def kstep {α : Type} (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size)
-    (contC : KContC α) (exit : Cmd → α)
+    (contC : KContC H k stop α) (exit : Cmd → α)
     (word count : UInt64) (ring : ByteArray) (wpos pend cap written : USize) (p1 p2 : UInt8)
     (remaining iCount lCount dCount : UInt64) (flags : Flags)
     (iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist : UInt64)
-    (wordBuf : ByteArray) (wordPos : USize) (tag : Tag) (left : UInt64) (pos : USize) (cell : RunOut) : α :=
+    (wordBuf : ByteArray) (wordPos : USize) (tag : Tag) (left : UInt64) (pos : USize) (cell : RunOut)
+    (hinv : KInv H k stop word count ring wpos iCur iPrev lCur lPrev dCur dPrev copyBits tag pos) : α :=
   let cont := contC cell
-  if hp : pos ≤ stop then
-    let rf := refill word count a pos stop hs (USize.le_iff_toNat_le.mp hp)
+    let rf := refill word count a pos stop hs hinv.pos
     let w := rf.word
     let c := rf.count
     let p := rf.pos
+    have hr := hinv.refill hs hinv.pos
     match tag with
     | .command =>
       if remaining = 0 then
@@ -219,14 +249,14 @@ def kcase {α : Type} (cont : KCont α) (exit : Cmd → α) (r : Cmd) : α :=
         if hn : 2 ≤ H.nI then
           let hn' := UInt64.le_iff_toNat_le.mp hn
           let r := blockSwitch H.arena H.lit.arena32 H.baseTI H.baseCI (H.swI hn').1 (H.swI hn').2 H.nI iCur iPrev w c
-          match r.status with
+          match hst : r.status with
           | .ok =>
             cont r.word r.count ring wpos pend cap written p1 p2 remaining (r.blockCount - 1) lCount dCount
               { flags with
                 fI0 := markWord flags.fI0 r.cur 0, fI1 := markWord flags.fI1 r.cur 1, fI2 := markWord flags.fI2 r.cur 2
                 fI3 := markWord flags.fI3 r.cur 3 }
               r.cur iCur lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos
-              .insertCopy left p
+              .insertCopy left p (hr.swI hn hst (noCL Tag.insertCopy_ne))
           | .short =>
             exit (mkCmd w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
               dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .command left p .needsInput)
@@ -239,66 +269,65 @@ def kcase {α : Type} (cont : KCont α) (exit : Cmd → α) (r : Cmd) : α :=
       else
         cont w c ring wpos pend cap written p1 p2 remaining (iCount - 1) lCount dCount flags iCur iPrev lCur lPrev dCur
           dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .insertCopy left p
+          (hr.retag Tag.insertCopy_ne)
     | .insertCopy =>
-      if ht : iCur < H.nI then
-        have ht' := UInt64.lt_iff_toNat_lt.mp ht
-        have hb : 4 * iCur.toNat + 4 ≤ H.icBase.size := by
-          rw [H.icSize]
-          omega
-        let v := lookup H.arena (tableBase H.icBase iCur hb H.ic32) w
-          (by rw [tableBase_toNat]; exact H.icFits _ ht') H.lit.arena32
-        if wordBits v ≤ c then
-          if hc : wordSym v < 704 then
-            let b1 := (BitBuffer.mk w c).drop (wordBits v)
-            let row := insertRow (wordSym v) (lt704 hc)
-            if rowBits row ≤ b1.count then
-              let b2 := b1.drop (rowBits row)
-              let cr := copyRow (wordSym v) (lt704 hc)
-              cont b2.word b2.count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur
-                lPrev dCur dPrev d0 d1 d2 d3 (wordSym v) (rowBase row + b1.peek (rowBits row)) clen (rowBits cr)
-                (rowBase cr) dist wordBuf wordPos .copyLength left p
-            else
-              exit (mkCmd w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
-                dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .insertCopy left p
-                .needsInput)
+      have ht' : iCur.toNat < H.nI.toNat := hr.iCur
+      have hb : 4 * iCur.toNat + 4 ≤ H.icBase.size := by
+        rw [H.icSize]
+        omega
+      let v := lookup H.arena (tableBase H.icBase iCur hb H.ic32) w
+        (by rw [tableBase_toNat]; exact H.icFits _ ht') H.lit.arena32
+      if hwb : wordBits v ≤ c then
+        if hc : wordSym v < 704 then
+          let b1 := (BitBuffer.mk w c).drop (wordBits v)
+          let row := insertRow (wordSym v) (lt704 hc)
+          if hrb : rowBits row ≤ b1.count then
+            let b2 := b1.drop (rowBits row)
+            let cr := copyRow (wordSym v) (lt704 hc)
+            cont b2.word b2.count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur
+              lPrev dCur dPrev d0 d1 d2 d3 (wordSym v) (rowBase row + b1.peek (rowBits row)) clen (rowBits cr)
+              (rowBase cr) dist wordBuf wordPos .copyLength left p
+              ((hr.drop (copyBits' := copyBits) (wordBits_lt v) hwb (noCL Tag.insertCopy_ne)).drop (insertRow_bits (lt704 hc)) hrb
+                (fun _ => copyRow_bits (lt704 hc)))
           else
             exit (mkCmd w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
-              dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .insertCopy left p .bad)
+              dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .insertCopy left p
+              .needsInput)
         else
           exit (mkCmd w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
-            dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .insertCopy left p .needsInput)
+            dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .insertCopy left p .bad)
       else
         exit (mkCmd w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
-          dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .insertCopy left p .bad)
+          dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .insertCopy left p .needsInput)
     | .copyLength =>
       if remaining < ilen then
         exit (mkCmd w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
           dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .copyLength left p .bad)
-      else if copyBits ≤ c then
+      else if hcb : copyBits ≤ c then
         let b := BitBuffer.mk w c
         let b1 := b.drop copyBits
         cont b1.word b1.count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
           dCur dPrev d0 d1 d2 d3 code ilen (copyBase + b.peek copyBits) copyBits copyBase dist wordBuf wordPos .literals
-          ilen p
+          ilen p (hr.drop (by have := hr.copyBits rfl; omega) hcb (noCL Tag.literals_ne))
       else
         exit (mkCmd w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
           dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .copyLength left p .needsInput)
     | .literals =>
       if left = 0 then
         cont w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev
-          d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .distance left p
+          d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .distance left p (hr.retag Tag.distance_ne)
       else if lCount = 0 then
         if hn : 2 ≤ H.nL then
           let hn' := UInt64.le_iff_toNat_le.mp hn
           let r := blockSwitch H.arena H.lit.arena32 H.baseTL H.baseCL (H.swL hn').1 (H.swL hn').2 H.nL lCur lPrev w c
-          match r.status with
+          match hst : r.status with
           | .ok =>
             cont r.word r.count ring wpos pend cap written p1 p2 remaining iCount r.blockCount dCount
               { flags with
                 fL0 := markWord flags.fL0 r.cur 0, fL1 := markWord flags.fL1 r.cur 1, fL2 := markWord flags.fL2 r.cur 2
                 fL3 := markWord flags.fL3 r.cur 3 }
               iCur iPrev r.cur lCur dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos
-              .literals left p
+              .literals left p (hr.swL hn hst (noCL Tag.literals_ne))
           | .short =>
             exit (mkCmd w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
               dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .literals left p .needsInput)
@@ -311,49 +340,54 @@ def kcase {α : Type} (cont : KCont α) (exit : Cmd → α) (r : Cmd) : α :=
       else if room k cap ≤ pend then
         exit (mkCmd w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
           dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .literals left p .needsOutput)
-      else if ht : lCur < H.nL then
-        have ht' := UInt64.lt_iff_toNat_lt.mp ht
+      else
+        have ht' : lCur.toNat < H.nL.toNat := hr.lCur
         have hm : lCur.toUSize.toNat < H.modes.size := by
           rw [cur_usize ht', H.modesSize]
           exact ht'
         have hmLt := H.modesLt _ hm
-        if h : winCheck k wpos ring = true ∧ p ≤ stop ∧ wfCheck w c = true then
-          let run := (umin left (umin lCount (room k cap - pend).toUInt64)).toUSize
-          let r := literalRunC cell H.lit a stop hs (lCur <<< 6).toUSize
-            ((H.modes.uget lCur.toUSize hm).toUInt64 <<< 9).toUSize
-            (ringMask k) k.toNat
-            (by
-              rw [mapBase_toNat ht', H.lMapSize]
-              omega)
-            (by
-              rw [modeOff_toNat hmLt]
-              omega)
-            (by
-              rw [modeOff_toNat hmLt]
-              omega)
-            (ringMask_toNat (winCheck_k h.1)) (winCheck_k h.1) run w c p wpos ring p1 p2
-            (USize.le_iff_toNat_le.mp h.2.1) (wfCheck_wf h.2.2) (winCheck_size h.1) (winCheck_pos h.1)
-          let used := run - r.left
-          if r.left = 0 then
-            contC { r with ring := ByteArray.empty } r.word r.count r.ring r.wpos (pend + used) cap (usmin (ringSize k - USize.ofNat 16) (written + used))
-              r.p1 r.p2 (remaining - used.toUInt64) iCount (lCount - used.toUInt64) dCount flags iCur iPrev lCur lPrev
-              dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .literals
-              (left - used.toUInt64) r.pos
-          else
-            exit (mkCmd r.word r.count r.ring r.wpos (pend + used) cap (usmin (ringSize k - USize.ofNat 16) (written + used))
-              r.p1 r.p2 (remaining - used.toUInt64) iCount (lCount - used.toUInt64) dCount flags iCur iPrev lCur lPrev
-              dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .literals
-              (left - used.toUInt64) r.pos .needsInput)
+        let run := (umin left (umin lCount (room k cap - pend).toUInt64)).toUSize
+        let r := literalRunC cell H.lit a stop hs (lCur <<< 6).toUSize
+          ((H.modes.uget lCur.toUSize hm).toUInt64 <<< 9).toUSize
+          (ringMask k) k.toNat
+          (by
+            rw [mapBase_toNat ht', H.lMapSize]
+            omega)
+          (by
+            rw [modeOff_toNat hmLt]
+            omega)
+          (by
+            rw [modeOff_toNat hmLt]
+            omega)
+          (ringMask_toNat hr.k24) hr.k24 run w c p wpos ring p1 p2 hr.pos hr.wf hr.size hr.wpos
+        have hri := literalRunC_inv cell H.lit a stop hs (lCur <<< 6).toUSize
+          ((H.modes.uget lCur.toUSize hm).toUInt64 <<< 9).toUSize (ringMask k) k.toNat
+          (by
+            rw [mapBase_toNat ht', H.lMapSize]
+            omega)
+          (by
+            rw [modeOff_toNat hmLt]
+            omega)
+          (by
+            rw [modeOff_toNat hmLt]
+            omega)
+          (ringMask_toNat hr.k24) hr.k24 run w c p wpos ring p1 p2 hr.pos hr.wf hr.size hr.wpos
+        let used := run - r.left
+        if r.left = 0 then
+          contC { r with ring := ByteArray.empty } r.word r.count r.ring r.wpos (pend + used) cap
+            (usmin (ringSize k - USize.ofNat 16) (written + used))
+            r.p1 r.p2 (remaining - used.toUInt64) iCount (lCount - used.toUInt64) dCount flags iCur iPrev lCur lPrev
+            dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .literals
+            (left - used.toUInt64) r.pos (hr.set hri.1 hri.2.1 hri.2.2.1 hri.2.2.2 (noCL Tag.literals_ne))
         else
-          exit (mkCmd w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
-            dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .literals left p .bad)
-      else
-        exit (mkCmd w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
-          dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .literals left p .bad)
+          exit (mkCmd r.word r.count r.ring r.wpos (pend + used) cap (usmin (ringSize k - USize.ofNat 16) (written + used))
+            r.p1 r.p2 (remaining - used.toUInt64) iCount (lCount - used.toUInt64) dCount flags iCur iPrev lCur lPrev
+            dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .literals
+            (left - used.toUInt64) r.pos .needsInput)
     | .distance =>
       if remaining = 0 then
         cont w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev
-          d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .command left p
+          d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .command left p (hr.retag Tag.command_ne)
       else if code < 128 then
         if d0 = 0 then
           exit (mkCmd w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
@@ -361,18 +395,19 @@ def kcase {α : Type} (cont : KCont α) (exit : Cmd → α) (r : Cmd) : α :=
         else
           kapply cont exit w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
             dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .distance left p 0 d0
+            (hr.retag Tag.distance_ne)
       else if dCount = 0 then
         if hn : 2 ≤ H.nD then
           let hn' := UInt64.le_iff_toNat_le.mp hn
           let r := blockSwitch H.arena H.lit.arena32 H.baseTD H.baseCD (H.swD hn').1 (H.swD hn').2 H.nD dCur dPrev w c
-          match r.status with
+          match hst : r.status with
           | .ok =>
             cont r.word r.count ring wpos pend cap written p1 p2 remaining iCount lCount (r.blockCount - 1)
               { flags with
                 fD0 := markWord flags.fD0 r.cur 0, fD1 := markWord flags.fD1 r.cur 1, fD2 := markWord flags.fD2 r.cur 2
                 fD3 := markWord flags.fD3 r.cur 3 }
               iCur iPrev lCur lPrev r.cur dCur d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos
-              .distanceSymbol left p
+              .distanceSymbol left p (hr.swD hn hst (noCL Tag.distanceSymbol_ne))
           | .short =>
             exit (mkCmd w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
               dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .distance left p .needsInput)
@@ -385,137 +420,149 @@ def kcase {α : Type} (cont : KCont α) (exit : Cmd → α) (r : Cmd) : α :=
       else
         cont w c ring wpos pend cap written p1 p2 remaining iCount lCount (dCount - 1) flags iCur iPrev lCur lPrev dCur
           dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .distanceSymbol left p
+          (hr.retag Tag.distanceSymbol_ne)
     | .distanceSymbol =>
-      if ht : dCur < H.nD then
-        have ht' := UInt64.lt_iff_toNat_lt.mp ht
-        have hi : (dMapIndex dCur clen).toNat < H.dMap.size := by
-          have h1 := H.dMap32
-          have h2 := H.dMapSize
-          have hcid := distanceContextId_lt clen.toNat
-          rw [dMapIndex_toNat (by omega)]
-          omega
-        let tree := H.dMap.uget (dMapIndex dCur clen) hi
-        have htree : tree.toNat < H.treesD.toNat := H.dMapLt _ hi
-        have hb : 4 * tree.toUInt64.toNat + 4 ≤ H.dBase.size := by
-          rw [H.dSize, UInt8.toNat_toUInt64]
-          omega
-        have hfit : TableFits H.arena (tableBase H.dBase tree.toUInt64 hb H.d32).toNat := by
-          rw [tableBase_toNat, UInt8.toNat_toUInt64]
-          exact H.dFits _ htree
-        let v := lookup H.arena (tableBase H.dBase tree.toUInt64 hb H.d32) w hfit H.lit.arena32
-        if wordBits v ≤ c then
-          let nbits := extraBitsFast H.npostfix H.ndirect (wordSym v)
-          let b1 := (BitBuffer.mk w c).drop (wordBits v)
-          if nbits ≤ 24 then
-            if nbits ≤ b1.count then
-              let b2 := b1.drop nbits
-              let d := distFast H.npostfix H.ndirect d0 d1 d2 d3 (wordSym v) (b1.peek nbits)
-              if d = 0 then
-                exit (mkCmd w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur
-                  lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .distanceSymbol left
-                  p .bad)
-              else
-                kapply cont exit b2.word b2.count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags
-                  iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos
-                  .distanceSymbol left p (wordSym v) d
+      have ht' : dCur.toNat < H.nD.toNat := hr.dCur
+      have hi : (dMapIndex dCur clen).toNat < H.dMap.size := by
+        have h1 := H.dMap32
+        have h2 := H.dMapSize
+        have hcid := distanceContextId_lt clen.toNat
+        rw [dMapIndex_toNat (by omega)]
+        omega
+      let tree := H.dMap.uget (dMapIndex dCur clen) hi
+      have htree : tree.toNat < H.treesD.toNat := H.dMapLt _ hi
+      have hb : 4 * tree.toUInt64.toNat + 4 ≤ H.dBase.size := by
+        rw [H.dSize, UInt8.toNat_toUInt64]
+        omega
+      have hfit : TableFits H.arena (tableBase H.dBase tree.toUInt64 hb H.d32).toNat := by
+        rw [tableBase_toNat, UInt8.toNat_toUInt64]
+        exact H.dFits _ htree
+      let v := lookup H.arena (tableBase H.dBase tree.toUInt64 hb H.d32) w hfit H.lit.arena32
+      if hwb : wordBits v ≤ c then
+        let nbits := extraBitsFast H.npostfix H.ndirect (wordSym v)
+        let b1 := (BitBuffer.mk w c).drop (wordBits v)
+        if hn24 : nbits ≤ 24 then
+          if hnb : nbits ≤ b1.count then
+            let b2 := b1.drop nbits
+            let d := distFast H.npostfix H.ndirect d0 d1 d2 d3 (wordSym v) (b1.peek nbits)
+            if d = 0 then
+              exit (mkCmd w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur
+                lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .distanceSymbol left
+                p .bad)
             else
-              exit (mkCmd w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
-                dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .distanceSymbol left p
-                .needsInput)
+              kapply cont exit b2.word b2.count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags
+                iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos
+                .distanceSymbol left p (wordSym v) d
+                ((hr.drop (copyBits' := copyBits) (wordBits_lt v) hwb (noCL Tag.distanceSymbol_ne)).drop
+                  (by
+                    have := UInt64.le_iff_toNat_le.mp hn24
+                    have h24 : (24 : UInt64).toNat = 24 := rfl
+                    omega) hnb (noCL Tag.distanceSymbol_ne))
           else
             exit (mkCmd w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
-              dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .distanceSymbol left p .bad)
+              dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .distanceSymbol left p
+              .needsInput)
         else
           exit (mkCmd w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
-            dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .distanceSymbol left p
-            .needsInput)
+            dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .distanceSymbol left p .bad)
       else
         exit (mkCmd w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
-          dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .distanceSymbol left p .bad)
+          dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .distanceSymbol left p
+          .needsInput)
     | .copy =>
       if left = 0 then
         cont w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev
-          d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .command left p
+          d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .command left p (hr.retag Tag.command_ne)
       else if room k cap ≤ pend then
         exit (mkCmd w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
           dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .copy left p .needsOutput)
       else
         let run := (umin left (room k cap - pend).toUInt64).toUSize
         let d := dist.toUSize
-        if h : winCheck k wpos ring = true ∧ USize.ofNat 1 ≤ d ∧ d ≤ ringSize k then
-          let r := copyRun d (ringMask k) (ringSize k) k.toNat (winCheck_k h.1) (ringMask_toNat (winCheck_k h.1))
-            (ringSize_toNat (winCheck_k h.1))
-            (by
-              have := USize.le_iff_toNat_le.mp h.2.1
-              rwa [usize_ofNat' (by decide)] at this)
-            (by
-              have := USize.le_iff_toNat_le.mp h.2.2
-              rwa [ringSize_toNat (winCheck_k h.1)] at this)
-            run ring wpos p1 p2 (winCheck_size h.1) (winCheck_pos h.1)
+        if h : USize.ofNat 1 ≤ d ∧ d ≤ ringSize k then
+          have hd1 : 1 ≤ d.toNat := by
+            have := USize.le_iff_toNat_le.mp h.1
+            rwa [usize_ofNat' (by decide)] at this
+          have hd2 : d.toNat ≤ 2 ^ k.toNat := by
+            have := USize.le_iff_toNat_le.mp h.2
+            rwa [ringSize_toNat hr.k24] at this
+          let r := copyRun d (ringMask k) (ringSize k) k.toNat hr.k24 (ringMask_toNat hr.k24) (ringSize_toNat hr.k24)
+            hd1 hd2 run ring wpos p1 p2 hr.size hr.wpos
+          have hri := copyRun_inv hr.k24 (ringMask_toNat hr.k24) (ringSize_toNat hr.k24) hd1 hd2 run ring wpos p1 p2
+            hr.size hr.wpos
           cont w c r.ring r.wpos (pend + run) cap (usmin (ringSize k - USize.ofNat 16) (written + run)) r.p1 r.p2
             remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits
-            copyBase dist wordBuf wordPos .copy (left - run.toUInt64) p
+            copyBase dist wordBuf wordPos .copy (left - run.toUInt64) p (hr.wrote hri.1 hri.2 Tag.copy_ne)
         else
           exit (mkCmd w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
             dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .copy left p .bad)
     | .word =>
       if wordBuf.usize - wordPos = 0 then
         cont w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev
-          d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .command left p
+          d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .command left p (hr.retag Tag.command_ne)
       else if room k cap ≤ pend then
         exit (mkCmd w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
           dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .word left p .needsOutput)
       else
         let run := usmin (wordBuf.usize - wordPos) (room k cap - pend)
-        if h : winCheck k wpos ring = true ∧ wordPos.toNat + run.toNat ≤ wordBuf.size ∧
-            wordPos.toNat + run.toNat ≤ 2 ^ 32 - 1 then
-          let r := wordRun wordBuf (ringMask k) k.toNat (winCheck_k h.1) (ringMask_toNat (winCheck_k h.1)) run wordPos
-            ring wpos p1 p2 h.2.1 h.2.2 (winCheck_size h.1) (winCheck_pos h.1)
+        if h : wordPos.toNat + run.toNat ≤ wordBuf.size ∧ wordPos.toNat + run.toNat ≤ 2 ^ 32 - 1 then
+          let r := wordRun wordBuf (ringMask k) k.toNat hr.k24 (ringMask_toNat hr.k24) run wordPos ring wpos p1 p2 h.1
+            h.2 hr.size hr.wpos
+          have hri := wordRun_inv hr.k24 (ringMask_toNat hr.k24) run wordPos ring wpos p1 p2 h.1 h.2 hr.size hr.wpos
           cont w c r.ring r.wpos (pend + run) cap (usmin (ringSize k - USize.ofNat 16) (written + run)) r.p1 r.p2
             remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits
-            copyBase dist wordBuf (wordPos + run) .word left p
+            copyBase dist wordBuf (wordPos + run) .word left p (hr.wrote hri.1 hri.2 Tag.word_ne)
         else
           exit (mkCmd w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
             dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .word left p .bad)
-  else
-    exit (mkCmd word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
-      dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos .bad)
 
 /-- `runCmd` on the fields: up to `n` steps, each ending in a jump to the next. -/
 def runCmdK (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (n : USize) (cell : RunOut)
     (word count : UInt64) (ring : ByteArray) (wpos pend cap written : USize) (p1 p2 : UInt8)
     (remaining iCount lCount dCount : UInt64) (flags : Flags)
     (iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist : UInt64)
-    (wordBuf : ByteArray) (wordPos : USize) (tag : Tag) (left : UInt64) (pos : USize) : Cmd :=
+    (wordBuf : ByteArray) (wordPos : USize) (tag : Tag) (left : UInt64) (pos : USize)
+    (hinv : KInv H k stop word count ring wpos iCur iPrev lCur lPrev dCur dPrev copyBits tag pos) : Cmd :=
   if _hn : n = 0 then
     mkCmd word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev
       d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos .next
   else
     kstep H k a stop hs
       (fun cell word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur
-          dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos =>
+          dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos h =>
         runCmdK H k a stop hs (n - USize.ofNat 1) cell word count ring wpos pend cap written p1 p2 remaining iCount lCount
           dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos
-          tag left pos)
+          tag left pos h)
       (fun c => c)
       word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev
-      d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos cell
+      d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos cell hinv
 termination_by n.toNat
 decreasing_by
   have := usize_pred _hn
   have := usize_ne _hn
   omega
 
-/-- `runCmd` as the compiler runs it: the state taken apart once, then the loop on its fields. -/
+/-- What the compiled loop needs to know of a state. -/
+abbrev CmdInv (H : Hdr) (k stop : USize) (st : Cmd) (pos : USize) : Prop :=
+  KInv H k stop st.word st.count st.ring st.wpos st.iCur st.iPrev st.lCur st.lPrev st.dCur st.dPrev st.copyBits st.tag
+    pos
+
+/-- `runCmd`, for a state the compiled loop may run from. The compiler runs `runCmdE` in its place. -/
+def runCmdP (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (n : USize) (st : Cmd)
+    (pos : USize) (_h : CmdInv H k stop st pos) : Cmd :=
+  runCmd H k a stop hs n st pos
+
+/-- `runCmdP` as the compiler runs it: the state taken apart once, then the loop on its fields. -/
 def runCmdE (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (n : USize) (st : Cmd)
-    (pos : USize) : Cmd :=
-  match st with
+    (pos : USize) (h : CmdInv H k stop st pos) : Cmd :=
+  match st, h with
   | ⟨word, count, ring, wpos, pend, cap, written, p1, p2, remaining, iCount, lCount, dCount, flags,
       ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf, wordPos⟩,
-      tag, left, _, _⟩ =>
+      tag, left, _, _⟩, h =>
     -- the first record, built from values so that it is allocated here and held once
-    runCmdK H k a stop hs n ⟨word, count, pos, wpos, ByteArray.empty, p1, p2, 0, 0⟩ word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev
-      lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos
+    runCmdK H k a stop hs n ⟨word, count, pos, wpos, ByteArray.empty, p1, p2, 0, 0⟩ word count ring wpos pend cap written
+      p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits
+      copyBase dist wordBuf wordPos tag left pos h
 
 /-! ### The compiled loop is `runCmd` -/
 
@@ -527,18 +574,38 @@ macro "ksplit" : tactic =>
     | rfl
     | contradiction))
 
+/-- `ksplit`, with one more fact that settles the other side's tests: there a test may hold one more conjunct, which
+the fact gives. -/
+macro "ksplitW " e:term : tactic =>
+  `(tactic| repeat' (first
+    | (split <;> rename_i h <;>
+        (try simp only [h, $e:term, ↓reduceIte, ↓reduceDIte, and_self, and_true, true_and, and_false]))
+    | rfl
+    | contradiction))
+
 section
+/-- A continuation that depends neither on the record it is handed nor on the proof. -/
+abbrev Drops {α : Type} (H : Hdr) (k stop : USize) (contC : KContC H k stop α) (g : KCont α) : Prop :=
+  ∀ c word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev
+    d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos h,
+    contC c word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur
+        dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos h =
+      g word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev
+        d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos
+
 variable {α : Type} (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size)
-  (contC : KContC α) (g : KCont α) (exit : Cmd → α)
+  (contC : KContC H k stop α) (g : KCont α) (exit : Cmd → α)
   (word count : UInt64) (ring : ByteArray) (wpos pend cap written : USize) (p1 p2 : UInt8)
   (remaining iCount lCount dCount : UInt64) (flags : Flags)
   (iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist : UInt64)
   (wordBuf : ByteArray) (wordPos : USize) (left : UInt64) (pos sp : USize) (ss : StepStatus) (cell : RunOut)
 
 /-- What a step on the fields must equal, for a tag, when its continuation doesn't depend on the record it passes. -/
-abbrev KStepIs (tag : Tag) : Prop :=
+abbrev KStepIs (tag : Tag) (hinv : KInv H k stop word count ring wpos iCur iPrev lCur lPrev dCur dPrev copyBits tag pos) :
+    Prop :=
   kstep H k a stop hs contC exit word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur
-      iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos cell =
+      iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos cell
+      hinv =
     kcase g exit (stepCmd H k a stop hs (mkCmd word count ring wpos pend cap written p1 p2 remaining iCount lCount
       dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos
       tag left sp ss) pos)
@@ -547,130 +614,142 @@ abbrev KStepIs (tag : Tag) : Prop :=
 -- tracking by hand, so the linter for unused simp arguments is off for these eight lemmas.
 set_option linter.unusedSimpArgs false
 
-theorem kstep_command (hcont : ∀ c, contC c = g) (hp : pos ≤ stop) :
+theorem kstep_command (hcont : Drops H k stop contC g)
+    (hinv : KInv H k stop word count ring wpos iCur iPrev lCur lPrev dCur dPrev copyBits _ pos) :
     KStepIs H k a stop hs contC g exit word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur
       iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos left pos sp ss cell
-      .command := by
+      .command hinv := by
   unfold KStepIs kstep stepCmd
   simp only [hcont]
-  rw [dite_eq_left hp, dite_eq_left hp]
+  rw [dite_eq_left (USize.le_iff_toNat_le.mpr hinv.pos)]
   simp only [mkCmd, stepAt, stepCommand, markStep, Cmd.iCur, Cmd.iPrev]
   ksplit
 
-theorem kstep_insertCopy (hcont : ∀ c, contC c = g) (hp : pos ≤ stop) :
+theorem kstep_insertCopy (hcont : Drops H k stop contC g)
+    (hinv : KInv H k stop word count ring wpos iCur iPrev lCur lPrev dCur dPrev copyBits _ pos) :
     KStepIs H k a stop hs contC g exit word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur
       iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos left pos sp ss cell
-      .insertCopy := by
+      .insertCopy hinv := by
   unfold KStepIs kstep stepCmd
   simp only [hcont]
-  rw [dite_eq_left hp, dite_eq_left hp]
-  simp only [mkCmd, stepAt, stepInsertCopy, insertStep, markStep, Cmd.iCur]
+  rw [dite_eq_left (USize.le_iff_toNat_le.mpr hinv.pos)]
+  have hI : iCur < H.nI := UInt64.lt_iff_toNat_lt.mpr hinv.iCur
+  simp only [mkCmd, stepAt, stepInsertCopy, insertStep, markStep, Cmd.iCur, hI, ↓reduceDIte]
   ksplit
 
-theorem kstep_copyLength (hcont : ∀ c, contC c = g) (hp : pos ≤ stop) :
+theorem kstep_copyLength (hcont : Drops H k stop contC g)
+    (hinv : KInv H k stop word count ring wpos iCur iPrev lCur lPrev dCur dPrev copyBits _ pos) :
     KStepIs H k a stop hs contC g exit word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur
       iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos left pos sp ss cell
-      .copyLength := by
+      .copyLength hinv := by
   unfold KStepIs kstep stepCmd
   simp only [hcont]
-  rw [dite_eq_left hp, dite_eq_left hp]
+  rw [dite_eq_left (USize.le_iff_toNat_le.mpr hinv.pos)]
   simp only [mkCmd, stepAt, stepCopyLength, markStep, Cmd.ilen, Cmd.copyBits, Cmd.copyBase]
   ksplit
 
-theorem kstep_literals (hcont : ∀ c, contC c = g) (hp : pos ≤ stop) :
+theorem kstep_literals (hcont : Drops H k stop contC g)
+    (hinv : KInv H k stop word count ring wpos iCur iPrev lCur lPrev dCur dPrev copyBits _ pos) :
     KStepIs H k a stop hs contC g exit word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur
       iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos left pos sp ss cell
-      .literals := by
+      .literals hinv := by
   unfold KStepIs kstep stepCmd
   simp only [hcont]
-  rw [dite_eq_left hp, dite_eq_left hp]
+  rw [dite_eq_left (USize.le_iff_toNat_le.mpr hinv.pos)]
+  have hL : lCur < H.nL := UInt64.lt_iff_toNat_lt.mpr hinv.lCur
+  have hwin := hinv.win
+  have hp' : ∀ hq, (refill word count a pos stop hs hq).pos ≤ stop :=
+    fun hq => USize.le_iff_toNat_le.mpr (refill_spec hs hq hinv.wf).2.2.1
+  have hwf : ∀ hq, wfCheck (refill word count a pos stop hs hq).word (refill word count a pos stop hs hq).count = true :=
+    fun hq => wfCheck_of_wf (refill_spec hs hq hinv.wf).1
   simp only [mkCmd, stepAt, stepLiterals, literalsRun, finishLiterals, clearRing, markStep, Cmd.lCur, Cmd.lPrev,
-    literalRunC_eq, litInto]
+    literalRunC_eq, litInto, hL, hwin, hp', hwf, and_self, ↓reduceDIte]
   ksplit
 
-theorem kstep_distance (hcont : ∀ c, contC c = g) (hp : pos ≤ stop) :
+theorem kstep_distance (hcont : Drops H k stop contC g)
+    (hinv : KInv H k stop word count ring wpos iCur iPrev lCur lPrev dCur dPrev copyBits _ pos) :
     KStepIs H k a stop hs contC g exit word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur
       iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos left pos sp ss cell
-      .distance := by
+      .distance hinv := by
   unfold KStepIs kstep stepCmd
   simp only [hcont]
-  rw [dite_eq_left hp, dite_eq_left hp]
+  rw [dite_eq_left (USize.le_iff_toNat_le.mpr hinv.pos)]
   simp only [mkCmd, stepAt, stepDistance, applyDistance, applyWord, applyBuilt, kapply, markStep, Cmd.code, Cmd.d0,
-    Cmd.d1, Cmd.d2, Cmd.clen, Cmd.dCur, Cmd.dPrev]
+    Cmd.d1, Cmd.d2, Cmd.clen, Cmd.dCur, Cmd.dPrev, hcont]
   ksplit
 
-theorem kstep_distanceSymbol (hcont : ∀ c, contC c = g) (hp : pos ≤ stop) :
+theorem kstep_distanceSymbol (hcont : Drops H k stop contC g)
+    (hinv : KInv H k stop word count ring wpos iCur iPrev lCur lPrev dCur dPrev copyBits _ pos) :
     KStepIs H k a stop hs contC g exit word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur
       iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos left pos sp ss cell
-      .distanceSymbol := by
+      .distanceSymbol hinv := by
   unfold KStepIs kstep stepCmd
   simp only [hcont]
-  rw [dite_eq_left hp, dite_eq_left hp]
+  rw [dite_eq_left (USize.le_iff_toNat_le.mpr hinv.pos)]
   simp only [mkCmd, stepAt, stepDistanceSymbol, distanceThrough, distanceStep, setBits, applyDistance, applyWord,
-    applyBuilt, kapply, markStep, Cmd.dCur, Cmd.clen, Cmd.d0, Cmd.d1, Cmd.d2, Cmd.d3]
-  -- `split` doesn't take this outer test apart, so both sides are rewritten by its case; the two tests are the same
-  -- term, so one rewrite takes both
-  by_cases ht : dCur < H.nD
-  · rw [dite_eq_left ht]
-    ksplit
-  · simp only [ht, ↓reduceDIte]
-    rfl
+    applyBuilt, kapply, markStep, Cmd.dCur, Cmd.clen, Cmd.d0, Cmd.d1, Cmd.d2, Cmd.d3, hcont]
+  -- `split` doesn't take this outer test apart, so the invariant's fact settles it
+  have hD : dCur < H.nD := UInt64.lt_iff_toNat_lt.mpr hinv.dCur
+  simp only [hD, ↓reduceDIte]
+  ksplit
 
-theorem kstep_copy (hcont : ∀ c, contC c = g) (hp : pos ≤ stop) :
+theorem kstep_copy (hcont : Drops H k stop contC g)
+    (hinv : KInv H k stop word count ring wpos iCur iPrev lCur lPrev dCur dPrev copyBits _ pos) :
     KStepIs H k a stop hs contC g exit word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur
       iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos left pos sp ss cell
-      .copy := by
+      .copy hinv := by
   unfold KStepIs kstep stepCmd
   simp only [hcont]
-  rw [dite_eq_left hp, dite_eq_left hp]
+  rw [dite_eq_left (USize.le_iff_toNat_le.mpr hinv.pos)]
+  have hwin := hinv.win
   simp only [mkCmd, stepAt, stepCopy, finishCopy, clearRing, markStep, Cmd.dist]
-  ksplit
+  ksplitW hwin
 
-theorem kstep_word (hcont : ∀ c, contC c = g) (hp : pos ≤ stop) :
+theorem kstep_word (hcont : Drops H k stop contC g)
+    (hinv : KInv H k stop word count ring wpos iCur iPrev lCur lPrev dCur dPrev copyBits _ pos) :
     KStepIs H k a stop hs contC g exit word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur
       iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos left pos sp ss cell
-      .word := by
+      .word hinv := by
   unfold KStepIs kstep stepCmd
   simp only [hcont]
-  rw [dite_eq_left hp, dite_eq_left hp]
+  rw [dite_eq_left (USize.le_iff_toNat_le.mpr hinv.pos)]
+  have hwin := hinv.win
   simp only [mkCmd, stepAt, stepWord, finishWord, clearRing, markStep, Cmd.wordBuf, Cmd.wordPos]
-  ksplit
+  ksplitW hwin
 
 set_option linter.unusedSimpArgs true
 
 /-- A step on the fields is `stepCmd` on the record they make, gone on with. -/
-theorem kstep_eq (hcont : ∀ c, contC c = g) (tag : Tag) :
+theorem kstep_eq (hcont : Drops H k stop contC g) (tag : Tag)
+    (hinv : KInv H k stop word count ring wpos iCur iPrev lCur lPrev dCur dPrev copyBits tag pos) :
     KStepIs H k a stop hs contC g exit word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur
-      iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos left pos sp ss cell tag := by
-  by_cases hp : pos ≤ stop
+      iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos left pos sp ss cell tag
+      hinv := by
   · cases tag
     · exact kstep_command H k a stop hs contC g exit word count ring wpos pend cap written p1 p2 remaining iCount lCount
         dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos
-        left pos sp ss cell hcont hp
+        left pos sp ss cell hcont hinv
     · exact kstep_insertCopy H k a stop hs contC g exit word count ring wpos pend cap written p1 p2 remaining iCount lCount
         dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos
-        left pos sp ss cell hcont hp
+        left pos sp ss cell hcont hinv
     · exact kstep_copyLength H k a stop hs contC g exit word count ring wpos pend cap written p1 p2 remaining iCount lCount
         dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos
-        left pos sp ss cell hcont hp
+        left pos sp ss cell hcont hinv
     · exact kstep_literals H k a stop hs contC g exit word count ring wpos pend cap written p1 p2 remaining iCount lCount
         dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos
-        left pos sp ss cell hcont hp
+        left pos sp ss cell hcont hinv
     · exact kstep_distance H k a stop hs contC g exit word count ring wpos pend cap written p1 p2 remaining iCount lCount
         dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos
-        left pos sp ss cell hcont hp
+        left pos sp ss cell hcont hinv
     · exact kstep_distanceSymbol H k a stop hs contC g exit word count ring wpos pend cap written p1 p2 remaining iCount
         lCount dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf
-        wordPos left pos sp ss cell hcont hp
+        wordPos left pos sp ss cell hcont hinv
     · exact kstep_copy H k a stop hs contC g exit word count ring wpos pend cap written p1 p2 remaining iCount lCount
         dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos
-        left pos sp ss cell hcont hp
+        left pos sp ss cell hcont hinv
     · exact kstep_word H k a stop hs contC g exit word count ring wpos pend cap written p1 p2 remaining iCount lCount
         dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos
-        left pos sp ss cell hcont hp
-  · unfold KStepIs kstep stepCmd
-    rw [dite_eq_right hp, dite_eq_right hp]
-    rfl
+        left pos sp ss cell hcont hinv
 
 end
 
@@ -679,10 +758,11 @@ theorem runCmdK_eq (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : st
     ∀ (N : Nat) (n : USize) (cell : RunOut) (word count : UInt64) (ring : ByteArray) (wpos pend cap written : USize)
       (p1 p2 : UInt8) (remaining iCount lCount dCount : UInt64) (flags : Flags)
       (iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist : UInt64)
-      (wordBuf : ByteArray) (wordPos : USize) (tag : Tag) (left : UInt64) (pos sp : USize) (ss : StepStatus),
+      (wordBuf : ByteArray) (wordPos : USize) (tag : Tag) (left : UInt64) (pos sp : USize) (ss : StepStatus)
+      (hinv : KInv H k stop word count ring wpos iCur iPrev lCur lPrev dCur dPrev copyBits tag pos),
       n.toNat = N →
       runCmdK H k a stop hs n cell word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur
-          iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos =
+          iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos hinv =
         runCmd H k a stop hs n (mkCmd word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags
           iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left sp ss)
           pos := by
@@ -690,36 +770,33 @@ theorem runCmdK_eq (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : st
   induction N with
   | zero =>
     intro n cell word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
-      dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos sp ss hN
+      dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos sp ss hinv hN
     have hn : n = 0 := usize_zero hN
     rw [runCmdK, runCmd, dite_eq_left hn, dite_eq_left hn]
     rfl
   | succ N ih =>
     intro n cell word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
-      dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos sp ss hN
+      dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos sp ss hinv hN
     have hn : n ≠ 0 := fun e => by rw [e] at hN; exact Nat.succ_ne_zero _ hN.symm
     have hpred : (n - USize.ofNat 1).toNat = N := by
       rw [usize_pred hn]
       omega
-    -- the rest of the loop doesn't depend on the record it is handed: both equal `runCmd`
-    have hc : ∀ c : RunOut,
-        (fun word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur
-            dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos =>
+    -- the rest of the loop depends neither on the record it is handed nor on the proof: it is `runCmd`
+    have hc : Drops H k stop
+        (fun c word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur
+            dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos h =>
           runCmdK H k a stop hs (n - USize.ofNat 1) c word count ring wpos pend cap written p1 p2 remaining iCount lCount
             dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos
-            tag left pos : KCont Cmd) =
+            tag left pos h)
         (fun word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur
             dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos =>
-          runCmdK H k a stop hs (n - USize.ofNat 1) cell word count ring wpos pend cap written p1 p2 remaining iCount
+          runCmd H k a stop hs (n - USize.ofNat 1) (mkCmd word count ring wpos pend cap written p1 p2 remaining iCount
             lCount dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf
-            wordPos tag left pos) := by
-      intro c
-      funext word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur
-        dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos
-      rw [ih _ c word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
-          dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos pos .next hpred,
-        ih _ cell word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
-          dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos pos .next hpred]
+            wordPos tag left pos .next) pos) :=
+      fun c word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur
+          dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos h =>
+        ih _ c word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
+          dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos pos .next h hpred
     rw [runCmdK, runCmd, dite_eq_right hn, dite_eq_right hn, kstep_eq (sp := sp) (ss := ss) (hcont := hc)]
     dsimp only
     generalize stepCmd H k a stop hs (mkCmd word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount
@@ -729,20 +806,16 @@ theorem runCmdK_eq (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : st
       ⟨e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, e11, e12, e13, e14, e15, e16, e17, e18⟩, tg, lf, ps, st⟩ := r
     unfold kcase
     cases st
-    · simp only [↓reduceIte]
-      apply ih
-      rw [usize_pred hn]
-      omega
     all_goals rfl
 
-/-- The compiler runs the loop on the fields in place of `runCmd`. -/
-@[csimp] theorem runCmd_csimp : @runCmd = @runCmdE := by
-  funext H k a stop hs n st pos
+/-- The compiler runs the loop on the fields in place of `runCmdP`. -/
+@[csimp] theorem runCmdP_csimp : @runCmdP = @runCmdE := by
+  funext H k a stop hs n st pos h
   obtain ⟨word, count, ring, wpos, pend, cap, written, p1, p2, remaining, iCount, lCount, dCount, flags,
     ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf, wordPos⟩,
     tag, left, sp, ss⟩ := st
-  exact (runCmdK_eq H k a stop hs _ n ⟨word, count, pos, wpos, ByteArray.empty, p1, p2, 0, 0⟩ word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags
-    iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos sp ss
-    rfl).symm
+  exact (runCmdK_eq H k a stop hs _ n ⟨word, count, pos, wpos, ByteArray.empty, p1, p2, 0, 0⟩ word count ring wpos pend
+    cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen
+    copyBits copyBase dist wordBuf wordPos tag left pos sp ss h rfl).symm
 
 end Brotli.Decoder

@@ -24,6 +24,13 @@ theorem DInv.hd {stop : USize} {D : Dec} (h : DInv stop D) (ht : D.tag = .hdr) :
   | hdr w st last mlen g q => exact ⟨g, q, hrel.2.2.2.2.2.2.1, hrel.2.2.2.2.2.2.2.2⟩
   | _ => exact absurd (hrel.1.symm.trans ht) (fun e => DTag.noConfusion e)
 
+/-- A state in a meta-block's commands gives the compiled command loop what it may assume. -/
+theorem DInv.cmd {stop : USize} {D : Dec} (h : DInv stop D) (ht : D.tag = .cmds) : CmdInv D.H D.k stop D.cmd D.pos := by
+  obtain ⟨⟨p, hrel⟩, hpos⟩ := h
+  cases p with
+  | cmds w last m q => exact KInv.of_rel hrel.2.2.2.1 hrel.2.2.2.2 hpos
+  | _ => exact absurd (hrel.1.symm.trans ht) (fun e => DTag.noConfusion e)
+
 /-- One step of the whole decoder. -/
 def stepD (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (h : DInv stop D) : Dec :=
   match ht : D.tag with
@@ -32,7 +39,7 @@ def stepD (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) 
   | .skip => stepDSkip stop D D.pos
   | .raw => stepDRaw a stop hs D D.pos
   | .hdr => stepDHdr a stop hs D D.pos (h.hd ht) h.2
-  | .cmds => stepDCmds a stop hs D D.pos
+  | .cmds => stepDCmdsP a stop hs D D.pos (h.cmd ht)
   | .ended => D
 
 section

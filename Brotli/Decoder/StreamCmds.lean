@@ -275,6 +275,41 @@ def stepDCmds (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : D
       { D0 with cmd := r, pos := rp, status := .next, tag := if last then .ended else .mblock, H := Hdr.none }
     else { D0 with cmd := r, pos := rp, status := .bad }
 
+/-- `stepDCmds`, for a state the compiled command loop may run from. The compiler runs `stepDCmdsE` in its place. -/
+def stepDCmdsP (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize)
+    (_h : CmdInv D.H D.k stop D.cmd pos) : Dec :=
+  stepDCmds a stop hs D pos
+
+/-- The state a take function hands out is the state's own. -/
+theorem takeCmd_inv {D : Dec} {c : Cmd} {D0 : Dec} {stop pos : USize} (hc : takeCmd D = (c, D0))
+    (h : CmdInv D.H D.k stop D.cmd pos) : CmdInv D.H D.k stop c pos :=
+  (show D.cmd = c from congrArg Prod.fst hc) ▸ h
+
+/-- `stepDCmds` as the compiler runs it: the same steps, with the command loop given what it may assume. -/
+def stepDCmdsE (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize)
+    (h : CmdInv D.H D.k stop D.cmd pos) : Dec :=
+  let H := D.H
+  let k := D.k
+  let last := D.last
+  match hc : takeCmd D with
+  | (c, D0) =>
+  let r := runCmdP H k a stop hs cmdBudget c pos (takeCmd_inv hc h)
+  let rp := r.pos
+  match r.status with
+  | .next => { D0 with cmd := r, pos := rp, status := .next }
+  | .needsInput => { D0 with cmd := r, pos := rp, status := .needsInput }
+  | .needsOutput => { D0 with cmd := r, pos := rp, status := .needsOutput }
+  | .bad => { D0 with cmd := r, pos := rp, status := .bad }
+  | .done =>
+    if seenOk r H.nL H.nI H.nD then
+      { D0 with cmd := r, pos := rp, status := .next, tag := if last then .ended else .mblock, H := Hdr.none }
+    else { D0 with cmd := r, pos := rp, status := .bad }
+
+/-- The compiler runs the commands' step with the compiled loop in place of `stepDCmdsP`. -/
+@[csimp] theorem stepDCmdsP_csimp : @stepDCmdsP = @stepDCmdsE := by
+  funext a stop hs D pos h
+  rfl
+
 /-- The bits of a state outside a header. -/
 theorem Dec.bits_cmd {D : Dec} (h : D.tag ≠ .hdr) (a : ByteArray) (pos stop : USize) (F : List Bool) :
     D.bits a pos stop F = availBits D.cmd.word D.cmd.count a pos stop F := by
