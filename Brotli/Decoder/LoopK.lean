@@ -1,6 +1,8 @@
 module
 
 public import Brotli.Decoder.CopyRing
+public import Brotli.Decoder.StepDistance
+public import Brotli.Decoder.Loop
 
 /-!
 # The compiled command loop

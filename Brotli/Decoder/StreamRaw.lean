@@ -1,7 +1,8 @@
 module
 
-public import Brotli.Decoder.StreamStart
 public import Brotli.Decoder.StreamOrder
+public import Brotli.Decoder.Window
+public import Brotli.Decoder.HeaderStep
 
 @[expose] public section
 

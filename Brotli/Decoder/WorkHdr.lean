@@ -2,6 +2,8 @@ module
 
 public import Brotli.Decoder.Progress
 public import Brotli.Decoder.CostHeader
+public import Brotli.Decoder.HeaderDone
+public import Brotli.Decoder.Positions
 
 @[expose] public section
 

@@ -2,6 +2,7 @@ module
 
 public import Brotli.Decoder.Reader
 public import Brotli.Decoder.CmdLut
+public import Brotli.Spec.Stream
 
 @[expose] public section
 

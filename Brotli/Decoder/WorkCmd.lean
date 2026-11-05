@@ -1,7 +1,7 @@
 module
 
-public import Brotli.Decoder.WorkHdr
 public import Brotli.Decoder.Work
+public import Brotli.Decoder.CostHeader
 
 @[expose] public section
 

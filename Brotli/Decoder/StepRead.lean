@@ -2,6 +2,8 @@ module
 
 public import Brotli.Decoder.Step
 public import Brotli.Decoder.CmdLut
+public import Brotli.Decoder.Block
+public import Brotli.Decoder.HeaderOrder
 
 @[expose] public section
 

@@ -1,6 +1,8 @@
 module
 
-public import Brotli.Decoder.StreamRun
+public import Brotli.Decoder.HeaderRest
+public import Brotli.Decoder.Rest
+public import Brotli.Decoder.StreamState
 
 @[expose] public section
 

@@ -1,6 +1,6 @@
 module
 
-public import Brotli.Spec.Stream
+public import Brotli.Spec.Context
 
 @[expose] public section
 

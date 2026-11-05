@@ -3,6 +3,7 @@ module
 public import Brotli.Decoder.State
 public import Brotli.Decoder.Copy
 public import Brotli.Decoder.Order
+public import Brotli.Decoder.Fixed
 
 @[expose] public section
 

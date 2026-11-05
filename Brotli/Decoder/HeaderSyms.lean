@@ -1,6 +1,9 @@
 module
 
-public import Brotli.Decoder.HeaderLens
+public import Brotli.Decoder.HeaderRest
+public import Brotli.Decoder.Rest
+public import Brotli.Decoder.HeaderStep
+public import Brotli.Decoder.HeaderCode
 
 @[expose] public section
 

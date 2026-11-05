@@ -1,6 +1,7 @@
 module
 
 public import Brotli.Decoder.BitBuffer
+public import Brotli.Spec.Stream
 
 @[expose] public section
 

@@ -1,6 +1,14 @@
 module
 
-public import Brotli.Decoder.Loop
+public import Brotli.Spec.Distance
+public import Brotli.Decoder.Table
+public import Brotli.Decoder.CmdLut
+public import Brotli.Decoder.Block
+public import Brotli.Decoder.Window
+public import Brotli.Decoder.Rest
+public import Brotli.Decoder.Literals
+public import Brotli.Decoder.StepRead
+public import Brotli.Decoder.DictBytes
 
 @[expose] public section
 

@@ -1,7 +1,5 @@
 module
 
-public import Brotli.Spec.Stream
-
 @[expose] public section
 
 /-!

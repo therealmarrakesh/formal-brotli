@@ -1,7 +1,8 @@
 module
 
-public import Brotli.Decoder.Rest
 public import Brotli.Decoder.Window
+public import Brotli.Spec.Context
+public import Brotli.Spec.Stream
 
 @[expose] public section
 

@@ -1,7 +1,7 @@
 module
 
 public import Brotli.Decoder.TableDown
-public import Brotli.Decoder.Copy
+public import Brotli.Decoder.Window
 public import Brotli.Decoder.Lookup
 public import Brotli.Decoder.Fixed
 

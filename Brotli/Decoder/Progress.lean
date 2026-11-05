@@ -1,6 +1,10 @@
 module
 
-public import Brotli.Decoder.OrderSpec
+public import Brotli.Decoder.HeaderRest
+public import Brotli.Decoder.Rest
+public import Brotli.Decoder.StepRead
+public import Brotli.Decoder.StreamOrder
+public import Brotli.Decoder.Restrict
 
 @[expose] public section
 

@@ -1,6 +1,9 @@
 module
 
-public import Brotli.Decoder.HeaderBuild
+public import Brotli.Decoder.Codes
+public import Brotli.Decoder.Block
+public import Brotli.Decoder.SmallRead
+public import Brotli.Decoder.Builder
 
 @[expose] public section
 

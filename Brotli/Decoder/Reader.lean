@@ -1,7 +1,6 @@
 module
 
 public import Brotli.Decoder.Lookup
-public import Brotli.Decoder.Refill
 
 @[expose] public section
 

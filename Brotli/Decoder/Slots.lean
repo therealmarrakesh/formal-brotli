@@ -1,7 +1,5 @@
 module
 
-public import Brotli.Decoder.Hit
-
 @[expose] public section
 
 /-!

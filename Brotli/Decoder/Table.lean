@@ -2,6 +2,7 @@ module
 
 public import Brotli.Decoder.Slots
 public import Brotli.Decoder.Codes
+public import Brotli.Decoder.Hit
 
 @[expose] public section
 

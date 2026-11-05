@@ -1,7 +1,10 @@
 module
 
-public import Brotli.Decoder.StepLiterals
 public import Brotli.Decoder.DictBytes
+public import Brotli.Decoder.Block
+public import Brotli.Decoder.Rest
+public import Brotli.Decoder.Literals
+public import Brotli.Decoder.StepRead
 
 @[expose] public section
 

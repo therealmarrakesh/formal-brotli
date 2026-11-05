@@ -1,7 +1,7 @@
 module
 
-public import Brotli.Decoder.HeaderDone
-public import Brotli.Decoder.Loop
+public import Brotli.Decoder.HeaderRest
+public import Brotli.Decoder.Rest
 
 @[expose] public section
 

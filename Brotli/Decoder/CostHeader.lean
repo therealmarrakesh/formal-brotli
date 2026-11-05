@@ -1,7 +1,9 @@
 module
 
-public import Brotli.Decoder.HeaderDone
 public import Brotli.Decoder.Cost
+public import Brotli.Decoder.HeaderRest
+public import Brotli.Decoder.HeaderLens
+public import Brotli.Decoder.HeaderStep2
 
 @[expose] public section
 

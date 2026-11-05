@@ -2,6 +2,9 @@ module
 
 public import Brotli.Decoder.Interface
 public import Brotli.Decoder.StreamOut
+public import Brotli.Decoder.HeaderDone
+public import Brotli.Decoder.StreamSteps
+public import Brotli.Decoder.StreamRun
 
 @[expose] public section
 

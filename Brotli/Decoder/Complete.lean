@@ -1,6 +1,7 @@
 module
 
-public import Brotli.Spec.Stream
+public import Brotli.Spec.Bits
+public import Brotli.Spec.PrefixCode
 
 @[expose] public section
 

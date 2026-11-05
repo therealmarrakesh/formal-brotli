@@ -1,6 +1,10 @@
 module
 
-public import Brotli.Decoder.Layout
+public import Brotli.Decoder.HeaderRest
+public import Brotli.Decoder.HeaderDone
+public import Brotli.Decoder.StepDistance
+public import Brotli.Decoder.StreamSteps
+public import Brotli.Decoder.StreamCall
 
 @[expose] public section
 

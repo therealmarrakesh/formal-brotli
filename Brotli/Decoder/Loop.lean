@@ -1,6 +1,7 @@
 module
 
 public import Brotli.Decoder.StepDistance
+public import Brotli.Decoder.StepLiterals
 
 @[expose] public section
 

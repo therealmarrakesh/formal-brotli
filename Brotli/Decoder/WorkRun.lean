@@ -1,6 +1,7 @@
 module
 
 public import Brotli.Decoder.WorkStream
+public import Brotli.Decoder.WorkHdr
 
 @[expose] public section
 

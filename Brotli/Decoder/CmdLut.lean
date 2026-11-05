@@ -1,6 +1,8 @@
 module
 
 public import Brotli.Decoder.Lookup
+public import Brotli.Spec.BlockSwitch
+public import Brotli.Spec.InsertCopy
 
 @[expose] public section
 

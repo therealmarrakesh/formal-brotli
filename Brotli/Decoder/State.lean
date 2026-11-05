@@ -1,8 +1,6 @@
 module
 
 public import Brotli.Decoder.Literals
-public import Brotli.Decoder.Block
-public import Brotli.Decoder.Fixed
 
 @[expose] public section
 

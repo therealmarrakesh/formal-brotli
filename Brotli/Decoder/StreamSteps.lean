@@ -1,6 +1,7 @@
 module
 
 public import Brotli.Decoder.StreamCmds
+public import Brotli.Decoder.StreamStart
 
 @[expose] public section
 

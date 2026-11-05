@@ -1,6 +1,6 @@
 module
 
-public import Brotli.Decoder.Hit
+public import Brotli.Decoder.Complete
 
 @[expose] public section
 
