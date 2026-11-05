@@ -181,7 +181,7 @@ def cmdsEnd : Nat := 84 + 772 + 1 + roundCost
 
 /-- What a header's end costs beyond its potential: the command loop's header and first state, the loop's round, and what
 the commands' start holds. Its last step is within its place's potential. -/
-def hdrEnd : Nat := 770 + 1 + 103 + cmdsEnd
+def hdrEnd : Nat := 770 + 1 + 100 + cmdsEnd
 
 /-- What a metadata block's or an uncompressed block's end costs: its last step and the loop's round, and a round of the
 call at the next meta-block's start. -/
@@ -581,7 +581,7 @@ theorem pay_hdr {w : Nat} {st : StreamState} {last : Bool} {mlen : Nat} {g : Gh}
     have hb := sreach_len (hj t)
     cases p' with
     | cmds w' l' m' cp =>
-      have := cpot_le cp
+      have := cpot_command hR''.2.2.2.2 rfl
       simp only [Dec.bits, Dec.word, Dec.count, dpot, spot] at hb ⊢
       dsimp only at h1' h2' ⊢
       unfold hdrEnd

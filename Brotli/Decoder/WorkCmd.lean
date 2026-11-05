@@ -1422,6 +1422,13 @@ theorem word_crank {p : Phase} (h : isWordP p = true) : crank p = 1 ∨ crank p 
   | word s pending => cases pending <;> simp [crank, cstage]
   | _ => cases h
 
+/-- A state at a command's start has the potential of a command's place. -/
+theorem cpot_command {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {p : Phase} (h : Rel w k m st p) (ht : st.tag = .command) :
+    cpot p ≤ 100 := by
+  cases p with
+  | command s => by_cases h0 : s.remaining = 0 <;> simp [cpot, crank, cstage, cred, h0]
+  | _ => first | exact False.elim h | exact absurd (ht.symm.trans h.2.1) (fun e => by cases e)
+
 theorem cpot_le (p : Phase) : cpot p ≤ 103 := by
   have := crank_le p
   by_cases hc : cred p = 0
