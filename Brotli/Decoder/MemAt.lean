@@ -1,5 +1,9 @@
-import Brotli.Decoder.Tables
-import Brotli.Decoder.Work
+module
+
+public import Brotli.Decoder.Tables
+public import Brotli.Decoder.Work
+
+@[expose] public section
 
 /-!
 # Where the limit binds

@@ -1,4 +1,8 @@
-import Brotli.Decoder.BitBuffer
+module
+
+public import Brotli.Decoder.BitBuffer
+
+@[expose] public section
 
 /-!
 # Refilling the bit buffer
@@ -49,7 +53,7 @@ private theorem usize_add {p : USize} {n : Nat} (hn : n < 2 ^ 32) (h : p.toNat +
   rwa [← USize.size_eq_two_pow]
 
 /-- The `k`th of eight bytes at `i`. -/
-@[inline] private def byteAt (a : ByteArray) (i : USize) (k : Nat) (hk : k < 8) (h8 : i.toNat + 8 ≤ a.size)
+@[inline] def byteAt (a : ByteArray) (i : USize) (k : Nat) (hk : k < 8) (h8 : i.toNat + 8 ≤ a.size)
     (hu : i.toNat + 8 ≤ USize.size) : UInt8 :=
   a.uget (i + USize.ofNat k) (by
     rw [usize_add (by omega) (by omega)]
@@ -65,7 +69,7 @@ private theorem byteAt_eq {a : ByteArray} {i : USize} {k : Nat} {hk : k < 8} {h8
     simp [hi]
 
 /-- Eight bytes at `i`, the first the least significant. -/
-@[inline] private def loadBuffer (a : ByteArray) (i : USize) (h8 : i.toNat + 8 ≤ a.size)
+@[inline] def loadBuffer (a : ByteArray) (i : USize) (h8 : i.toNat + 8 ≤ a.size)
     (hu : i.toNat + 8 ≤ USize.size) : BitBuffer :=
   (((((((BitBuffer.push ⟨0, 0⟩ (byteAt a i 0 (by decide) h8 hu)).push (byteAt a i 1 (by decide) h8 hu)).push
     (byteAt a i 2 (by decide) h8 hu)).push (byteAt a i 3 (by decide) h8 hu)).push
@@ -243,8 +247,8 @@ allocates. -/
 def BitBuffer.fillSlow (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (word count : UInt64) (p : USize) : Refilled :=
   if h : count ≤ 56 ∧ p < stop then
     have hlt := USize.lt_iff_toNat_lt.mp h.2
-    have hnext : (p + USize.ofNat 1).toNat = p.toNat + 1 :=
-      usize_add (by decide) (Nat.lt_of_le_of_lt (by omega) stop.toNat_lt_size)
+    have hnext : (p + USize.ofNat 1).toNat = p.toNat + 1 := by
+      exact usize_add (by decide) (Nat.lt_of_le_of_lt (by omega) stop.toNat_lt_size)
     let b := (BitBuffer.mk word count).push (a.uget p (by omega))
     BitBuffer.fillSlow a stop hs b.word b.count (p + USize.ofNat 1)
   else ⟨word, count, p⟩

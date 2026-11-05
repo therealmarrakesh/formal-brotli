@@ -1,4 +1,8 @@
-import Brotli.Decoder.CopyRing
+module
+
+public import Brotli.Decoder.CopyRing
+
+@[expose] public section
 
 /-!
 # The compiled command loop

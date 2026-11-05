@@ -1,4 +1,8 @@
-import Brotli.Decoder.SmallRead
+module
+
+public import Brotli.Decoder.SmallRead
+
+@[expose] public section
 
 /-!
 # What the spec still has to do in a header

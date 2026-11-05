@@ -1,5 +1,9 @@
-import Brotli.Decoder.StepLiterals
-import Brotli.Decoder.DictBytes
+module
+
+public import Brotli.Decoder.StepLiterals
+public import Brotli.Decoder.DictBytes
+
+@[expose] public section
 
 /-!
 # The distance's steps

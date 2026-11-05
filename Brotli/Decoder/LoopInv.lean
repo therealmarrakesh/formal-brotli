@@ -1,4 +1,8 @@
-import Brotli.Decoder.Loop
+module
+
+public import Brotli.Decoder.Loop
+
+@[expose] public section
 
 /-!
 # What the compiled command loop carries

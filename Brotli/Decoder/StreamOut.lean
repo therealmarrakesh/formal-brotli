@@ -1,4 +1,8 @@
-import Brotli.Decoder.StreamRun
+module
+
+public import Brotli.Decoder.StreamRun
+
+@[expose] public section
 
 /-!
 # A place's output is the start of the stream's

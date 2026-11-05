@@ -1,4 +1,8 @@
-import Brotli.Decoder.OrderSpec
+module
+
+public import Brotli.Decoder.OrderSpec
+
+@[expose] public section
 
 /-!
 # A header's tables, as far as its bits go

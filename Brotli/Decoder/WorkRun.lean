@@ -1,4 +1,8 @@
-import Brotli.Decoder.WorkStream
+module
+
+public import Brotli.Decoder.WorkStream
+
+@[expose] public section
 
 /-!
 # The work of the decoder's loop and of a call, against a potential

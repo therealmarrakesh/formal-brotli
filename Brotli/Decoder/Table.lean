@@ -1,5 +1,9 @@
-import Brotli.Decoder.Slots
-import Brotli.Decoder.Codes
+module
+
+public import Brotli.Decoder.Slots
+public import Brotli.Decoder.Codes
+
+@[expose] public section
 
 /-!
 # The two-level table

@@ -1,5 +1,9 @@
-import Brotli.Decoder.Reader
-import Brotli.Decoder.CmdLut
+module
+
+public import Brotli.Decoder.Reader
+public import Brotli.Decoder.CmdLut
+
+@[expose] public section
 
 /-!
 # Block switches

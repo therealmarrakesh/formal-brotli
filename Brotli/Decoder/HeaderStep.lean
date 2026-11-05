@@ -1,4 +1,8 @@
-import Brotli.Decoder.HeaderState
+module
+
+public import Brotli.Decoder.HeaderState
+
+@[expose] public section
 
 /-!
 # The header's steps that read small fields

@@ -1,5 +1,9 @@
-import Brotli.Decoder.HeaderDone
-import Brotli.Decoder.Loop
+module
+
+public import Brotli.Decoder.HeaderDone
+public import Brotli.Decoder.Loop
+
+@[expose] public section
 
 /-!
 # What the spec still has to do in a stream

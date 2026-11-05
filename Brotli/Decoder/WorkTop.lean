@@ -1,4 +1,8 @@
-import Brotli.Decoder.WorkIface
+module
+
+public import Brotli.Decoder.WorkIface
+
+@[expose] public section
 
 /-!
 # The decoder's work, call by call

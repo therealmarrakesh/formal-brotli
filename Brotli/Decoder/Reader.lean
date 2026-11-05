@@ -1,5 +1,9 @@
-import Brotli.Decoder.Lookup
-import Brotli.Decoder.Refill
+module
+
+public import Brotli.Decoder.Lookup
+public import Brotli.Decoder.Refill
+
+@[expose] public section
 
 /-!
 # Reading one thing from the bit buffer

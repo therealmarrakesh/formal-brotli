@@ -1,4 +1,8 @@
-import Brotli.Decoder.Block
+module
+
+public import Brotli.Decoder.Block
+
+@[expose] public section
 
 /-!
 # Small reads in a meta-block's header

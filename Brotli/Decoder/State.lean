@@ -1,6 +1,10 @@
-import Brotli.Decoder.Literals
-import Brotli.Decoder.Block
-import Brotli.Decoder.Fixed
+module
+
+public import Brotli.Decoder.Literals
+public import Brotli.Decoder.Block
+public import Brotli.Decoder.Fixed
+
+@[expose] public section
 
 /-!
 # The command loop's state

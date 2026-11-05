@@ -1,5 +1,9 @@
-import Brotli.Decoder.HeaderRest
-import Brotli.Decoder.Order
+module
+
+public import Brotli.Decoder.HeaderRest
+public import Brotli.Decoder.Order
+
+@[expose] public section
 
 /-!
 # A header's reading, in order

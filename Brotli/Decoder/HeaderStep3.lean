@@ -1,4 +1,8 @@
-import Brotli.Decoder.HeaderStep2
+module
+
+public import Brotli.Decoder.HeaderStep2
+
+@[expose] public section
 
 /-!
 # The header's context maps and groups of codes, between their prefix codes

@@ -1,4 +1,8 @@
-import Brotli.Decoder.HeaderMap
+module
+
+public import Brotli.Decoder.HeaderMap
+
+@[expose] public section
 
 /-!
 # The header machine, and the header it leaves

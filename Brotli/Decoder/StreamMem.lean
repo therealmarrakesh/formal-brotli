@@ -1,4 +1,8 @@
-import Brotli.Decoder.StreamCall
+module
+
+public import Brotli.Decoder.StreamCall
+
+@[expose] public section
 
 /-!
 # What a state holds

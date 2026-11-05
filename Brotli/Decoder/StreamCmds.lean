@@ -1,6 +1,10 @@
-import Brotli.Decoder.StreamState
-import Brotli.Decoder.Positions
-import Brotli.Decoder.LoopK
+module
+
+public import Brotli.Decoder.StreamState
+public import Brotli.Decoder.Positions
+public import Brotli.Decoder.LoopK
+
+@[expose] public section
 
 /-!
 # From a header to its commands, and on

@@ -1,5 +1,9 @@
-import Brotli.Spec.Transform
-import Brotli.Spec.DictionaryData
+module
+
+public import Brotli.Spec.Transform
+public import Brotli.Spec.DictionaryData
+
+@[expose] public section
 
 /-!
 # Static dictionary

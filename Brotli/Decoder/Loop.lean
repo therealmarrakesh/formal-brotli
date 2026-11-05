@@ -1,4 +1,8 @@
-import Brotli.Decoder.StepDistance
+module
+
+public import Brotli.Decoder.StepDistance
+
+@[expose] public section
 
 /-!
 # The command loop

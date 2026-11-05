@@ -1,4 +1,8 @@
-import Brotli.Decoder.Table
+module
+
+public import Brotli.Decoder.Table
+
+@[expose] public section
 
 /-!
 # How big a table is

@@ -1,9 +1,13 @@
-import Brotli.Decoder.Order
-import Brotli.Decoder.Refill
-import Brotli.Decoder.Lookup
-import Brotli.Decoder.Window
-import Brotli.Decoder.ContextLut
-import Brotli.Decoder.Copy
+module
+
+public import Brotli.Decoder.Order
+public import Brotli.Decoder.Refill
+public import Brotli.Decoder.Lookup
+public import Brotli.Decoder.Window
+public import Brotli.Decoder.ContextLut
+public import Brotli.Decoder.Copy
+
+@[expose] public section
 
 /-!
 # The literal loop

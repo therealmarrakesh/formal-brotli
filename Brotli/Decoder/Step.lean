@@ -1,6 +1,10 @@
-import Brotli.Decoder.State
-import Brotli.Decoder.Copy
-import Brotli.Decoder.Order
+module
+
+public import Brotli.Decoder.State
+public import Brotli.Decoder.Copy
+public import Brotli.Decoder.Order
+
+@[expose] public section
 
 /-!
 # One step of the command loop

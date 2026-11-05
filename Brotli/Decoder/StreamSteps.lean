@@ -1,4 +1,8 @@
-import Brotli.Decoder.StreamCmds
+module
+
+public import Brotli.Decoder.StreamCmds
+
+@[expose] public section
 
 /-!
 # The stream's steps

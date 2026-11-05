@@ -1,5 +1,9 @@
-import Brotli.Decoder.HeaderDone
-import Brotli.Decoder.Cost
+module
+
+public import Brotli.Decoder.HeaderDone
+public import Brotli.Decoder.Cost
+
+@[expose] public section
 
 /-!
 # The work of a header step
@@ -27,8 +31,8 @@ private theorem cusize_add {p : USize} {n : Nat} (hn : n < 2 ^ 32) (h : p.toNat 
 def fillSlowW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (word count : UInt64) (p : USize) : Nat :=
   if h : count ≤ 56 ∧ p < stop then
     have hlt := USize.lt_iff_toNat_lt.mp h.2
-    have hnext : (p + USize.ofNat 1).toNat = p.toNat + 1 :=
-      cusize_add (by decide) (Nat.lt_of_le_of_lt (by omega) stop.toNat_lt_size)
+    have hnext : (p + USize.ofNat 1).toNat = p.toNat + 1 := by
+      exact cusize_add (by decide) (Nat.lt_of_le_of_lt (by omega) stop.toNat_lt_size)
     let b := (BitBuffer.mk word count).push (a.uget p (by omega))
     1 + fillSlowW a stop hs b.word b.count (p + USize.ofNat 1)
   else 1

@@ -1,4 +1,8 @@
-import Brotli.Decoder.HeaderStep
+module
+
+public import Brotli.Decoder.HeaderStep
+
+@[expose] public section
 
 /-!
 # More of the header's steps

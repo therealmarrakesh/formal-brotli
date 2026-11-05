@@ -1,4 +1,8 @@
-import Brotli.Spec.Bits
+module
+
+public import Brotli.Spec.Bits
+
+@[expose] public section
 
 /-!
 # Prefix codes

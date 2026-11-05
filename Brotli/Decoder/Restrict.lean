@@ -1,4 +1,8 @@
-import Brotli.Decoder.StreamOrder
+module
+
+public import Brotli.Decoder.StreamOrder
+
+@[expose] public section
 
 /-!
 # The reading in order looks at no bit it doesn't take

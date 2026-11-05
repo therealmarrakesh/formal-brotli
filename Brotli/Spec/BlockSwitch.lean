@@ -1,4 +1,8 @@
-import Brotli.Spec.PrefixCode
+module
+
+public import Brotli.Spec.PrefixCode
+
+@[expose] public section
 
 /-!
 # Encoding of block-switch commands

@@ -1,4 +1,8 @@
-import Brotli.Decoder.LoopInv
+module
+
+public import Brotli.Decoder.LoopInv
+
+@[expose] public section
 
 /-!
 # Copy and word runs that return only the window

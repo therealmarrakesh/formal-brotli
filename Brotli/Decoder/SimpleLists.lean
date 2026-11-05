@@ -1,4 +1,8 @@
-import Brotli.Decoder.HeaderBuild
+module
+
+public import Brotli.Decoder.HeaderBuild
+
+@[expose] public section
 
 /-!
 # A simple prefix code's lists

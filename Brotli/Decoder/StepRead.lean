@@ -1,5 +1,9 @@
-import Brotli.Decoder.Step
-import Brotli.Decoder.CmdLut
+module
+
+public import Brotli.Decoder.Step
+public import Brotli.Decoder.CmdLut
+
+@[expose] public section
 
 /-!
 # The steps that read bits

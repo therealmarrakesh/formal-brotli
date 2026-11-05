@@ -1,4 +1,6 @@
 -- This module serves as the root of the `Brotli` library.
 -- Import modules here that should be built as part of the library.
-import Brotli.Spec
-import Brotli.Decoder
+module
+
+public import Brotli.Spec
+public import Brotli.Decoder

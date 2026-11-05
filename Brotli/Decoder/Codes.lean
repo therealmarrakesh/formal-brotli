@@ -1,4 +1,8 @@
-import Brotli.Decoder.Hit
+module
+
+public import Brotli.Decoder.Hit
+
+@[expose] public section
 
 /-!
 # Walking a code's symbols

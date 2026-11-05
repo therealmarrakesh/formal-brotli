@@ -1,6 +1,10 @@
-import Brotli.Decoder.StreamMem
-import Brotli.Decoder.StreamLimit
-import Brotli.Decoder.Restrict
+module
+
+public import Brotli.Decoder.StreamMem
+public import Brotli.Decoder.StreamLimit
+public import Brotli.Decoder.Restrict
+
+@[expose] public section
 
 /-!
 # The decoder

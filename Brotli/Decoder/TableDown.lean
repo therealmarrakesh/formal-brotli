@@ -1,4 +1,8 @@
-import Brotli.Decoder.TableSize
+module
+
+public import Brotli.Decoder.TableSize
+
+@[expose] public section
 
 /-!
 # Building a table longest codes first

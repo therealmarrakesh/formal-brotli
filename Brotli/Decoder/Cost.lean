@@ -1,5 +1,9 @@
-import Brotli.Decoder.TableSize
-import Brotli.Decoder.Builder
+module
+
+public import Brotli.Decoder.TableSize
+public import Brotli.Decoder.Builder
+
+@[expose] public section
 
 /-!
 # The decoder's work, loop by loop

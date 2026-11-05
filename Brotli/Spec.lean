@@ -1,4 +1,6 @@
-import Brotli.Spec.Stream
+module
+
+public import Brotli.Spec.Stream
 
 /-!
 # Brotli specification

@@ -1,4 +1,8 @@
-import Brotli.Decoder.HeaderSyms
+module
+
+public import Brotli.Decoder.HeaderSyms
+
+@[expose] public section
 
 /-!
 # A context map's values

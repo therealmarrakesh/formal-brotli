@@ -1,4 +1,8 @@
-import Brotli.Decoder.HeaderLens
+module
+
+public import Brotli.Decoder.HeaderLens
+
+@[expose] public section
 
 /-!
 # A prefix code's lengths

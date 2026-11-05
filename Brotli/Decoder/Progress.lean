@@ -1,4 +1,8 @@
-import Brotli.Decoder.OrderSpec
+module
+
+public import Brotli.Decoder.OrderSpec
+
+@[expose] public section
 
 /-!
 # How far the reading in order goes without reading or producing

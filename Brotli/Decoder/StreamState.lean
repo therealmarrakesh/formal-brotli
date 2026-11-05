@@ -1,4 +1,8 @@
-import Brotli.Decoder.StreamRaw
+module
+
+public import Brotli.Decoder.StreamRaw
+
+@[expose] public section
 
 /-!
 # The stream's state

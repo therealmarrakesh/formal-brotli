@@ -1,4 +1,8 @@
-import Brotli.Decoder.StreamRest
+module
+
+public import Brotli.Decoder.StreamRest
+
+@[expose] public section
 
 /-!
 # Small reads at the stream's level

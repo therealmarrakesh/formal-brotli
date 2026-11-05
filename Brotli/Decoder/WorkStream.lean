@@ -1,4 +1,8 @@
-import Brotli.Decoder.WorkCmd
+module
+
+public import Brotli.Decoder.WorkCmd
+
+@[expose] public section
 
 /-!
 # The work of the stream's steps and of a call

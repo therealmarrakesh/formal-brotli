@@ -1,4 +1,8 @@
-import Brotli.Decoder.HeaderCode
+module
+
+public import Brotli.Decoder.HeaderCode
+
+@[expose] public section
 
 /-!
 # The code lengths of the code length alphabet

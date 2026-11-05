@@ -1,9 +1,13 @@
-import Brotli.Spec.PrefixCode
-import Brotli.Spec.Distance
-import Brotli.Spec.InsertCopy
-import Brotli.Spec.BlockSwitch
-import Brotli.Spec.Context
-import Brotli.Spec.Dictionary
+module
+
+public import Brotli.Spec.PrefixCode
+public import Brotli.Spec.Distance
+public import Brotli.Spec.InsertCopy
+public import Brotli.Spec.BlockSwitch
+public import Brotli.Spec.Context
+public import Brotli.Spec.Dictionary
+
+@[expose] public section
 
 /-!
 # Compressed data format

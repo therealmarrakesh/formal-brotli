@@ -1,5 +1,9 @@
-import Brotli.Decoder.StreamStart
-import Brotli.Decoder.StreamOrder
+module
+
+public import Brotli.Decoder.StreamStart
+public import Brotli.Decoder.StreamOrder
+
+@[expose] public section
 
 /-!
 # Uncompressed bytes and metadata

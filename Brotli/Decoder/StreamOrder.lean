@@ -1,5 +1,9 @@
-import Brotli.Decoder.StreamRest
-import Brotli.Decoder.HeaderOrder
+module
+
+public import Brotli.Decoder.StreamRest
+public import Brotli.Decoder.HeaderOrder
+
+@[expose] public section
 
 /-!
 # The stream's places, and the stream read in order

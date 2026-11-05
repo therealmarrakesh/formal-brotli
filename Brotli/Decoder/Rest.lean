@@ -1,4 +1,8 @@
-import Brotli.Spec.Stream
+module
+
+public import Brotli.Spec.Stream
+
+@[expose] public section
 
 /-!
 # What the spec still has to do

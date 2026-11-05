@@ -1,7 +1,11 @@
-import Brotli.Decoder.HeaderOrder
-import Brotli.Decoder.Builder
-import Brotli.Decoder.TableSize
-import Brotli.Decoder.State
+module
+
+public import Brotli.Decoder.HeaderOrder
+public import Brotli.Decoder.Builder
+public import Brotli.Decoder.TableSize
+public import Brotli.Decoder.State
+
+@[expose] public section
 
 /-!
 # The header machine's state

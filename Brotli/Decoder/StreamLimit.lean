@@ -1,4 +1,8 @@
-import Brotli.Decoder.StreamCall
+module
+
+public import Brotli.Decoder.StreamCall
+
+@[expose] public section
 
 /-!
 # The limit changes nothing but whether the decoder stops

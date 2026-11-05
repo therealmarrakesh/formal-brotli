@@ -1,4 +1,8 @@
-import Brotli.Decoder.SimpleLists
+module
+
+public import Brotli.Decoder.SimpleLists
+
+@[expose] public section
 
 /-!
 # A prefix code's first bits

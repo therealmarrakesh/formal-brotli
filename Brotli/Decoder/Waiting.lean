@@ -1,4 +1,8 @@
-import Brotli.Decoder.Layout
+module
+
+public import Brotli.Decoder.Layout
+
+@[expose] public section
 
 /-!
 # The bytes left waiting

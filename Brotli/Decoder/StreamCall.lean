@@ -1,5 +1,9 @@
-import Brotli.Decoder.Interface
-import Brotli.Decoder.StreamOut
+module
+
+public import Brotli.Decoder.Interface
+public import Brotli.Decoder.StreamOut
+
+@[expose] public section
 
 /-!
 # A call

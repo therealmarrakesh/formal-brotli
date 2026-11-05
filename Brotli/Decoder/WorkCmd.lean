@@ -1,5 +1,9 @@
-import Brotli.Decoder.WorkHdr
-import Brotli.Decoder.Work
+module
+
+public import Brotli.Decoder.WorkHdr
+public import Brotli.Decoder.Work
+
+@[expose] public section
 
 /-!
 # The work of a meta-block's commands
@@ -1733,6 +1737,8 @@ theorem runCmdW_count {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a :
         | .next => runCmdW H k a stop hs (n - USize.ofNat 1) (stepCmd H k a stop hs st pos) (stepCmd H k a stop hs st pos).pos
         | _ => 0 := by
       rw [runCmdW, dite_eq_right hn]
+      -- in a module this `match` is a matcher of its own, not `runCmdW`'s, so `rw`'s closing `rfl` doesn't see it
+      rfl
     have hrun : runCmd H k a stop hs n st pos = match (stepCmd H k a stop hs st pos).status with
         | .next => runCmd H k a stop hs (n - USize.ofNat 1) (stepCmd H k a stop hs st pos) (stepCmd H k a stop hs st pos).pos
         | _ => stepCmd H k a stop hs st pos := by

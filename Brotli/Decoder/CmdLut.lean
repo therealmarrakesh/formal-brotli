@@ -1,4 +1,8 @@
-import Brotli.Decoder.Lookup
+module
+
+public import Brotli.Decoder.Lookup
+
+@[expose] public section
 
 /-!
 # The command lookup
@@ -135,14 +139,14 @@ theorem lt26 {c : UInt64} (h : c < 26) : c.toNat < 26 := by
   slotWord cmdLut (c + c).toUSize
     (by
       rw [slot_even hc, cmdLut_size]
-      omega) cmdLut_size32
+      omega) (by exact cmdLut_size32)
 
 /-- A symbol's copy slot. -/
 @[inline] def copyRow (c : UInt64) (hc : c.toNat < 704) : UInt64 :=
   slotWord cmdLut (c + c + 1).toUSize
     (by
       rw [slot_odd hc, cmdLut_size]
-      omega) cmdLut_size32
+      omega) (by exact cmdLut_size32)
 
 /-- A slot's extra bits. -/
 @[inline] def rowBits (row : UInt64) : UInt64 := row &&& 255
@@ -225,7 +229,7 @@ private theorem count_small : ∀ i, i < 26 → (blockCountCodes.getD i (0, 0, 0
   slotWord countLut c.toUSize
     (by
       rw [u64_usize (by omega), countLut_size]
-      omega) countLut_size32
+      omega) (by exact countLut_size32)
 
 /-- What a block count slot holds. -/
 theorem countRow_fields {c : UInt64} (hc : c.toNat < 26) :

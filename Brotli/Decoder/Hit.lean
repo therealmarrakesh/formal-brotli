@@ -1,5 +1,9 @@
-import Brotli.Decoder.BitBuffer
-import Brotli.Decoder.Complete
+module
+
+public import Brotli.Decoder.BitBuffer
+public import Brotli.Decoder.Complete
+
+@[expose] public section
 
 /-!
 # Which symbol a bit pattern decodes to

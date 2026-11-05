@@ -1,4 +1,8 @@
-import Brotli.Decoder.StreamSteps
+module
+
+public import Brotli.Decoder.StreamSteps
+
+@[expose] public section
 
 /-!
 # The stream's loop

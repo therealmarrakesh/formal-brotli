@@ -1,4 +1,8 @@
-import Brotli.Decoder.Rest
+module
+
+public import Brotli.Decoder.Rest
+
+@[expose] public section
 
 /-!
 # The spec's reading, in order

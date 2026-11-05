@@ -1,4 +1,8 @@
-import Brotli.Spec.Stream
+module
+
+public import Brotli.Spec.Stream
+
+@[expose] public section
 
 /-!
 # The decoder's interface and goals

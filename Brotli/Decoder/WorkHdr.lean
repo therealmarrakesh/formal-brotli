@@ -1,5 +1,9 @@
-import Brotli.Decoder.Progress
-import Brotli.Decoder.CostHeader
+module
+
+public import Brotli.Decoder.Progress
+public import Brotli.Decoder.CostHeader
+
+@[expose] public section
 
 /-!
 # The work of a header

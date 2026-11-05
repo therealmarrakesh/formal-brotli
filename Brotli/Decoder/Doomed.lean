@@ -1,4 +1,8 @@
-import Brotli.Decoder.OrderSpec
+module
+
+public import Brotli.Decoder.OrderSpec
+
+@[expose] public section
 
 /-!
 # A doomed prefix stays within its meta-block

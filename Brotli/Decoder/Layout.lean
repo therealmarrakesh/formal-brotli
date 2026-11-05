@@ -1,4 +1,8 @@
-import Brotli.Decoder.StreamTop
+module
+
+public import Brotli.Decoder.StreamTop
+
+@[expose] public section
 
 /-!
 # Where the chunk sits

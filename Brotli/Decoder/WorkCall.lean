@@ -1,4 +1,8 @@
-import Brotli.Decoder.WorkRun
+module
+
+public import Brotli.Decoder.WorkRun
+
+@[expose] public section
 
 /-!
 # The work of a call, against the potential

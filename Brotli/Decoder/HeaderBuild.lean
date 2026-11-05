@@ -1,4 +1,8 @@
-import Brotli.Decoder.HeaderStep3
+module
+
+public import Brotli.Decoder.HeaderStep3
+
+@[expose] public section
 
 /-!
 # A prefix code finished
@@ -628,19 +632,11 @@ theorem tableDone_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {c : PrefixCode
         subst hsz
         cases k <;> simp only [budO, groupsFrom, Nat.add_mul, Nat.one_mul] <;> omega
     have hroom : st.d.arena.size + tableBytes c ≤ st.d.arenaCap.toNat := by omega
-    have hstart : (match st.role with
-        | .map => mapTableDone st (soloTable st.head st.next single sym st.size ha) (soloTable_fits ha)
-        | _ =>
-          if hs : single = true then installTable (growSingle st sym ⟨har.2, har.1⟩) (UInt64.ofNat (st.d.arena.size / 2)) (growSingle_ok hi)
-          else installTable (growLens st (tableArgs_build ha hs har)) (UInt64.ofNat (st.d.arena.size / 2)) (growLens_ok hi)) =
-        (if hs : single = true then installTable (growSingle st sym ⟨har.2, har.1⟩) (UInt64.ofNat (st.d.arena.size / 2)) (growSingle_ok hi)
-          else installTable (growLens st (tableArgs_build ha hs har)) (UInt64.ofNat (st.d.arena.size / 2)) (growLens_ok hi)) := by
-      cases hr : st.role with
-      | map => exact absurd hr hmap
-      | type => rfl
-      | count => rfl
-      | codes => rfl
-    rw [hstart]
+    -- a `match` written here would be a matcher of its own, which `rw` doesn't find in `tableDone`'s, so the
+    -- goal's own match is split
+    split
+    · rename_i e
+      exact absurd e hmap
     have hbase : (UInt64.ofNat (st.d.arena.size / 2)).toNat = st.d.arena.size / 2 := u64_lit (by omega)
     have hfinish : ∀ {A1 : ByteArray} {S : Hd} {hS : InstallOk S.role S.idx S.fill}, S = { st with d := { st.d with arena := A1 } } →
         Built st.d.arena A1 c → A1.size ≤ st.d.arenaCap.toNat → A1.size = st.d.arena.size + tableBytes c →

@@ -1,5 +1,9 @@
-import Brotli.Decoder.WorkCall
-import Brotli.Decoder.MemAt
+module
+
+public import Brotli.Decoder.WorkCall
+public import Brotli.Decoder.MemAt
+
+@[expose] public section
 
 /-!
 # The decoder's work at its interface

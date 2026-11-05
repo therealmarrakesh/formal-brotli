@@ -1,5 +1,9 @@
-import Brotli.Decoder.Copy
-import Brotli.Decoder.CmdLut
+module
+
+public import Brotli.Decoder.Copy
+public import Brotli.Decoder.CmdLut
+
+@[expose] public section
 
 /-!
 # Dictionary words in byte arrays
@@ -167,8 +171,8 @@ private theorem usize_plus {a : USize} {n : Nat} (hn : n < 2 ^ 16) (h : a.toNat 
 /-- Adds the bytes `ferment` gives for a word starting at `pos`, with `n` bytes in it. -/
 def fermentPush (t : ByteArray) (hs : t.size < 2 ^ 24) (pos n : USize) (buf : ByteArray) (h : pos.toNat + n.toNat ≤ t.size)
     (hn : n.toNat ≠ 0) : ByteArray :=
-  have h1 : (pos + USize.ofNat 1).toNat = pos.toNat + 1 := usize_plus (by decide) (by omega)
-  have h2 : (pos + USize.ofNat 2).toNat = pos.toNat + 2 := usize_plus (by decide) (by omega)
+  have h1 : (pos + USize.ofNat 1).toNat = pos.toNat + 1 := by exact usize_plus (by decide) (by omega)
+  have h2 : (pos + USize.ofNat 2).toNat = pos.toNat + 2 := by exact usize_plus (by decide) (by omega)
   let b := t.uget pos (by omega)
   if b < 192 then buf.push (if 97 ≤ b ∧ b ≤ 122 then b ^^^ 32 else b)
   else if b < 224 then
@@ -310,7 +314,7 @@ def fermentRun (t : ByteArray) (hs : t.size < 2 ^ 24) (pos n : USize) (buf : Byt
     have hnz := usize_ne hn
     have hu := fermentUsed_bounds (t.uget pos (by omega)) hnz
     have hp : (pos + fermentUsed (t.uget pos (by omega)) n).toNat =
-        pos.toNat + (fermentUsed (t.uget pos (by omega)) n).toNat := usize_add_small (by omega)
+        pos.toNat + (fermentUsed (t.uget pos (by omega)) n).toNat := by exact usize_add_small (by omega)
     have hm : (n - fermentUsed (t.uget pos (by omega)) n).toNat =
         n.toNat - (fermentUsed (t.uget pos (by omega)) n).toNat :=
       USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr hu.2)
@@ -600,7 +604,7 @@ theorem elementStep_spec {t : ByteArray} {hs : t.size < 2 ^ 24} {kind k : UInt8}
     congr 2
     omega
 
-private theorem base_toNat {id : USize} (hid : id.toNat < 121) : (id * USize.ofNat 32).toNat = 32 * id.toNat := by
+theorem base_toNat {id : USize} (hid : id.toNat < 121) : (id * USize.ofNat 32).toNat = 32 * id.toNat := by
   rw [USize.toNat_mul, usize_lit (by decide), Nat.mul_comm, ← USize.size_eq_two_pow]
   have := USize.le_size
   exact Nat.mod_eq_of_lt (by omega)
@@ -714,7 +718,7 @@ private theorem len_small : ∀ i, i < 25 → NDBITS.getD i 0 ≤ 11 ∧ DOFFSET
   slotWord lenLut c.toUSize
     (by
       rw [word_toUSize (by omega), lenLut_size]
-      omega) lenLut_size32
+      omega) (by exact lenLut_size32)
 
 /-- What a word length's slot holds. -/
 theorem lenRow_fields {c : UInt64} (hc : c.toNat < 25) :
@@ -765,7 +769,7 @@ instance (clen wordId : UInt64) : Decidable (dictValid clen wordId) :=
 @[inline] def dictOff (row clen wordId : UInt64) : UInt64 :=
   rowBase row + (wordId &&& (((1 : UInt64) <<< rowBits row) - 1)) * clen
 
-private theorem dict_parts {clen wordId row : UInt64} (h4 : 4 ≤ clen.toNat) (h24 : clen.toNat ≤ 24)
+theorem dict_parts {clen wordId row : UInt64} (h4 : 4 ≤ clen.toNat) (h24 : clen.toNat ≤ 24)
     (hb : (rowBits row).toNat = NDBITS.getD clen.toNat 0) (hbase : (rowBase row).toNat = DOFFSET clen.toNat) :
     (dictTid row wordId).toNat = wordId.toNat >>> NDBITS.getD clen.toNat 0 ∧
       (dictOff row clen wordId).toNat = wordOffset clen.toNat (wordId.toNat % NWORDS clen.toNat) ∧

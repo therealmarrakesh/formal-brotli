@@ -1,7 +1,11 @@
-import Brotli.Decoder.TableDown
-import Brotli.Decoder.Copy
-import Brotli.Decoder.Lookup
-import Brotli.Decoder.Fixed
+module
+
+public import Brotli.Decoder.TableDown
+public import Brotli.Decoder.Copy
+public import Brotli.Decoder.Lookup
+public import Brotli.Decoder.Fixed
+
+@[expose] public section
 
 /-!
 # Building a table in fixed-width values
@@ -395,7 +399,7 @@ private theorem rev8_idx (v : UInt64) : (v &&& 255).toUSize.toNat < rev8Lut.size
   omega
 
 /-- A byte, reversed. -/
-@[inline] def rev8 (v : UInt64) : UInt64 := (rev8Lut.uget (v &&& 255).toUSize (rev8_idx v)).toUInt64
+@[inline] def rev8 (v : UInt64) : UInt64 := (rev8Lut.uget (v &&& 255).toUSize (by exact rev8_idx v)).toUInt64
 
 private theorem rev8_toNat (v : UInt64) : (rev8 v).toNat = revBits 8 v.toNat := by
   unfold rev8
@@ -697,7 +701,7 @@ array if it has none. -/
       (putSlot t1 rp (lU + ((half - baseU) <<< 4)) (by
         rw [size_zeroExtend]
         have := long_root h
-        omega) (long_size h hl))
+        omega) (by exact long_size h hl))
       (half + (rv >>> 8)) 1
       (by rw [size_putSlot]; exact long_size h hl)
       (by
@@ -706,7 +710,7 @@ array if it has none. -/
         exact long_open h hl k hk)
   else
     fillRun (lU + (s <<< 4)) (1 <<< (lU - 8)) t (baseU + (e >>> 4) + (rv >>> 8)) (1 <<< ((e &&& 15) - lU))
-      (by have := h.ok.h32; omega) (long_sub h hz hl hb)
+      (by have := h.ok.h32; omega) (by exact long_sub h hz hl hb)
 
 /-- The slots of a short code word are root slots. -/
 private theorem short_in {t : ByteArray} {base l c : Nat} (h : BuildOk t base l c) (hl8 : l ≤ 8) {lU cU baseU : UInt64}
@@ -738,7 +742,7 @@ private theorem short_in {t : ByteArray} {base l c : Nat} (h : BuildOk t base l 
   let rv := revFast lU cU
   if hl8 : lU ≤ 8 then
     fillRun (lU + (s <<< 4)) (1 <<< lU) t (baseU + rv) (1 <<< (8 - lU)) (by have := h.h32; omega)
-      (short_in h (by rw [← hl]; exact UInt64.le_iff_toNat_le.mp hl8) hl hc hb)
+      (by exact short_in h (by rw [← hl]; exact UInt64.le_iff_toNat_le.mp hl8) hl hc hb)
   else
     let rp := baseU + (rv &&& 255)
     have hlong : LongOk t base l c rv rp (getSlot t rp (by

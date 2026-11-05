@@ -1,5 +1,9 @@
-import Brotli.Decoder.Rest
-import Brotli.Decoder.Window
+module
+
+public import Brotli.Decoder.Rest
+public import Brotli.Decoder.Window
+
+@[expose] public section
 
 /-!
 # The copy loops

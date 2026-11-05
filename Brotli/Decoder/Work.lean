@@ -1,5 +1,9 @@
-import Brotli.Decoder.Progress
-import Brotli.Decoder.Waiting
+module
+
+public import Brotli.Decoder.Progress
+public import Brotli.Decoder.Waiting
+
+@[expose] public section
 
 /-!
 # Steps of the reading in order

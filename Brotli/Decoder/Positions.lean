@@ -1,5 +1,9 @@
-import Brotli.Decoder.Loop
-import Brotli.Decoder.HeaderDone
+module
+
+public import Brotli.Decoder.Loop
+public import Brotli.Decoder.HeaderDone
+
+@[expose] public section
 
 /-!
 # Steps that only record the position

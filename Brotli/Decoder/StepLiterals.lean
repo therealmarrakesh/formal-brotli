@@ -1,4 +1,8 @@
-import Brotli.Decoder.StepRead
+module
+
+public import Brotli.Decoder.StepRead
+
+@[expose] public section
 
 /-!
 # The literals' step

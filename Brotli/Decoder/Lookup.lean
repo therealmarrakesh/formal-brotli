@@ -1,5 +1,9 @@
-import Brotli.Decoder.Table
-import Brotli.Decoder.BitBuffer
+module
+
+public import Brotli.Decoder.Table
+public import Brotli.Decoder.BitBuffer
+
+@[expose] public section
 
 /-!
 # Table lookup
