@@ -71,7 +71,7 @@ def msValue (r : Rd) : MetaStart :=
   else Rd.short b0
 
 /-- Reads the start of a meta-block. -/
-def metaStartFast (b0 : BitBuffer) : Rd :=
+@[inline] def metaStartFast (b0 : BitBuffer) : Rd :=
   if 1 ≤ b0.count then
     let l := b0.peek 1
     let b1 := b0.drop 1
@@ -295,7 +295,7 @@ theorem wbitsChain_eq (bs : List Bool) : readWBITS bs = wbitsChain bs := by
     (try cases a) <;> (try cases b) <;> (try cases c) <;> (try cases d) <;> (try cases e) <;> (try cases f) <;> (try cases g) <;> rfl
 
 /-- Reads WBITS, into `a`. -/
-def wbitsFast (b0 : BitBuffer) : Rd :=
+@[inline] def wbitsFast (b0 : BitBuffer) : Rd :=
   if 1 ≤ b0.count then
     let b1 := b0.drop 1
     if b0.peek 1 = 0 then Rd.ok b1 16 0 0 0 0

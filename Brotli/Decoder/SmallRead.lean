@@ -152,7 +152,7 @@ theorem drop_wf' {b : BitBuffer} (hw : b.Wf) {k : UInt64} (hk : k.toNat < 64) (h
 /-! ### The variable-length code -/
 
 /-- Reads the variable-length code of NBLTYPES and the other counts, into `a`. -/
-def varLenFast (b0 : BitBuffer) : Rd :=
+@[inline] def varLenFast (b0 : BitBuffer) : Rd :=
   if 1 ≤ b0.count then
     let first := b0.peek 1
     let b1 := b0.drop 1
@@ -243,7 +243,7 @@ private theorem ne_toNat {x n : UInt64} (h : ¬ x = n) : ¬ x.toNat = n.toNat :=
 /-! ### RLEMAX -/
 
 /-- Reads RLEMAX, into `a`. -/
-def rlemaxFast (b0 : BitBuffer) : Rd :=
+@[inline] def rlemaxFast (b0 : BitBuffer) : Rd :=
   if 1 ≤ b0.count then
     let flag := b0.peek 1
     let b1 := b0.drop 1
@@ -301,7 +301,7 @@ theorem cclChain_eq (bs : List Bool) : readCodeLengthCodeLength bs = cclChain bs
     (try cases a) <;> (try cases b) <;> (try cases c) <;> (try cases d) <;> rfl
 
 /-- Reads a code length of a code length symbol, into `a`. -/
-def cclFast (b0 : BitBuffer) : Rd :=
+@[inline] def cclFast (b0 : BitBuffer) : Rd :=
   if 2 ≤ b0.count then
     let v := b0.peek 2
     let b1 := b0.drop 2
@@ -547,7 +547,7 @@ def simpleCode (size s1 s2 s3 s4 e : Nat) : PrefixCode :=
   else .canonical (lengthsOf size [(s1, 1), (s2, 2), (s3, 3), (s4, 3)])
 
 /-- Reads a simple prefix code after its first two bits: its symbols into `a` to `d`, and its shape into `e`. -/
-def simpleFast (size bits : UInt64) (b0 : BitBuffer) : Rd :=
+@[inline] def simpleFast (size bits : UInt64) (b0 : BitBuffer) : Rd :=
   if 2 ≤ b0.count then
     let nsym := b0.peek 2
     let b1 := b0.drop 2
@@ -811,7 +811,7 @@ variable {t : ByteArray} {base : USize} {hfit : TableFits t base.toNat} {h32 : t
   else Rd.bad b0
 
 /-- Reads a block count, into `a`. -/
-def blockCountFast (t : ByteArray) (base : USize) (hfit : TableFits t base.toNat) (h32 : t.size < 2 ^ 32) (b0 : BitBuffer) : Rd :=
+@[inline] def blockCountFast (t : ByteArray) (base : USize) (hfit : TableFits t base.toNat) (h32 : t.size < 2 ^ 32) (b0 : BitBuffer) : Rd :=
   let v := lookup t base b0.word hfit h32
   if wordBits v ≤ b0.count then countFinish b0 v else Rd.short b0
 
@@ -897,7 +897,7 @@ def mapSym (rlemax : Nat) (code : PrefixCode) (bs : List Bool) : Option ((Nat ×
     | none => readInt p.1 p.2 >>= fun q => some ((0, (1 <<< p.1) + q.1), q.2)
 
 /-- Reads one symbol of a context map's values: the value into `a`, and the run into `b`. -/
-def mapSymFast (t : ByteArray) (base : USize) (hfit : TableFits t base.toNat) (h32 : t.size < 2 ^ 32) (rlemax : UInt64)
+@[inline] def mapSymFast (t : ByteArray) (base : USize) (hfit : TableFits t base.toNat) (h32 : t.size < 2 ^ 32) (rlemax : UInt64)
     (b0 : BitBuffer) : Rd :=
   let v := lookup t base b0.word hfit h32
   if wordBits v ≤ b0.count then
@@ -980,7 +980,7 @@ def lenSym (clc : PrefixCode) (bs : List Bool) : Option ((Nat × Nat) × List Bo
     readInt (if p.1 = 16 then 2 else if p.1 = 17 then 3 else 0) p.2 >>= fun q => some ((p.1, q.1), q.2)
 
 /-- Reads one code length symbol into `a`, and its extra bits' value into `b`. -/
-def lenSymFast (t : ByteArray) (base : USize) (hfit : TableFits t base.toNat) (h32 : t.size < 2 ^ 32) (b0 : BitBuffer) : Rd :=
+@[inline] def lenSymFast (t : ByteArray) (base : USize) (hfit : TableFits t base.toNat) (h32 : t.size < 2 ^ 32) (b0 : BitBuffer) : Rd :=
   let v := lookup t base b0.word hfit h32
   if wordBits v ≤ b0.count then
     let sym := wordSym v

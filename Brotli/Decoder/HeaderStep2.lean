@@ -130,7 +130,7 @@ theorem stepHFirst_ok {i : Cat} {n : Nat} {tc cc : PrefixCode} {st : Hd} {g : Gh
 /-! ### NPOSTFIX and NDIRECT -/
 
 /-- Reads NPOSTFIX into `a` and the four bits of NDIRECT into `b`. -/
-def npFast (b0 : BitBuffer) : Rd :=
+@[inline] def npFast (b0 : BitBuffer) : Rd :=
   if 2 ≤ b0.count then
     let b1 := b0.drop 2
     if 4 ≤ b1.count then Rd.ok (b1.drop 4) (b0.peek 2) (b1.peek 4) 0 0 0 else Rd.short b0
