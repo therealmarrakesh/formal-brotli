@@ -733,31 +733,64 @@ theorem fill_root {lens : List Nat} (hC : Complete (.canonical lens)) {r : Nat} 
     rw [hsum.symm, h128] at hm
     exact Nat.le_of_mul_le_mul_left hm (Nat.two_pow_pos _)
 
+/-- The short code words fill the root at most once. -/
+theorem shortFill_le {lens : List Nat} (hC : Complete (.canonical lens)) :
+    sumR (fun j => blCount lens (j + 1) * 2 ^ (8 - (j + 1))) 8 ≤ 256 := by
+  have hl := hC.1
+  have h8 : 128 * sumR (fun j => blCount lens (j + 1) * 2 ^ (8 - (j + 1))) 8 = sumUpTo lens 8 := by
+    have : ∀ k, k ≤ 8 → 128 * sumR (fun j => blCount lens (j + 1) * 2 ^ (8 - (j + 1))) k = sumUpTo lens k := by
+      intro k
+      induction k with
+      | zero => intro _; rfl
+      | succ k ih =>
+        intro hk
+        simp only [sumR, Nat.mul_add, ih (by omega), sumUpTo_succ]
+        rw [Nat.mul_left_comm, show (128 : Nat) * 2 ^ (8 - (k + 1)) = 2 ^ (15 - (k + 1)) by
+          rw [show (128 : Nat) = 2 ^ 7 from rfl, ← Nat.pow_add, show 7 + (8 - (k + 1)) = 15 - (k + 1) by omega]]
+    exact this 8 (Nat.le_refl _)
+  have h15 : sumUpTo lens 15 = 32768 := by rw [sumUpTo_eq lens hl, hC.2]
+  have := sumUpTo_mono lens (show 8 ≤ 15 by omega)
+  omega
+
+/-- The long code words fill at most their sub-tables. -/
+theorem longFill_le {lens : List Nat} (hC : Complete (.canonical lens)) :
+    sumR (fun r => sumR (fun j => cntL lens (j + 9) r * fillCnt lens (j + 9) r) 7) 256 ≤ offSum (depths lens) 256 := by
+  have hlong := sumR_le (n := 256) (f := fun r => sumR (fun j => cntL lens (j + 9) r * fillCnt lens (j + 9) r) 7)
+    (g := fun r => subSize ((depths lens).getD r 0)) (fun r hr => fill_root hC hr)
+  rw [← offSum_eq] at hlong
+  exact hlong
+
 /-- The builder writes at most one slot for each code word longer than 8 bits, and 376 more. -/
 theorem fill_le {lens : List Nat} (hC : Complete (.canonical lens)) :
     sumR (fun j => blCount lens (j + 1) * 2 ^ (8 - (j + 1))) 8 +
       sumR (fun r => sumR (fun j => cntL lens (j + 9) r * fillCnt lens (j + 9) r) 7) 256 ≤ longCount lens + 376 := by
-  have hl := hC.1
-  -- The short code words fill the root at most once.
-  have hshort : sumR (fun j => blCount lens (j + 1) * 2 ^ (8 - (j + 1))) 8 ≤ 256 := by
-    have h8 : 128 * sumR (fun j => blCount lens (j + 1) * 2 ^ (8 - (j + 1))) 8 = sumUpTo lens 8 := by
-      have : ∀ k, k ≤ 8 → 128 * sumR (fun j => blCount lens (j + 1) * 2 ^ (8 - (j + 1))) k = sumUpTo lens k := by
-        intro k
-        induction k with
-        | zero => intro _; rfl
-        | succ k ih =>
-          intro hk
-          simp only [sumR, Nat.mul_add, ih (by omega), sumUpTo_succ]
-          rw [Nat.mul_left_comm, show (128 : Nat) * 2 ^ (8 - (k + 1)) = 2 ^ (15 - (k + 1)) by
-            rw [show (128 : Nat) = 2 ^ 7 from rfl, ← Nat.pow_add, show 7 + (8 - (k + 1)) = 15 - (k + 1) by omega]]
-      exact this 8 (Nat.le_refl _)
-    have h15 : sumUpTo lens 15 = 32768 := by rw [sumUpTo_eq lens hl, hC.2]
-    have := sumUpTo_mono lens (show 8 ≤ 15 by omega)
-    omega
-  have hlong := sumR_le (n := 256) (f := fun r => sumR (fun j => cntL lens (j + 9) r * fillCnt lens (j + 9) r) 7)
-    (g := fun r => subSize ((depths lens).getD r 0)) (fun r hr => fill_root hC hr)
-  rw [← offSum_eq] at hlong
+  have := shortFill_le hC
+  have := longFill_le hC
   have := offSum_le hC
+  omega
+
+/-- With no length longer than eight, there are no sub-tables. -/
+theorem offSum_short {lens : List Nat} (hl : ∀ l ∈ lens, l ≤ 15) (h8 : ∀ l ∈ lens, l ≤ 8) : offSum (depths lens) 256 = 0 := by
+  have hz : ∀ r, (depths lens).getD r 0 = 0 := by
+    intro r
+    refine Classical.byContradiction fun hne => ?_
+    obtain ⟨s, l, c, ⟨hs, hl8, _⟩, _⟩ := (depths_spec hl).2.2.1 r hne
+    have := h8 l (List.mem_of_getElem? hs)
+    omega
+  have : ∀ n, offSum (depths lens) n = 0 := by
+    intro n
+    induction n with
+    | zero => rfl
+    | succ n ih => simp only [offSum, ih, hz, subSize, ↓reduceIte]
+  exact this 256
+
+/-- With no length longer than eight, the code words fill the root once. -/
+theorem fill_short {lens : List Nat} (hC : Complete (.canonical lens)) (h8 : ∀ l ∈ lens, l ≤ 8) :
+    sumR (fun j => blCount lens (j + 1) * 2 ^ (8 - (j + 1))) 8 +
+      sumR (fun r => sumR (fun j => cntL lens (j + 9) r * fillCnt lens (j + 9) r) 7) 256 ≤ 256 := by
+  have := shortFill_le hC
+  have := longFill_le hC
+  rw [offSum_short hC.1 h8] at this
   omega
 
 /-- A complete code's table has at most 376 slots and one for each code word longer than 8 bits. -/

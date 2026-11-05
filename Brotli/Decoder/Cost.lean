@@ -112,9 +112,11 @@ theorem termAt_split {L : List Nat} (hl : ∀ l ∈ L, l ≤ 15) (h : Nat → Na
         · rw [ite_eq_right (by omega), ite_eq_right hj]
       rw [this, sumR_oneG, ite_eq_left (by omega)]
 
-/-- The builder's slot writes, as the spec's code words give them, are at most the table-size bound. -/
-theorem fillSum_le {L : List Nat} (hC : Complete (.canonical L)) :
-    ((List.range L.length).map (termAt L fun _ l c => fillCnt L l (rootOf l c))).sum ≤ longCount L + 376 := by
+/-- The builder's slot writes, as the spec's code words give them: the short code words' and the long ones'. -/
+theorem fillSum_split {L : List Nat} (hC : Complete (.canonical L)) :
+    ((List.range L.length).map (termAt L fun _ l c => fillCnt L l (rootOf l c))).sum =
+      sumR (fun j => blCount L (j + 1) * 2 ^ (8 - (j + 1))) 8 +
+        sumR (fun r => sumR (fun j => cntL L (j + 9) r * fillCnt L (j + 9) r) 7) 256 := by
   have hl := hC.1
   rw [List.map_congr_left (fun s _ => termAt_split hl _ s), sum_sumR, show (15 : Nat) = 8 + 7 from rfl, sumR_shift]
   have hshort : sumR (fun j => ((List.range L.length).map fun s =>
@@ -146,7 +148,18 @@ theorem fillSum_le {L : List Nat} (hC : Complete (.canonical L)) :
       _ (fun s _ _ => revBits_lt 8 _)]
     rfl
   rw [hshort, hlong]
+
+/-- The builder's slot writes are at most the table-size bound. -/
+theorem fillSum_le {L : List Nat} (hC : Complete (.canonical L)) :
+    ((List.range L.length).map (termAt L fun _ l c => fillCnt L l (rootOf l c))).sum ≤ longCount L + 376 := by
+  rw [fillSum_split hC]
   exact fill_le hC
+
+/-- With no length longer than eight, the builder writes the root's 256 slots. -/
+theorem fillSum_short {L : List Nat} (hC : Complete (.canonical L)) (h8 : ∀ l ∈ L, l ≤ 8) :
+    ((List.range L.length).map (termAt L fun _ l c => fillCnt L l (rootOf l c))).sum ≤ 256 := by
+  rw [fillSum_split hC]
+  exact fill_short hC h8
 
 theorem termAt_add (L : List Nat) (h1 h2 : Nat → Nat → Nat → Nat) (s : Nat) :
     termAt L (fun s l c => h1 s l c + h2 s l c) s = termAt L h1 s + termAt L h2 s := by
@@ -535,6 +548,32 @@ theorem buildFastW_le {t head next : ByteArray} {L : List Nat} (ha : BuildArgs t
   generalize longCount L = Lc at hsum hoff ⊢
   omega
 
+/-- The builder's work for a code with no code word longer than 8 bits: three rounds for each symbol, the root's slots and
+zeros, and its rounds. -/
+theorem buildFastW_short {t head next : ByteArray} {L : List Nat} (ha : BuildArgs t head next L) (h8 : ∀ l ∈ L, l ≤ 8) :
+    buildFastW t head next ≤ 3 * L.length + 784 := by
+  have hw := build_start ha
+  rw [half_toNat ha.2.2.2.2.2.2] at hw
+  obtain ⟨hC, _, _, _, _, h2, h32⟩ := ha
+  have hle := chain_le hw.small _ _ (fun s hs => mem_drop_rev hs) hw.chain
+  have hwk := walkW_le (L := L) (base := t.size / 2) _ rfl 16384 _ _ _ _ _ hw (by omega)
+  rw [remW_start hC.1, zeroExtend_zeros] at hwk
+  have hsum : ((List.range L.length).map (wordW L)).sum ≤ 256 + 3 * L.length := by
+    unfold wordW
+    rw [List.map_congr_left (fun s _ => termAt_add L (fun _ l c => fillCnt L l (rootOf l c)) (fun _ _ _ => 3) s), sum_add]
+    have a := fillSum_short hC h8
+    have b := sum_le_mul (termAt L fun _ _ _ => 3) (k := 3) (termAt_le _ _ (fun _ _ _ => Nat.le_refl _)) (List.range L.length)
+    rw [List.length_range] at b
+    omega
+  have hoff := offSum_short hC.1 h8
+  have hz := zeroExtendW_le 512
+  rw [ByteArray.size_append, size_zeros] at hwk
+  unfold buildFastW
+  generalize walkW head next (t.size / 2) 16384 (t ++ zeros 512) 15 (u16At head 15) 32768 = W at hwk ⊢
+  generalize ((List.range L.length).map (wordW L)).sum = S at hwk hsum
+  generalize offSum (depths L) 256 = O at hwk hoff
+  omega
+
 /-- The work of `buildLens`: six rounds for each symbol, four for each code word longer than 8 bits, and 1299 more. -/
 theorem buildLensW_le {t lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.size} (h : LensArgs t lens n) :
     buildLensW t lens n hn ≤ 6 * n.toNat + 4 * longCount (lensOf lens n.toNat) + 1299 := by
@@ -548,6 +587,25 @@ theorem buildLensW_le {t lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.si
   show listsW n.toNat + buildFastW t (listsOf lens n hn).1 (listsOf lens n hn).2 ≤ _
   generalize buildFastW t (listsOf lens n hn).1 (listsOf lens n hn).2 = B at hb ⊢
   generalize longCount (lensOf lens n.toNat) = Lc at hb ⊢
+  generalize (lensOf lens n.toNat).length = m at hb hlen
+  unfold listsW
+  generalize zbW 32 = a at z1 ⊢
+  generalize zbW (2 * n.toNat) = b at z2 ⊢
+  generalize n.toNat = k at *
+  omega
+
+/-- The work of `buildLens` for a code with no code word longer than 8 bits: six rounds for each symbol, and 819. -/
+theorem buildLensW_short {t lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.size} (h : LensArgs t lens n)
+    (h8 : ∀ l ∈ lensOf lens n.toNat, l ≤ 8) : buildLensW t lens n hn ≤ 6 * n.toNat + 819 := by
+  have hb : buildFastW t (listsOf lens n hn).1 (listsOf lens n hn).2 ≤ 3 * (lensOf lens n.toNat).length + 784 :=
+    buildFastW_short (lens_build h) h8
+  have hlen : (lensOf lens n.toNat).length = n.toNat := length_lensOf hn
+  have z1 := zbW_le 32
+  have z2 := zbW_le (2 * n.toNat)
+  have h704 : n.toNat ≤ 704 := h.2.1
+  have hd : 2 * n.toNat / 65536 = 0 := Nat.div_eq_of_lt (by omega)
+  show listsW n.toNat + buildFastW t (listsOf lens n hn).1 (listsOf lens n hn).2 ≤ _
+  generalize buildFastW t (listsOf lens n hn).1 (listsOf lens n hn).2 = B at hb ⊢
   generalize (lensOf lens n.toNat).length = m at hb hlen
   unfold listsW
   generalize zbW 32 = a at z1 ⊢

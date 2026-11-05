@@ -61,7 +61,7 @@ theorem tableDoneW_le {st : Hd} {single : Bool} {sym : UInt64} (ha : TableArgs s
     omega
 
 /-- A finished code length code's table's work: its eighteen lengths are at most five, so it has no long code words. -/
-theorem clTableW_le {st : Hd} (h : ∃ acc, ClDone st acc) : clTableW st ≤ 1407 := by
+theorem clTableW_le {st : Hd} (h : ∃ acc, ClDone st acc) : clTableW st ≤ 927 := by
   have h18 : (USize.ofNat 18).toNat = 18 := usize_ofNat' (by decide)
   obtain ⟨acc, hd⟩ := h
   unfold clTableW
@@ -72,10 +72,10 @@ theorem clTableW_le {st : Hd} (h : ∃ acc, ClDone st acc) : clTableW st ≤ 140
   · rw [ite_eq_right h1]
     by_cases hn : (USize.ofNat 18).toNat ≤ st.clLens.size
     · rw [dite_eq_left hn]
-      have b1 := buildLensW_le (hn := hn) (⟨hd.complete h1, by rw [h18]; decide, rfl, by decide⟩ :
+      have b1 := buildLensW_short (hn := hn) (⟨hd.complete h1, by rw [h18]; decide, rfl, by decide⟩ :
         LensArgs ByteArray.empty st.clLens (USize.ofNat 18))
-      have b2 := longCount_short (fun l hl => Nat.le_trans (hd.short h1 l hl) (show 5 ≤ 8 by decide))
-      rw [b2, h18] at b1
+        (fun l hl => Nat.le_trans (hd.short h1 l hl) (show 5 ≤ 8 by decide))
+      rw [h18] at b1
       omega
     · rw [dite_eq_right hn]
       omega
@@ -148,7 +148,7 @@ def ownerPot (g : Gh) : Owner → Nat
 def symsTable (n : Nat) : Nat := 7 * n + 1268
 
 /-- The code length code's last step: its table, and the lists' links emptied. -/
-def clDone : Nat := 1443
+def clDone : Nat := 963
 
 /-- At least the bits still to read before a code length code ends with two symbols or more: each length adds at most
 four to the 32 it fills for each bit it takes. -/
@@ -161,12 +161,12 @@ def clSingle (order : List Nat) : Nat := 2 * order.length
 symbols or more leads to lengths that each take a bit, and one ending with one symbol may lead to lengths that take no
 bits, each prepaid. -/
 def clensPot (n : Nat) (order : List Nat) (sum : Nat) : Nat :=
-  max (clDone + symsTable n - (hdrRate - 3) * clMulti sum) (clDone + symsTable n + 5 * n - (hdrRate - 3) * clSingle order)
+  max (clDone + symsTable n - (hdrRate - 3) * clMulti sum) (clDone + symsTable n + 4 * n - (hdrRate - 3) * clSingle order)
 
 /-- What a code's lengths still to read prepay: with a code length code of one symbol, the lengths read without bits. -/
 def symsPre (clc : PrefixCode) (n len : Nat) : Nat :=
   match clc with
-  | .single _ => 5 * (n - len)
+  | .single _ => 4 * (n - len)
   | .canonical _ => 0
 
 /-- The potential of a header's place. A code's lengths carry its table's work, paid by the bits of its code length
@@ -197,7 +197,7 @@ def hcost (g : Gh) : HPhase → HPhase → Nat
   | .code o n, _ => 7 * n + 1301 + ownerX g o
   | .clens .., .syms .. => clDone
   | .clens .., _ => 3
-  | .syms _ _ _ ls, .syms _ _ _ ls' => ls'.lens.length - ls.lens.length + 4
+  | .syms _ _ _ ls, .syms _ _ _ ls' => ls'.lens.length - ls.lens.length + 3
   | .syms o n _ _, _ => symsTable n + ownerX g o
   | .first .., _ => 3
   | .np, _ => 260
@@ -297,6 +297,30 @@ theorem clcl_fill {bs r : List Bool} {v : Nat} (h : readCodeLengthCodeLength bs 
         simp only [↓reduceIte, reduceCtorEq] <;> omega
     · simp at hf
   · simp at hf
+
+/-- A simple prefix code takes its symbol count's two bits, and its first symbol's bits. -/
+theorem simpleChain_takes {size bits : Nat} {bs r : List Bool} {c : PrefixCode} (h : simpleChain size bits bs = some (c, r)) :
+    r.length + 2 + bits ≤ bs.length := by
+  unfold simpleChain at h
+  cases h1 : readInt 2 bs with
+  | none => rw [h1] at h; cases h
+  | some p =>
+    obtain ⟨nsym, bs1⟩ := p
+    rw [h1] at h
+    have l1 := readInt_length _ _ _ _ h1
+    have h' : simpleC1 size bits nsym bs1 = some (c, r) := h
+    unfold simpleC1 at h'
+    cases h2 : readInt bits bs1 with
+    | none => rw [h2] at h'; cases h'
+    | some q =>
+      obtain ⟨s1, bs2⟩ := q
+      rw [h2] at h'
+      have l2 := readInt_length _ _ _ _ h2
+      have h'' : (if size ≤ s1 then none else simpleN1 size bits nsym s1 bs2) = some (c, r) := h'
+      split at h''
+      · cases h''
+      · have := faith_le (faith_simpleN1 size bits nsym s1) h''
+        omega
 
 private theorem pow_long : ∀ n, n < 8 → 2 * 2 ^ n + 192 ≤ 64 * (4 + n) := by decide
 
@@ -403,12 +427,12 @@ theorem clensPot_fin {n x sum B : Nat} {rest : List Nat} (hf : 32 - sum ≤ 4 * 
   omega
 
 /-- A code length code that ends with one symbol. -/
-theorem clensPot_nil {n sum : Nat} : clDone + symsTable n + 5 * n ≤ clensPot n [] sum := by
+theorem clensPot_nil {n sum : Nat} : clDone + symsTable n + 4 * n ≤ clensPot n [] sum := by
   unfold clensPot clSingle
   simp only [List.length_nil, Nat.mul_zero, Nat.sub_zero]
   omega
 
-theorem symsPre_le (clc : PrefixCode) (n len : Nat) : symsPre clc n len ≤ 5 * (n - len) := by
+theorem symsPre_le (clc : PrefixCode) (n len : Nat) : symsPre clc n len ≤ 4 * (n - len) := by
   cases clc <;> simp only [symsPre] <;> omega
 
 /-- A code length code filled by a length that is not its first is not a single symbol's. -/
@@ -640,7 +664,7 @@ theorem hpay {g : Gh} {p : HPhase} {bs c : List Bool} {g' : Gh} {p' : HPhase} (h
             · cases e2
               rename_i hle _
               obtain ⟨l, hl, hl1⟩ := applyCodeLength_grow ls v.1 v.2
-              show (applyCodeLength ls v.1 v.2).lens.length - ls.lens.length + 4 +
+              show (applyCodeLength ls v.1 v.2).lens.length - ls.lens.length + 3 +
                 (symsPre clc n (applyCodeLength ls v.1 v.2).lens.length + symsTable n + ownerX g o + ownerPot g o) + _ ≤ _
               rw [hl] at hle ⊢
               rw [List.length_append] at hle ⊢
@@ -1193,7 +1217,7 @@ theorem wCode {st : Hd} {g : Gh} {o : Owner} {n : Nat} {pos : USize} {g' : Gh} {
 
 theorem clFinish_tag {st : Hd} {h : ∃ acc, ClDone st acc} : (clFinish st h).tag = .syms := rfl
 
-theorem clFinishW_le {st : Hd} (h : ∃ acc, ClDone st acc) : clFinishW st ≤ 1440 := by
+theorem clFinishW_le {st : Hd} (h : ∃ acc, ClDone st acc) : clFinishW st ≤ 960 := by
   unfold clFinishW
   have := clTableW_le h
   have := zbW_le 32
@@ -1219,7 +1243,7 @@ theorem wClens {st : Hd} {g : Gh} {o : Owner} {n : Nat} {order : List Nat} {acc 
       have hsy : ptag p' = .syms := by rw [← htag]; exact clFinish_tag
       rw [hcost_clens, ite_eq_left hsy]
       have := clFinishW_le (st := { st with pos := pos, status := .next }) (clens_done0 hH hT h18 hnz)
-      have hcd : clDone = 1443 := rfl
+      have hcd : clDone = 963 := rfl
       omega
     · rw [ite_eq_right hnz]
       omega
@@ -1251,7 +1275,7 @@ theorem wClens {st : Hd} {g : Gh} {o : Owner} {n : Nat} {order : List Nat} {acc 
               clLens := setLen st.clLens (getU clOrderLut st.clIdx.toUSize).toUInt64 r.a, clSum := st.clSum + ((32 : UInt64) >>> r.a)
               clNz := st.clNz + 1, clSym := (getU clOrderLut st.clIdx.toUSize).toUInt64, clIdx := st.clIdx + 1 })
             (clens_done1 hH hT h18 hr5 h0 h32)
-          have hcd : clDone = 1443 := rfl
+          have hcd : clDone = 963 := rfl
           omega
         · rw [ite_eq_right h32]
           omega
@@ -1369,7 +1393,7 @@ theorem wSyms {st : Hd} {g : Gh} {o : Owner} {n : Nat} {clc : PrefixCode} {ls : 
                   have hln' : (st.ln + (new - old)).toNat = ls'.lens.length := hy'.ln
                   have key := add_grew hln' (by rw [hl]; exact hg)
                   rw [hl] at key
-                  show _ + 1 + 2 ≤ ls'.lens.length - ls.lens.length + 4
+                  show _ + 1 + 2 ≤ ls'.lens.length - ls.lens.length + 3
                   omega
                 | _ => cases htg
 
@@ -2123,7 +2147,7 @@ theorem ownerPot_le {st : Hd} {g : Gh} {n : Nat} {o : Owner} (ho : OwnerRel st g
 
 /-- What a code's owner holds, with the most the code's lengths carry. -/
 theorem codeOwner_le {st : Hd} {g : Gh} {n : Nat} {o : Owner} (ho : OwnerRel st g n o) (hu : Upto st.d g (ownerStage o))
-    (hg : GOk g) (hn : n ≤ 704) : ownerX g o + ownerPot g o + clDone + symsTable n + 13 * n ≤ 93801 := by
+    (hg : GOk g) (hn : n ≤ 704) : ownerX g o + ownerPot g o + clDone + symsTable n + 4 * n ≤ 93801 := by
   have hP := ownerPot_le ho hu hg
   have hI : 1 < ownerStage o → g.m.insertCopy.n ≤ 256 := fun h => (hu.cat .I h).wf.2.1
   unfold clDone symsTable
@@ -2187,7 +2211,7 @@ theorem hpot_le {st : Hd} {g : Gh} {p : HPhase} (hrel : HRel st g p) (hg : GOk g
   | clens o n order acc sum =>
     obtain ⟨_, hs, ho, _⟩ := hm
     have := codeOwner_le ho hu hg hs.2.2
-    have hc : clensPot n order sum ≤ clDone + symsTable n + 13 * n := by unfold clensPot; omega
+    have hc : clensPot n order sum ≤ clDone + symsTable n + 4 * n := by unfold clensPot; omega
     show clensPot n order sum + ownerX g o + ownerPot g o ≤ _
     omega
   | syms o n clc ls =>
