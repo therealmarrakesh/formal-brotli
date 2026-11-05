@@ -172,8 +172,8 @@ theorem callD_tag {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {f
 
 /-- A call's work against the potential. A call that pauses leaves the potential of where it pauses and its bits to pay
 later, at most one more byte waiting than it found, and pays 2980 for each bit it reads, 33 for each byte it hands out,
-31 for each byte it leaves waiting, the window, and 126. Any call pays at most the potential, 2980 for each bit, 33 for
-each byte it hands out, the window, and 157: it decodes at most one byte more than it hands out. -/
+31 for each byte it leaves waiting, the window, and 93. Any call pays at most the potential, 2980 for each bit, 33 for
+each byte it hands out, the window, and 132: it decodes at most one byte more than it hands out. -/
 theorem pay_callD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {final : Bool} :
     ∀ (space : Nat) (D : Dec) (h : DInv stop D) (p : SPhase) (buf : ByteArray), DRel D p → SInv p →
     (D.tag ≠ .wbits → 10 ≤ D.k.toNat) →
@@ -190,12 +190,12 @@ theorem pay_callD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {f
           dpot p D + hdrRate * (D.bits a D.pos stop (bits t)).length + (stop.toNat - D.pos.toNat) +
             33 * ((callD a stop hs final D h buf space).buf.size - buf.size) +
             31 *(callD a stop hs final D h buf space).D.cmd.pend.toNat +
-            winD D (runD a stop hs (withCap D space) (h.withCap space)) + 126) ∧
+            winD D (runD a stop hs (withCap D space) (h.withCap space)) + 93) ∧
     (∀ t : List UInt8, callDW a stop hs final D h buf space + hdrRate * ((stop.toNat - (callD a stop hs final D h buf space).pos.toNat) * 8) +
       (stop.toNat - (callD a stop hs final D h buf space).pos.toNat) ≤
       dpot p D + hdrRate * (D.bits a D.pos stop (bits t)).length + (stop.toNat - D.pos.toNat) +
       33 * ((callD a stop hs final D h buf space).buf.size - buf.size) +
-      winD D (runD a stop hs (withCap D space) (h.withCap space)) + 157) := by
+      winD D (runD a stop hs (withCap D space) (h.withCap space)) + 132) := by
   intro space
   induction space using Nat.strongRecOn with
   | _ space ih =>
