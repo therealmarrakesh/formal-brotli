@@ -110,6 +110,151 @@ def literalsRun (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.
     else markStep st pos .bad
   else markStep st pos .bad
 
+/-! ### The compiled literal step
+
+`literalsRunK` is `literalsRun` with the loop ending in the step's new state itself, so that the loop's result is never
+allocated as a record. The proofs are about `literalsRun`; `literalsRun_csimp` proves the two equal, and the compiler
+runs `literalsRunK`. -/
+
+/-- `finishLiterals` from the loop's result as plain values, written out, so that no result record is built. -/
+@[noinline] def finishLitS (st0 : Cmd) (word count : UInt64) (pos wpos : USize) (ring : ByteArray) (p1 p2 : UInt8)
+    (left run size : USize) : Cmd :=
+  let used := run - left
+  { st0 with
+    word := word, count := count, ring := ring, wpos := wpos, p1 := p1, p2 := p2
+    left := st0.left - used.toUInt64, lCount := st0.lCount - used.toUInt64, remaining := st0.remaining - used.toUInt64
+    pend := st0.pend + used
+    written := usmin (size - USize.ofNat 16) (st0.written + used)
+    pos := pos, status := if left = 0 then .next else .needsInput }
+
+/-- `literalRun`, ending in `finishLitS`. -/
+def literalRunK (st0 : Cmd) (run size : USize) {nTrees : Nat} {arena litBase lMap : ByteArray}
+    (C : LitChecked arena litBase lMap nTrees)
+    (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (mapBase modeOff mask : USize) (k : Nat)
+    (hmb : mapBase.toNat + 64 ≤ lMap.size) (hm : modeOff.toNat + 512 ≤ 2048) (hd : modeOff.toNat % 512 = 0)
+    (hmask : mask.toNat = 2 ^ k - 1) (hk : k ≤ 24) (n : USize) (word count : UInt64) (pos wpos : USize) (ring : ByteArray)
+    (p1 p2 : UInt8) (hp : pos.toNat ≤ stop.toNat) (hw : (BitBuffer.mk word count).Wf) (hsize : ring.size = 2 ^ k)
+    (hwp : wpos.toNat < 2 ^ k) : Cmd :=
+  if hn : n = 0 then finishLitS st0 word count pos wpos ring p1 p2 0 run size
+  else
+    let r := refill word count a pos stop hs hp
+    let rw := r.word
+    let rc := r.count
+    let rp := r.pos
+    have hspec := refill_spec hs hp hw
+    let cid := cidFast modeOff p1 p2 hm
+    have hcid : cid.toNat < 64 := cid_lt hm hd
+    have hi : (mapIndex mapBase cid).toNat < lMap.size := by
+      rw [mapIndex_toNat (by have := C.map32; omega)]
+      omega
+    let tree := lMap.uget (mapIndex mapBase cid) hi
+    have htree : tree.toNat < nTrees := C.treeLt _ hi
+    have hb : 4 * tree.toNat + 4 ≤ litBase.size := by
+      rw [C.baseSize]
+      omega
+    let base := treeBase litBase tree hb C.base32
+    have hfit : TableFits arena base.toNat := by
+      rw [treeBase_toNat]
+      exact C.fits _ htree
+    let v := lookup arena base rw hfit C.arena32
+    let l := v &&& 15
+    if hl : l ≤ rc then
+      let byte := (v >>> 4).toUInt8
+      have hl63 : l.toNat < 64 := by
+        have : (v &&& 15).toNat = v.toNat % 16 := by
+          rw [UInt64.toNat_and]
+          exact Nat.and_two_pow_sub_one_eq_mod v.toNat 4
+        show (v &&& 15).toNat < 64
+        omega
+      have hr : wpos.toNat < ring.size := by omega
+      let ring' := ringWrite ring wpos byte hr
+      have hsize' : ring'.size = 2 ^ k := (size_ringWrite ring wpos byte hr).trans hsize
+      have hnext : (ringNext wpos mask).toNat < 2 ^ k := by
+        unfold ringNext
+        rw [USize.toNat_and, hmask, Nat.and_two_pow_sub_one_eq_mod]
+        exact Nat.mod_lt _ (Nat.two_pow_pos _)
+      let b := (BitBuffer.mk rw rc).drop l
+      literalRunK st0 run size C a stop hs mapBase modeOff mask k hmb hm hd hmask hk (n - USize.ofNat 1) b.word b.count rp
+        (ringNext wpos mask) ring' byte p1 hspec.2.2.1 (BitBuffer.drop_wf hspec.1 hl63 (UInt64.le_iff_toNat_le.mp hl))
+        hsize' hnext
+    else finishLitS st0 rw rc rp wpos ring p1 p2 n run size
+termination_by n.toNat
+decreasing_by
+  have := usize_pred hn
+  have := usize_ne hn
+  omega
+
+/-- The loop ending in the new state is the loop, then `finishLiterals`. -/
+theorem literalRunK_eq (st0 : Cmd) (run size : USize) {nTrees : Nat} {arena litBase lMap : ByteArray}
+    (C : LitChecked arena litBase lMap nTrees) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size)
+    (mapBase modeOff mask : USize) (k : Nat) (hmb : mapBase.toNat + 64 ≤ lMap.size) (hm : modeOff.toNat + 512 ≤ 2048)
+    (hd : modeOff.toNat % 512 = 0) (hmask : mask.toNat = 2 ^ k - 1) (hk : k ≤ 24) :
+    ∀ (N : Nat) (n : USize) (word count : UInt64) (pos wpos : USize) (ring : ByteArray) (p1 p2 : UInt8)
+      (hp : pos.toNat ≤ stop.toNat) (hw : (BitBuffer.mk word count).Wf) (hsize : ring.size = 2 ^ k)
+      (hwp : wpos.toNat < 2 ^ k), n.toNat = N →
+      literalRunK st0 run size C a stop hs mapBase modeOff mask k hmb hm hd hmask hk n word count pos wpos ring p1 p2 hp hw
+          hsize hwp =
+        finishLiterals st0 (literalRun C a stop hs mapBase modeOff mask k hmb hm hd hmask hk n word count pos wpos ring p1 p2
+          hp hw hsize hwp) run size := by
+  intro N
+  induction N with
+  | zero =>
+    intro n word count pos wpos ring p1 p2 hp hw hsize hwp hN
+    have hn : n = 0 := usize_zero hN
+    rw [literalRunK, literalRun, dite_eq_left hn, dite_eq_left hn]
+    rfl
+  | succ N ih =>
+    intro n word count pos wpos ring p1 p2 hp hw hsize hwp hN
+    have hn : n ≠ 0 := fun e => by rw [e] at hN; exact Nat.succ_ne_zero _ hN.symm
+    rw [literalRunK, literalRun, dite_eq_right hn, dite_eq_right hn]
+    dsimp only
+    -- `split` takes the same branch on both sides, whose conditions are the same
+    split
+    · exact ih _ _ _ _ _ _ _ _ _ _ _ _ (by rw [usize_pred hn]; omega)
+    · rfl
+
+/-- `literalsRun`, with the loop ending in the new state. -/
+def literalsRunK (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (st : Cmd) (pos : USize) :
+    Cmd :=
+  if ht : st.lCur < H.nL then
+    have ht' := UInt64.lt_iff_toNat_lt.mp ht
+    have hm : st.lCur.toUSize.toNat < H.modes.size := by
+      rw [cur_usize ht', H.modesSize]
+      exact ht'
+    have hmLt := H.modesLt _ hm
+    if h : winCheck k st.wpos st.ring = true ∧ pos ≤ stop ∧ wfCheck st.word st.count = true then
+      let run := (umin st.left (umin st.lCount (room k st.cap - st.pend).toUInt64)).toUSize
+      let ring := st.ring
+      let st0 := clearRing st
+      literalRunK st0 run (ringSize k) H.lit a stop hs (st.lCur <<< 6).toUSize
+        ((H.modes.uget st.lCur.toUSize hm).toUInt64 <<< 9).toUSize
+        (ringMask k) k.toNat
+        (by
+          rw [mapBase_toNat ht', H.lMapSize]
+          omega)
+        (by
+          rw [modeOff_toNat hmLt]
+          omega)
+        (by
+          rw [modeOff_toNat hmLt]
+          omega)
+        (ringMask_toNat (winCheck_k h.1)) (winCheck_k h.1) run st0.word st0.count pos st0.wpos ring st0.p1 st0.p2
+        (USize.le_iff_toNat_le.mp h.2.1) (wfCheck_wf h.2.2) (winCheck_size h.1) (winCheck_pos h.1)
+    else markStep st pos .bad
+  else markStep st pos .bad
+
+@[csimp] theorem literalsRun_csimp : @literalsRun = @literalsRunK := by
+  funext H k a stop hs st pos
+  unfold literalsRun literalsRunK
+  by_cases ht : st.lCur < H.nL
+  · rw [dite_eq_left ht, dite_eq_left ht]
+    by_cases h : winCheck k st.wpos st.ring = true ∧ pos ≤ stop ∧ wfCheck st.word st.count = true
+    · rw [dite_eq_left h, dite_eq_left h]
+      dsimp only
+      exact (literalRunK_eq _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ rfl).symm
+    · rw [dite_eq_right h, dite_eq_right h]
+  · rw [dite_eq_right ht, dite_eq_right ht]
+
 /-- A step in a command's literals. -/
 def stepLiterals (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (st : Cmd) (pos : USize) : Cmd :=
   if st.left = 0 then { st with tag := .distance, pos := pos, status := .next }

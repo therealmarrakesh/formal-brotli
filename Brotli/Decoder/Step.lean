@@ -508,4 +508,175 @@ theorem stepWord_ok {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeader} {K :
       rw [hmoved] at h1 h2 h3
       exact word_after hC htag hprod hpend hsmall hwp hp hguard.2.1 (by omega) (by omega) hplen h1 h2 h3
 
+/-! ### The compiled copy and word steps
+
+`stepCopyK` and `stepWordK` are `stepCopy` and `stepWord` with their loops ending in the step's new state itself, so
+that the loop's result is never allocated as a record. The proofs are about `stepCopy` and `stepWord`; the `csimp`
+theorems prove each equal to its compiled form, and the compiler runs that. -/
+
+/-- `finishCopy` from the loop's result as plain values, written out. -/
+@[noinline] def finishCopyS (st0 : Cmd) (ring : ByteArray) (wpos : USize) (p1 p2 : UInt8) (run rsz pos : USize) : Cmd :=
+  { st0 with
+    ring := ring, wpos := wpos, p1 := p1, p2 := p2
+    left := st0.left - run.toUInt64
+    pend := st0.pend + run
+    written := usmin (rsz - USize.ofNat 16) (st0.written + run)
+    pos := pos, status := .next }
+
+/-- `copyRun`, ending in `finishCopyS`. -/
+def copyRunK (st0 : Cmd) (run rsz pos0 : USize) (d mask size : USize) (k : Nat) (hk : k ≤ 24)
+    (hmask : mask.toNat = 2 ^ k - 1) (hsz : size.toNat = 2 ^ k) (hd1 : 1 ≤ d.toNat) (hd2 : d.toNat ≤ 2 ^ k) (n : USize)
+    (ring : ByteArray) (wpos : USize) (p1 p2 : UInt8) (hsize : ring.size = 2 ^ k) (hwp : wpos.toNat < 2 ^ k) : Cmd :=
+  if hn : n = 0 then finishCopyS st0 ring wpos p1 p2 run rsz pos0
+  else
+    have hb : (ringBack wpos d mask size).toNat < ring.size := by
+      rw [ringBack_toNat hk hmask hsz hwp hd1 hd2, hsize]
+      exact ringIdx_lt hwp (by omega)
+    let byte := ring.uget (ringBack wpos d mask size) hb
+    have hr : wpos.toNat < ring.size := by omega
+    have hnext : (ringNext wpos mask).toNat < 2 ^ k := by
+      unfold ringNext
+      rw [USize.toNat_and, hmask, Nat.and_two_pow_sub_one_eq_mod]
+      exact Nat.mod_lt _ (Nat.two_pow_pos _)
+    copyRunK st0 run rsz pos0 d mask size k hk hmask hsz hd1 hd2 (n - USize.ofNat 1) (ringWrite ring wpos byte hr)
+      (ringNext wpos mask) byte p1 ((size_ringWrite ring wpos byte hr).trans hsize) hnext
+termination_by n.toNat
+decreasing_by
+  have := usize_pred hn
+  have := usize_ne hn
+  omega
+
+theorem copyRunK_eq (st0 : Cmd) (run rsz pos0 : USize) (d mask size : USize) (k : Nat) (hk : k ≤ 24)
+    (hmask : mask.toNat = 2 ^ k - 1) (hsz : size.toNat = 2 ^ k) (hd1 : 1 ≤ d.toNat) (hd2 : d.toNat ≤ 2 ^ k) :
+    ∀ (N : Nat) (n : USize) (ring : ByteArray) (wpos : USize) (p1 p2 : UInt8) (hsize : ring.size = 2 ^ k)
+      (hwp : wpos.toNat < 2 ^ k), n.toNat = N →
+      copyRunK st0 run rsz pos0 d mask size k hk hmask hsz hd1 hd2 n ring wpos p1 p2 hsize hwp =
+        finishCopy st0 (copyRun d mask size k hk hmask hsz hd1 hd2 n ring wpos p1 p2 hsize hwp) run rsz pos0 := by
+  intro N
+  induction N with
+  | zero =>
+    intro n ring wpos p1 p2 hsize hwp hN
+    have hn : n = 0 := usize_zero hN
+    rw [copyRunK, copyRun, dite_eq_left hn, dite_eq_left hn]
+    rfl
+  | succ N ih =>
+    intro n ring wpos p1 p2 hsize hwp hN
+    have hn : n ≠ 0 := fun e => by rw [e] at hN; exact Nat.succ_ne_zero _ hN.symm
+    rw [copyRunK, copyRun, dite_eq_right hn, dite_eq_right hn]
+    dsimp only
+    exact ih _ _ _ _ _ _ _ (by rw [usize_pred hn]; omega)
+
+/-- `stepCopy`, with the loop ending in the new state. -/
+def stepCopyK (k : USize) (st : Cmd) (pos : USize) : Cmd :=
+  if st.left = 0 then { st with tag := .command, pos := pos, status := .next }
+  else if room k st.cap ≤ st.pend then markStep st pos .needsOutput
+  else
+    let run := (umin st.left (room k st.cap - st.pend).toUInt64).toUSize
+    let d := st.dist.toUSize
+    if h : winCheck k st.wpos st.ring = true ∧ USize.ofNat 1 ≤ d ∧ d ≤ ringSize k then
+      let ring := st.ring
+      let st0 := clearRing st
+      copyRunK st0 run (ringSize k) pos d (ringMask k) (ringSize k) k.toNat (winCheck_k h.1)
+        (ringMask_toNat (winCheck_k h.1)) (ringSize_toNat (winCheck_k h.1))
+        (by
+          have := USize.le_iff_toNat_le.mp h.2.1
+          rwa [usize_ofNat' (by decide)] at this)
+        (by
+          have := USize.le_iff_toNat_le.mp h.2.2
+          rwa [ringSize_toNat (winCheck_k h.1)] at this)
+        run ring st0.wpos st0.p1 st0.p2 (winCheck_size h.1) (winCheck_pos h.1)
+    else markStep st pos .bad
+
+@[csimp] theorem stepCopy_csimp : @stepCopy = @stepCopyK := by
+  funext k st pos
+  unfold stepCopy stepCopyK
+  -- each `split` takes the same branch on both sides, whose conditions are the same
+  split
+  · rfl
+  · split
+    · rfl
+    · dsimp only
+      split
+      · exact (copyRunK_eq _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ rfl).symm
+      · rfl
+
+/-- `finishWord` from the loop's result as plain values, written out. -/
+@[noinline] def finishWordS (st0 : Cmd) (ring : ByteArray) (wpos : USize) (p1 p2 : UInt8) (run size pos : USize) : Cmd :=
+  { st0 with
+    ring := ring, wpos := wpos, p1 := p1, p2 := p2
+    ext := { st0.ext with wordPos := st0.wordPos + run }
+    pend := st0.pend + run
+    written := usmin (size - USize.ofNat 16) (st0.written + run)
+    pos := pos, status := .next }
+
+/-- `wordRun`, ending in `finishWordS`. -/
+def wordRunK (st0 : Cmd) (run size pos0 : USize) (buf : ByteArray) (mask : USize) (k : Nat) (hk : k ≤ 24)
+    (hmask : mask.toNat = 2 ^ k - 1) (n idx : USize) (ring : ByteArray) (wpos : USize) (p1 p2 : UInt8)
+    (hb : idx.toNat + n.toNat ≤ buf.size) (hb32 : idx.toNat + n.toNat ≤ 2 ^ 32 - 1) (hsize : ring.size = 2 ^ k)
+    (hwp : wpos.toNat < 2 ^ k) : Cmd :=
+  if hn : n = 0 then finishWordS st0 ring wpos p1 p2 run size pos0
+  else
+    have hnz := usize_ne hn
+    have hpred := usize_pred hn
+    let byte := buf.uget idx (by omega)
+    have hr : wpos.toNat < ring.size := by omega
+    have hnext : (ringNext wpos mask).toNat < 2 ^ k := by
+      unfold ringNext
+      rw [USize.toNat_and, hmask, Nat.and_two_pow_sub_one_eq_mod]
+      exact Nat.mod_lt _ (Nat.two_pow_pos _)
+    have hi : (idx + USize.ofNat 1).toNat = idx.toNat + 1 := usize_succ (by omega)
+    wordRunK st0 run size pos0 buf mask k hk hmask (n - USize.ofNat 1) (idx + USize.ofNat 1) (ringWrite ring wpos byte hr)
+      (ringNext wpos mask) byte p1 (by rw [hi]; omega) (by rw [hi]; omega) ((size_ringWrite ring wpos byte hr).trans hsize)
+      hnext
+termination_by n.toNat
+decreasing_by
+  omega
+
+theorem wordRunK_eq (st0 : Cmd) (run size pos0 : USize) (buf : ByteArray) (mask : USize) (k : Nat) (hk : k ≤ 24)
+    (hmask : mask.toNat = 2 ^ k - 1) :
+    ∀ (N : Nat) (n idx : USize) (ring : ByteArray) (wpos : USize) (p1 p2 : UInt8) (hb : idx.toNat + n.toNat ≤ buf.size)
+      (hb32 : idx.toNat + n.toNat ≤ 2 ^ 32 - 1) (hsize : ring.size = 2 ^ k) (hwp : wpos.toNat < 2 ^ k), n.toNat = N →
+      wordRunK st0 run size pos0 buf mask k hk hmask n idx ring wpos p1 p2 hb hb32 hsize hwp =
+        finishWord st0 (wordRun buf mask k hk hmask n idx ring wpos p1 p2 hb hb32 hsize hwp) run size pos0 := by
+  intro N
+  induction N with
+  | zero =>
+    intro n idx ring wpos p1 p2 hb hb32 hsize hwp hN
+    have hn : n = 0 := usize_zero hN
+    rw [wordRunK, wordRun, dite_eq_left hn, dite_eq_left hn]
+    rfl
+  | succ N ih =>
+    intro n idx ring wpos p1 p2 hb hb32 hsize hwp hN
+    have hn : n ≠ 0 := fun e => by rw [e] at hN; exact Nat.succ_ne_zero _ hN.symm
+    rw [wordRunK, wordRun, dite_eq_right hn, dite_eq_right hn]
+    dsimp only
+    exact ih _ _ _ _ _ _ _ _ _ _ (by rw [usize_pred hn]; omega)
+
+/-- `stepWord`, with the loop ending in the new state. -/
+def stepWordK (k : USize) (st : Cmd) (pos : USize) : Cmd :=
+  let n := st.wordBuf.usize - st.wordPos
+  if n = 0 then { st with tag := .command, pos := pos, status := .next }
+  else if room k st.cap ≤ st.pend then markStep st pos .needsOutput
+  else
+    let run := usmin n (room k st.cap - st.pend)
+    if h : winCheck k st.wpos st.ring = true ∧ st.wordPos.toNat + run.toNat ≤ st.wordBuf.size ∧
+        st.wordPos.toNat + run.toNat ≤ 2 ^ 32 - 1 then
+      let ring := st.ring
+      let st0 := clearRing st
+      wordRunK st0 run (ringSize k) pos st0.wordBuf (ringMask k) k.toNat (winCheck_k h.1) (ringMask_toNat (winCheck_k h.1)) run
+        st0.wordPos ring st0.wpos st0.p1 st0.p2 h.2.1 h.2.2 (winCheck_size h.1) (winCheck_pos h.1)
+    else markStep st pos .bad
+
+@[csimp] theorem stepWord_csimp : @stepWord = @stepWordK := by
+  funext k st pos
+  unfold stepWord stepWordK
+  dsimp only
+  split
+  · rfl
+  · split
+    · rfl
+    · split
+      · exact (wordRunK_eq _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ rfl).symm
+      · rfl
+
 end Brotli.Decoder
