@@ -759,11 +759,24 @@ theorem simpleFast_ok {size bits : UInt64} {b0 : BitBuffer} (hw : b0.Wf) (hb : b
   else if size ≤ 512 then 9
   else 10
 
-private theorem alphabetBits_table : ∀ n, n ≤ 1024 →
-    alphabetBits n = if n ≤ 1 then 0 else if n ≤ 2 then 1 else if n ≤ 4 then 2 else if n ≤ 8 then 3 else if n ≤ 16 then 4
-      else if n ≤ 32 then 5 else if n ≤ 64 then 6 else if n ≤ 128 then 7 else if n ≤ 256 then 8 else if n ≤ 512 then 9
-      else 10 := by
-  decide +kernel
+/-- `ALPHABET_BITS` is the least `b` with `n ≤ 2 ^ b`. -/
+private theorem alphabetBits_at (n b : Nat) (hb : b ≤ n) (h1 : n ≤ 2 ^ b) (h2 : b = 0 ∨ 2 ^ (b - 1) < n) :
+    alphabetBits n = b := by
+  unfold alphabetBits
+  have hlt : ∀ j < b, ¬ n ≤ 2 ^ j := by
+    intro j hj hn
+    rcases h2 with h2 | h2
+    · omega
+    · have : 2 ^ j ≤ 2 ^ (b - 1) := Nat.pow_le_pow_right (by decide) (by omega)
+      omega
+  rw [List.find?_eq_some_iff_getElem.mpr ⟨by simpa using h1, b, by simp; omega, by simp,
+    fun j hj => by simpa using hlt j (by simpa using hj)⟩]
+  rfl
+
+/-- A branch of `alphabetBitsFast`: its value `k` is `ALPHABET_BITS` of `n` when `n` is in `k`'s range. -/
+private theorem alphabetBits_fast (n : Nat) (k : UInt64) (hb10 : k.toNat ≤ 10) (hb : k.toNat ≤ n)
+    (h1 : n ≤ 2 ^ k.toNat) (h2 : k.toNat = 0 ∨ 2 ^ (k.toNat - 1) < n) : k.toNat = alphabetBits n ∧ k.toNat ≤ 10 :=
+  ⟨(alphabetBits_at n k.toNat hb h1 h2).symm, hb10⟩
 
 theorem alphabetBitsFast_toNat {size : UInt64} (h : size.toNat ≤ 1024) :
     (alphabetBitsFast size).toNat = alphabetBits size.toNat ∧ (alphabetBitsFast size).toNat ≤ 10 := by
@@ -773,13 +786,14 @@ theorem alphabetBitsFast_toNat {size : UInt64} (h : size.toNat ≤ 1024) :
     by_cases c : size ≤ k
     · rw [ite_eq_left c, ite_eq_left (by rw [← hm]; exact cond_le.mp c)]
     · rw [ite_eq_right c, ite_eq_right (by rw [← hm]; exact fun e => c (cond_le.mpr e))]
-  rw [alphabetBits_table _ h]
   unfold alphabetBitsFast
   rw [le_ite 512 512 _ _ rfl, le_ite 256 256 _ _ rfl, le_ite 128 128 _ _ rfl, le_ite 64 64 _ _ rfl, le_ite 32 32 _ _ rfl,
     le_ite 16 16 _ _ rfl, le_ite 8 8 _ _ rfl, le_ite 4 4 _ _ rfl, le_ite 2 2 _ _ rfl, le_ite 1 1 _ _ rfl]
   generalize size.toNat = n at h
   repeat' split
-  all_goals first | exact ⟨rfl, by decide⟩ | omega
+  all_goals
+    refine alphabetBits_fast n _ ?_ ?_ ?_ ?_ <;>
+      simp only [UInt64.reduceToNat, Nat.reducePow, Nat.reduceSub, true_or] <;> omega
 
 /-! ### Reads through a table -/
 

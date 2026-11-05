@@ -252,7 +252,8 @@ theorem growSingle_eq (st : Hd) (sym : UInt64) (h : st.d.arena.size + 2672 < 2 ^
 def mtfInitLut : ByteArray := ((List.range 256).map Nat.toUInt8).toByteArray
 
 private theorem mtfInit_values : ∀ k, k < 256 → (List.range 256).getD k 0 = (((List.range 256).map Nat.toUInt8)[k]?.getD 0).toNat := by
-  decide +kernel
+  intro k hk
+  simp [List.getD_eq_getElem?_getD, List.getElem?_range hk, Nat.mod_eq_of_lt hk]
 
 theorem mtfInit_is : MtfIs mtfInitLut (List.range 256) := by
   refine ⟨by simp [mtfInitLut, List.size_toByteArray], by simp, fun k hk => ?_⟩

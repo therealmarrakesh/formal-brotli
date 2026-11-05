@@ -941,7 +941,9 @@ no bit was read. -/
 def cred : Phase → Nat
   | .copy _ _ n => if n = 0 then 0 else 103 - 26 * n
   | .word _ pending => if pending = [] then 0 else 103 - 26 * pending.length
-  | _ => 0
+  -- the other places are listed rather than matched by `_`, whose equation lemma took 4 s to generate
+  | .command .. | .insertCopy .. | .copyLength .. | .literals .. | .literalSymbol .. | .distance .. | .distanceSymbol .. =>
+    0
 
 /-- The potential of a command's place: three for each rank, a dictionary word's building where one may begin, and what
 a copy or a word holds. -/
@@ -950,7 +952,9 @@ def cpot (p : Phase) : Nat := 3 * crank p + (if 2 ≤ crank p then 79 else 0) + 
 /-- Whether a place is a dictionary word's. -/
 def isWordP : Phase → Bool
   | .word .. => true
-  | _ => false
+  -- listed rather than matched by `_`, as in `cred`
+  | .command .. | .insertCopy .. | .copyLength .. | .literals .. | .literalSymbol .. | .distance .. | .distanceSymbol ..
+  | .copy .. => false
 
 /-- A step of the commands read in order goes on only from a rank of 13 or more. -/
 theorem cstage_next {w : Nat} {m : MetaBlockHeader} {p : Phase} {bs : List Bool} {q : Phase} {c : List Bool}
