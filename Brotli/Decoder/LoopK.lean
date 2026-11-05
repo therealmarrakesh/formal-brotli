@@ -1,4 +1,4 @@
-import Brotli.Decoder.LoopInv
+import Brotli.Decoder.CopyRing
 
 /-!
 # The compiled command loop
@@ -470,10 +470,10 @@ def kcase {α : Type} (cont : KCont α) (exit : Cmd → α) (r : Cmd) : α :=
           dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .distanceSymbol left p
           .needsInput)
     | .copy =>
-      if left = 0 then
+      if hl0 : left = 0 then
         cont w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev
           d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .command left p (hr.retag Tag.command_ne)
-      else if room k cap ≤ pend then
+      else if hrm : room k cap ≤ pend then
         exit (mkCmd w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
           dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .copy left p .needsOutput)
       else
@@ -486,10 +486,12 @@ def kcase {α : Type} (cont : KCont α) (exit : Cmd → α) (r : Cmd) : α :=
           have hd2 : d.toNat ≤ 2 ^ k.toNat := by
             have := USize.le_iff_toNat_le.mp h.2
             rwa [ringSize_toNat hr.k24] at this
-          let r := copyRun d (ringMask k) (ringSize k) k.toNat hr.k24 (ringMask_toNat hr.k24) (ringSize_toNat hr.k24)
-            hd1 hd2 run ring wpos p1 p2 hr.size hr.wpos
-          have hri := copyRun_inv hr.k24 (ringMask_toNat hr.k24) (ringSize_toNat hr.k24) hd1 hd2 run ring wpos p1 p2
-            hr.size hr.wpos
+          have hrun : run ≠ 0 := copy_run_ne hr.k24 hl0 hrm
+          have h2 : 2 ≤ 2 ^ k.toNat := by have := hr.k16; omega
+          let r := copyRunF d (ringMask k) (ringSize k) k.toNat hr.k24 (ringMask_toNat hr.k24) (ringSize_toNat hr.k24)
+            hd1 hd2 run ring wpos p1 p2 hr.size hr.wpos h2 hrun
+          have hri := copyRunF_inv hr.k24 (ringMask_toNat hr.k24) (ringSize_toNat hr.k24) hd1 hd2 run ring wpos p1 p2
+            hr.size hr.wpos h2 hrun
           cont w c r.ring r.wpos (pend + run) cap (usmin (ringSize k - USize.ofNat 16) (written + run)) r.p1 r.p2
             remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits
             copyBase dist wordBuf wordPos .copy (left - run.toUInt64) p (hr.wrote hri.1 hri.2 Tag.copy_ne)
@@ -497,18 +499,21 @@ def kcase {α : Type} (cont : KCont α) (exit : Cmd → α) (r : Cmd) : α :=
           exit (mkCmd w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
             dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .copy left p .bad)
     | .word =>
-      if wordBuf.usize - wordPos = 0 then
+      if hw0 : wordBuf.usize - wordPos = 0 then
         cont w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev
           d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .command left p (hr.retag Tag.command_ne)
-      else if room k cap ≤ pend then
+      else if hrm : room k cap ≤ pend then
         exit (mkCmd w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
           dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .word left p .needsOutput)
       else
         let run := usmin (wordBuf.usize - wordPos) (room k cap - pend)
         if h : wordPos.toNat + run.toNat ≤ wordBuf.size ∧ wordPos.toNat + run.toNat ≤ 2 ^ 32 - 1 then
-          let r := wordRun wordBuf (ringMask k) k.toNat hr.k24 (ringMask_toNat hr.k24) run wordPos ring wpos p1 p2 h.1
-            h.2 hr.size hr.wpos
-          have hri := wordRun_inv hr.k24 (ringMask_toNat hr.k24) run wordPos ring wpos p1 p2 h.1 h.2 hr.size hr.wpos
+          have hrun : run ≠ 0 := word_run_ne hw0 hrm
+          have h2 : 2 ≤ 2 ^ k.toNat := by have := hr.k16; omega
+          let r := wordRunF wordBuf (ringMask k) k.toNat hr.k24 (ringMask_toNat hr.k24) run wordPos ring wpos p1 p2 h.1
+            h.2 hr.size hr.wpos h2 hrun
+          have hri := wordRunF_inv hr.k24 (ringMask_toNat hr.k24) run wordPos ring wpos p1 p2 h.1 h.2 hr.size hr.wpos h2
+            hrun
           cont w c r.ring r.wpos (pend + run) cap (usmin (ringSize k - USize.ofNat 16) (written + run)) r.p1 r.p2
             remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits
             copyBase dist wordBuf (wordPos + run) .word left p (hr.wrote hri.1 hri.2 Tag.word_ne)
@@ -702,7 +707,7 @@ theorem kstep_copy (hcont : Drops H k stop contC g)
   simp only [hcont]
   rw [dite_eq_left (USize.le_iff_toNat_le.mpr hinv.pos)]
   have hwin := hinv.win
-  simp only [mkCmd, stepAt, stepCopy, finishCopy, clearRing, markStep, Cmd.dist]
+  simp only [mkCmd, stepAt, stepCopy, finishCopy, clearRing, markStep, Cmd.dist, copyRunF_eq]
   ksplitW hwin
 
 theorem kstep_word (hcont : Drops H k stop contC g)
@@ -714,7 +719,7 @@ theorem kstep_word (hcont : Drops H k stop contC g)
   simp only [hcont]
   rw [dite_eq_left (USize.le_iff_toNat_le.mpr hinv.pos)]
   have hwin := hinv.win
-  simp only [mkCmd, stepAt, stepWord, finishWord, clearRing, markStep, Cmd.wordBuf, Cmd.wordPos]
+  simp only [mkCmd, stepAt, stepWord, finishWord, clearRing, markStep, Cmd.wordBuf, Cmd.wordPos, wordRunF_eq]
   ksplitW hwin
 
 set_option linter.unusedSimpArgs true
