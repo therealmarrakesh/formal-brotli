@@ -299,6 +299,100 @@ theorem BitBuffer.fillSlow_spec {a : ByteArray} {stop : USize} (hs : stop.toNat 
         show 56 < count.toNat
         omega
 
+/-! ### The slow fill, unrolled
+
+`fillSlow` is a loop, so it isn't inlined, and its `Refilled` result is allocated on every call: on every step once
+fewer than eight bytes remain, and on every step after the input runs out. It takes at most eight bytes, since each
+adds eight bits to at most 56, so `fillSlowU` is the same eight steps written out, each ending in a continuation:
+inlined into `refill`, its result is never built. `fillSlow_csimp` proves the two equal. -/
+
+/-- One step of the slow fill: a byte taken while there is room and input, ending in `more`, or the buffer as it
+stands, in `done`. -/
+@[inline] def fillStep {α : Type} (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size)
+    (more done : UInt64 → UInt64 → USize → α) (word count : UInt64) (p : USize) : α :=
+  if h : count ≤ 56 ∧ p < stop then
+    have hlt := USize.lt_iff_toNat_lt.mp h.2
+    let b := (BitBuffer.mk word count).push (a.uget p (by omega))
+    more b.word b.count (p + USize.ofNat 1)
+  else done word count p
+
+/-- The slow fill's result from its fields. -/
+@[inline] def mkRefilled (w c : UInt64) (q : USize) : Refilled := ⟨w, c, q⟩
+
+/-- `fillSlow` as eight steps written out. -/
+@[inline] def fillSlowU (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (word count : UInt64) (p : USize) :
+    Refilled :=
+  fillStep a stop hs (fillStep a stop hs (fillStep a stop hs (fillStep a stop hs (fillStep a stop hs
+    (fillStep a stop hs (fillStep a stop hs (fillStep a stop hs mkRefilled mkRefilled) mkRefilled) mkRefilled)
+    mkRefilled) mkRefilled) mkRefilled) mkRefilled) mkRefilled word count p
+
+/-- `fillSlow` is its first step, gone on with by itself. -/
+private theorem fillSlow_step (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) :
+    BitBuffer.fillSlow a stop hs = fillStep a stop hs (BitBuffer.fillSlow a stop hs) mkRefilled := by
+  funext word count p
+  rw [BitBuffer.fillSlow]
+  rfl
+
+/-- `fillSlow` unrolled `k` times. -/
+private def fillG (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) :
+    Nat → UInt64 → UInt64 → USize → Refilled
+  | 0 => BitBuffer.fillSlow a stop hs
+  | k + 1 => fillStep a stop hs (fillG a stop hs k) mkRefilled
+
+/-- The written-out steps, `k` deep. -/
+private def fillU (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) :
+    Nat → UInt64 → UInt64 → USize → Refilled
+  | 0 => mkRefilled
+  | k + 1 => fillStep a stop hs (fillU a stop hs k) mkRefilled
+
+private theorem fillG_eq (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) :
+    ∀ k, fillG a stop hs k = BitBuffer.fillSlow a stop hs := by
+  intro k
+  induction k with
+  | zero => rfl
+  | succ k ih =>
+    show fillStep a stop hs (fillG a stop hs k) mkRefilled = _
+    rw [ih, ← fillSlow_step]
+
+/-- The step goes on only with eight more bits than it was given. -/
+private theorem fillStep_congr {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size}
+    {m1 m2 : UInt64 → UInt64 → USize → Refilled} {lo : Nat}
+    (h : ∀ w c q, lo + 8 ≤ c.toNat → m1 w c q = m2 w c q) :
+    ∀ w c q, lo ≤ c.toNat → fillStep a stop hs m1 mkRefilled w c q = fillStep a stop hs m2 mkRefilled w c q := by
+  intro w c q hc
+  unfold fillStep
+  split
+  · rename_i hh
+    apply h
+    rw [BitBuffer.push_count (UInt64.le_iff_toNat_le.mp hh.1)]
+    show lo + 8 ≤ c.toNat + 8
+    omega
+  · rfl
+
+/-- At depth `k`, the unrolled fill and the loop agree on every buffer with at least `64 - 8k` bits. -/
+private theorem fillGU (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) :
+    ∀ k w c q, 64 - 8 * k ≤ c.toNat → fillG a stop hs k w c q = fillU a stop hs k w c q := by
+  intro k
+  induction k with
+  | zero =>
+    intro w c q hc
+    show BitBuffer.fillSlow a stop hs w c q = mkRefilled w c q
+    rw [BitBuffer.fillSlow, dite_eq_right]
+    · rfl
+    · intro hh
+      have := UInt64.le_iff_toNat_le.mp hh.1
+      have h56 : (56 : UInt64).toNat = 56 := rfl
+      omega
+  | succ k ih =>
+    intro w c q hc
+    exact fillStep_congr (lo := 64 - 8 * (k + 1)) (fun w c q h => ih w c q (by omega)) w c q hc
+
+/-- The compiler runs the slow fill written out, which allocates nothing, in place of the loop. -/
+@[csimp] theorem fillSlow_csimp : @BitBuffer.fillSlow = @fillSlowU := by
+  funext a stop hs word count p
+  rw [← fillG_eq a stop hs 8]
+  exact fillGU a stop hs 8 word count p (by omega)
+
 /-- The buffer in a refill's result. -/
 @[inline] def Refilled.buf (r : Refilled) : BitBuffer := ⟨r.word, r.count⟩
 
