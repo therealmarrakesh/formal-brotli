@@ -123,7 +123,8 @@ def tableDoneW (st : Hd) (single : Bool) : Nat :=
 /-- The work of `clTable`. -/
 def clTableW (st : Hd) : Nat :=
   if st.clNz = 1 then buildSingleW
-  else if hn : (USize.ofNat 18).toNat ≤ st.clLens.size then buildLensW ByteArray.empty st.clLens (USize.ofNat 18) hn
+  else if hn : (USize.ofNat 18).toNat ≤ st.clLens.size ∧ LensSmall st.clLens (USize.ofNat 18) then
+    buildLensW ByteArray.empty st.clLens (USize.ofNat 18) hn.1 hn.2
   else 1
 
 /-- The work of `clFinish`: the code length code's table, with nothing checked, and the lists' links emptied. -/

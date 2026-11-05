@@ -174,12 +174,11 @@ theorem clTableW_le {st : Hd} (h : ∃ acc, ClDone st acc) : clTableW st ≤ 927
     have := buildSingleW_le
     omega
   · rw [ite_eq_right h1]
-    by_cases hn : (USize.ofNat 18).toNat ≤ st.clLens.size
+    by_cases hn : (USize.ofNat 18).toNat ≤ st.clLens.size ∧ LensSmall st.clLens (USize.ofNat 18)
     · rw [dite_eq_left hn]
-      have b1 := buildLensW_short (hn := hn) (⟨hd.complete h1, by rw [h18]; decide, rfl, by decide⟩ :
+      have b1 := buildLensW_short (hn := hn.1) (hs := hn.2) (⟨hd.complete h1, by rw [h18]; decide, rfl, by decide⟩ :
         LensArgs ByteArray.empty st.clLens (USize.ofNat 18))
         (fun l hl => Nat.le_trans (hd.short h1 l hl) (show 5 ≤ 8 by decide))
-      rw [h18] at b1
       omega
     · rw [dite_eq_right hn]
       omega

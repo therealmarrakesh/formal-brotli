@@ -245,8 +245,8 @@ def buildFastW (t head next : ByteArray) : Nat :=
 def listsW (n : Nat) : Nat := zbW 32 + zbW (2 * n) + (n + 1)
 
 /-- The work of `buildLens`: the lists, then the builder. -/
-def buildLensW (t lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) : Nat :=
-  listsW n.toNat + buildFastW t (listsOf lens n hn).1 (listsOf lens n hn).2
+def buildLensW (t lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) (hs : LensSmall lens n) : Nat :=
+  listsW n.toNat + buildFastW t (listsOf lens n hn hs).1 (listsOf lens n hn hs).2
 
 /-- The work of `buildSingleFast`: 512 zeros, 256 slots written. -/
 def buildSingleW : Nat := zeroExtendW 512 + fillRunW 256
@@ -593,9 +593,10 @@ theorem buildFastW_short {t head next : ByteArray} {L : List Nat} (ha : BuildArg
   omega
 
 /-- The work of `buildLens`: six rounds for each symbol, four for each code word longer than 8 bits, and 1299 more. -/
-theorem buildLensW_le {t lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.size} (h : LensArgs t lens n) :
-    buildLensW t lens n hn ≤ 6 * n.toNat + 4 * longCount (lensOf lens n.toNat) + 1299 := by
-  have hb : buildFastW t (listsOf lens n hn).1 (listsOf lens n hn).2 ≤
+theorem buildLensW_le {t lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.size} {hs : LensSmall lens n}
+    (h : LensArgs t lens n) :
+    buildLensW t lens n hn hs ≤ 6 * n.toNat + 4 * longCount (lensOf lens n.toNat) + 1299 := by
+  have hb : buildFastW t (listsOf lens n hn hs).1 (listsOf lens n hn hs).2 ≤
       3 * (lensOf lens n.toNat).countP (· != 0) + 4 * longCount (lensOf lens n.toNat) + 1264 := buildFastW_le (lens_build h)
   have hc := List.countP_le_length (p := (· != 0)) (l := lensOf lens n.toNat)
   generalize (lensOf lens n.toNat).countP (· != 0) = nz at hb hc
@@ -604,8 +605,8 @@ theorem buildLensW_le {t lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.si
   have z2 := zbW_le (2 * n.toNat)
   have h704 : n.toNat ≤ 704 := h.2.1
   have hd : 2 * n.toNat / 65536 = 0 := Nat.div_eq_of_lt (by omega)
-  show listsW n.toNat + buildFastW t (listsOf lens n hn).1 (listsOf lens n hn).2 ≤ _
-  generalize buildFastW t (listsOf lens n hn).1 (listsOf lens n hn).2 = B at hb ⊢
+  show listsW n.toNat + buildFastW t (listsOf lens n hn hs).1 (listsOf lens n hn hs).2 ≤ _
+  generalize buildFastW t (listsOf lens n hn hs).1 (listsOf lens n hn hs).2 = B at hb ⊢
   generalize longCount (lensOf lens n.toNat) = Lc at hb ⊢
   generalize (lensOf lens n.toNat).length = m at hc hlen
   unfold listsW
@@ -615,9 +616,9 @@ theorem buildLensW_le {t lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.si
   omega
 
 /-- The work of `buildLens` for a code with no code word longer than 8 bits: six rounds for each symbol, and 819. -/
-theorem buildLensW_short {t lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.size} (h : LensArgs t lens n)
-    (h8 : ∀ l ∈ lensOf lens n.toNat, l ≤ 8) : buildLensW t lens n hn ≤ 6 * n.toNat + 819 := by
-  have hb : buildFastW t (listsOf lens n hn).1 (listsOf lens n hn).2 ≤ 3 * (lensOf lens n.toNat).countP (· != 0) + 784 :=
+theorem buildLensW_short {t lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.size} {hs : LensSmall lens n}
+    (h : LensArgs t lens n) (h8 : ∀ l ∈ lensOf lens n.toNat, l ≤ 8) : buildLensW t lens n hn hs ≤ 6 * n.toNat + 819 := by
+  have hb : buildFastW t (listsOf lens n hn hs).1 (listsOf lens n hn hs).2 ≤ 3 * (lensOf lens n.toNat).countP (· != 0) + 784 :=
     buildFastW_short (lens_build h) h8
   have hc := List.countP_le_length (p := (· != 0)) (l := lensOf lens n.toNat)
   generalize (lensOf lens n.toNat).countP (· != 0) = nz at hb hc
@@ -626,8 +627,8 @@ theorem buildLensW_short {t lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens
   have z2 := zbW_le (2 * n.toNat)
   have h704 : n.toNat ≤ 704 := h.2.1
   have hd : 2 * n.toNat / 65536 = 0 := Nat.div_eq_of_lt (by omega)
-  show listsW n.toNat + buildFastW t (listsOf lens n hn).1 (listsOf lens n hn).2 ≤ _
-  generalize buildFastW t (listsOf lens n hn).1 (listsOf lens n hn).2 = B at hb ⊢
+  show listsW n.toNat + buildFastW t (listsOf lens n hn hs).1 (listsOf lens n hn hs).2 ≤ _
+  generalize buildFastW t (listsOf lens n hn hs).1 (listsOf lens n hn hs).2 = B at hb ⊢
   generalize (lensOf lens n.toNat).length = m at hc hlen
   unfold listsW
   generalize zbW 32 = a at z1 ⊢

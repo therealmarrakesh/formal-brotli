@@ -227,6 +227,29 @@ theorem size_u16Set (b : ByteArray) (i : USize) (v : UInt64) : (u16Set b i v).si
   unfold u16Set
   simp only [size_setU]
 
+/-- Reads a 16-bit value in the array. -/
+@[inline] def u16GetU (b : ByteArray) (i : USize) (h : 2 * i.toNat + 1 < b.size) (h16 : i.toNat < 2 ^ 16) : UInt64 :=
+  (b.uget (i * USize.ofNat 2) (by rw [p2 h16]; omega)).toUInt64 |||
+    ((b.uget (i * USize.ofNat 2 + USize.ofNat 1) (by rw [p3 h16]; omega)).toUInt64 <<< 8)
+
+/-- Writes a 16-bit value in the array. -/
+@[inline] def u16SetU (b : ByteArray) (i : USize) (v : UInt64) (h : 2 * i.toNat + 1 < b.size) (h16 : i.toNat < 2 ^ 16) :
+    ByteArray :=
+  (b.uset (i * USize.ofNat 2) v.toUInt8 (by rw [p2 h16]; omega)).uset (i * USize.ofNat 2 + USize.ofNat 1) (v >>> 8).toUInt8
+    (by rw [size_uset', p3 h16]; omega)
+
+theorem u16GetU_eq (b : ByteArray) (i : USize) (h : 2 * i.toNat + 1 < b.size) (h16 : i.toNat < 2 ^ 16) :
+    u16GetU b i h h16 = u16Get b i := by
+  simp only [u16GetU, u16Get, uget_getU]
+
+theorem u16SetU_eq (b : ByteArray) (i : USize) (v : UInt64) (h : 2 * i.toNat + 1 < b.size) (h16 : i.toNat < 2 ^ 16) :
+    u16SetU b i v h h16 = u16Set b i v := by
+  simp only [u16SetU, u16Set, uset_setU]
+
+theorem size_u16SetU (b : ByteArray) (i : USize) (v : UInt64) (h : 2 * i.toNat + 1 < b.size) (h16 : i.toNat < 2 ^ 16) :
+    (u16SetU b i v h h16).size = b.size := by
+  rw [u16SetU_eq, size_u16Set]
+
 theorem u16At_set_same {b : ByteArray} {i : USize} {v : UInt64} (h : i.toNat < 2 ^ 16) (hs : 2 * i.toNat + 1 < b.size)
     (hv : v.toNat < 65536) : u16At (u16Set b i v) i.toNat = v.toNat := by
   unfold u16Set u16At
@@ -1422,13 +1445,35 @@ theorem ChainIs.frame {next : ByteArray} {j : USize} {x : UInt64} (hj : j.toNat 
     rw [u16At_set_ne hj (hn s List.mem_cons_self)]
     exact ChainIs.frame hj h3 fun s' hs' => hn s' (List.mem_cons_of_mem _ hs')
 
+private theorem lens_byte_toUSize {lens : ByteArray} {i : USize} (h : i.toNat < lens.size) :
+    (lens.uget i h).toUSize.toNat = (lens.data[i.toNat]?.getD 0).toNat := by
+  rw [UInt8.toNat_toUSize, uget_toNat]
+
+/-- What `listsLoop` needs: at most 704 code lengths, each at most 15. -/
+def LensSmall (lens : ByteArray) (n : USize) : Prop :=
+  n.toNat ≤ 704 ∧ ∀ j, j < n.toNat → (lens.data[j]?.getD 0).toNat ≤ 15
+
+instance (lens : ByteArray) (n : USize) : Decidable (LensSmall lens n) := by
+  unfold LensSmall
+  infer_instance
+
 /-- Links the symbols from `i` of the `n` code lengths in `lens`, each in front of its length's list. -/
-def listsLoop (lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) (i : USize) (head next : ByteArray) :
-    ByteArray × ByteArray :=
+def listsLoop (lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) (hs : LensSmall lens n) (i : USize)
+    (head next : ByteArray) (hh : head.size = 32) (hx : next.size = 2 * n.toNat) : ByteArray × ByteArray :=
   if hi : i < n then
-    let l := (lens.uget i (Nat.lt_of_lt_of_le (USize.lt_iff_toNat_lt.mp hi) hn)).toUSize
-    if l = 0 then listsLoop lens n hn (i + USize.ofNat 1) head next
-    else listsLoop lens n hn (i + USize.ofNat 1) (u16Set head l (i.toUInt64 + 1)) (u16Set next i (u16Get head l))
+    have hil : i.toNat < lens.size := Nat.lt_of_lt_of_le (USize.lt_iff_toNat_lt.mp hi) hn
+    let l := (lens.uget i hil).toUSize
+    if l = 0 then listsLoop lens n hn hs (i + USize.ofNat 1) head next hh hx
+    else
+      have hl : l.toNat ≤ 15 := by
+        show (lens.uget i hil).toUSize.toNat ≤ 15
+        rw [lens_byte_toUSize hil]
+        exact hs.2 _ (USize.lt_iff_toNat_lt.mp hi)
+      have hi' : i.toNat < n.toNat := USize.lt_iff_toNat_lt.mp hi
+      listsLoop lens n hn hs (i + USize.ofNat 1)
+        (u16SetU head l (i.toUInt64 + 1) (by omega) (by omega))
+        (u16SetU next i (u16GetU head l (by omega) (by omega)) (by have := hs.1; omega) (by have := hs.1; omega))
+        (by rw [size_u16SetU]; exact hh) (by rw [size_u16SetU]; exact hx)
   else (head, next)
 termination_by n.toNat - i.toNat
 decreasing_by
@@ -1438,24 +1483,22 @@ decreasing_by
     omega
 
 /-- The lists of each length's symbols of the `n` code lengths in `lens`. -/
-def listsOf (lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) : ByteArray × ByteArray :=
-  listsLoop lens n hn 0 (zeroBytes 32) (zeroBytes (2 * n.toNat))
+def listsOf (lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) (hs : LensSmall lens n) : ByteArray × ByteArray :=
+  listsLoop lens n hn hs 0 (zeroBytes 32) (zeroBytes (2 * n.toNat)) (zeroBytes_size (by decide))
+    (zeroBytes_size (by have := hs.1; omega))
 
-private theorem lens_byte_toUSize {lens : ByteArray} {i : USize} (h : i.toNat < lens.size) :
-    (lens.uget i h).toUSize.toNat = (lens.data[i.toNat]?.getD 0).toNat := by
-  rw [UInt8.toNat_toUSize, uget_toNat]
-
-theorem listsLoop_spec {lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.size} (h704 : n.toNat ≤ 704)
-    (hl : ∀ l ∈ lensOf lens n.toNat, l ≤ 15) : ∀ (N : Nat) (i : USize) (head next : ByteArray), n.toNat - i.toNat = N →
-    i.toNat ≤ n.toNat → head.size = 32 → next.size = 2 * n.toNat →
+theorem listsLoop_spec {lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.size} (hs : LensSmall lens n) :
+    ∀ (N : Nat) (i : USize) (head next : ByteArray) (hh : head.size = 32) (hnx : next.size = 2 * n.toNat),
+    n.toNat - i.toNat = N → i.toNat ≤ n.toNat →
     (∀ l, 1 ≤ l → l ≤ 15 →
       ChainIs next (u16At head l) ((List.range i.toNat).filter (fun s => (lensOf lens n.toNat)[s]? == some l)).reverse) →
-    (listsLoop lens n hn i head next).1.size = 32 ∧ (listsLoop lens n hn i head next).2.size = 2 * n.toNat ∧
-      ListsIs (listsLoop lens n hn i head next).1 (listsLoop lens n hn i head next).2 (lensOf lens n.toNat) := by
+    (listsLoop lens n hn hs i head next hh hnx).1.size = 32 ∧ (listsLoop lens n hn hs i head next hh hnx).2.size = 2 * n.toNat ∧
+      ListsIs (listsLoop lens n hn hs i head next hh hnx).1 (listsLoop lens n hn hs i head next hh hnx).2 (lensOf lens n.toNat) := by
+  have h704 := hs.1
   intro N
   induction N with
   | zero =>
-    intro i head next hN hi hh hnx hc
+    intro i head next hh hnx hN hi hc
     have hin : ¬ i < n := fun h => by have := USize.lt_iff_toNat_lt.mp h; omega
     rw [listsLoop, dite_eq_right hin]
     dsimp only
@@ -1463,12 +1506,12 @@ theorem listsLoop_spec {lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.siz
     have := hc l h1 h2
     rwa [show i.toNat = (lensOf lens n.toNat).length by rw [length_lensOf hn]; omega] at this
   | succ N ih =>
-    intro i head next hN hi hh hnx hc
+    intro i head next hh hnx hN hi hc
     have hlt : i < n := USize.lt_iff_toNat_lt.mpr (by omega)
     have hi1 := usize_next hlt
     have hil : i.toNat < lens.size := by omega
     have hget := lensOf_get (lens := lens) (n := n.toNat) (i := i.toNat) (by omega) hn
-    have hl15 : (lens.data[i.toNat]?.getD 0).toNat ≤ 15 := hl _ (List.mem_of_getElem? hget)
+    have hl15 : (lens.data[i.toNat]?.getD 0).toNat ≤ 15 := hs.2 _ (by omega)
     -- The lists below `i + 1`.
     have hrange : ∀ l, ((List.range (i.toNat + 1)).filter (fun s => (lensOf lens n.toNat)[s]? == some l)) =
         ((List.range i.toNat).filter (fun s => (lensOf lens n.toNat)[s]? == some l)) ++
@@ -1487,11 +1530,13 @@ theorem listsLoop_spec {lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.siz
     by_cases h0 : (lens.uget i hil).toUSize = 0
     · rw [ite_eq_left h0]
       have hz : (lens.data[i.toNat]?.getD 0).toNat = 0 := by rw [← hlv, h0]; rfl
-      refine ih (i + USize.ofNat 1) head next (by omega) (by omega) hh hnx fun l h1 h2 => ?_
+      refine ih (i + USize.ofNat 1) head next hh hnx (by omega) (by omega) fun l h1 h2 => ?_
       rw [hi1, hrange l, ite_eq_right (by omega), List.append_nil]
       exact hc l h1 h2
     · rw [ite_eq_right h0]
       have hl0 : (lens.uget i hil).toUSize.toNat ≠ 0 := fun e => h0 (USize.toNat_inj.mp (by rw [e]; rfl))
+      refine ih (i + USize.ofNat 1) _ _ _ _ (by omega) (by omega) ?_
+      simp only [u16SetU_eq, u16GetU_eq]
       generalize hL : (lens.uget i hil).toUSize = L at h0 hl0 hlv ⊢
       have hL16 : L.toNat < 16 := by omega
       have hi16 : i.toNat < 2 ^ 16 := by omega
@@ -1499,8 +1544,6 @@ theorem listsLoop_spec {lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.siz
       have hiv : (i.toUInt64 + 1).toNat = i.toNat + 1 := by
         rw [u64_add' (by rw [USize.toNat_toUInt64, show (1 : UInt64).toNat = 1 from rfl]; omega), USize.toNat_toUInt64]
         rfl
-      refine ih (i + USize.ofNat 1) _ _ (by omega) (by omega) (by rw [size_u16Set]; exact hh)
-        (by rw [size_u16Set]; exact hnx) ?_
       intro l h1 h2
       rw [hi1, hrange l]
       by_cases he : L.toNat = l
@@ -1513,11 +1556,10 @@ theorem listsLoop_spec {lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.siz
       · rw [ite_eq_right (by omega), List.append_nil, u16At_set_ne hL2 (Ne.symm he)]
         exact ChainIs.frame hi16 (hc l h1 h2) fun s hs => hmem _ s (List.mem_reverse.mp hs)
 
-theorem listsOf_spec {lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.size} (h704 : n.toNat ≤ 704)
-    (hl : ∀ l ∈ lensOf lens n.toNat, l ≤ 15) :
-    (listsOf lens n hn).1.size = 32 ∧ (listsOf lens n hn).2.size = 2 * n.toNat ∧
-      ListsIs (listsOf lens n hn).1 (listsOf lens n hn).2 (lensOf lens n.toNat) := by
-  refine listsLoop_spec h704 hl _ 0 _ _ rfl (by simp) (zeroBytes_size (by decide)) (zeroBytes_size (by omega)) ?_
+theorem listsOf_spec {lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.size} (hs : LensSmall lens n) :
+    (listsOf lens n hn hs).1.size = 32 ∧ (listsOf lens n hn hs).2.size = 2 * n.toNat ∧
+      ListsIs (listsOf lens n hn hs).1 (listsOf lens n hn hs).2 (lensOf lens n.toNat) := by
+  refine listsLoop_spec hs _ 0 _ _ _ _ rfl (by simp) ?_
   intro l _ _
   show ChainIs _ (u16At (zeroBytes 32) l) []
   show u16At (zeroBytes 32) l = 0
@@ -1530,16 +1572,21 @@ slots with room for the table. -/
 def LensArgs (t lens : ByteArray) (n : USize) : Prop :=
   Complete (.canonical (lensOf lens n.toNat)) ∧ n.toNat ≤ 704 ∧ t.size % 2 = 0 ∧ t.size + 2672 < 2 ^ 32
 
+/-- A complete code's lengths are small. -/
+theorem LensArgs.small {t lens : ByteArray} {n : USize} (h : LensArgs t lens n) (hn : n.toNat ≤ lens.size) : LensSmall lens n :=
+  ⟨h.2.1, fun j hj => h.1.1 _ (List.mem_of_getElem? (lensOf_get (lens := lens) (n := n.toNat) (i := j) hj hn))⟩
+
 theorem lens_build {t lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.size} (h : LensArgs t lens n) :
-    BuildArgs t (listsOf lens n hn).1 (listsOf lens n hn).2 (lensOf lens n.toNat) := by
+    BuildArgs t (listsOf lens n hn (h.small hn)).1 (listsOf lens n hn (h.small hn)).2 (lensOf lens n.toNat) := by
+  have hs := h.small hn
   obtain ⟨hC, h704, h2, h32⟩ := h
-  obtain ⟨s1, s2, hl⟩ := listsOf_spec (hn := hn) h704 hC.1
+  obtain ⟨s1, s2, hl⟩ := listsOf_spec (hn := hn) hs
   exact ⟨hC, by rw [length_lensOf hn]; exact h704, hl, by omega, by omega, h2, h32⟩
 
 /-- Appends a canonical code's table to the arena, from the `n` code lengths in `lens`. Its slots start at
 `t.size / 2`. -/
 def buildLens (t lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) (h : LensArgs t lens n) : ByteArray :=
-  match hl : listsOf lens n hn with
+  match hl : listsOf lens n hn (h.small hn) with
   | (head, next) => buildFast t head next ⟨lensOf lens n.toNat, by
       have := lens_build (hn := hn) h
       rw [hl] at this
