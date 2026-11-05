@@ -53,6 +53,7 @@ import Brotli.Decoder.StreamMem
 import Brotli.Decoder.StreamLimit
 import Brotli.Decoder.StreamTop
 import Brotli.Decoder.OrderSpec
+import Brotli.Decoder.Doomed
 import Brotli.Decoder.Tables
 import Brotli.Decoder.MemAt
 import Brotli.Decoder.Progress
