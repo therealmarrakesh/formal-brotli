@@ -254,8 +254,10 @@ def stepDistance (H : Hdr) (st : Cmd) (pos : USize) : Cmd :=
       | .ok =>
         { st with
           word := r.word, count := r.count, dCur := r.cur, dPrev := st.dCur, dCount := r.blockCount - 1
-          fD0 := markWord st.fD0 r.cur 0, fD1 := markWord st.fD1 r.cur 1, fD2 := markWord st.fD2 r.cur 2
-          fD3 := markWord st.fD3 r.cur 3, tag := .distanceSymbol, pos := pos, status := .next }
+          flags := { st.flags with
+            fD0 := markWord st.flags.fD0 r.cur 0, fD1 := markWord st.flags.fD1 r.cur 1, fD2 := markWord st.flags.fD2 r.cur 2
+            fD3 := markWord st.flags.fD3 r.cur 3 }
+          tag := .distanceSymbol, pos := pos, status := .next }
       | .short => markStep st pos .needsInput
       | .bad => markStep st pos .bad
     else markStep st pos .bad

@@ -125,8 +125,10 @@ def stepCommand (H : Hdr) (st : Cmd) (pos : USize) : Cmd :=
       | .ok =>
         { st with
           word := r.word, count := r.count, iCur := r.cur, iPrev := st.iCur, iCount := r.blockCount - 1
-          fI0 := markWord st.fI0 r.cur 0, fI1 := markWord st.fI1 r.cur 1, fI2 := markWord st.fI2 r.cur 2
-          fI3 := markWord st.fI3 r.cur 3, tag := .insertCopy, pos := pos, status := .next }
+          flags := { st.flags with
+            fI0 := markWord st.flags.fI0 r.cur 0, fI1 := markWord st.flags.fI1 r.cur 1, fI2 := markWord st.flags.fI2 r.cur 2
+            fI3 := markWord st.flags.fI3 r.cur 3 }
+          tag := .insertCopy, pos := pos, status := .next }
       | .short => markStep st pos .needsInput
       | .bad => markStep st pos .bad
     else markStep st pos .bad

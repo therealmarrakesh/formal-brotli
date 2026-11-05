@@ -15,8 +15,7 @@ open Brotli.Spec Brotli.Properties
 def cmdStart (c : Cmd) (d : Done) (word count mlen : UInt64) : Cmd :=
   { c with
     word := word, count := count, remaining := mlen, iCur := 0, iPrev := 1, iCount := d.countI, lCur := 0, lPrev := 1, lCount := d.countL
-    dCur := 0, dPrev := 1, dCount := d.countD, fL0 := 1, fL1 := 0, fL2 := 0, fL3 := 0, fI0 := 1, fI1 := 0, fI2 := 0, fI3 := 0
-    fD0 := 1, fD1 := 0, fD2 := 0, fD3 := 0, tag := .command }
+    dCur := 0, dPrev := 1, dCount := d.countD, flags := ⟨1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0⟩, tag := .command }
 
 private theorem flagOf_start : ∀ t, t < 256 → flagOf 1 0 0 0 t = decide (t = 0) := by
   decide +kernel
@@ -195,7 +194,8 @@ theorem allFlags_iff {w0 w1 w2 w3 n : UInt64} :
 
 /-- A meta-block's end check: every block type occurred. -/
 @[inline] def seenOk (st : Cmd) (nL nI nD : UInt64) : Bool :=
-  allFlags st.fL0 st.fL1 st.fL2 st.fL3 nL && allFlags st.fI0 st.fI1 st.fI2 st.fI3 nI && allFlags st.fD0 st.fD1 st.fD2 st.fD3 nD
+  allFlags st.flags.fL0 st.flags.fL1 st.flags.fL2 st.flags.fL3 nL && allFlags st.flags.fI0 st.flags.fI1 st.flags.fI2 st.flags.fI3 nI &&
+    allFlags st.flags.fD0 st.flags.fD1 st.flags.fD2 st.flags.fD3 nD
 
 private theorem uses_iff {w0 w1 w2 w3 cur prev count : UInt64} {st : BlockState} {c : BlockCategory}
     (h : BlockRel w0 w1 w2 w3 cur prev count st c) {n : UInt64} (hn : n.toNat = c.n) (hc : c.n ≤ 256) :
@@ -214,9 +214,9 @@ theorem seenOk_iff {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {st : Cmd} {s : C
   have hI := uses_iff hC.iRel hH.nI hH.ok.insertCopy.2.1
   have hD := uses_iff hC.dRel hH.nD hH.ok.distance.2.1
   unfold seenOk
-  generalize allFlags st.fL0 st.fL1 st.fL2 st.fL3 H.nL = a1 at hL
-  generalize allFlags st.fI0 st.fI1 st.fI2 st.fI3 H.nI = a2 at hI
-  generalize allFlags st.fD0 st.fD1 st.fD2 st.fD3 H.nD = a3 at hD
+  generalize allFlags st.flags.fL0 st.flags.fL1 st.flags.fL2 st.flags.fL3 H.nL = a1 at hL
+  generalize allFlags st.flags.fI0 st.flags.fI1 st.flags.fI2 st.flags.fI3 H.nI = a2 at hI
+  generalize allFlags st.flags.fD0 st.flags.fD1 st.flags.fD2 st.flags.fD3 H.nD = a3 at hD
   generalize usesEveryType m.literal s.literal = b1 at hL
   generalize usesEveryType m.insertCopy s.insertCopy = b2 at hI
   generalize usesEveryType m.distance s.distance = b3 at hD
@@ -228,8 +228,8 @@ theorem seenOk_iff {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {st : Cmd} {s : C
 /-! ### Steps -/
 
 /-- A command loop's state with nothing in it, to hold a state's place while the real one is written. -/
-def Cmd.none : Cmd := ⟨0, 0, ByteArray.empty, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  0, 0, .command, 0, 0, 0, 0, 0, 0, 0, ByteArray.empty, 0, 0, .next⟩
+def Cmd.none : Cmd := ⟨0, 0, ByteArray.empty, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  ⟨0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0⟩, .command, 0, 0, 0, 0, 0, 0, 0, ByteArray.empty, 0, 0, .next⟩
 
 /-- A header machine's state with nothing in it. -/
 def Hd.none : Hd := ⟨0, 0, 0, .next, .cat, Done.none, .L, .type, true, .L, 0, 0, 0, 0, 0, ByteArray.empty, headNone, nextNone, 0, 0, 0, 0, 0,

@@ -41,6 +41,22 @@ inductive StepStatus where
   | bad
   deriving DecidableEq
 
+/-- The block types that occurred, four words per category: type `t`'s flag is bit `t % 64` of word `t / 64`. They are
+held apart from the loop's state, which a block switch alone changes, so that every other step's state stays small. -/
+structure Flags where
+  fL0 : UInt64
+  fL1 : UInt64
+  fL2 : UInt64
+  fL3 : UInt64
+  fI0 : UInt64
+  fI1 : UInt64
+  fI2 : UInt64
+  fI3 : UInt64
+  fD0 : UInt64
+  fD1 : UInt64
+  fD2 : UInt64
+  fD3 : UInt64
+
 /-- The loop's state between steps. A step returns it with the input position and how the step ended, so that a step
 updates it in place and returns nothing else. -/
 structure Cmd where
@@ -71,19 +87,8 @@ structure Cmd where
   dCur : UInt64
   dPrev : UInt64
   dCount : UInt64
-  /-- The block types that occurred, four words per category: type `t`'s flag is bit `t % 64` of word `t / 64`. -/
-  fL0 : UInt64
-  fL1 : UInt64
-  fL2 : UInt64
-  fL3 : UInt64
-  fI0 : UInt64
-  fI1 : UInt64
-  fI2 : UInt64
-  fI3 : UInt64
-  fD0 : UInt64
-  fD1 : UInt64
-  fD2 : UInt64
-  fD3 : UInt64
+  /-- The block types that occurred. -/
+  flags : Flags
   tag : Tag
   code : UInt64
   ilen : UInt64
@@ -253,9 +258,9 @@ structure Core (w k : Nat) (m : MetaBlockHeader) (st : Cmd) (out : List Nat) (re
   d2 : ds.thirdToLast = st.d2.toNat
   d3 : ds.fourthToLast = st.d3.toNat
   dsLt : ds.last < 2 ^ 32 ∧ ds.secondToLast < 2 ^ 32 ∧ ds.thirdToLast < 2 ^ 32 ∧ ds.fourthToLast < 2 ^ 32
-  iRel : BlockRel st.fI0 st.fI1 st.fI2 st.fI3 st.iCur st.iPrev st.iCount ic m.insertCopy
-  lRel : BlockRel st.fL0 st.fL1 st.fL2 st.fL3 st.lCur st.lPrev st.lCount lit m.literal
-  dRel : BlockRel st.fD0 st.fD1 st.fD2 st.fD3 st.dCur st.dPrev st.dCount dist m.distance
+  iRel : BlockRel st.flags.fI0 st.flags.fI1 st.flags.fI2 st.flags.fI3 st.iCur st.iPrev st.iCount ic m.insertCopy
+  lRel : BlockRel st.flags.fL0 st.flags.fL1 st.flags.fL2 st.flags.fL3 st.lCur st.lPrev st.lCount lit m.literal
+  dRel : BlockRel st.flags.fD0 st.flags.fD1 st.flags.fD2 st.flags.fD3 st.dCur st.dPrev st.dCount dist m.distance
   wordLe : st.wordBuf.size ≤ 38
 
 /-- A state stands for a place in `rest`. -/
