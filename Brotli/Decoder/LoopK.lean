@@ -281,24 +281,21 @@ def kcase {α : Type} (cont : KCont α) (exit : Cmd → α) (r : Cmd) : α :=
       let v := lookup H.arena (tableBase H.icBase iCur hb H.ic32) w
         (by rw [tableBase_toNat]; exact H.icFits _ ht') H.lit.arena32
       if hwb : wordBits v ≤ c then
-        if hc : wordSym v < 704 then
-          let b1 := (BitBuffer.mk w c).drop (wordBits v)
-          let row := insertRow (wordSym v) (lt704 hc)
-          if hrb : rowBits row ≤ b1.count then
-            let b2 := b1.drop (rowBits row)
-            let cr := copyRow (wordSym v) (lt704 hc)
-            cont b2.word b2.count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur
-              lPrev dCur dPrev d0 d1 d2 d3 (wordSym v) (rowBase row + b1.peek (rowBits row)) clen (rowBits cr)
-              (rowBase cr) dist wordBuf wordPos .copyLength left p
-              ((hr.drop (wordBits_lt v) hwb hr.tagged).drop (insertRow_bits (lt704 hc)) hrb
-                (copyRow_bits (lt704 hc)))
-          else
-            exit (mkCmd w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
-              dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .insertCopy left p
-              .needsInput)
+        have hc : wordSym v < 704 := ic_sym hr.hdr ht' hwb
+        let b1 := (BitBuffer.mk w c).drop (wordBits v)
+        let row := insertRow (wordSym v) (lt704 hc)
+        if hrb : rowBits row ≤ b1.count then
+          let b2 := b1.drop (rowBits row)
+          let cr := copyRow (wordSym v) (lt704 hc)
+          cont b2.word b2.count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur
+            lPrev dCur dPrev d0 d1 d2 d3 (wordSym v) (rowBase row + b1.peek (rowBits row)) clen (rowBits cr)
+            (rowBase cr) dist wordBuf wordPos .copyLength left p
+            ((hr.drop (wordBits_lt v) hwb hr.tagged).drop (insertRow_bits (lt704 hc)) hrb
+              (copyRow_bits (lt704 hc)))
         else
           exit (mkCmd w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
-            dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .insertCopy left p .bad)
+            dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .insertCopy left p
+            .needsInput)
       else
         exit (mkCmd w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
           dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .insertCopy left p .needsInput)
@@ -444,30 +441,27 @@ def kcase {α : Type} (cont : KCont α) (exit : Cmd → α) (r : Cmd) : α :=
       if hwb : wordBits v ≤ c then
         let nbits := extraBitsFast H.npostfix H.ndirect (wordSym v)
         let b1 := (BitBuffer.mk w c).drop (wordBits v)
-        if hn24 : nbits ≤ 24 then
-          if hnb : nbits ≤ b1.count then
-            let b2 := b1.drop nbits
-            let d := distFast H.npostfix H.ndirect d0 d1 d2 d3 (wordSym v) (b1.peek nbits)
-            if hd0 : d = 0 then
-              exit (mkCmd w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur
-                lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .distanceSymbol left
-                p .bad)
-            else
-              kapply cont exit b2.word b2.count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags
-                iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos
-                .distanceSymbol left p (wordSym v) d hd0
-                ((hr.drop (wordBits_lt v) hwb hr.tagged).drop
-                  (by
-                    have := UInt64.le_iff_toNat_le.mp hn24
-                    have h24 : (24 : UInt64).toNat = 24 := rfl
-                    omega) hnb trivial)
+        have hn24 : nbits ≤ 24 := d_bits hr.hdr htree hwb
+        if hnb : nbits ≤ b1.count then
+          let b2 := b1.drop nbits
+          let d := distFast H.npostfix H.ndirect d0 d1 d2 d3 (wordSym v) (b1.peek nbits)
+          if hd0 : d = 0 then
+            exit (mkCmd w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur
+              lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .distanceSymbol left
+              p .bad)
           else
-            exit (mkCmd w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
-              dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .distanceSymbol left p
-              .needsInput)
+            kapply cont exit b2.word b2.count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags
+              iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos
+              .distanceSymbol left p (wordSym v) d hd0
+              ((hr.drop (wordBits_lt v) hwb hr.tagged).drop
+                (by
+                  have := UInt64.le_iff_toNat_le.mp hn24
+                  have h24 : (24 : UInt64).toNat = 24 := rfl
+                  omega) hnb trivial)
         else
           exit (mkCmd w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
-            dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .distanceSymbol left p .bad)
+            dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .distanceSymbol left p
+            .needsInput)
       else
         exit (mkCmd w c ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
           dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos .distanceSymbol left p
@@ -572,6 +566,15 @@ macro "ksplit" : tactic =>
     | rfl
     | contradiction))
 
+/-- `ksplit`, closing branches with a given tactic before trying `rfl`: on a branch where the other side's test failed
+and a fact rules that out, `rfl` would unfold both sides and hit the recursion limit. -/
+macro "ksplitT " t:tacticSeq : tactic =>
+  `(tactic| repeat' (first
+    | (split <;> rename_i h <;> (try simp only [h, ↓reduceIte, ↓reduceDIte, and_self, and_true, true_and]))
+    | ($t)
+    | rfl
+    | contradiction))
+
 section
 /-- A continuation that depends neither on the record it is handed nor on the proof. -/
 abbrev Drops {α : Type} (H : Hdr) (k stop : USize) (contC : KContC H k stop α) (g : KCont α) : Prop :=
@@ -623,8 +626,14 @@ theorem kstep_insertCopy (hcont : Drops H k stop contC g)
   simp only [hcont]
   rw [dite_eq_left (USize.le_iff_toNat_le.mpr hinv.pos)]
   have hI : iCur < H.nI := UInt64.lt_iff_toNat_lt.mpr hinv.iCur
+  have hsym : ∀ (w c : UInt64) (hb : 4 * iCur.toNat + 4 ≤ H.icBase.size)
+      (hf : TableFits H.arena (tableBase H.icBase iCur hb H.ic32).toNat),
+      wordBits (lookup H.arena (tableBase H.icBase iCur hb H.ic32) w hf H.lit.arena32) ≤ c →
+      wordSym (lookup H.arena (tableBase H.icBase iCur hb H.ic32) w hf H.lit.arena32) < 704 :=
+    fun _ _ _ _ h => ic_sym hinv.hdr hinv.iCur h
   simp only [mkCmd, stepAt, stepInsertCopy, insertStep, markStep, Cmd.iCur, hI, ↓reduceDIte]
-  ksplit
+  -- `stepCmd`'s symbol test failing is ruled out by the table's code
+  ksplitT (exact absurd (hsym _ _ _ _ (by assumption)) (by assumption))
 
 theorem kstep_copyLength (hcont : Drops H k stop contC g)
     (hinv : KInv H k stop word count ring wpos written iCur iPrev lCur lPrev dCur dPrev copyBits dist wordBuf wordPos _ pos) :
@@ -679,8 +688,26 @@ theorem kstep_distanceSymbol (hcont : Drops H k stop contC g)
     applyBuilt, kapply, markStep, Cmd.dCur, Cmd.clen, Cmd.d0, Cmd.d1, Cmd.d2, Cmd.d3, hcont]
   -- `split` doesn't take this outer test apart, so the invariant's fact settles it
   have hD : dCur < H.nD := UInt64.lt_iff_toNat_lt.mpr hinv.dCur
+  have hbits : ∀ (p : USize) (hp : p.toNat < H.dMap.size)
+      (hb : 4 * (H.dMap.uget p hp).toUInt64.toNat + 4 ≤ H.dBase.size)
+      (hf : TableFits H.arena (tableBase H.dBase (H.dMap.uget p hp).toUInt64 hb H.d32).toNat) (w c : UInt64),
+      wordBits (lookup H.arena (tableBase H.dBase (H.dMap.uget p hp).toUInt64 hb H.d32) w hf H.lit.arena32) ≤ c →
+      extraBitsFast H.npostfix H.ndirect
+        (wordSym (lookup H.arena (tableBase H.dBase (H.dMap.uget p hp).toUInt64 hb H.d32) w hf H.lit.arena32)) ≤ 24 :=
+    fun p hp _ _ _ _ h => d_bits hinv.hdr (H.dMapLt p hp) h
+  have h0 : extraBitsFast H.npostfix H.ndirect 0 ≤ 24 := by
+    apply UInt64.le_iff_toNat_le.mpr
+    rw [extraBitsFast_toNat H.npLe H.ndLe (by decide)]
+    show distanceExtraBits _ _ 0 ≤ 24
+    unfold distanceExtraBits
+    split <;> omega
   simp only [hD, ↓reduceDIte]
-  ksplit
+  -- `stepCmd`'s extra-bits test failing is ruled out by the table's code (where the symbol is known to be 0, by the
+  -- extra bits of symbol 0)
+  ksplitT
+    first
+    | exact absurd (hbits _ _ _ _ _ _ (by assumption)) (by assumption)
+    | exact absurd h0 (by assumption)
 
 theorem kstep_copy (hcont : Drops H k stop contC g)
     (hinv : KInv H k stop word count ring wpos written iCur iPrev lCur lPrev dCur dPrev copyBits dist wordBuf wordPos _ pos) :

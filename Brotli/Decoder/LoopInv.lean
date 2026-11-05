@@ -196,6 +196,47 @@ theorem word_next {wordBuf : ByteArray} {wordPos : USize} (h : wordPos.toNat ≤
   rw [USize.toNat_add, Nat.mod_eq_of_lt (by omega)]
   exact ⟨hb, h.2⟩
 
+/-! ### Symbols a table gives -/
+
+/-- A table for a complete code over `n` symbols gives a symbol below `n`, when the bits at hand cover it. -/
+theorem sym_lt {t : ByteArray} {base : USize} {c : PrefixCode} {n : Nat} (hok : TableOk t base.toNat c)
+    (hfit : TableFits t base.toNat) (h32 : t.size < 2 ^ 32) (hC : Complete c) (hS : c.Symbols n) {w cnt : UInt64}
+    (hle : wordBits (lookup t base w hfit h32) ≤ cnt) : (wordSym (lookup t base w hfit h32)).toNat < n := by
+  have h := (lookup_read (b := ⟨w, cnt⟩) hok hfit h32 hC).2.1 hle []
+  exact decodeSymbol_lt hS h
+
+/-- An insert-and-copy symbol is below 704. -/
+theorem ic_sym {H : Hdr} (hh : ∃ m, HdrRel H m) {i : UInt64} (hi : i.toNat < H.nI.toNat)
+    {hb : 4 * i.toNat + 4 ≤ H.icBase.size} {hf : TableFits H.arena (tableBase H.icBase i hb H.ic32).toNat}
+    {w c : UInt64} (hle : wordBits (lookup H.arena (tableBase H.icBase i hb H.ic32) w hf H.lit.arena32) ≤ c) :
+    wordSym (lookup H.arena (tableBase H.icBase i hb H.ic32) w hf H.lit.arena32) < 704 := by
+  obtain ⟨m, hH⟩ := hh
+  obtain ⟨code, _, hok, hC, hS⟩ := hH.ic _ hi
+  have hok' : TableOk H.arena (tableBase H.icBase i hb H.ic32).toNat code := by
+    rw [tableBase_toNat]
+    exact hok
+  have h := sym_lt hok' hf H.lit.arena32 hC hS hle
+  have h704 : insertCopyAlphabetSize = 704 := rfl
+  rw [h704] at h
+  exact UInt64.lt_iff_toNat_lt.mpr h
+
+/-- A distance symbol's extra bits are at most 24. -/
+theorem d_bits {H : Hdr} (hh : ∃ m, HdrRel H m) {tr : UInt8} (htr : tr.toNat < H.treesD.toNat)
+    {hb : 4 * tr.toUInt64.toNat + 4 ≤ H.dBase.size} {hf : TableFits H.arena (tableBase H.dBase tr.toUInt64 hb H.d32).toNat}
+    {w c : UInt64} (hle : wordBits (lookup H.arena (tableBase H.dBase tr.toUInt64 hb H.d32) w hf H.lit.arena32) ≤ c) :
+    extraBitsFast H.npostfix H.ndirect (wordSym (lookup H.arena (tableBase H.dBase tr.toUInt64 hb H.d32) w hf
+      H.lit.arena32)) ≤ 24 := by
+  obtain ⟨m, hH⟩ := hh
+  obtain ⟨code, _, hok, hC, hS⟩ := hH.d _ htr
+  have hok' : TableOk H.arena (tableBase H.dBase tr.toUInt64 hb H.d32).toNat code := by
+    rw [tableBase_toNat, UInt8.toNat_toUInt64]
+    exact hok
+  have h := sym_lt hok' hf H.lit.arena32 hC hS hle
+  rw [← hH.npostfix, ← hH.ndirect, distanceExtraBits_le_iff] at h
+  apply UInt64.le_iff_toNat_le.mpr
+  rw [extraBitsFast_toNat H.npLe H.ndLe (wordValue_lt _)]
+  exact h
+
 /-! ### Block switches -/
 
 /-- A block switch that finishes leaves the bits well formed and the new type within the count. -/
