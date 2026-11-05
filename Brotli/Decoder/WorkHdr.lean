@@ -164,12 +164,12 @@ def clSingle (order : List Nat) : Nat := 2 * order.length
 symbols or more leads to lengths that each take a bit, and one ending with one symbol may lead to lengths that take no
 bits, each prepaid. -/
 def clensPot (n : Nat) (order : List Nat) (sum : Nat) : Nat :=
-  max (clDone + symsTable n - (hdrRate - 3) * clMulti sum) (clDone + symsTable n + 4 * n - (hdrRate - 3) * clSingle order)
+  max (clDone + symsTable n - (hdrRate - 3) * clMulti sum) (clDone + symsTable n + 3 * n - (hdrRate - 3) * clSingle order)
 
 /-- What a code's lengths still to read prepay: with a code length code of one symbol, the lengths read without bits. -/
 def symsPre (clc : PrefixCode) (n len : Nat) : Nat :=
   match clc with
-  | .single _ => 4 * (n - len)
+  | .single _ => 3 * (n - len)
   | .canonical _ => 0
 
 /-- The potential of a header's place. A code's lengths carry its table's work, paid by the bits of its code length
@@ -200,7 +200,7 @@ def hcost (g : Gh) : HPhase → HPhase → Nat
   | .code o n, _ => 7 * n + 1301 + ownerX g o
   | .clens .., .syms .. => clDone
   | .clens .., _ => 3
-  | .syms _ _ _ ls, .syms _ _ _ ls' => ls'.lens.length - ls.lens.length + 3
+  | .syms _ _ _ ls, .syms _ _ _ ls' => if ls'.rep.map (·.1) = some 16 then ls'.lens.length - ls.lens.length + 3 else 3
   | .syms o n _ _, _ => symsTable n + ownerX g o
   | .first .., _ => 3
   | .np, _ => 260
@@ -439,13 +439,44 @@ theorem clensPot_fin {n x sum B : Nat} {rest : List Nat} (hf : 32 - sum ≤ 4 * 
   omega
 
 /-- A code length code that ends with one symbol. -/
-theorem clensPot_nil {n sum : Nat} : clDone + symsTable n + 4 * n ≤ clensPot n [] sum := by
+theorem clensPot_nil {n sum : Nat} : clDone + symsTable n + 3 * n ≤ clensPot n [] sum := by
   unfold clensPot clSingle
   simp only [List.length_nil, Nat.mul_zero, Nat.sub_zero]
   omega
 
-theorem symsPre_le (clc : PrefixCode) (n len : Nat) : symsPre clc n len ≤ 4 * (n - len) := by
+theorem symsPre_le (clc : PrefixCode) (n len : Nat) : symsPre clc n len ≤ 3 * (n - len) := by
   cases clc <;> simp only [symsPre] <;> omega
+
+/-- A length symbol that repeats the previous length is a 16. -/
+theorem applyCodeLength_rep16 {ls : LengthState} {s e : Nat} (h : (applyCodeLength ls s e).rep.map (·.1) = some 16) : s = 16 := by
+  unfold applyCodeLength at h
+  split at h
+  · cases h
+  · simpa using h
+
+/-- A length symbol 16 takes its two extra bits. -/
+theorem lenSym_16 {clc : PrefixCode} {bs r : List Bool} {v : Nat × Nat} (h : lenSym clc bs = some (v, r)) (h16 : v.1 = 16) :
+    r.length + 2 ≤ bs.length := by
+  unfold lenSym at h
+  cases hd : decodeSymbol clc bs with
+  | none => rw [hd] at h; cases h
+  | some p =>
+    obtain ⟨s, b1⟩ := p
+    rw [hd] at h
+    have l1 := Brotli.Spec.decodeSymbol_le hd
+    change (readInt (if s = 16 then 2 else if s = 17 then 3 else 0) b1 >>= _) = _ at h
+    cases hx : readInt (if s = 16 then 2 else if s = 17 then 3 else 0) b1 with
+    | none => rw [hx] at h; cases h
+    | some q =>
+      rw [hx] at h
+      have h' : some ((s, q.1), q.2) = some (v, r) := h
+      simp only [Option.some.injEq, Prod.mk.injEq] at h'
+      obtain ⟨hv, hr⟩ := h'
+      have hs16 : s = 16 := by rw [← hv] at h16; exact h16
+      rw [hs16] at hx
+      have l2 := readInt_length 2 b1 q.1 q.2 (by simpa using hx)
+      rw [← hr]
+      omega
 
 /-- A code length code filled by a length that is not its first is not a single symbol's. -/
 theorem codeLengthCode_canon {acc : List (Nat × Nat)} {sum x v : Nat} (hs : lengthSum (acc.map (·.2)) = 1024 * sum)
@@ -718,18 +749,26 @@ theorem hpay {g : Gh} {p : HPhase} {bs c : List Bool} {g' : Gh} {p' : HPhase} (h
             · cases e2
               rename_i hle _
               obtain ⟨l, hl, hl1⟩ := applyCodeLength_grow ls v.1 v.2
-              show (applyCodeLength ls v.1 v.2).lens.length - ls.lens.length + 3 +
+              show (if (applyCodeLength ls v.1 v.2).rep.map (·.1) = some 16 then
+                  (applyCodeLength ls v.1 v.2).lens.length - ls.lens.length + 3 else 3) +
                 (symsPre clc n (applyCodeLength ls v.1 v.2).lens.length + symsTable n + ownerX g o + ownerPot g o) + _ ≤ _
-              rw [hl] at hle ⊢
-              rw [List.length_append] at hle ⊢
-              cases clc with
-              | single s =>
-                simp only [symsPre]
-                omega
-              | canonical L =>
-                have l2 := lenSym_takes e1
-                simp only [symsPre]
-                omega
+              by_cases h16 : (applyCodeLength ls v.1 v.2).rep.map (·.1) = some 16
+              · have l2 := lenSym_16 e1 (applyCodeLength_rep16 h16)
+                rw [ite_eq_left h16]
+                rw [hl] at hle ⊢
+                rw [List.length_append] at hle ⊢
+                cases clc <;> simp only [symsPre] <;> omega
+              · rw [ite_eq_right h16]
+                rw [hl] at hle ⊢
+                rw [List.length_append] at hle ⊢
+                cases clc with
+                | single s =>
+                  simp only [symsPre]
+                  omega
+                | canonical L =>
+                  have l2 := lenSym_takes e1
+                  simp only [symsPre]
+                  omega
   | first i n tc cc =>
     have hm := hStep_moves g (.first i n tc cc) bs _ _ h
     have hs := hstage_pos g' p'
@@ -914,7 +953,10 @@ theorem hcost_ge (g : Gh) (p p' : HPhase) : 3 ≤ hcost g p p' := by
   cases p with
   | code o n => cases p' <;> simp only [hcost] <;> omega
   | clens o n ord acc sum => cases p' <;> simp only [hcost, clDone] <;> omega
-  | syms o n clc ls => cases p' <;> simp only [hcost, symsTable] <;> omega
+  | syms o n clc ls =>
+    cases p' with
+    | syms => simp only [hcost]; split <;> omega
+    | _ => simp only [hcost, symsTable]; omega
   | trees isL => cases p' <;> simp only [hcost] <;> omega
   | vals isL t r code done left =>
     cases p' with
@@ -1369,6 +1411,13 @@ theorem syms_grow {g : Gh} {o : Owner} {n : Nat} {clc : PrefixCode} {ls : Length
             rw [hl, List.length_append]
             omega
 
+/-- A count of zero, less a count of at most 704, is not a growth of at most 704 unless the count was zero. -/
+private theorem sub_zero_toNat {new old : UInt64} {m : Nat} (h0 : new.toNat = 0) (ho : old.toNat ≤ 704)
+    (hm : (new - old).toNat = m) (hm7 : m ≤ 704) : m = 0 := by
+  have e := congrArg UInt64.toNat (UInt64.sub_add_cancel new old)
+  rw [UInt64.toNat_add, hm, h0, Nat.mod_eq_of_lt (by omega)] at e
+  omega
+
 /-- An index that grew by an addition grew by what was added. -/
 private theorem add_grew {a d : UInt64} {m : Nat} (h : (a + d).toNat = m) (hm : a.toNat < m) : d.toNat = m - a.toNat := by
   rw [UInt64.toNat_add] at h
@@ -1424,7 +1473,20 @@ theorem wSyms {st : Hd} {g : Gh} {o : Owner} {n : Nat} {clc : PrefixCode} {ls : 
         · rw [dite_eq_right h16] at hr hn
           rw [ite_eq_right h16]
           dsimp only at hr hn ⊢
-          generalize (if st.repCount ≠ 0 ∧ st.repSym = r.a then st.repCount else 0) = old at hr hn ⊢
+          have hold : (if st.repCount ≠ 0 ∧ st.repSym = r.a then st.repCount else 0).toNat ≤ 704 := by
+            have hr0 := hy.rep
+            have hle := hy.le
+            split
+            · cases hq : ls.rep with
+              | none =>
+                simp only [hq] at hr0
+                omega
+              | some sc =>
+                obtain ⟨s, k⟩ := sc
+                simp only [hq] at hr0
+                omega
+            · exact Nat.zero_le _
+          generalize (if st.repCount ≠ 0 ∧ st.repSym = r.a then st.repCount else 0) = old at hr hn hold ⊢
           generalize (if r.a = 16 then (4 : UInt64) else 8) = mult at hr hn ⊢
           generalize (if old = 0 then 3 + r.b else mult * (old - 2) + (3 + r.b)) = new at hr hn ⊢
           unfold symsRep at hr hn
@@ -1454,8 +1516,33 @@ theorem wSyms {st : Hd} {g : Gh} {o : Owner} {n : Nat} {clc : PrefixCode} {ls : 
                   have hln' : (st.ln + (new - old)).toNat = ls'.lens.length := hy'.ln
                   have key := add_grew hln' (by rw [hl]; exact hg)
                   rw [hl] at key
-                  show _ + 1 + 2 ≤ ls'.lens.length - ls.lens.length + 3
-                  omega
+                  have hle' := hy'.le
+                  have hn' : n' ≤ 704 := hr.2.2.2.1.2.2
+                  have hrep' := hy'.rep
+                  show _ + 1 + 2 ≤ (if ls'.rep.map (·.1) = some 16 then ls'.lens.length - ls.lens.length + 3 else 3)
+                  cases hq : ls'.rep with
+                  | none =>
+                    simp only [hq] at hrep'
+                    have h0 := sub_zero_toNat hrep' hold key (by omega)
+                    simp only [Option.map_none, reduceCtorEq, ↓reduceIte]
+                    omega
+                  | some sc =>
+                    obtain ⟨s, k⟩ := sc
+                    simp only [hq] at hrep'
+                    have hs16 : s = 16 := by
+                      rw [← hrep'.1]
+                      have : r.a = 16 := by
+                        by_cases h' : r.a = 16
+                        · exact h'
+                        · exact absurd (ite_eq_right h') hz
+                      show (pushRun st r pos hH hT (st.ln + (new - old)) new sum (syms_lnLt hH hT hln)
+                        (syms_eLe hH hT hover)).repSym.toNat = 16
+                      show r.a.toNat = 16
+                      rw [this]
+                      rfl
+                    subst hs16
+                    simp only [Option.map_some, ↓reduceIte]
+                    omega
                 | _ => cases htg
 
 /-- A header step's work, once the buffer is refilled, by where it goes. -/
@@ -2120,7 +2207,7 @@ theorem stepHW_short {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size}
 /-! ### The most a header's place holds
 
 With at most 256 block types in a category, 256 trees in a context map and 16384 values in it, a header's place holds at
-most 77764: a literal context map's code's lengths, with the table's work for the map and what the map holds. -/
+most 77492: a literal context map's code's lengths, with the table's work for the map and what the map holds. -/
 
 theorem beforeMaps_le {nL nI nD : Nat} (h1 : nL ≤ 256) (h2 : nI ≤ 256) (h3 : nD ≤ 256) : beforeMaps nL nI nD ≤ 53380 := by
   unfold beforeMaps afterL afterD mapPre zb smallMax catMax treeMax
@@ -2208,7 +2295,7 @@ theorem ownerPot_le {st : Hd} {g : Gh} {n : Nat} {o : Owner} (ho : OwnerRel st g
 
 /-- What a code's owner holds, with the most the code's lengths carry. -/
 theorem codeOwner_le {st : Hd} {g : Gh} {n : Nat} {o : Owner} (ho : OwnerRel st g n o) (hu : Upto st.d g (ownerStage o))
-    (hg : GOk g) (hn : n ≤ 704) : ownerX g o + ownerPot g o + clDone + symsTable n + 4 * n ≤ 77764 := by
+    (hg : GOk g) (hn : n ≤ 704) : ownerX g o + ownerPot g o + clDone + symsTable n + 3 * n ≤ 77492 := by
   have hP := ownerPot_le ho hu hg
   have hI : 1 < ownerStage o → g.m.insertCopy.n ≤ 256 := fun h => (hu.cat .I h).wf.2.1
   unfold clDone symsTable
@@ -2244,7 +2331,7 @@ theorem codeOwner_le {st : Hd} {g : Gh} {n : Nat} {o : Owner} (ho : OwnerRel st 
     omega
 
 /-- The most a header's place holds. -/
-theorem hpot_le {st : Hd} {g : Gh} {p : HPhase} (hrel : HRel st g p) (hg : GOk g) (hp : HOk p) : hpot g p ≤ 77764 := by
+theorem hpot_le {st : Hd} {g : Gh} {p : HPhase} (hrel : HRel st g p) (hg : GOk g) (hp : HOk p) : hpot g p ≤ 77492 := by
   obtain ⟨_, hu, hm⟩ := hrel
   have hS := mapSize_le hg
   have hI : 1 < stageOf p → g.m.insertCopy.n ≤ 256 := fun h => (hu.cat .I h).wf.2.1
@@ -2272,7 +2359,7 @@ theorem hpot_le {st : Hd} {g : Gh} {p : HPhase} (hrel : HRel st g p) (hg : GOk g
   | clens o n order acc sum =>
     obtain ⟨_, hs, ho, _⟩ := hm
     have := codeOwner_le ho hu hg hs.2.2
-    have hc : clensPot n order sum ≤ clDone + symsTable n + 4 * n := by unfold clensPot; omega
+    have hc : clensPot n order sum ≤ clDone + symsTable n + 3 * n := by unfold clensPot; omega
     show clensPot n order sum + ownerX g o + ownerPot g o ≤ _
     omega
   | syms o n clc ls =>
