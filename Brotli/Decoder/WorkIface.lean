@@ -31,37 +31,37 @@ def callWin (s : DState) (a : ByteArray) (start stop : Nat) (space : Nat) : Nat 
   else 0
 
 private theorem arith_pause {W dq ho ph dp hh size u hand po win : Nat} (hu : u ≤ size)
-    (h : W + dq + 22343 * (ho + (size - u) * 8) + 282 * ph ≤ dp + 22343 * (hh + size * 8) + 284 * hand + 282 * po + win + 280) :
-    W + dq + 22343 * ho + 282 * ph ≤ dp + 22343 * hh + 178744 * u + 284 * hand + 282 * po + win + 280 := by
+    (h : W + dq + 4470 * (ho + (size - u) * 8) + 282 * ph ≤ dp + 4470 * (hh + size * 8) + 284 * hand + 282 * po + win + 280) :
+    W + dq + 4470 * ho + 282 * ph ≤ dp + 4470 * hh + 35760 * u + 284 * hand + 282 * po + win + 280 := by
   obtain ⟨d, rfl⟩ : ∃ d, size = u + d := ⟨size - u, by omega⟩
   rw [Nat.add_sub_cancel_left] at h
-  have e1 : 22343 * (ho + d * 8) = 22343 * ho + 178744 * d := by
+  have e1 : 4470 * (ho + d * 8) = 4470 * ho + 35760 * d := by
     rw [Nat.mul_add, Nat.mul_comm d 8, ← Nat.mul_assoc]
-  have e2 : 22343 * (hh + (u + d) * 8) = 22343 * hh + 178744 * u + 178744 * d := by
+  have e2 : 4470 * (hh + (u + d) * 8) = 4470 * hh + 35760 * u + 35760 * d := by
     rw [Nat.mul_add, Nat.mul_comm (u + d) 8, ← Nat.mul_assoc, Nat.mul_add, Nat.add_assoc]
   rw [e1, e2] at h
-  generalize 22343 * ho = A at h ⊢
-  generalize 22343 * hh = B at h ⊢
-  generalize 178744 * u = C at h ⊢
-  generalize 178744 * d = E at h
+  generalize 4470 * ho = A at h ⊢
+  generalize 4470 * hh = B at h ⊢
+  generalize 35760 * u = C at h ⊢
+  generalize 35760 * d = E at h
   omega
 
 private theorem arith_any {W dp hh s size o hand win : Nat} (h1 : s ≤ o) (h2 : o ≤ s + size)
-    (h : W + 22343 * ((s + size - o) * 8) ≤ dp + 22343 * (hh + size * 8) + 284 * hand + win + 559) :
-    W ≤ dp + 22343 * hh + 178744 * (o - s) + 284 * hand + win + 559 := by
+    (h : W + 4470 * ((s + size - o) * 8) ≤ dp + 4470 * (hh + size * 8) + 284 * hand + win + 559) :
+    W ≤ dp + 4470 * hh + 35760 * (o - s) + 284 * hand + win + 559 := by
   obtain ⟨d, rfl⟩ : ∃ d, o = s + d := ⟨o - s, by omega⟩
   obtain ⟨e, rfl⟩ : ∃ e, size = d + e := ⟨size - d, by omega⟩
   have g1 : s + (d + e) - (s + d) = e := by omega
   rw [g1] at h
   rw [Nat.add_sub_cancel_left]
-  have e1 : 22343 * (e * 8) = 178744 * e := by
+  have e1 : 4470 * (e * 8) = 35760 * e := by
     rw [Nat.mul_comm e 8, ← Nat.mul_assoc]
-  have e2 : 22343 * (hh + (d + e) * 8) = 22343 * hh + 178744 * d + 178744 * e := by
+  have e2 : 4470 * (hh + (d + e) * 8) = 4470 * hh + 35760 * d + 35760 * e := by
     rw [Nat.mul_add, Nat.mul_comm (d + e) 8, ← Nat.mul_assoc, Nat.mul_add, Nat.add_assoc]
   rw [e1, e2] at h
-  generalize 22343 * hh = B at h ⊢
-  generalize 178744 * d = C at h ⊢
-  generalize 178744 * e = E at h
+  generalize 4470 * hh = B at h ⊢
+  generalize 35760 * d = C at h ⊢
+  generalize 35760 * e = E at h
   generalize 284 * hand = F at h ⊢
   omega
 
@@ -69,9 +69,9 @@ section
 variable {x : List UInt8} {R : Run DState} {c : Call}
 
 /-- One call of the decoder, against the potential: a call that pauses is paid for by the potential of where it starts,
-22343 for each bit it takes from what its state holds and each of eight for each byte it uses, 284 for each byte it hands
+4470 for each bit it takes from what its state holds and each of eight for each byte it uses, 284 for each byte it hands
 out, 282 for each byte it leaves waiting, the window it allocates and 280, less the potential and bits where it pauses.
-Any call is paid for by the potential, 22343 for each bit its state holds and each of eight for each byte it uses, 284 for
+Any call is paid for by the potential, 4470 for each bit its state holds and each of eight for each byte it uses, 284 for
 each byte it hands out, the window and 559. -/
 theorem call_pays (hin : R.read + c.size ≤ x.length) (hfit : c.pre.length + c.size + c.post.length < USize.size) {p : SPhase}
     (hrel : DRel R.state.val p) (hsi : SInv p) (hk : R.state.val.tag ≠ .wbits → 10 ≤ R.state.val.k.toNat) :
@@ -80,13 +80,13 @@ theorem call_pays (hin : R.read + c.size ≤ x.length) (hfit : c.pre.length + c.
         ((R.reply decoder x c).state.val.tag ≠ .wbits → 10 ≤ (R.reply decoder x c).state.val.k.toNat) ∧
         (R.reply decoder x c).state.val.cmd.pend.toNat ≤ R.state.val.cmd.pend.toNat + 1 ∧
         callWork R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.buf.toByteArray c.space c.final +
-          dpot q (R.reply decoder x c).state.val + 22343 * (R.reply decoder x c).state.val.held.length +
+          dpot q (R.reply decoder x c).state.val + 4470 * (R.reply decoder x c).state.val.held.length +
           282 * R.state.val.cmd.pend.toNat ≤
-          dpot p R.state.val + 22343 * R.state.val.held.length + 178744 * (R.reply decoder x c).used +
+          dpot p R.state.val + 4470 * R.state.val.held.length + 35760 * (R.reply decoder x c).used +
             284 * ((R.reply decoder x c).output.size - c.buf.length) + 282 * (R.reply decoder x c).state.val.cmd.pend.toNat +
             callWin R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.space + 280) ∧
     callWork R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.buf.toByteArray c.space c.final ≤
-      dpot p R.state.val + 22343 * R.state.val.held.length + 178744 * (R.reply decoder x c).used +
+      dpot p R.state.val + 4470 * R.state.val.held.length + 35760 * (R.reply decoder x c).used +
         284 * ((R.reply decoder x c).output.size - c.buf.length) +
         callWin R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.space + 559 := by
   have hg : c.pre.length + c.size ≤ (R.input x c).size ∧ c.pre.length ≤ c.pre.length + c.size ∧ c.pre.length + c.size < USize.size :=
@@ -139,7 +139,7 @@ theorem call_pays (hin : R.read + c.size ≤ x.length) (hfit : c.pre.length + c.
   have e0 : (atPos R.state.val c.pre.length).held = R.state.val.held := rfl
   have e1 : (atPos R.state.val c.pre.length).cmd.pend = R.state.val.cmd.pend := rfl
   have e2 : dpot p (atPos R.state.val c.pre.length) = dpot p R.state.val := rfl
-  have hR : hdrRate = 22343 := rfl
+  have hR : hdrRate = 4470 := rfl
   refine ⟨fun hst => ?_, ?_⟩
   · obtain ⟨q, d1, d2, d3, d4, d5, d6, d7, d8⟩ := C1 hst
     rw [hpos0] at d5
