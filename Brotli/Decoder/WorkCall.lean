@@ -171,8 +171,8 @@ theorem callD_tag {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {f
           exact ht
 
 /-- A call's work against the potential. A call that pauses leaves the potential of where it pauses and its bits to pay
-later, at most one more byte waiting than it found, and pays 4470 for each bit it reads, 284 for each byte it hands out,
-282 for each byte it leaves waiting, the window, and 126. Any call pays at most the potential, 4470 for each bit, 284 for
+later, at most one more byte waiting than it found, and pays 2980 for each bit it reads, 284 for each byte it hands out,
+282 for each byte it leaves waiting, the window, and 126. Any call pays at most the potential, 2980 for each bit, 284 for
 each byte it hands out, the window, and 408: it decodes at most one byte more than it hands out. -/
 theorem pay_callD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {final : Bool} :
     ∀ (space : Nat) (D : Dec) (h : DInv stop D) (p : SPhase) (buf : ByteArray), DRel D p → SInv p →
@@ -206,7 +206,7 @@ theorem pay_callD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {f
     have hpl := runD_pendLe a stop hs ⟨withCap D space, h.withCap space⟩
     dsimp only at hpl
     have hcap := capE_capFor space
-    have hRate : hdrRate = 4470 := rfl
+    have hRate : hdrRate = 2980 := rfl
     have hpend : (runD a stop hs (withCap D space) (h.withCap space)).cmd.pend.toNat ≤
         max D.cmd.pend.toNat (min space 16777216 + 1) := by
       have h2 := hpl.2

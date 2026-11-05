@@ -309,7 +309,7 @@ theorem pay_wbits {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
       (stepDWbitsW a stop hs D pos + 1) 11) ∧
     ((stepDWbits a stop hs D pos).status ≠ .next → stepDWbitsW a stop hs D pos + 1 ≤ 11) := by
   have hok := stepDWbits_ok (S := specSem) (hs := hs) hrel hp
-  have hR : hdrRate = 4470 := rfl
+  have hR : hdrRate = 2980 := rfl
   refine ⟨fun hn => ?_, fun hn => ?_, fun hn => wbitsW_stop hp hn⟩
   · have hW := wbitsW_next (hs := hs) hrel.2.1 hp hn
     obtain ⟨p', hR', h1, h2, _, hsd, hout, hj⟩ := hok.next hn
@@ -390,7 +390,7 @@ theorem stepDMeta_hd {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size}
     cases h
 
 /-- A header's start holds the potential of the literal category's number of block types not yet read. -/
-theorem hpot_start {x y z : UInt64} {g : Gh} {p : HPhase} (h : HRel (hdStart x y z) g p) : hpot g p = 9248 := by
+theorem hpot_start {x y z : UInt64} {g : Gh} {p : HPhase} (h : HRel (hdStart x y z) g p) : hpot g p = 16772 := by
   have ht := h.tag_eq
   cases p with
   | cat i =>
@@ -421,7 +421,7 @@ theorem pay_mblock {w : Nat} {st : StreamState} {a : ByteArray} {stop : USize} {
     stepDMetaW a stop hs D pos + 1 ≤ 12 := by
   have hok := stepDMeta_ok (S := specSem) (hs := hs) hrel hp
   have hW := metaW_le (hs := hs) (D := D) hp
-  have hR : hdrRate = 4470 := rfl
+  have hR : hdrRate = 2980 := rfl
   refine ⟨fun hn => ?_, fun hn => ?_, fun hn => ?_, by omega⟩
   · obtain ⟨p', hR', h1, h2, _, hsd, hout, hj⟩ := hok.next hn
     refine Pays.intro p' hR' hout h1 h2 (fun hi => sinv_of_sreach (hj []) hi) (fun t => ?_)
@@ -574,7 +574,13 @@ theorem pay_hdr {w : Nat} {st : StreamState} {last : Bool} {mlen : Nat} {g : Gh}
       ⟨[], rfl, rfl⟩, h1, h2, fun hi => sinv_of_sreach (sreach_hdr (q := (g, p)) (q' := (g', p')) (Reach.one (h5 []))) hi,
       fun t => ?_⟩, fun e => DStatus.noConfusion e, fun e => by rcases e with e | e <;> exact DStatus.noConfusion e⟩
     have hpy := hpay hsz (vleft_le hR) (fun isL e => by subst e; exact tsize_le hR)
-      (fun o n order acc sum e => by subst e; exact hR.2.2.2.2.2.sumEq) (h5 (bits t))
+      (fun o n order acc sum e => by subst e; exact hR.2.2.2.2.2.sumEq)
+      (fun isL t r n e => by
+        subst e
+        obtain ⟨_, _, _, _, h2, _, h16, hn⟩ := hR.2.2.2.2
+        rw [hn]
+        unfold contextMapAlphabetSize
+        omega) (h5 (bits t))
     simp only [Dec.bits, Dec.word, Dec.count, dpot, spot, clearHd]
     omega
   · obtain ⟨b1, b2, hR', _, _, hmv, h6, _⟩ := hstep.needsInput hst
@@ -646,7 +652,7 @@ theorem pay_cmds {w : Nat} {last : Bool} {m : MetaBlockHeader} {q0 : Phase} {a :
   obtain ⟨l, hl1, hl2⟩ := o1
   have hl2' : st'.pend.toNat = cmd.pend.toNat + l.length := hl2
   have hlo : q.out.length - q0.out.length = l.length := by rw [hl1, List.length_append]; omega
-  have hRate : hdrRate = 4470 := rfl
+  have hRate : hdrRate = 2980 := rfl
   have eW : stepDCmdsW a stop hs ⟨.cmds, cmd, hd, H, k, last', left, limit, pos', status⟩ pos =
       runCmdW H k a stop hs cmdBudget cmd pos + (if (runCmd H k a stop hs cmdBudget cmd pos).status = .done then 772 else 0) := rfl
   simp only [stateBits] at g3 c1 c3
@@ -778,7 +784,7 @@ theorem pay_skip {w : Nat} {st : StreamState} {last : Bool} {n : Nat} {a : ByteA
     ((stepDSkip stop D pos).status = .needsInput → Pays a stop (.skip w st last n) D pos (stepDSkip stop D pos) 2 2) ∧
     ((stepDSkip stop D pos).status = .needsOutput → Pays a stop (.skip w st last n) D pos (stepDSkip stop D pos) 2 2) := by
   have hok := stepDSkip_ok (S := specSem) hs hrel hp
-  have hR : hdrRate = 4470 := rfl
+  have hR : hdrRate = 2980 := rfl
   have hd : dpot (.skip w st last n) D = 10 := rfl
   refine ⟨fun hn => ?_, fun hn => ?_, fun hn => ?_⟩
   · obtain ⟨p', hR', h1, h2, _, hsd, hout, hj⟩ := hok.next hn
@@ -888,7 +894,7 @@ theorem pay_raw {w : Nat} {st : StreamState} {last : Bool} {n : Nat} {a : ByteAr
       (stepDRawW a stop hs D pos + 1) 12) ∧
     stepDRawW a stop hs D pos + 1 ≤ 12 + 10 * ((stepDRaw a stop hs D pos).cmd.pend.toNat - D.cmd.pend.toNat) := by
   have hok := stepDRaw_ok (S := specSem) (hs := hs) hrel hp
-  have hR : hdrRate = 4470 := rfl
+  have hR : hdrRate = 2980 := rfl
   have hd : dpot (.raw w st last n) D = 10 := rfl
   have hW := rawW_le (hs := hs) (D := D) (pos := pos)
   refine ⟨fun hn => ?_, fun hn => ?_, fun hn => ?_, by omega⟩
@@ -1473,7 +1479,7 @@ theorem runD_k10 {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} (x 
 /-- The window a run of the loop allocates: WBITS's, when it starts there and gets past it. -/
 def winD (D r : Dec) : Nat := if D.tag = .wbits ∧ r.tag ≠ .wbits then 2 ^ r.k.toNat + 256 else 0
 
-/-- The decoder's loop, against the potential: its steps are paid for by the potential, 4470 for each bit, 282 for each
+/-- The decoder's loop, against the potential: its steps are paid for by the potential, 2980 for each bit, 282 for each
 byte and the window, and the step that stops it by at most 87 more, or, when it rejects or reports the limit, by the bits
 and the bytes it may decode first, and 94. -/
 theorem pay_runD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} : ∀ (x : RunArg a stop hs) (p : SPhase),

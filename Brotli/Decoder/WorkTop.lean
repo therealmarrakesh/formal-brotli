@@ -3,7 +3,7 @@ import Brotli.Decoder.WorkIface
 /-!
 # The decoder's work, call by call
 
-The work of a run's calls, in the work model, is at most 35761 for each byte the calls use (4470 for each bit, and one for taking it), 284 for
+The work of a run's calls, in the work model, is at most 23841 for each byte the calls use (2980 for each bit, and one for taking it), 284 for
 each byte they hand out, one for each byte of the window the stream declares and 272 more, 408 for each call, and 408.
 A call pays for its work with the potential of where it starts, which it leaves where it pauses for the next call to use.
 -/
@@ -56,15 +56,15 @@ theorem after_emitted {x : List UInt8} {R : Run DState} {c : Call} :
   rfl
 
 private theorem run_step {W cw dp dq h h' r u e hd pd pd' wp wp' cwin n : Nat}
-    (hW : W + dp + 4470 * h ≤ 35761 * r + 284 * e + 282 * pd + wp + 126 * n)
-    (hc : cw + dq + 4470 * h' + 282 * pd ≤ dp + 4470 * h + 35761 * u + 284 * hd + 282 * pd' + cwin + 126)
+    (hW : W + dp + 2980 * h ≤ 23841 * r + 284 * e + 282 * pd + wp + 126 * n)
+    (hc : cw + dq + 2980 * h' + 282 * pd ≤ dp + 2980 * h + 23841 * u + 284 * hd + 282 * pd' + cwin + 126)
     (hw : wp + cwin ≤ wp') :
-    W + cw + dq + 4470 * h' ≤ 35761 * (r + u) + 284 * (e + hd) + 282 * pd' + wp' + 126 * (n + 1) := by
-  rw [Nat.mul_add 35761, Nat.mul_add 284, Nat.mul_add 126]
-  generalize 4470 * h = A at hW hc
-  generalize 4470 * h' = A' at hc ⊢
-  generalize 35761 * r = B at hW ⊢
-  generalize 35761 * u = B' at hc ⊢
+    W + cw + dq + 2980 * h' ≤ 23841 * (r + u) + 284 * (e + hd) + 282 * pd' + wp' + 126 * (n + 1) := by
+  rw [Nat.mul_add 23841, Nat.mul_add 284, Nat.mul_add 126]
+  generalize 2980 * h = A at hW hc
+  generalize 2980 * h' = A' at hc ⊢
+  generalize 23841 * r = B at hW ⊢
+  generalize 23841 * u = B' at hc ⊢
   generalize 284 * e = C at hW ⊢
   generalize 284 * hd = C' at hc ⊢
   generalize 282 * pd = P at hW hc
@@ -73,16 +73,16 @@ private theorem run_step {W cw dp dq h h' r u e hd pd pd' wp wp' cwin n : Nat}
   omega
 
 private theorem run_stop {W cw dp h r u e hd pd wp cwin win n : Nat}
-    (hW : W + dp + 4470 * h ≤ 35761 * r + 284 * e + 282 * pd + wp + 126 * n)
-    (hc : cw ≤ dp + 4470 * h + 35761 * u + 284 * hd + cwin + 408) (hp : pd ≤ n) (hw : wp + cwin ≤ win) :
-    W + cw ≤ 35761 * (r + u) + 284 * (e + hd) + win + 408 * (n + 1) + 408 := by
+    (hW : W + dp + 2980 * h ≤ 23841 * r + 284 * e + 282 * pd + wp + 126 * n)
+    (hc : cw ≤ dp + 2980 * h + 23841 * u + 284 * hd + cwin + 408) (hp : pd ≤ n) (hw : wp + cwin ≤ win) :
+    W + cw ≤ 23841 * (r + u) + 284 * (e + hd) + win + 408 * (n + 1) + 408 := by
   have hP := Nat.mul_le_mul_left 282 hp
-  rw [Nat.mul_add 35761, Nat.mul_add 284, Nat.mul_add 408]
+  rw [Nat.mul_add 23841, Nat.mul_add 284, Nat.mul_add 408]
   have e1 : 408 * n = 282 * n + 126 * n := by rw [← Nat.add_mul]
   rw [e1]
-  generalize 4470 * h = A at hW hc
-  generalize 35761 * r = B at hW ⊢
-  generalize 35761 * u = B' at hc ⊢
+  generalize 2980 * h = A at hW hc
+  generalize 23841 * r = B at hW ⊢
+  generalize 23841 * u = B' at hc ⊢
   generalize 284 * e = C at hW ⊢
   generalize 284 * hd = C' at hc ⊢
   generalize 282 * pd = P at hW hP
@@ -91,13 +91,13 @@ private theorem run_stop {W cw dp h r u e hd pd wp cwin win n : Nat}
   omega
 
 private theorem run_now {W dp h r e pd wp win n : Nat}
-    (hW : W + dp + 4470 * h ≤ 35761 * r + 284 * e + 282 * pd + wp + 126 * n) (hp : pd ≤ n) (hw : wp ≤ win) :
-    W ≤ 35761 * r + 284 * e + win + 408 * n + 408 := by
+    (hW : W + dp + 2980 * h ≤ 23841 * r + 284 * e + 282 * pd + wp + 126 * n) (hp : pd ≤ n) (hw : wp ≤ win) :
+    W ≤ 23841 * r + 284 * e + win + 408 * n + 408 := by
   have hP := Nat.mul_le_mul_left 282 hp
   have e1 : 408 * n = 282 * n + 126 * n := by rw [← Nat.add_mul]
   rw [e1]
-  generalize 4470 * h = A at hW
-  generalize 35761 * r = B at hW ⊢
+  generalize 2980 * h = A at hW
+  generalize 23841 * r = B at hW ⊢
   generalize 284 * e = C at hW ⊢
   generalize 282 * pd = P at hW hP
   generalize 282 * n = P' at hP ⊢
@@ -110,9 +110,9 @@ paid for and 126 for each call; a run that has stopped has had all its work paid
 theorem work_inv {limit : Nat} {x : List UInt8} {R : Run DState} {W n : Nat} (h : ReachesW limit x R W n) :
     (R.status.stopped = false → ∃ p, DRel R.state.val p ∧ SInv p ∧ (R.state.val.tag ≠ .wbits → 10 ≤ R.state.val.k.toNat) ∧
       R.state.val.cmd.pend.toNat ≤ n ∧
-      W + dpot p R.state.val + 4470 * R.state.val.held.length ≤
-        35761 * R.read + 284 * R.emitted.length + 282 * R.state.val.cmd.pend.toNat + winPaid x R + 126 * n) ∧
-    (R.status.stopped = true → W ≤ 35761 * R.read + 284 * R.emitted.length + (declaredWindow x + 272) + 408 * n + 408) := by
+      W + dpot p R.state.val + 2980 * R.state.val.held.length ≤
+        23841 * R.read + 284 * R.emitted.length + 282 * R.state.val.cmd.pend.toNat + winPaid x R + 126 * n) ∧
+    (R.status.stopped = true → W ≤ 23841 * R.read + 284 * R.emitted.length + (declaredWindow x + 272) + 408 * n + 408) := by
   induction h with
   | start =>
     by_cases hl : limit < fixedCost
@@ -190,7 +190,7 @@ theorem work_inv {limit : Nat} {x : List UInt8} {R : Run DState} {W n : Nat} (h 
       exact run_stop hW hc hpn hwq
 
 /-- The most a state's place holds: a header's place, with what its end costs. -/
-theorem dpot_le {D : Dec} {p : SPhase} (hrel : DRel D p) (hsi : SInv p) : dpot p D ≤ 95741 := by
+theorem dpot_le {D : Dec} {p : SPhase} (hrel : DRel D p) (hsi : SInv p) : dpot p D ≤ 79521 := by
   cases p with
   | hdr w st last mlen g q =>
     obtain ⟨_, _, _, _, _, _, hh, _⟩ := hrel
@@ -211,8 +211,8 @@ theorem dpot_le {D : Dec} {p : SPhase} (hrel : DRel D p) (hsi : SInv p) : dpot p
   | raw => simp [dpot, spot, tailEnd, roundCost]
   | ended => simp [dpot, spot]
 
-/-- The most a call can leave for the next to use: the potential of where it pauses, and 4470 for each bit it holds. -/
-def psiMax : Nat := 381821
+/-- The most a call can leave for the next to use: the potential of where it pauses, and 2980 for each bit it holds. -/
+def psiMax : Nat := 270241
 
 theorem Reaches.withWork {limit : Nat} {x : List UInt8} {R : Run DState} (h : Reaches decoder limit x R) :
     ∃ W n, ReachesW limit x R W n := by
@@ -225,35 +225,35 @@ theorem Reaches.withWork {limit : Nat} {x : List UInt8} {R : Run DState} (h : Re
 /-- The potential a running decoder holds is at most `psiMax`. -/
 theorem decoder_potential {limit : Nat} {x : List UInt8} {R : Run DState} (h : Reaches decoder limit x R)
     (hs : R.status.stopped = false) :
-    ∃ p, DRel R.state.val p ∧ SInv p ∧ dpot p R.state.val + 4470 * R.state.val.held.length ≤ psiMax := by
+    ∃ p, DRel R.state.val p ∧ SInv p ∧ dpot p R.state.val + 2980 * R.state.val.held.length ≤ psiMax := by
   obtain ⟨W, n, hW⟩ := h.withWork
   obtain ⟨p, hrel, hsi, -, -, -⟩ := (work_inv hW).1 hs
   have := dpot_le hrel hsi
-  have := Nat.mul_le_mul_left 4470 hrel.held_le
+  have := Nat.mul_le_mul_left 2980 hrel.held_le
   exact ⟨p, hrel, hsi, by unfold psiMax; omega⟩
 
 /-- The work bound for one call. A call's work, in the work model, is at most the potential it starts with, at most
-`psiMax`, and 35761 for each byte it uses, 284 for each byte it hands out, one for each byte of the window the stream
+`psiMax`, and 23841 for each byte it uses, 284 for each byte it hands out, one for each byte of the window the stream
 declares and 272 more for zero-filling it, and 408. -/
 theorem decoder_callWork {limit : Nat} {x : List UInt8} {R : Run DState} {c : Call} (h : Reaches decoder limit x R)
     (ha : R.Allowed x c) :
     callWork R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.buf.toByteArray c.space c.final ≤
-      psiMax + 35761 * (R.reply decoder x c).used + 284 * ((R.reply decoder x c).output.size - c.buf.length) +
+      psiMax + 23841 * (R.reply decoder x c).used + 284 * ((R.reply decoder x c).output.size - c.buf.length) +
         (declaredWindow x + 272) + 408 := by
   obtain ⟨W, n, hW⟩ := h.withWork
   obtain ⟨p, hrel, hsi, hk, -, -⟩ := (work_inv hW).1 ha.running
   have hG := (call_pays (x := x) (R := R) (c := c) ha.inside ha.fits hrel hsi hk).2
   have hwin := callWin_le h ha
   have := dpot_le hrel hsi
-  have := Nat.mul_le_mul_left 4470 hrel.held_le
+  have := Nat.mul_le_mul_left 2980 hrel.held_le
   unfold psiMax
   omega
 
-/-- The work bound. The work of a run's calls, in the work model, is at most 35761 for each byte they use, 284 for each
+/-- The work bound. The work of a run's calls, in the work model, is at most 23841 for each byte they use, 284 for each
 byte they hand out, one for each byte of the window the stream declares and 272 more for zero-filling it, 408 for each
 call, and 408. -/
 theorem decoder_work {limit : Nat} {x : List UInt8} {R : Run DState} {W n : Nat} (h : ReachesW limit x R W n) :
-    W ≤ 35761 * R.read + 284 * R.emitted.length + (declaredWindow x + 272) + 408 * n + 408 := by
+    W ≤ 23841 * R.read + 284 * R.emitted.length + (declaredWindow x + 272) + 408 * n + 408 := by
   obtain ⟨I1, I2⟩ := work_inv h
   cases hst : R.status.stopped with
   | true => exact I2 hst
