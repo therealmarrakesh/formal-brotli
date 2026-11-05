@@ -2,8 +2,6 @@ module
 
 public import Brotli.Decoder.CopyRing
 
-@[expose] public section
-
 /-!
 # The compiled command loop
 
@@ -544,17 +542,17 @@ decreasing_by
   omega
 
 /-- What the compiled loop needs to know of a state. -/
-abbrev CmdInv (H : Hdr) (k stop : USize) (st : Cmd) (pos : USize) : Prop :=
+public abbrev CmdInv (H : Hdr) (k stop : USize) (st : Cmd) (pos : USize) : Prop :=
   KInv H k stop st.word st.count st.ring st.wpos st.written st.iCur st.iPrev st.lCur st.lPrev st.dCur st.dPrev
     st.copyBits st.dist st.wordBuf st.wordPos st.tag pos
 
 /-- `runCmd`, for a state the compiled loop may run from. The compiler runs `runCmdE` in its place. -/
-def runCmdP (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (n : USize) (st : Cmd)
+@[expose] public def runCmdP (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (n : USize) (st : Cmd)
     (pos : USize) (_h : CmdInv H k stop st pos) : Cmd :=
   runCmd H k a stop hs n st pos
 
 /-- `runCmdP` as the compiler runs it: the state taken apart once, then the loop on its fields. -/
-def runCmdE (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (n : USize) (st : Cmd)
+public def runCmdE (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (n : USize) (st : Cmd)
     (pos : USize) (h : CmdInv H k stop st pos) : Cmd :=
   match st, h with
   | ⟨word, count, ring, wpos, pend, cap, written, p1, p2, remaining, iCount, lCount, dCount, flags,
@@ -839,7 +837,7 @@ theorem runCmdK_eq (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : st
     all_goals rfl
 
 /-- The compiler runs the loop on the fields in place of `runCmdP`. -/
-@[csimp] theorem runCmdP_csimp : @runCmdP = @runCmdE := by
+@[csimp] public theorem runCmdP_csimp : @runCmdP = @runCmdE := by
   funext H k a stop hs n st pos h
   obtain ⟨word, count, ring, wpos, pend, cap, written, p1, p2, remaining, iCount, lCount, dCount, flags,
     ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf, wordPos⟩,
