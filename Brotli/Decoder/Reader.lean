@@ -10,7 +10,7 @@ what the spec's reader does on the bits held followed by anything.
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-- A lookup word's bit count, its low 4 bits. -/
 @[inline] def wordBits (v : UInt64) : UInt64 := v &&& 15

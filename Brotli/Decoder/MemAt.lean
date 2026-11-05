@@ -12,7 +12,7 @@ bits up to its refill's end.
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-- A header machine state, with what it has read of its meta-block: the meta-block's start `um` and the header so far `u`,
 before the bits it holds. Whatever bits follow, the start reads as a compressed meta-block's, the header's reading in order

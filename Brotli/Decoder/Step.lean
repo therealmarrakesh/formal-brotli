@@ -11,7 +11,7 @@ the bridge's real test: every result is tied to `rest`, for every future.
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-- How far a place is along a command: steps within a command lower this, and the start of a command is the lowest. -/
 def rankC : Phase → Nat × Nat

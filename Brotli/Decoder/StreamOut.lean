@@ -9,7 +9,7 @@ since a run that hits the memory limit never reaches an output of its own.
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-- The bytes so far, most recent first, are the start of `y`. -/
 def Ext (l : List Nat) (y : List UInt8) : Prop := l.reverse.map Nat.toUInt8 <+: y

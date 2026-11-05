@@ -11,7 +11,7 @@ the same name without its `W`, round by round, and the theorems after it bound i
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-! ### Zeros -/
 

@@ -10,7 +10,7 @@ output. It uses `hrest` and `rest` for the places inside a header and a meta-blo
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-- The stream's end. -/
 def endOf (st : StreamState) (bs : List Bool) : Option (List UInt8) :=

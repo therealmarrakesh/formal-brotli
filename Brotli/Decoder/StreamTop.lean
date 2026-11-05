@@ -11,7 +11,7 @@ The correctness goals follow from them.
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-- The decoder's state between calls. -/
 abbrev DState := { D : Dec // ∃ p, DRel D p }

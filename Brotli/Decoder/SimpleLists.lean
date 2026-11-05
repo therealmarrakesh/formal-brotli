@@ -8,7 +8,7 @@ its symbols: each length's symbols in decreasing order, sorted by comparisons.
 -/
 
 namespace Brotli.Decoder
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-- Two increasing lists with the same members are equal. -/
 theorem eq_of_lt_mem : ∀ {a b : List Nat}, a.Pairwise (· < ·) → b.Pairwise (· < ·) → (∀ x, x ∈ a ↔ x ∈ b) → a = b

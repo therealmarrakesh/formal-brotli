@@ -11,7 +11,7 @@ rejects the bits at hand. So the reading in order of a stream's first bytes reac
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 section
 variable {A P E α : Type}

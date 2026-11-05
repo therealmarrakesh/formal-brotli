@@ -12,7 +12,7 @@ sub-tables don't overlap.
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-! ### Zeros, and the slots of opened sub-tables -/
 

@@ -9,7 +9,7 @@ Each runs on a buffer that a refill has just filled, so the bits held fall short
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-! ### Small facts -/
 

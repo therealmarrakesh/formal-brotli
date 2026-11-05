@@ -12,7 +12,7 @@ While a meta-block's header is read, the decoder's state is plain scalars and by
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-- A small table held only while the header is read: it has been checked once, so its lookups need no check. -/
 structure Tab where

@@ -15,7 +15,7 @@ only when `n` runs out or the bits at hand can't finish a symbol.
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-- What the header's check has established about the literal tables, with no mention of the spec. -/
 structure LitChecked (arena litBase lMap : ByteArray) (nTrees : Nat) : Prop where

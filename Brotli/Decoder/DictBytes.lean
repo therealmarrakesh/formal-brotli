@@ -12,7 +12,7 @@ the kernel would try to evaluate.
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-! ### The dictionary's bytes -/
 
@@ -69,6 +69,14 @@ private theorem dict_lt (i : Nat) : DICT i < 256 :=
 private theorem toUInt8_toNat {x : Nat} (h : x < 256) : x.toUInt8.toNat = x := by
   simp only [Nat.toUInt8, UInt8.toNat_ofNat']
   exact Nat.mod_eq_of_lt h
+
+/-- Values that are bytes survive `Nat.toUInt8` and back. -/
+private theorem map_toUInt8 : ∀ l : List Nat, (∀ b ∈ l, b < 256) →
+    (l.map Nat.toUInt8).map UInt8.toNat = l
+  | [], _ => rfl
+  | x :: l, h => by
+    simp only [List.map_cons]
+    rw [toUInt8_toNat (h x (by simp)), map_toUInt8 l fun b hb => h b (List.mem_cons_of_mem _ hb)]
 
 /-- A run of bytes from a byte array. -/
 def slice (t : ByteArray) (p n : Nat) : List Nat :=

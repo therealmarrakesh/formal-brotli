@@ -11,7 +11,7 @@ bytes it produces and the window it allocates; a step that stops the loop costs 
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-! ### What the stream's steps read in order take -/
 

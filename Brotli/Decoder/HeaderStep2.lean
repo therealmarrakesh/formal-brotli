@@ -9,7 +9,7 @@ modes, a context map's number of trees and RLEMAX, and the start and end of a gr
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 section
 variable {α : Type} {K : HK α} {a : ByteArray} {stop : USize}

@@ -1,5 +1,5 @@
 import Brotli.Decoder.BitBuffer
-import Brotli.Properties.Complete
+import Brotli.Decoder.Complete
 
 /-!
 # Which symbol a bit pattern decodes to
@@ -12,7 +12,7 @@ that the low `l` bits of `w` are the code word of symbol `s`. Every pattern has 
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-- The low `l` bits of `w`, reversed. -/
 def revBits : Nat → Nat → Nat

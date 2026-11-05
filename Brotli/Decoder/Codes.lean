@@ -258,10 +258,10 @@ worked out downwards from the top of the code space. -/
 def walkDown {β : Type} (f : β → Nat → Nat → Nat → β) (lens : List Nat) (acc : β) : β := walkFrom f lens 15 32768 acc
 
 /-- A complete code's codes end at the top of the code space. -/
-theorem top_code {lens : List Nat} (hC : Brotli.Properties.Complete (.canonical lens)) :
+theorem top_code {lens : List Nat} (hC : Complete (.canonical lens)) :
     nextCode lens 15 + blCount lens 15 = 32768 := by
-  have h1 := Brotli.Properties.nextCode_sum lens 15 (by decide) (by decide)
-  rw [Brotli.Properties.sumUpTo_eq lens hC.1, hC.2] at h1
+  have h1 := nextCode_sum lens 15 (by decide) (by decide)
+  rw [sumUpTo_eq lens hC.1, hC.2] at h1
   simpa using h1
 
 /-- Halving the code above a length's codes gives the code above the next shorter length's. -/
@@ -273,7 +273,7 @@ theorem nextCode_half (lens : List Nat) (l : Nat) : nextCode lens (l + 1) / 2 = 
 `code` once every longer code has been seen, holds at the end, for a list of the symbols seen that has every symbol with
 a code. -/
 theorem walkDown_ind {β : Type} {f : β → Nat → Nat → Nat → β} {lens : List Nat}
-    (hC : Brotli.Properties.Complete (.canonical lens))
+    (hC : Complete (.canonical lens))
     (P : List Nat → β → Prop)
     (hs : ∀ done s l c acc, P done acc → lens[s]? = some l → l ≠ 0 → code lens s = some c →
       (∀ s' l', lens[s']? = some l' → l < l' → s' ∈ done) → P (s :: done) (f acc s l c))

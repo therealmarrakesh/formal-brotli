@@ -10,7 +10,7 @@ pauses or finishes, and `flushCmd` hands bytes waiting in the window to the call
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-- The step for the place a state is at, its buffer refilled. -/
 def stepAt (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (st : Cmd) (pos : USize) : Cmd :=

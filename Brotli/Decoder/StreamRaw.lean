@@ -9,7 +9,7 @@ Where the stream's bits go past whole bytes: the fill bits, metadata to skip, an
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-! ### In the spec's terms -/
 

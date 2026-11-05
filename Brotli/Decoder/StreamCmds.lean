@@ -9,7 +9,7 @@ Starting a meta-block's commands once its header is read, running them, and the 
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-- The command loop's state at the start of a meta-block: in each category, only type 0 has occurred. -/
 def cmdStart (c : Cmd) (d : Done) (word count mlen : UInt64) : Cmd :=

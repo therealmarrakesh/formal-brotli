@@ -10,7 +10,7 @@ A call pays for its work with the potential of where it starts, which it leaves 
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-- A state at a place holds at most 64 bits. -/
 theorem DRel.held_le {D : Dec} {p : SPhase} (h : DRel D p) : D.held.length ≤ 64 := by

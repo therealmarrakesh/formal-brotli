@@ -14,7 +14,7 @@ slots for those code words.
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-! ### Sums over a range -/
 

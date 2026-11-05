@@ -9,7 +9,7 @@ A call's work, in the work model, against the potential of where its state stand
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-- The work of one call of the decoder: the call's own, for a call `decStep` takes, and one for a call it turns away. -/
 def callWork (s : DState) (a : ByteArray) (start stop : Nat) (buf : ByteArray) (space : Nat) (final : Bool) : Nat :=

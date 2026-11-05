@@ -9,7 +9,7 @@ and counts the rounds of its loops. A loop that can stop early counts all the ro
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-! ### The steps -/
 

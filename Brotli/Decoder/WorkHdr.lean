@@ -12,7 +12,7 @@ bits that settle its size are read, and rises only when bits are read.
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-! ### Tables -/
 
@@ -677,9 +677,21 @@ theorem hpot_owner_canon (g : Gh) (o : Owner) (L : List Nat) : hpot g (ownerPlac
     simp only [ownerPlace, hpot, ownerPot, mapOwner, runOf]
     split <;> omega
 
+/-- `ALPHABET_BITS` bits hold the alphabet. -/
+private theorem alphabetBits_le (size : Nat) : size ≤ 2 ^ alphabetBits size := by
+  have hs : ((List.range (size + 1)).find? fun b => size ≤ 2 ^ b).isSome = true := by
+    rw [List.find?_isSome]
+    exact ⟨size, List.mem_range.mpr (by omega), by simpa using Nat.le_of_lt Nat.lt_two_pow_self⟩
+  unfold alphabetBits
+  cases hf : (List.range (size + 1)).find? (fun b => decide (size ≤ 2 ^ b)) with
+  | none =>
+    rw [hf] at hs
+    simp at hs
+  | some x => simpa using List.find?_some hf
+
 /-- An alphabet of two symbols or more takes a bit or more. -/
 theorem alphabetBits_pos {n : Nat} (h : 2 ≤ n) : 1 ≤ alphabetBits n := by
-  have := (alphabetBits_spec n).1
+  have := alphabetBits_le n
   refine Nat.le_of_not_lt fun h0 => ?_
   rw [Nat.lt_one_iff.mp h0] at this
   simp at this

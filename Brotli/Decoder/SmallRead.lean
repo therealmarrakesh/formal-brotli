@@ -10,7 +10,7 @@ and the rules below build that up one spec read at a time.
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-- A small read's result, flat. What its values mean is up to the read. -/
 structure Rd where

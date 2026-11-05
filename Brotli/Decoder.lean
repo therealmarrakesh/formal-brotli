@@ -3,6 +3,7 @@ import Brotli.Decoder.Rest
 import Brotli.Decoder.Order
 import Brotli.Decoder.BitBuffer
 import Brotli.Decoder.Refill
+import Brotli.Decoder.Complete
 import Brotli.Decoder.Hit
 import Brotli.Decoder.Slots
 import Brotli.Decoder.Codes

@@ -9,7 +9,7 @@ check that every tree occurs.
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 section
 variable {α : Type} (K : HK α)

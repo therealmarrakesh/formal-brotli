@@ -8,7 +8,7 @@ The place at a prefix code's first two bits, a simple prefix code, and the code 
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-! ### Code lengths in an array -/
 

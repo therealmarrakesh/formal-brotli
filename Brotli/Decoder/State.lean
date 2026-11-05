@@ -1,7 +1,6 @@
 import Brotli.Decoder.Literals
 import Brotli.Decoder.Block
 import Brotli.Decoder.Fixed
-import Brotli.Properties.Lookups
 
 /-!
 # The command loop's state
@@ -13,7 +12,7 @@ for the command loop. Everything about the spec here is ghost: it appears only i
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-- Which place in the command loop a state is at. -/
 inductive Tag where
@@ -144,6 +143,28 @@ structure Hdr where
   swL : 2 ≤ nL.toNat → TableFits arena baseTL.toNat ∧ TableFits arena baseCL.toNat
   swI : 2 ≤ nI.toNat → TableFits arena baseTI.toNat ∧ TableFits arena baseCI.toNat
   swD : 2 ≤ nD.toNat → TableFits arena baseTD.toNat ∧ TableFits arena baseCD.toNat
+
+/-- What a meta-block header gives the lookups that follow it. -/
+structure HeaderOk (m : MetaBlockHeader) : Prop where
+  literal : m.literal.Wf
+  insertCopy : m.insertCopy.Wf
+  distance : m.distance.Wf
+  literalCount : 2 ≤ m.literal.n → m.literal.countCode.Symbols blockCountAlphabetSize
+  insertCopyCount : 2 ≤ m.insertCopy.n → m.insertCopy.countCode.Symbols blockCountAlphabetSize
+  distanceCount : 2 ≤ m.distance.n → m.distance.countCode.Symbols blockCountAlphabetSize
+  modes_length : m.contextModes.length = m.literal.n
+  literalMap_length : m.literalMap.length = literalContextMapSize m.literal.n
+  literalMap_lt : ∀ v ∈ m.literalMap, v < m.literalCodes.length
+  literalCodes : ∀ c ∈ m.literalCodes, c.Symbols literalAlphabetSize ∧ Complete c
+  insertCopyCodes_length : m.insertCopyCodes.length = m.insertCopy.n
+  insertCopyCodes : ∀ c ∈ m.insertCopyCodes, c.Symbols insertCopyAlphabetSize ∧ Complete c
+  distanceMap_length : m.distanceMap.length = distanceContextMapSize m.distance.n
+  distanceMap_lt : ∀ v ∈ m.distanceMap, v < m.distanceCodes.length
+  distanceCodes : ∀ c ∈ m.distanceCodes,
+    c.Symbols (distanceAlphabetSize m.npostfix m.ndirect) ∧ Complete c
+  literalSwitch : Complete m.literal.typeCode ∧ Complete m.literal.countCode
+  insertCopySwitch : Complete m.insertCopy.typeCode ∧ Complete m.insertCopy.countCode
+  distanceSwitch : Complete m.distance.typeCode ∧ Complete m.distance.countCode
 
 /-- A category's switch tables match the spec's. -/
 structure CatRel (arena : ByteArray) (baseT baseC : USize) (c : BlockCategory) : Prop where

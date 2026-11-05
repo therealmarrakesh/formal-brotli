@@ -8,7 +8,7 @@ The place reading them, up to the code length code's table.
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-- The order of the code length alphabet, in an array. -/
 def clOrderLut : ByteArray := (codeLengthOrder.map Nat.toUInt8).toByteArray

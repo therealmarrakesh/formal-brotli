@@ -10,7 +10,7 @@ header's and the commands' ranks go down. `runD` is the loop, with no fuel, by t
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-! ### The step -/
 

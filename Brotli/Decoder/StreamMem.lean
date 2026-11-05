@@ -10,7 +10,7 @@ and a fixed cost for the rest.
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-! ### The demand -/
 

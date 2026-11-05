@@ -10,7 +10,7 @@ What one call does: hand out waiting bytes, run the loop, hand out what it left,
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-! ### What the loop leaves -/
 

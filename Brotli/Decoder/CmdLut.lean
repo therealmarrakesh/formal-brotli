@@ -1,5 +1,4 @@
 import Brotli.Decoder.Lookup
-import Brotli.Properties.Lookups
 
 /-!
 # The command lookup
@@ -10,7 +9,7 @@ searching the spec's tables for each command. `cmdRow_spec` proves the table is 
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-- A symbol's insert extra bits, lowest insert length, copy extra bits and lowest copy length. -/
 def cmdRow (c : Nat) : Nat × Nat × Nat × Nat :=
@@ -63,6 +62,28 @@ private theorem cmdLut_slot {i : Nat} (h : i < 1408) : u32At cmdLut i = cmdEntry
 private theorem rows_small : ∀ c, c < 704 →
     (cmdRow c).1 ≤ 24 ∧ (cmdRow c).2.1 ≤ 22594 ∧ (cmdRow c).2.2.1 ≤ 24 ∧ (cmdRow c).2.2.2 ≤ 2118 := by
   decide +kernel
+
+private theorem insertCopyCodes_total : ∀ c, c < 704 →
+    ((insertCopyCodes c).any fun p => decide (p.1 < 24) && decide (p.2 < 24)) = true := by
+  decide +kernel
+
+/-- Every symbol of the insert-and-copy alphabet has a cell and rows in both length tables. -/
+private theorem insertCopy_tables {c : Nat} (h : c < insertCopyAlphabetSize) :
+    ∃ ic cc ir cr, insertCopyCodes c = some (ic, cc) ∧ insertLengthCodes[ic]? = some ir ∧
+      copyLengthCodes[cc]? = some cr := by
+  have key := insertCopyCodes_total c h
+  cases hc : insertCopyCodes c with
+  | none => simp [hc] at key
+  | some p =>
+    obtain ⟨ic, cc⟩ := p
+    simp only [hc, Option.any_some, Bool.and_eq_true, decide_eq_true_eq] at key
+    have hi : ic < insertLengthCodes.length := by
+      have : insertLengthCodes.length = 24 := by decide
+      omega
+    have hk : cc < copyLengthCodes.length := by
+      have : copyLengthCodes.length = 24 := by decide
+      omega
+    exact ⟨ic, cc, _, _, rfl, List.getElem?_eq_getElem hi, List.getElem?_eq_getElem hk⟩
 
 /-- What a row holds, in the spec's tables. -/
 theorem cmdRow_spec {c : Nat} (hc : c < 704) :

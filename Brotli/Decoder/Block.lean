@@ -10,7 +10,12 @@ them unless the chunk ran out, and the read is all or nothing: if the bits run s
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
+
+/-- Every symbol of the block count alphabet has a row in the table. -/
+theorem blockCount_table {c : Nat} (h : c < blockCountAlphabetSize) :
+    ∃ row, blockCountCodes[c]? = some row :=
+  ⟨blockCountCodes[c]'(by rw [blockCountCodes_length]; exact h), List.getElem?_eq_getElem _⟩
 
 /-- How a small read ended. -/
 inductive ReadStatus where

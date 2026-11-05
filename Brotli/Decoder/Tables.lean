@@ -10,7 +10,7 @@ of its bits go, are at most those of more of its bits.
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-! ### A header's tables, as far as its bits go -/
 

@@ -8,7 +8,7 @@ Each place in a header that needs no table built has a step here, with the theor
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-- A small read in the spec's terms, applied to what follows it. -/
 theorem ROk.run {A β : Type} {spec : List Bool → Option (A × List Bool)} {b b0 : BitBuffer} {room : Nat} {r : Rd} {v : A}

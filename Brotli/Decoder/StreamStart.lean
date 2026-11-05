@@ -8,7 +8,7 @@ WBITS, and the start of a meta-block up to its ISUNCOMPRESSED or its metadata le
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 private theorem not_le_lt4 {a k : UInt64} (h : ¬ k ≤ a) : a.toNat < k.toNat :=
   Nat.lt_of_not_le fun e => h (UInt64.le_iff_toNat_le.mpr e)

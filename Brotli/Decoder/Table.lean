@@ -12,7 +12,7 @@ its hit. This module holds what a table is and what it takes; `buildTable` (`Tab
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-! ### What a table has to do -/
 

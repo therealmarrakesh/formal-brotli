@@ -13,7 +13,7 @@ proofs say what a table means, and `buildSingleFast_eq` does the same for `build
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-! ### Bytes and 16-bit values in an array -/
 

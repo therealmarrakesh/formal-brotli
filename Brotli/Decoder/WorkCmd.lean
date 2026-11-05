@@ -11,7 +11,7 @@ begins a dictionary word, the word's building.
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-! ### The loops -/
 

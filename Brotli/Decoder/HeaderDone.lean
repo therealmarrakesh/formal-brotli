@@ -10,7 +10,7 @@ checked.
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-! ### The machine -/
 

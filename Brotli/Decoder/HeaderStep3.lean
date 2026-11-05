@@ -8,7 +8,7 @@ The places that start and end a context map or a group of codes.
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 section
 variable {α : Type} {K : HK α} {a : ByteArray} {stop : USize}

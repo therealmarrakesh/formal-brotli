@@ -9,7 +9,7 @@ meta-block's start, and the stream's end.
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-! ### Through the header machine -/
 

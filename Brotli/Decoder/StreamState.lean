@@ -9,7 +9,7 @@ to do down to the stream's output.
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-- What a stream's places are worth: what follows a meta-block, and what a place gives that isn't inside one. The spec's
 own worth is its output. Another is what the termination measure counts. -/

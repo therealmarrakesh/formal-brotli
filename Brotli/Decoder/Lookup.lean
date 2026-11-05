@@ -11,7 +11,7 @@ The arena stays below `2 ^ 32` bytes, so its positions always fit a `USize`.
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 private theorem usize_toNat_add {a b : USize} (h : a.toNat + b.toNat < 2 ^ 32) : (a + b).toNat = a.toNat + b.toNat := by
   rw [USize.toNat_add]

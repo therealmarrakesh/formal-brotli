@@ -8,7 +8,7 @@ The place reading a complex prefix code's lengths, one code length symbol at a t
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-- Reads length `l`'s link in `head`. -/
 @[inline] def getHead (t : ByteArray) (ht : t.size = 32) (l : UInt64) (hl : l.toNat < 16) : UInt64 :=

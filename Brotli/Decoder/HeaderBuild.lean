@@ -9,7 +9,7 @@ if it's a context map's. `tableDone` does that and moves on to what the code was
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-! ### What a built table gives -/
 

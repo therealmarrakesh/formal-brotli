@@ -3,11 +3,11 @@ import Brotli.Spec.Stream
 /-!
 # Complete prefix codes
 
-Every prefix code read from a stream fills its code space exactly, so `decodeSymbol` can only fail by running
-out of bits. A stream is never rejected because its bits fall in a gap of a code.
+Every prefix code `readPrefixCode` reads fills its code space exactly, so `decodeSymbol` with it decodes a symbol from
+any 15 or more bits.
 -/
 
-namespace Brotli.Properties
+namespace Brotli.Decoder
 
 open Brotli.Spec
 
@@ -308,125 +308,4 @@ theorem readPrefixCode_complete {size : Nat} {bs r : List Bool} {c : PrefixCode}
   | single _ => trivial
   | canonical lens => exact ⟨hfit.1, hsum lens rfl⟩
 
-/-! ### The code length code -/
-
-/-- The sum of `32 >> code length` over the non-zero code lengths of the pairs. -/
-private def sum32 (pairs : List (Nat × Nat)) : Nat :=
-  (pairs.map fun p => if p.2 = 0 then 0 else 32 >>> p.2).sum
-
-private theorem sum32_scale : ∀ pairs : List (Nat × Nat), (∀ p ∈ pairs, p.2 ≤ 5) →
-    lengthSum (pairs.map (·.2)) = 1024 * sum32 pairs
-  | [], _ => by simp [lengthSum, sum32]
-  | p :: pairs, h => by
-    have ih := sum32_scale pairs fun q hq => h q (List.mem_cons_of_mem _ hq)
-    have key : ∀ l, l < 6 → (if l = 0 then 0 else 32768 >>> l) = 1024 * (if l = 0 then 0 else 32 >>> l) := by
-      decide
-    have hp := key p.2 (by have := h p (by simp); omega)
-    simp only [lengthSum, sum32, List.map_cons, List.sum_cons] at ih ⊢
-    rw [hp, ih, Nat.mul_add]
-
-private theorem readCodeLengthCodeLengths_spec : ∀ (order : List Nat) (acc : List (Nat × Nat))
-    (sum : Nat) (bs : List Bool) (pairs : List (Nat × Nat)) (r : List Bool),
-    order.Nodup → (∀ x ∈ order, x < 18) → (∀ p ∈ acc, p.1 < 18 ∧ p.1 ∉ order ∧ p.2 ≤ 5) →
-    (acc.map (·.1)).Nodup → sum = sum32 acc →
-    readCodeLengthCodeLengths order acc sum bs = some (pairs, r) →
-    (pairs.filter (·.2 != 0)).length = 1 ∨
-      (sum32 pairs = 32 ∧ (pairs.map (·.1)).Nodup ∧ ∀ p ∈ pairs, p.1 < 18 ∧ p.2 ≤ 5)
-  | [], _, _, _, pairs, _, _, _, _, _, _, h => by
-    simp only [readCodeLengthCodeLengths] at h
-    split at h
-    · rename_i hone
-      simp only [Option.some.injEq, Prod.mk.injEq] at h
-      rw [← h.1]
-      exact Or.inl hone
-    · simp at h
-  | sym :: order, acc, sum, bs, pairs, r, hnd, hlt, hacc, hkeys, hsum, h => by
-    simp only [readCodeLengthCodeLengths] at h
-    obtain ⟨⟨len, bs1⟩, h1, h⟩ := bind_some h
-    dsimp only at h
-    rw [List.nodup_cons] at hnd
-    have hlen := (readCodeLengthCodeLength_width h1).1
-    have hsym : sym < 18 := hlt sym (by simp)
-    have hacc' : ∀ p ∈ acc ++ [(sym, len)], p.1 < 18 ∧ p.1 ∉ order ∧ p.2 ≤ 5 := by
-      intro p hp
-      rcases List.mem_append.mp hp with hp | hp
-      · obtain ⟨a, b, c⟩ := hacc p hp
-        exact ⟨a, fun hm => b (List.mem_cons_of_mem _ hm), c⟩
-      · rw [List.mem_singleton.mp hp]
-        exact ⟨hsym, hnd.1, hlen⟩
-    have hkeys' : ((acc ++ [(sym, len)]).map (·.1)).Nodup := by
-      rw [List.map_append]
-      refine List.pairwise_append.mpr ⟨hkeys, List.pairwise_singleton _ _, ?_⟩
-      intro a ha b hb
-      simp only [List.map_cons, List.map_nil, List.mem_singleton] at hb
-      subst hb
-      obtain ⟨p, hp, rfl⟩ := List.mem_map.mp ha
-      intro he
-      exact (hacc p hp).2.1 (by rw [he]; simp)
-    have hlt' : ∀ x ∈ order, x < 18 := fun x hx => hlt x (List.mem_cons_of_mem _ hx)
-    split at h
-    · rename_i h0
-      refine readCodeLengthCodeLengths_spec order _ _ bs1 pairs r hnd.2 hlt' hacc' hkeys' ?_ h
-      simp [sum32, hsum, h0]
-    · rename_i h0
-      have hsum' : sum + 32 >>> len = sum32 (acc ++ [(sym, len)]) := by
-        simp [sum32, hsum, h0]
-      split at h
-      · rename_i hs
-        simp only [Option.some.injEq, Prod.mk.injEq] at h
-        obtain ⟨rfl, -⟩ := h
-        exact Or.inr ⟨by rw [← hsum', hs], hkeys', fun p hp => ⟨(hacc' p hp).1, (hacc' p hp).2.2⟩⟩
-      · split at h
-        · simp at h
-        · exact readCodeLengthCodeLengths_spec order _ _ bs1 pairs r hnd.2 hlt' hacc' hkeys' hsum' h
-
-private theorem codeLengthOrder_ok : codeLengthOrder.Nodup ∧ ∀ x ∈ codeLengthOrder, x < 18 := by
-  decide +kernel
-
-/-- Every code length code read from a stream is complete (§3.5). -/
-theorem codeLengthCode_complete {hskip : Nat} {bs r : List Bool} {pairs : List (Nat × Nat)}
-    (h : readCodeLengthCodeLengths (codeLengthOrder.drop hskip) [] 0 bs = some (pairs, r)) :
-    Complete (codeLengthCode pairs) := by
-  have hfit := codeLengthCode_fits h
-  have hspec := readCodeLengthCodeLengths_spec _ _ _ _ _ _
-    (codeLengthOrder_ok.1.sublist (List.drop_sublist _ _))
-    (fun x hx => codeLengthOrder_ok.2 x (List.mem_of_mem_drop hx))
-    (by simp) (by simp) (by simp [sum32]) h
-  unfold codeLengthCode at hfit ⊢
-  split at hfit
-  · trivial
-  · rename_i hne
-    refine ⟨hfit.1, ?_⟩
-    rcases hspec with hone | ⟨hs, hk, hb⟩
-    · obtain ⟨x, hx⟩ := List.length_eq_one_iff.mp hone
-      obtain ⟨sym, l⟩ := x
-      exact absurd hx (hne sym l)
-    · rw [lengthSum_lengthsOf_eq 18 pairs hk (fun p hp => (hb p hp).1),
-        sum32_scale pairs (fun p hp => (hb p hp).2), hs]
-
-/-! ### Only running out of bits fails -/
-
-/-- A prefix code read from a stream decodes a symbol from any 15 or more bits. -/
-theorem readPrefixCode_decodes {size : Nat} {bs r b : List Bool} {c : PrefixCode}
-    (h : readPrefixCode size bs = some (c, r)) (hb : 15 ≤ b.length) :
-    ∃ s r', decodeSymbol c b = some (s, r') :=
-  decodeSymbol_complete (readPrefixCode_complete h) hb
-
-/-- Decoding with a prefix code read from a stream fails only with fewer than 15 bits left. -/
-theorem decodeSymbol_none_short {size : Nat} {bs r b : List Bool} {c : PrefixCode}
-    (h : readPrefixCode size bs = some (c, r)) (hn : decodeSymbol c b = none) : b.length < 15 := by
-  refine Nat.lt_of_not_le fun hb => ?_
-  obtain ⟨s, r', hs⟩ := readPrefixCode_decodes h hb
-  rw [hs] at hn
-  simp at hn
-
-/-- Decoding with a code length code read from a stream fails only with fewer than 15 bits left. -/
-theorem codeLengthCode_none_short {hskip : Nat} {bs r b : List Bool} {pairs : List (Nat × Nat)}
-    (h : readCodeLengthCodeLengths (codeLengthOrder.drop hskip) [] 0 bs = some (pairs, r))
-    (hn : decodeSymbol (codeLengthCode pairs) b = none) : b.length < 15 := by
-  refine Nat.lt_of_not_le fun hb => ?_
-  obtain ⟨s, r', hs⟩ := decodeSymbol_complete (codeLengthCode_complete h) hb
-  rw [hs] at hn
-  simp at hn
-
-end Brotli.Properties
+end Brotli.Decoder

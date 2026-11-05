@@ -11,7 +11,7 @@ by a unit of each byte it hands out.
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-- WBITS's step that goes on reads the window's size from the stream's bits. -/
 theorem stepDWbits_reads {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize}

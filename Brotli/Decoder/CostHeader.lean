@@ -10,7 +10,7 @@ the rounds of its loops. A loop that can stop early counts all the rounds it cou
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 private theorem cusize_ofNat {n : Nat} (h : n < 2 ^ 32) : (USize.ofNat n).toNat = n := by
   rw [USize.toNat_ofNat', ← USize.size_eq_two_pow]

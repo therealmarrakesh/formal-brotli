@@ -10,7 +10,7 @@ it selects, a backward copy or a dictionary word.
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-- Begins a word that has been built. -/
 def applyBuilt (st : Cmd) (pos : USize) (word : ByteArray) : Cmd :=

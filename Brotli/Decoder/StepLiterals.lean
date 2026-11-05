@@ -9,7 +9,7 @@ full, or runs the literal loop for as many literals as the command, the block an
 
 namespace Brotli.Decoder
 
-open Brotli.Spec Brotli.Properties
+open Brotli.Spec
 
 /-- A cheap check that a buffer is well formed, for the literal loop's entry. -/
 @[inline] def wfCheck (word count : UInt64) : Bool :=
