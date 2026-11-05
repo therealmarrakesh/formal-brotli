@@ -11,25 +11,18 @@ namespace Brotli.Decoder
 
 open Brotli.Spec Brotli.Properties
 
-/-- The block type flags at the start of a meta-block's commands: type 0 of each category has occurred. -/
-def seenInit : ByteArray := ((List.range 768).map fun i => if i % 256 = 0 then (1 : UInt8) else 0).toByteArray
-
-theorem seenInit_size : seenInit.size = 768 := by
-  simp [seenInit, List.size_toByteArray]
-
-theorem seenInit_at {i : Nat} (h : i < 768) : seenInit.data[i]?.getD 0 = if i % 256 = 0 then (1 : UInt8) else 0 := by
-  simp only [seenInit, List.data_toByteArray, List.getElem?_toArray]
-  simp [h]
-
-/-- The command loop's state at the start of a meta-block, with `seen` the flags `seenInit`. -/
-def cmdStart (c : Cmd) (d : Done) (word count mlen : UInt64) (seen : ByteArray) : Cmd :=
+/-- The command loop's state at the start of a meta-block: in each category, only type 0 has occurred. -/
+def cmdStart (c : Cmd) (d : Done) (word count mlen : UInt64) : Cmd :=
   { c with
     word := word, count := count, remaining := mlen, iCur := 0, iPrev := 1, iCount := d.countI, lCur := 0, lPrev := 1, lCount := d.countL
-    dCur := 0, dPrev := 1, dCount := d.countD, seen := seen, tag := .command }
+    dCur := 0, dPrev := 1, dCount := d.countD, fL0 := 1, fL1 := 0, fL2 := 0, fL3 := 0, fI0 := 1, fI1 := 0, fI2 := 0, fI3 := 0
+    fD0 := 1, fD1 := 0, fD2 := 0, fD3 := 0, tag := .command }
 
-private theorem blockRel_start {seenInit : ByteArray} (seenInit_at : ∀ {i : Nat}, i < 768 → seenInit.data[i]?.getD 0 = if i % 256 = 0 then (1 : UInt8) else 0)
-    {c : BlockCategory} {off : Nat} {count : UInt64} (hoff : off = 0 ∨ off = 256 ∨ off = 512)
-    (hc : count.toNat = c.firstCount) (hw : c.Wf) : BlockRel seenInit off 0 1 count (.initial c) c where
+private theorem flagOf_start : ∀ t, t < 256 → flagOf 1 0 0 0 t = decide (t = 0) := by
+  decide +kernel
+
+private theorem blockRel_start {c : BlockCategory} {count : UInt64} (hc : count.toNat = c.firstCount) (hw : c.Wf) :
+    BlockRel 1 0 0 0 0 1 count (.initial c) c where
   cur := rfl
   prev := rfl
   count := hc.symm
@@ -41,22 +34,13 @@ private theorem blockRel_start {seenInit : ByteArray} (seenInit_at : ∀ {i : Na
     omega
   flags := by
     intro t ht
-    rw [seenInit_at (by rcases hoff with h | h | h <;> omega)]
     have hmem : t ∈ (BlockState.initial c).seen ↔ t = 0 := by simp [BlockState.initial]
-    rw [hmem]
-    have hmod : (off + t) % 256 = 0 ↔ t = 0 := by
-      rcases hoff with h | h | h <;> subst h <;> omega
-    by_cases h0 : t = 0
-    · rw [ite_eq_left (hmod.mpr h0)]
-      exact ⟨fun _ => h0, fun _ => by decide⟩
-    · rw [ite_eq_right (fun e => h0 (hmod.mp e))]
-      exact ⟨fun e => absurd rfl e, fun e => absurd e h0⟩
+    rw [flagOf_start t ht, hmem, decide_eq_true_iff]
 
 /-- A state at the start of a meta-block's commands stands for that place. -/
-theorem cmdStart_rel {c : Cmd} {d : Done} {g : Gh} {w k : Nat} {st : StreamState} {word count mlen : UInt64} {seen : ByteArray}
-    (hs1 : seen.size = 768) (hs2 : ∀ {i : Nat}, i < 768 → seen.data[i]?.getD 0 = if i % 256 = 0 then (1 : UInt8) else 0)
+theorem cmdStart_rel {c : Cmd} {d : Done} {g : Gh} {w k : Nat} {st : StreamState} {word count mlen : UInt64}
     (hw : (BitBuffer.mk word count).Wf) (hu : Upto d g 10) (hwin : WinRel w k c st.output st.distances) (hp : st.produced = st.output.length) :
-    Rel w k g.m (cmdStart c d word count mlen seen) (.command (startState st mlen.toNat g.m)) := by
+    Rel w k g.m (cmdStart c d word count mlen) (.command (startState st mlen.toNat g.m)) := by
   have hL := hu.cat .L (by decide)
   have hI := hu.cat .I (by decide)
   have hD := hu.cat .D (by decide)
@@ -77,92 +61,162 @@ theorem cmdStart_rel {c : Cmd} {d : Done} {g : Gh} {w k : Nat} {st : StreamState
     d2 := hwin.d2
     d3 := hwin.d3
     dsLt := hwin.dsLt
-    iRel := blockRel_start hs2 (off := 256) (by decide) hI.count hI.wf
-    lRel := blockRel_start hs2 (off := 0) (by decide) hL.count hL.wf
-    dRel := blockRel_start hs2 (off := 512) (by decide) hD.count hD.wf
-    seenSize := hs1
+    iRel := blockRel_start hI.count hI.wf
+    lRel := blockRel_start hL.count hL.wf
+    dRel := blockRel_start hD.count hD.wf
     wordLe := hwin.wordLe }
 
 /-! ### The check at the end of the commands -/
 
-/-- Checks `n` flags from `t`. -/
-def allMarked (flags : ByteArray) (t n : UInt64) : Bool :=
-  if _hn : n = 0 then true
-  else if getU flags t.toUSize = 0 then false else allMarked flags (t + 1) (n - 1)
-termination_by n.toNat
-decreasing_by
-  have hne : n.toNat ≠ 0 := fun e => _hn (UInt64.toNat_inj.mp (by rw [e]; rfl))
-  have h1 : (n - 1).toNat = n.toNat - 1 := UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by
-    rw [show (1 : UInt64).toNat = 1 from rfl]
-    omega))
-  omega
+/-- The first `k` bits, for `k ≤ 64`. -/
+@[inline] def firstBits (k : UInt64) : UInt64 := if k = 0 then 0 else 0xFFFFFFFFFFFFFFFF >>> (64 - k)
 
-theorem allMarked_iff (flags : ByteArray) : ∀ (N : Nat) (t n : UInt64), n.toNat = N → t.toNat + N < 2 ^ 32 →
-    (allMarked flags t n = true ↔ ∀ k, t.toNat ≤ k → k < t.toNat + N → flags.data[k]?.getD 0 ≠ 0) := by
-  intro N
-  induction N with
-  | zero =>
-    intro t n hn _
-    have hz : n = 0 := UInt64.toNat_inj.mp (by rw [hn]; rfl)
-    rw [allMarked, dite_eq_left hz]
-    exact ⟨fun _ k h1 h2 => absurd h2 (by omega), fun _ => rfl⟩
-  | succ N ih =>
-    intro t n hn h32
-    have hz : n ≠ 0 := fun e => by rw [e] at hn; exact Nat.succ_ne_zero _ hn.symm
-    have hn1 : (n - 1).toNat = N := by
-      rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by rw [show (1 : UInt64).toNat = 1 from rfl]; omega)), hn]
-      rfl
-    have hi1 : (t + 1).toNat = t.toNat + 1 := by
-      rw [UInt64.toNat_add, show (1 : UInt64).toNat = 1 from rfl]
-      exact Nat.mod_eq_of_lt (by omega)
-    have hus : t.toUSize.toNat = t.toNat := word_toUSize (by omega)
-    have hget : getU flags t.toUSize = flags.data[t.toNat]?.getD 0 := by
-      apply UInt8.toNat_inj.mp
-      rw [getU_toNat, hus]
-    rw [allMarked, dite_eq_right hz, hget]
-    by_cases hc : flags.data[t.toNat]?.getD 0 = 0
-    · rw [ite_eq_left hc]
-      exact ⟨fun h => Bool.noConfusion h, fun h => absurd hc (h t.toNat (Nat.le_refl _) (by omega))⟩
-    · rw [ite_eq_right hc, ih (t + 1) (n - 1) hn1 (by rw [hi1]; omega), hi1]
-      constructor
-      · intro h k h1 h2
-        by_cases he : k = t.toNat
-        · rw [he]
-          exact hc
-        · exact h k (by omega) (by omega)
-      · intro h k h1 h2
-        exact h k (by omega) (by omega)
+private theorem firstBits_bit {k : UInt64} (hk : k.toNat ≤ 64) (i : Nat) :
+    (firstBits k).toNat.testBit i = decide (i < k.toNat) := by
+  unfold firstBits
+  by_cases h0 : k = 0
+  · subst h0
+    simp
+  · rw [ite_eq_right h0]
+    have hk0 : k.toNat ≠ 0 := fun e => h0 (UInt64.toNat_inj.mp e)
+    rw [UInt64.toNat_shiftRight, UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by
+      rw [show (64 : UInt64).toNat = 64 from rfl]; omega))]
+    rw [show (64 : UInt64).toNat = 64 from rfl, show (0xFFFFFFFFFFFFFFFF : UInt64).toNat = 2 ^ 64 - 1 from rfl,
+      Nat.mod_eq_of_lt (show 64 - k.toNat < 64 by omega), Nat.testBit_shiftRight, Nat.testBit_two_pow_sub_one]
+    by_cases h : i < k.toNat
+    · rw [decide_eq_true h, decide_eq_true (by omega)]
+    · rw [decide_eq_false h, decide_eq_false (by omega)]
+
+/-- How many of the types below `n` word `j` holds. -/
+@[inline] def wordNeed (n j : UInt64) : UInt64 :=
+  if n ≤ 64 * j then 0 else if 64 * j + 64 ≤ n then 64 else n - 64 * j
+
+private theorem wordNeed_toNat {n j : UInt64} (hj : j.toNat < 4) :
+    (wordNeed n j).toNat = min 64 (n.toNat - 64 * j.toNat) := by
+  have e1 : (64 * j).toNat = 64 * j.toNat := by
+    rw [UInt64.toNat_mul, show (64 : UInt64).toNat = 64 from rfl]
+    exact Nat.mod_eq_of_lt (by omega)
+  have e2 : (64 * j + 64).toNat = 64 * j.toNat + 64 := by
+    rw [UInt64.toNat_add, e1, show (64 : UInt64).toNat = 64 from rfl]
+    exact Nat.mod_eq_of_lt (by omega)
+  unfold wordNeed
+  by_cases h1 : n ≤ 64 * j
+  · have : n.toNat ≤ 64 * j.toNat := by rw [← e1]; exact UInt64.le_iff_toNat_le.mp h1
+    rw [ite_eq_left h1]
+    show 0 = _
+    omega
+  · have : ¬ n.toNat ≤ 64 * j.toNat := fun h => h1 (UInt64.le_iff_toNat_le.mpr (by rw [e1]; exact h))
+    rw [ite_eq_right h1]
+    by_cases h2 : 64 * j + 64 ≤ n
+    · have : 64 * j.toNat + 64 ≤ n.toNat := by rw [← e2]; exact UInt64.le_iff_toNat_le.mp h2
+      rw [ite_eq_left h2]
+      show 64 = _
+      omega
+    · have : ¬ 64 * j.toNat + 64 ≤ n.toNat := fun h => h2 (UInt64.le_iff_toNat_le.mpr (by rw [e2]; exact h))
+      rw [ite_eq_right h2, UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by rw [e1]; omega)), e1]
+      omega
+
+/-- Whether word `j` has every type below `n` that it holds. -/
+@[inline] def wordHas (w n j : UInt64) : Bool := w &&& firstBits (wordNeed n j) == firstBits (wordNeed n j)
+
+private theorem and_eq_iff {w m : UInt64} :
+    (w &&& m == m) = true ↔ ∀ i, i < 64 → m.toNat.testBit i = true → w.toNat.testBit i = true := by
+  rw [beq_iff_eq]
+  constructor
+  · intro h i _ hm
+    have := congrArg (fun x : UInt64 => x.toNat.testBit i) h
+    simp only [UInt64.toNat_and, Nat.testBit_and, hm, Bool.and_true] at this
+    exact this
+  · intro h
+    apply UInt64.toNat_inj.mp
+    apply Nat.eq_of_testBit_eq
+    intro i
+    rw [UInt64.toNat_and, Nat.testBit_and]
+    by_cases hi : i < 64
+    · cases hm : m.toNat.testBit i
+      · simp
+      · rw [h i hi hm]
+        rfl
+    · have := m.toNat_lt
+      rw [Nat.testBit_lt_two_pow (Nat.lt_of_lt_of_le this (Nat.pow_le_pow_right (by decide) (by omega)))]
+      simp
+
+private theorem wordHas_iff {w n j : UInt64} (hj : j.toNat < 4) :
+    wordHas w n j = true ↔ ∀ i, i < 64 → 64 * j.toNat + i < n.toNat → w.toNat.testBit i = true := by
+  have hk := wordNeed_toNat (n := n) hj
+  unfold wordHas
+  rw [and_eq_iff]
+  constructor
+  · intro h i hi hlt
+    exact h i hi (by rw [firstBits_bit (by omega) i, hk]; exact decide_eq_true (by omega))
+  · intro h i hi hm
+    rw [firstBits_bit (by omega) i, hk] at hm
+    exact h i hi (by have := of_decide_eq_true hm; omega)
+
+/-- Whether a category's flags have every type below `n`. -/
+@[inline] def allFlags (w0 w1 w2 w3 n : UInt64) : Bool := wordHas w0 n 0 && wordHas w1 n 1 && wordHas w2 n 2 && wordHas w3 n 3
+
+theorem allFlags_iff {w0 w1 w2 w3 n : UInt64} :
+    allFlags w0 w1 w2 w3 n = true ↔ ∀ t, t < n.toNat → flagOf w0 w1 w2 w3 t = true := by
+  unfold allFlags
+  simp only [Bool.and_eq_true]
+  rw [wordHas_iff (by decide), wordHas_iff (by decide), wordHas_iff (by decide), wordHas_iff (by decide)]
+  simp only [show (0 : UInt64).toNat = 0 from rfl, show (1 : UInt64).toNat = 1 from rfl, show (2 : UInt64).toNat = 2 from rfl,
+    show (3 : UInt64).toNat = 3 from rfl]
+  constructor
+  · intro ⟨⟨⟨h0, h1⟩, h2⟩, h3⟩ t ht
+    have hi : t % 64 < 64 := Nat.mod_lt _ (by decide)
+    unfold flagOf
+    have : t / 64 = 0 ∨ t / 64 = 1 ∨ t / 64 = 2 ∨ t / 64 ≥ 3 := by omega
+    rcases this with h | h | h | h
+    · simp only [h, ↓reduceIte]
+      exact h0 _ hi (by omega)
+    · simp only [h, ↓reduceIte, Nat.reduceEqDiff]
+      exact h1 _ hi (by omega)
+    · simp only [h, ↓reduceIte, Nat.reduceEqDiff]
+      exact h2 _ hi (by omega)
+    · rw [ite_eq_right (by omega), ite_eq_right (by omega), ite_eq_right (by omega)]
+      exact h3 _ hi (by omega)
+  · intro h
+    have g : ∀ k i, 64 * k + i < n.toNat → flagOf w0 w1 w2 w3 (64 * k + i) = true := fun k i hl => h _ hl
+    refine ⟨⟨⟨fun i hi hl => ?_, fun i hi hl => ?_⟩, fun i hi hl => ?_⟩, fun i hi hl => ?_⟩
+    · have := g 0 i hl
+      unfold flagOf at this
+      rwa [show (64 * 0 + i) / 64 = 0 by omega, show (64 * 0 + i) % 64 = i by omega] at this
+    · have := g 1 i hl
+      unfold flagOf at this
+      rwa [show (64 * 1 + i) / 64 = 1 by omega, show (64 * 1 + i) % 64 = i by omega] at this
+    · have := g 2 i hl
+      unfold flagOf at this
+      rwa [show (64 * 2 + i) / 64 = 2 by omega, show (64 * 2 + i) % 64 = i by omega] at this
+    · have := g 3 i hl
+      unfold flagOf at this
+      rwa [show (64 * 3 + i) / 64 = 3 by omega, show (64 * 3 + i) % 64 = i by omega] at this
 
 /-- A meta-block's end check: every block type occurred. -/
-@[inline] def seenOk (seen : ByteArray) (nL nI nD : UInt64) : Bool :=
-  allMarked seen 0 nL && allMarked seen 256 nI && allMarked seen 512 nD
+@[inline] def seenOk (st : Cmd) (nL nI nD : UInt64) : Bool :=
+  allFlags st.fL0 st.fL1 st.fL2 st.fL3 nL && allFlags st.fI0 st.fI1 st.fI2 st.fI3 nI && allFlags st.fD0 st.fD1 st.fD2 st.fD3 nD
 
-private theorem uses_iff {seen : ByteArray} {off : Nat} {cur prev count : UInt64} {st : BlockState} {c : BlockCategory} (h : BlockRel seen off cur prev count st c)
-    {o n : UInt64} (ho : o.toNat = off) (hoff : off ≤ 512) (hn : n.toNat = c.n) (hc : c.n ≤ 256) :
-    allMarked seen o n = true ↔ usesEveryType c st = true := by
-  rw [allMarked_iff seen _ o n rfl (by omega), ho, hn]
+private theorem uses_iff {w0 w1 w2 w3 cur prev count : UInt64} {st : BlockState} {c : BlockCategory}
+    (h : BlockRel w0 w1 w2 w3 cur prev count st c) {n : UInt64} (hn : n.toNat = c.n) (hc : c.n ≤ 256) :
+    allFlags w0 w1 w2 w3 n = true ↔ usesEveryType c st = true := by
+  rw [allFlags_iff, hn]
   unfold usesEveryType
   simp only [List.all_eq_true, List.mem_range, List.contains_iff_mem]
-  constructor
-  · intro hall t ht
-    exact (h.flags t (by omega)).mp (hall (off + t) (by omega) (by omega))
-  · intro hall j h1 h2
-    have e : j = off + (j - off) := by omega
-    rw [e]
-    exact (h.flags (j - off) (by omega)).mpr (hall _ (by omega))
+  exact ⟨fun hall t ht => (h.flags t (by omega)).mp (hall t ht), fun hall t ht => (h.flags t (by omega)).mpr (hall t ht)⟩
 
 /-- The check says what the spec checks. -/
 theorem seenOk_iff {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {st : Cmd} {s : CommandState} (hH : HdrRel H m)
     (hrel : Rel w k m st (.command s)) :
-    seenOk st.seen H.nL H.nI H.nD = (usesEveryType m.literal s.literal && usesEveryType m.insertCopy s.insertCopy && usesEveryType m.distance s.distance) := by
+    seenOk st H.nL H.nI H.nD = (usesEveryType m.literal s.literal && usesEveryType m.insertCopy s.insertCopy && usesEveryType m.distance s.distance) := by
   have hC := hrel.1
-  have hL := uses_iff hC.lRel (o := 0) rfl (by omega) hH.nL hH.ok.literal.2.1
-  have hI := uses_iff hC.iRel (o := 256) rfl (by omega) hH.nI hH.ok.insertCopy.2.1
-  have hD := uses_iff hC.dRel (o := 512) rfl (by omega) hH.nD hH.ok.distance.2.1
+  have hL := uses_iff hC.lRel hH.nL hH.ok.literal.2.1
+  have hI := uses_iff hC.iRel hH.nI hH.ok.insertCopy.2.1
+  have hD := uses_iff hC.dRel hH.nD hH.ok.distance.2.1
   unfold seenOk
-  generalize allMarked st.seen 0 H.nL = a1 at hL
-  generalize allMarked st.seen 256 H.nI = a2 at hI
-  generalize allMarked st.seen 512 H.nD = a3 at hD
+  generalize allFlags st.fL0 st.fL1 st.fL2 st.fL3 H.nL = a1 at hL
+  generalize allFlags st.fI0 st.fI1 st.fI2 st.fI3 H.nI = a2 at hI
+  generalize allFlags st.fD0 st.fD1 st.fD2 st.fD3 H.nD = a3 at hD
   generalize usesEveryType m.literal s.literal = b1 at hL
   generalize usesEveryType m.insertCopy s.insertCopy = b2 at hI
   generalize usesEveryType m.distance s.distance = b3 at hD
@@ -174,8 +228,8 @@ theorem seenOk_iff {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {st : Cmd} {s : C
 /-! ### Steps -/
 
 /-- A command loop's state with nothing in it, to hold a state's place while the real one is written. -/
-def Cmd.none : Cmd := ⟨0, 0, ByteArray.empty, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ByteArray.empty, .command, 0, 0, 0, 0, 0, 0,
-  0, ByteArray.empty, 0, 0, .next⟩
+def Cmd.none : Cmd := ⟨0, 0, ByteArray.empty, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0, 0, .command, 0, 0, 0, 0, 0, 0, 0, ByteArray.empty, 0, 0, .next⟩
 
 /-- A header machine's state with nothing in it. -/
 def Hd.none : Hd := ⟨0, 0, 0, .next, .cat, Done.none, .L, .type, true, .L, 0, 0, 0, 0, 0, ByteArray.empty, headNone, nextNone, 0, 0, 0, 0, 0,
@@ -214,7 +268,7 @@ def stepDCmds (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : D
   | .needsOutput => { D0 with cmd := r, pos := rp, status := .needsOutput }
   | .bad => { D0 with cmd := r, pos := rp, status := .bad }
   | .done =>
-    if seenOk r.seen H.nL H.nI H.nD then
+    if seenOk r H.nL H.nI H.nD then
       { D0 with cmd := r, pos := rp, status := .next, tag := if last then .ended else .mblock, H := Hdr.none }
     else { D0 with cmd := r, pos := rp, status := .bad }
 
@@ -271,7 +325,7 @@ theorem stepDCmds_ok {α : Type} {S : Sem α} {w : Nat} {last : Bool} {m : MetaB
     obtain ⟨s, hR', h1, h2, h3, h4, h5, h6⟩ := hstep.done hst
     have hsee := seenOk_iff hH hR'
     dsimp only
-    by_cases hc : seenOk r.seen H.nL H.nI H.nD = true
+    by_cases hc : seenOk r H.nL H.nI H.nD = true
     · rw [ite_eq_left hc]
       rw [hsee] at hc
       obtain ⟨hC, _, hprod⟩ := hR'

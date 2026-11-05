@@ -252,11 +252,10 @@ def stepDistance (H : Hdr) (st : Cmd) (pos : USize) : Cmd :=
         st.word st.count
       match r.status with
       | .ok =>
-        let seen := st.seen
-        let st0 := clearSeen st
-        { st0 with
-          word := r.word, count := r.count, dCur := r.cur, dPrev := st0.dCur, dCount := r.blockCount - 1
-          seen := markSeen seen (USize.ofNat 512 + r.cur.toUSize), tag := .distanceSymbol, pos := pos, status := .next }
+        { st with
+          word := r.word, count := r.count, dCur := r.cur, dPrev := st.dCur, dCount := r.blockCount - 1
+          fD0 := markWord st.fD0 r.cur 0, fD1 := markWord st.fD1 r.cur 1, fD2 := markWord st.fD2 r.cur 2
+          fD3 := markWord st.fD3 r.cur 3, tag := .distanceSymbol, pos := pos, status := .next }
       | .short => markStep st pos .needsInput
       | .bad => markStep st pos .bad
     else markStep st pos .bad
@@ -337,20 +336,12 @@ theorem stepDistance_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} 
           | ok =>
             obtain ⟨hw, hlt, hc1, hc2, hnext⟩ := hok hs
             have h256 := hH.ok.distance.2.1
-            have hsize := hC.seenSize
-            have hi := seen_index (off := 512) (t := r.cur) (by omega) (by omega)
             refine StepOk.ofNext (p' := .distanceSymbol s clen ⟨⟨st.dCur.toNat, r.cur.toNat⟩, r.blockCount.toNat - 1,
               r.cur.toNat :: s.distance.seen⟩) rfl ⟨?_, rfl, hprod, hclen⟩ (Nat.le_refl _) hp (fun F => ?_)
               (fun F => Reach.one (by rw [stateBits_eq, cStep_distance_switch _ h0' hc, nextIn_some (fun h => absurd h.2 (by omega)) (hnext _)]; rfl))
             · exact { hC with
                 wf := hw
-                dRel := hC.dRel.switched (by omega) hi hlt (u64_sub_one hc1).symm
-                lRel := hC.lRel.marked (by rw [hi]; omega)
-                iRel := hC.iRel.marked (by rw [hi]; omega)
-                seenSize := by
-                  show (markSeen st.seen _).size = _
-                  rw [size_markSeen]
-                  exact hsize }
+                dRel := hC.dRel.switched hlt h256 (u64_sub_one hc1).symm }
             · rw [stateBits_eq, rest_distance_switch _ h0' hc, hnext]
               rfl
           | short =>

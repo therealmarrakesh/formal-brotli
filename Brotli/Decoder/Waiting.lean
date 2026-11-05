@@ -63,7 +63,7 @@ theorem PendLe.ofRun {st r : Cmd} {k run : USize} (hc : r.cap = st.cap) (hroom :
 macro "keep_tac" : tactic => `(tactic| ((try dsimp only) <;> repeat' (first | split_all | exact PendLe.keep rfl rfl)))
 
 theorem stepCommand_pendLe (H : Hdr) (st : Cmd) (p : USize) : PendLe st (stepCommand H st p) := by
-  unfold stepCommand markStep clearSeen
+  unfold stepCommand markStep
   keep_tac
 
 theorem stepInsertCopy_pendLe (H : Hdr) (st : Cmd) (p : USize) : PendLe st (stepInsertCopy H st p) := by
@@ -95,7 +95,7 @@ theorem distanceStep_pendLe (H : Hdr) (st : Cmd) (p : USize) (v : UInt64) : Pend
   repeat' (first | split_all | exact (PendLe.keep (r := setBits st _ _) rfl rfl).trans (applyDistance_pendLe _ _ _ _) | exact PendLe.keep rfl rfl)
 
 theorem stepDistance_pendLe (H : Hdr) (st : Cmd) (p : USize) : PendLe st (stepDistance H st p) := by
-  unfold stepDistance markStep clearSeen
+  unfold stepDistance markStep
   try dsimp only
   repeat' (first | split_all | exact applyDistance_pendLe _ _ _ _ | exact PendLe.keep rfl rfl)
 
@@ -207,7 +207,7 @@ theorem literalsRun_pendLe (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) 
 
 theorem stepLiterals_pendLe (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (st : Cmd)
     (p : USize) : PendLe st (stepLiterals H k a stop hs st p) := by
-  unfold stepLiterals markStep clearSeen
+  unfold stepLiterals markStep
   try dsimp only
   by_cases h0 : st.left = 0
   · rw [ite_eq_left h0]
@@ -264,7 +264,7 @@ theorem runCmd_pendLe (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs :
 
 /-- A command's start writes nothing. -/
 theorem stepCommand_pend (H : Hdr) (st : Cmd) (p : USize) : (stepCommand H st p).pend = st.pend := by
-  unfold stepCommand markStep clearSeen
+  unfold stepCommand markStep
   try dsimp only
   repeat' (first | split_all | rfl)
 

@@ -16,9 +16,8 @@ open Brotli.Spec Brotli.Properties
 
 /-- What a state holds besides its window and the groups' tables: the arena's reservation for the categories' codes, the
 bounds `HSize` gives, which are more than an empty header reading and the bounds `HSmall` give, since a header's reading
-and a meta-block's fast header are never held together, 768 bytes of block type flags, 38 bytes of a dictionary word,
-and its fields. -/
-def fixedCost : Nat := 65860
+and a meta-block's fast header are never held together, 38 bytes of a dictionary word, and its fields. -/
+def fixedCost : Nat := 65092
 
 /-- What a state's fields cost. -/
 def fieldBytes : Nat := 1024
@@ -248,7 +247,7 @@ def Hd.holds (h : Hd) : Nat := h.d.holds + h.fill.size + h.head.size + h.next.si
 def Hdr.holds (H : Hdr) : Nat := H.arenaCap.toNat + H.litBase.size + H.lMap.size + H.icBase.size + H.dBase.size + H.dMap.size + H.modes.size
 
 /-- The bytes a state holds, and a constant for its fields. -/
-def Dec.holds (D : Dec) : Nat := D.cmd.ring.size + D.cmd.seen.size + D.cmd.wordBuf.size + D.hd.holds + D.H.holds + fieldBytes
+def Dec.holds (D : Dec) : Nat := D.cmd.ring.size + D.cmd.wordBuf.size + D.hd.holds + D.H.holds + fieldBytes
 
 /-- The bytes a fast header holds outside its arena, with bounds set by the format. -/
 structure HSmall (H : Hdr) : Prop where
@@ -275,14 +274,14 @@ structure MemD (Ws : Option Nat) (X L : Nat) (D : Dec) (B : List Bool) : Prop wh
   HOut : D.tag ≠ .cmds → D.H = Hdr.none
   hd : HSize D.hd
   H : HSmall D.H
-  win : (D.tag = .wbits ∧ D.cmd.ring.size = 0 ∧ D.cmd.seen.size = 0 ∧ D.cmd.wordBuf.size = 0 ∧ D.limit.toNat = L ∧ winSem.first B = Ws) ∨
+  win : (D.tag = .wbits ∧ D.cmd.ring.size = 0 ∧ D.cmd.wordBuf.size = 0 ∧ D.limit.toNat = L ∧ winSem.first B = Ws) ∨
     (D.tag ≠ .wbits ∧ ∃ w, Ws = some w ∧ w + 16 = 2 ^ D.k.toNat ∧ D.limit.toNat + 2 ^ D.k.toNat = L)
 
 /-- What a state's place says of its arrays. -/
 theorem DRel.arrays {D : Dec} {p : SPhase} (h : DRel D p) (ht : D.tag ≠ .wbits) :
-    D.cmd.ring.size = 2 ^ D.k.toNat ∧ D.k.toNat ≤ 24 ∧ D.cmd.seen.size ≤ 768 ∧ D.cmd.wordBuf.size ≤ 38 := by
-  have hwin : ∀ {w st}, WinAll D w st → D.cmd.ring.size = 2 ^ D.k.toNat ∧ D.k.toNat ≤ 24 ∧ D.cmd.seen.size ≤ 768 ∧ D.cmd.wordBuf.size ≤ 38 :=
-    fun a => ⟨a.win.ring.size, a.win.k24, a.win.seenLe, a.win.wordLe⟩
+    D.cmd.ring.size = 2 ^ D.k.toNat ∧ D.k.toNat ≤ 24 ∧ D.cmd.wordBuf.size ≤ 38 := by
+  have hwin : ∀ {w st}, WinAll D w st → D.cmd.ring.size = 2 ^ D.k.toNat ∧ D.k.toNat ≤ 24 ∧ D.cmd.wordBuf.size ≤ 38 :=
+    fun a => ⟨a.win.ring.size, a.win.k24, a.win.wordLe⟩
   cases p with
   | wbits => exact absurd h.1 ht
   | mblock => exact hwin h.2.2
@@ -342,10 +341,10 @@ theorem MemD.holds_le {Ws : Option Nat} {X L : Nat} {D : Dec} {B : List Bool} (M
     · rw [M.hdOut t1, hdNone_holds]
       omega
   unfold Dec.holds fixedCost fieldBytes
-  rcases M.win with ⟨ht, r0, s0, w0, hl, _⟩ | ⟨ht, w, hw, hk, hl⟩
+  rcases M.win with ⟨ht, r0, w0, hl, _⟩ | ⟨ht, w, hw, hk, hl⟩
   · rw [M.hdOut (by rw [ht]; decide), M.HOut (by rw [ht]; decide), hdNone_holds, hdrNone_holds]
     omega
-  · obtain ⟨r1, _, s1, w1⟩ := hrel.arrays ht
+  · obtain ⟨r1, _, w1⟩ := hrel.arrays ht
     have he : (some w : Option Nat).elim 0 (· + 16) = w + 16 := rfl
     rw [hw, he]
     have hA : D.hd.d.arenaCap.toNat + D.H.arenaCap.toNat ≤ smallMax + X ∧
@@ -366,7 +365,7 @@ theorem MemD.holds_le {Ws : Option Nat} {X L : Nat} {D : Dec} {B : List Bool} (M
 
 /-- A state with what it holds unchanged, but for its place. -/
 theorem MemD.move {Ws : Option Nat} {X L : Nat} {D D' : Dec} {B B' : List Bool} (M : MemD Ws X L D B) (hB : B' = B) (hp : ∃ p, DRel D' p ∧ (sLeave demandSem p B').getD 0 ≤ X)
-    (e1 : D'.tag = D.tag) (e2 : D'.cmd.ring = D.cmd.ring) (e3 : D'.cmd.seen = D.cmd.seen) (e4 : D'.cmd.wordBuf = D.cmd.wordBuf) (e5 : D'.hd = D.hd) (e6 : D'.H = D.H)
+    (e1 : D'.tag = D.tag) (e2 : D'.cmd.ring = D.cmd.ring) (e4 : D'.cmd.wordBuf = D.cmd.wordBuf) (e5 : D'.hd = D.hd) (e6 : D'.H = D.H)
     (e7 : D'.k = D.k) (e8 : D'.limit = D.limit) : MemD Ws X L D' B' := by
   subst hB
   refine ⟨hp, fun h => M.block (e1 ▸ h), fun h => ?_, fun h => ?_, fun h => ?_, fun h => ?_, ?_, ?_, ?_⟩
@@ -382,7 +381,7 @@ theorem MemD.move {Ws : Option Nat} {X L : Nat} {D D' : Dec} {B B' : List Bool} 
     exact M.hd
   · rw [e6]
     exact M.H
-  · rw [e1, e2, e3, e4, e7, e8]
+  · rw [e1, e2, e4, e7, e8]
     exact M.win
 
 /-! ### What a step leaves -/
@@ -557,7 +556,7 @@ theorem hsize_none : HSize Hd.none where
 structure WbitsFacts (a : ByteArray) (stop : USize) (D : Dec) (pos : USize) (r : Dec) : Prop where
   hd : r.hd = D.hd
   H : r.H = D.H
-  paused : r.status ≠ .next → r.tag = D.tag ∧ r.limit = D.limit ∧ r.cmd.ring = D.cmd.ring ∧ r.cmd.seen = D.cmd.seen ∧ r.cmd.wordBuf = D.cmd.wordBuf
+  paused : r.status ≠ .next → r.tag = D.tag ∧ r.limit = D.limit ∧ r.cmd.ring = D.cmd.ring ∧ r.cmd.wordBuf = D.cmd.wordBuf
   next : r.status = .next → r.tag = .mblock ∧ r.limit.toNat + 2 ^ r.k.toNat = D.limit.toNat
   memory : r.status = .memory → ∀ t : List UInt8, ∃ kv rest, readWBITS (D.bits a pos stop (bits t)) = some (kv, rest) ∧ D.limit.toNat < 2 ^ kv
   memAt : r.status = .memory → pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧ 8 * r.pos.toNat + D.cmd.count.toNat ≤ 8 * pos.toNat + 64 ∧
@@ -594,10 +593,10 @@ theorem stepDWbits_facts {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.s
   cases hsr : r.status with
   | short =>
     dsimp only
-    exact ⟨rfl, rfl, fun _ => ⟨rfl, rfl, rfl, rfl, rfl⟩, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
+    exact ⟨rfl, rfl, fun _ => ⟨rfl, rfl, rfl, rfl⟩, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
   | bad =>
     dsimp only
-    exact ⟨rfl, rfl, fun _ => ⟨rfl, rfl, rfl, rfl, rfl⟩, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
+    exact ⟨rfl, rfl, fun _ => ⟨rfl, rfl, rfl, rfl⟩, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
   | ok =>
     dsimp only
     obtain ⟨h10, h24⟩ := readWBITS_range (by simpa using (hval hsr).2 [])
@@ -617,7 +616,7 @@ theorem stepDWbits_facts {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.s
       omega
     · rw [ite_eq_right hc]
       have hlt : limit.toNat < 2 ^ r.a.toNat := Nat.lt_of_not_le fun e => hc (UInt64.le_iff_toNat_le.mpr (by rw [hneed]; exact e))
-      refine ⟨rfl, rfl, fun _ => ⟨rfl, rfl, rfl, rfl, rfl⟩, fun e => DStatus.noConfusion e, fun _ t => ⟨r.a.toNat, r.buf.held ++ (chunkBits a rf.pos.toNat stop.toNat ++ bits t), ?_, hlt⟩,
+      refine ⟨rfl, rfl, fun _ => ⟨rfl, rfl, rfl, rfl⟩, fun e => DStatus.noConfusion e, fun _ t => ⟨r.a.toNat, r.buf.held ++ (chunkBits a rf.pos.toNat stop.toNat ++ bits t), ?_, hlt⟩,
         fun _ => ⟨r2, r3, l2, fun s => ⟨r.a.toNat, r.buf.held ++ bits s, ?_, hlt⟩⟩⟩
       · show readWBITS (availBits cmd.word cmd.count a pos stop (bits t)) = _
         rw [hbits]
@@ -630,11 +629,11 @@ theorem stepDWbits_facts {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.s
 theorem wbits_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {t : List UInt8}
     (M : MemD Ws X L D (D.bits a D.pos stop (bits t))) (ht : D.tag = .wbits) (hp : D.pos.toNat ≤ stop.toNat) :
     StepM Ws X L a stop t (stepDWbits a stop hs D D.pos) := by
-  have hWin : D.cmd.ring.size = 0 ∧ D.cmd.seen.size = 0 ∧ D.cmd.wordBuf.size = 0 ∧ D.limit.toNat = L ∧ winSem.first (D.bits a D.pos stop (bits t)) = Ws := by
+  have hWin : D.cmd.ring.size = 0 ∧ D.cmd.wordBuf.size = 0 ∧ D.limit.toNat = L ∧ winSem.first (D.bits a D.pos stop (bits t)) = Ws := by
     rcases M.win with ⟨_, h⟩ | ⟨h, _⟩
     · exact h
     · exact absurd ht h
-  obtain ⟨_, _, _, hL, hWs⟩ := hWin
+  obtain ⟨_, _, hL, hWs⟩ := hWin
   obtain ⟨p, hrel, hw⟩ := M.place
   have hp0 : p = .wbits := by
     cases p with
@@ -671,10 +670,10 @@ theorem wbits_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {
       | hdr => exact hdown.elim
       | cmds => exact hdown.elim
       | ended => exact hdown.elim
-    · obtain ⟨g1, g2, g3, g4, g5⟩ := hF.paused hn
+    · obtain ⟨g1, g2, g3, g5⟩ := hF.paused hn
       refine ⟨hA, hB, fun e => absurd (ht.symm.trans (g1.symm.trans e)) (by decide), fun e => absurd (ht.symm.trans (g1.symm.trans e)) (by decide),
         fun _ => by rw [hF.hd]; exact hdO, fun _ => by rw [hF.H]; exact hHO, by rw [hF.hd]; exact M.hd, by rw [hF.H]; exact M.H,
-        Or.inl ⟨by rw [g1]; exact ht, by rw [g3]; assumption, by rw [g4]; assumption, by rw [g5]; assumption, by rw [g2]; exact hL, ?_⟩⟩
+        Or.inl ⟨by rw [g1]; exact ht, by rw [g3]; assumption, by rw [g5]; assumption, by rw [g2]; exact hL, ?_⟩⟩
       cases hst : r.status with
       | next => exact absurd hst hn
       | memory => exact absurd hst h0
@@ -1002,7 +1001,7 @@ theorem hdr_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs
   obtain ⟨w0, g1, g2, g3⟩ := hWinr
   obtain ⟨p, hrel, hw⟩ := M.place
   have hHO : D.H = Hdr.none := M.HOut (by rw [ht]; decide)
-  obtain ⟨_, hk24, _, _⟩ := hrel.arrays (by rw [ht]; decide)
+  obtain ⟨_, hk24, _⟩ := hrel.arrays (by rw [ht]; decide)
   cases p with
   | wbits => exact absurd (hrel.1.symm.trans ht) (by decide)
   | mblock => exact absurd (hrel.1.symm.trans ht) (by decide)
@@ -1114,7 +1113,7 @@ theorem runD_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {h
     · rw [dite_eq_left he]
       refine ⟨fun _ _ => ?_, fun e => DStatus.noConfusion e⟩
       obtain ⟨p, hrel, hw⟩ := M.place
-      exact M.move rfl ⟨p, hrel.congr rfl rfl rfl rfl rfl rfl rfl rfl, hw⟩ rfl rfl rfl rfl rfl rfl rfl rfl
+      exact M.move rfl ⟨p, hrel.congr rfl rfl rfl rfl rfl rfl rfl rfl, hw⟩ rfl rfl rfl rfl rfl rfl rfl
     · rw [dite_eq_right he]
       dsimp only
       have hstep := stepD_mem (hs := hs) (h := hinv) M he hinv.2
@@ -1135,7 +1134,7 @@ structure CallMem (Ws : Option Nat) (X L : Nat) (a : ByteArray) (stop : USize) (
 theorem MemD.flush {Ws : Option Nat} {X L : Nat} {D : Dec} {B : List Bool} (M : MemD Ws X L D B) (buf : ByteArray) (space : Nat) : MemD Ws X L (flushD D buf space).D B := by
   obtain ⟨p, hrel, hw⟩ := M.place
   obtain ⟨_, _, _, _, a4, _, _, _, _, _, _, _⟩ := flushD_spec hrel buf space
-  have hrings : (flushD D buf space).D.cmd.ring = D.cmd.ring ∧ (flushD D buf space).D.cmd.seen = D.cmd.seen ∧ (flushD D buf space).D.cmd.wordBuf = D.cmd.wordBuf := by
+  have hrings : (flushD D buf space).D.cmd.ring = D.cmd.ring ∧ (flushD D buf space).D.cmd.wordBuf = D.cmd.wordBuf := by
     rcases hrel.window with h0 | ⟨hring, hle, hout, hk⟩
     · have hf : flushAll D.k D.cmd buf space = ⟨D.cmd, buf, space⟩ := by
         rw [flushAll]
@@ -1144,13 +1143,13 @@ theorem MemD.flush {Ws : Option Nat} {X L : Nat} {D : Dec} {B : List Bool} (M : 
       unfold flushD
       dsimp only
       rw [hf]
-      exact ⟨rfl, rfl, rfl⟩
+      exact ⟨rfl, rfl⟩
     · obtain ⟨_, _, _, _, a5, _, _, _⟩ := flushAll_spec hk _ D.cmd buf space rfl hring hle hout
       unfold flushD
       dsimp only
       rw [a5]
-      exact ⟨rfl, rfl, rfl⟩
-  exact M.move rfl ⟨p, a4, hw⟩ rfl hrings.1 hrings.2.1 hrings.2.2 rfl rfl rfl rfl
+      exact ⟨rfl, rfl⟩
+  exact M.move rfl ⟨p, a4, hw⟩ rfl hrings.1 hrings.2 rfl rfl rfl rfl
 
 /-- Handing out a state's bytes leaves what it holds, with its bits as they were. -/
 theorem MemD.flushed {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {D : Dec} {F : List Bool} (M : MemD Ws X L D (D.bits a D.pos stop F)) (buf : ByteArray) (space : Nat) :

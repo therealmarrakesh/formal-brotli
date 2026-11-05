@@ -793,7 +793,7 @@ theorem stepAt_full {H : Hdr} {k : USize} {a : ByteArray} {stop : USize} {hs : s
       room k (stepAt H k a stop hs st pos).cap ≤ (stepAt H k a stop hs st pos).pend := by
   unfold stepAt
   cases ht : st.tag <;> dsimp only
-  · unfold stepCommand markStep clearSeen
+  · unfold stepCommand markStep
     try dsimp only
     repeat' (first | split_all | (intro h; exact absurd h (fun e => StepStatus.noConfusion e)))
   · unfold stepInsertCopy insertStep markStep
@@ -802,10 +802,10 @@ theorem stepAt_full {H : Hdr} {k : USize} {a : ByteArray} {stop : USize} {hs : s
   · unfold stepCopyLength markStep
     try dsimp only
     repeat' (first | split_all | (intro h; exact absurd h (fun e => StepStatus.noConfusion e)))
-  · unfold stepLiterals literalsRun finishLiterals markStep clearSeen clearRing
+  · unfold stepLiterals literalsRun finishLiterals markStep clearRing
     try dsimp only
     repeat' (first | split_all | (intro h; exact absurd h (fun e => StepStatus.noConfusion e)) | (intro _; assumption))
-  · unfold stepDistance applyDistance applyWord applyBuilt markStep clearSeen
+  · unfold stepDistance applyDistance applyWord applyBuilt markStep
     try dsimp only
     repeat' (first | split_all | (intro h; exact absurd h (fun e => StepStatus.noConfusion e)))
   · unfold stepDistanceSymbol

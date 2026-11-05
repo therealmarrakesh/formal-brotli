@@ -87,7 +87,7 @@ def stepDHdrW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : D
 /-- The work of `stepDCmds`: the command loop, and at the commands' end the check that every block type occurred. -/
 def stepDCmdsW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize) : Nat :=
   runCmdW D.H D.k a stop hs cmdBudget D.cmd pos +
-    if (runCmd D.H D.k a stop hs cmdBudget D.cmd pos).status = .done then 772 else 0
+    if (runCmd D.H D.k a stop hs cmdBudget D.cmd pos).status = .done then 1 else 0
 
 /-- The work of a step of the whole decoder. -/
 def stepDW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (h : DInv stop D) : Nat :=

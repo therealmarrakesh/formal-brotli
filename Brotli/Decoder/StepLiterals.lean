@@ -120,11 +120,10 @@ def stepLiterals (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop
         st.word st.count
       match r.status with
       | .ok =>
-        let seen := st.seen
-        let st0 := clearSeen st
-        { st0 with
-          word := r.word, count := r.count, lCur := r.cur, lPrev := st0.lCur, lCount := r.blockCount
-          seen := markSeen seen (USize.ofNat 0 + r.cur.toUSize), pos := pos, status := .next }
+        { st with
+          word := r.word, count := r.count, lCur := r.cur, lPrev := st.lCur, lCount := r.blockCount
+          fL0 := markWord st.fL0 r.cur 0, fL1 := markWord st.fL1 r.cur 1, fL2 := markWord st.fL2 r.cur 2
+          fL3 := markWord st.fL3 r.cur 3, pos := pos, status := .next }
       | .short => markStep st pos .needsInput
       | .bad => markStep st pos .bad
     else markStep st pos .bad
@@ -324,8 +323,6 @@ theorem stepLiterals_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlo
         | ok =>
           obtain ⟨hw, hlt, hc1, hc2, hnext⟩ := hok hst
           have h256 := hH.ok.literal.2.1
-          have hsize := hC.seenSize
-          have hi := seen_index (off := 0) (t := r.cur) (by omega) (by omega)
           have hdn : (rankC (.literals s ic c ilen clen (n' + 1) ⟨⟨st.lCur.toNat, r.cur.toNat⟩, r.blockCount.toNat, r.cur.toNat :: lit.seen⟩ out)).2 <
               (rankC (.literals s ic c ilen clen (n' + 1) lit out)).2 := by
             simp only [rankC, hcz, ↓reduceIte]
@@ -344,13 +341,7 @@ theorem stepLiterals_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlo
               rfl))
           · exact { hC with
               wf := hw
-              lRel := hC.lRel.switched (by omega) hi hlt rfl
-              iRel := hC.iRel.marked (by rw [hi]; omega)
-              dRel := hC.dRel.marked (by rw [hi]; omega)
-              seenSize := by
-                show (markSeen st.seen _).size = _
-                rw [size_markSeen]
-                exact hsize }
+              lRel := hC.lRel.switched hlt h256 rfl }
           · rw [stateBits_eq, stateBits_eq, rest_literal, rest_literal, hnext,
               nextElement_count (st := ⟨⟨st.lCur.toNat, r.cur.toNat⟩, r.blockCount.toNat, r.cur.toNat :: lit.seen⟩) _
                 (by show r.blockCount.toNat ≠ 0; omega)]

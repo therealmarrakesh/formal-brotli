@@ -576,7 +576,7 @@ theorem stepDCmds_down {w : Nat} {last : Bool} {m : MetaBlockHeader} {p : Phase}
     obtain ⟨s, hR', h4, h3⟩ := hstep.done hst
     have hsee := seenOk_iff hH hR'
     dsimp only at hok ⊢
-    by_cases hc : seenOk r.seen H.nL H.nI H.nD = true
+    by_cases hc : seenOk r H.nL H.nI H.nD = true
     · rw [ite_eq_left hc] at hok ⊢
       rw [hsee] at hc
       have hval : ∀ bs, (cVal w last' m (.command s) bs).1 = bs.length + 1 := by

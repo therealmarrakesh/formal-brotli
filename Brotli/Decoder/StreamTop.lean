@@ -814,7 +814,7 @@ structure MemTop (limit : Nat) (x : List UInt8) (R : Run DState) : Prop where
   fine : R.status ≠ .memoryLimit → fixedCost ≤ limit
 
 /-- A state with no window, no header's reading and no fast header holds no more than the fixed cost. -/
-private theorem holds_small {D : Dec} (c1 : D.cmd.ring.size = 0) (c2 : D.cmd.seen.size = 0) (c3 : D.cmd.wordBuf.size = 0)
+private theorem holds_small {D : Dec} (c1 : D.cmd.ring.size = 0) (c3 : D.cmd.wordBuf.size = 0)
     (h1 : D.hd = Hd.none) (h2 : D.H = Hdr.none) : D.holds ≤ fixedCost := by
   unfold Dec.holds fixedCost fieldBytes
   rw [h1, h2, hdNone_holds, hdrNone_holds]
@@ -822,13 +822,13 @@ private theorem holds_small {D : Dec} (c1 : D.cmd.ring.size = 0) (c2 : D.cmd.see
 
 /-- A state with nothing in it holds no more than the fixed cost. -/
 theorem deadD_holds : deadD.holds ≤ fixedCost :=
-  holds_small rfl rfl rfl rfl rfl
+  holds_small rfl rfl rfl rfl
 
 /-- A state at a stream's start. -/
 theorem liveD_mem (limit : Nat) (x : List UInt8) :
     MemD (winSem.first (bits x)) ((demandSem.first (bits x)).getD 0) (roomOf limit) (liveD limit) (bits x) := by
   refine ⟨⟨.wbits, liveD_rel limit, Nat.le_refl _⟩, fun e => DTag.noConfusion e, fun e => DTag.noConfusion e, fun e => DTag.noConfusion e, fun _ => rfl, fun _ => rfl,
-    hsize_none, hsmall_none, Or.inl ⟨rfl, rfl, rfl, rfl, ?_, rfl⟩⟩
+    hsize_none, hsmall_none, Or.inl ⟨rfl, rfl, rfl, ?_, rfl⟩⟩
   show (UInt64.ofNat (min (limit - fixedCost) 4294958407)).toNat = _
   rw [u64_ofNat (by omega)]
   rfl
@@ -863,7 +863,7 @@ private theorem reply_mem {Ws : Option Nat} {X L : Nat} {x : List UInt8} {R : Ru
     rfl
   have M0 : MemD Ws X L (atPos R.state.val c.pre.length)
       ((atPos R.state.val c.pre.length).bits (R.input x c) (atPos R.state.val c.pre.length).pos (USize.ofNat (c.pre.length + c.size)) (bits (x.drop (R.read + c.size)))) :=
-    M.move hb0 ⟨p, atPos_rel hrel _, by rw [hb0]; exact hw⟩ rfl rfl rfl rfl rfl rfl rfl rfl
+    M.move hb0 ⟨p, atPos_rel hrel _, by rw [hb0]; exact hw⟩ rfl rfl rfl rfl rfl rfl rfl
   refine ⟨callD (R.input x c) (USize.ofNat (c.pre.length + c.size)) hs c.final (atPos R.state.val c.pre.length) hinv c.buf.toByteArray c.space, ?_, ?_, ?_, h2, h1, callD_mem _ _ _ _ M0⟩
   · unfold Run.reply
     show (decStep _ _ _ _ _ _ _).state.val = _

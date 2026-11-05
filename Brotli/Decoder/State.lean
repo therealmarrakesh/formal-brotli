@@ -71,8 +71,19 @@ structure Cmd where
   dCur : UInt64
   dPrev : UInt64
   dCount : UInt64
-  /-- 256 flags per category, the block types that occurred. -/
-  seen : ByteArray
+  /-- The block types that occurred, four words per category: type `t`'s flag is bit `t % 64` of word `t / 64`. -/
+  fL0 : UInt64
+  fL1 : UInt64
+  fL2 : UInt64
+  fL3 : UInt64
+  fI0 : UInt64
+  fI1 : UInt64
+  fI2 : UInt64
+  fI3 : UInt64
+  fD0 : UInt64
+  fD1 : UInt64
+  fD2 : UInt64
+  fD3 : UInt64
   tag : Tag
   code : UInt64
   ilen : UInt64
@@ -155,13 +166,74 @@ structure HdrRel (H : Hdr) (m : MetaBlockHeader) : Prop where
   catI : CatRel H.arena H.baseTI H.baseCI m.insertCopy
   catD : CatRel H.arena H.baseTD H.baseCD m.distance
 
+/-! ### Block type flags -/
+
+/-- Word `j` of a category's flags, with type `t` marked: the bit `t % 64` goes to the word `t / 64` only. -/
+@[inline] def markWord (w t j : UInt64) : UInt64 := w ||| (((1 : UInt64) >>> (t / 64 ^^^ j)) <<< (t % 64))
+
+private theorem xor_small : ∀ a, a < 4 → ∀ b, b < 4 → a ^^^ b < 4 ∧ (1 >>> (a ^^^ b) = if a = b then 1 else 0) := by
+  decide
+
+theorem markWord_bit {w t j : UInt64} (ht : t.toNat < 256) (hj : j.toNat < 4) {i : Nat} (hi : i < 64) :
+    (markWord w t j).toNat.testBit i =
+      (w.toNat.testBit i || (decide (t.toNat / 64 = j.toNat) && decide (i = t.toNat % 64))) := by
+  have ha : t.toNat / 64 < 4 := by omega
+  obtain ⟨hx, hs⟩ := xor_small _ ha _ hj
+  have hm : t.toNat % 64 < 64 := Nat.mod_lt _ (by decide)
+  unfold markWord
+  rw [UInt64.toNat_or, Nat.testBit_or, UInt64.toNat_shiftLeft, UInt64.toNat_shiftRight, UInt64.toNat_xor, UInt64.toNat_div,
+    UInt64.toNat_mod]
+  rw [show (1 : UInt64).toNat = 1 from rfl, show (64 : UInt64).toNat = 64 from rfl,
+    Nat.mod_eq_of_lt (show t.toNat / 64 ^^^ j.toNat < 64 by omega), Nat.mod_mod, hs]
+  congr 1
+  rw [Nat.testBit_mod_two_pow, decide_eq_true (show i < 64 by omega), Bool.true_and, Nat.testBit_shiftLeft]
+  by_cases he : t.toNat / 64 = j.toNat
+  · rw [ite_eq_left he, decide_eq_true he, Bool.true_and]
+    by_cases hq : i = t.toNat % 64
+    · subst hq
+      simp
+    · rw [decide_eq_false hq]
+      by_cases hge : i ≥ t.toNat % 64
+      · rw [decide_eq_true hge, Bool.true_and]
+        rw [show i - t.toNat % 64 = (i - t.toNat % 64 - 1) + 1 by omega]
+        simp [Nat.testBit_succ]
+      · rw [decide_eq_false hge, Bool.false_and]
+  · rw [ite_eq_right he, decide_eq_false he, Bool.false_and]
+    simp
+
+/-- A category's flag for type `t`: bit `t % 64` of word `t / 64`. -/
+def flagOf (w0 w1 w2 w3 : UInt64) (t : Nat) : Bool :=
+  (if t / 64 = 0 then w0 else if t / 64 = 1 then w1 else if t / 64 = 2 then w2 else w3).toNat.testBit (t % 64)
+
+/-- Marking type `c` sets its flag and no other. -/
+theorem flagOf_mark {w0 w1 w2 w3 c : UInt64} (hc : c.toNat < 256) {t : Nat} (ht : t < 256) :
+    flagOf (markWord w0 c 0) (markWord w1 c 1) (markWord w2 c 2) (markWord w3 c 3) t =
+      (flagOf w0 w1 w2 w3 t || decide (t = c.toNat)) := by
+  have hi : t % 64 < 64 := Nat.mod_lt _ (by decide)
+  have key : ∀ k : Nat, k < 4 → t / 64 = k →
+      (decide (c.toNat / 64 = k) && decide (t % 64 = c.toNat % 64)) = decide (t = c.toNat) := by
+    intro k _ hk
+    by_cases h : t = c.toNat
+    · subst h
+      simp [hk]
+    · rw [decide_eq_false h]
+      by_cases h1 : c.toNat / 64 = k
+      · rw [decide_eq_true h1, Bool.true_and, decide_eq_false (fun e => h (by omega))]
+      · rw [decide_eq_false h1, Bool.false_and]
+  unfold flagOf
+  have : t / 64 = 0 ∨ t / 64 = 1 ∨ t / 64 = 2 ∨ t / 64 = 3 := by omega
+  rcases this with h | h | h | h <;> simp only [h, ↓reduceIte, Nat.reduceEqDiff] <;>
+    rw [markWord_bit hc (by decide) hi] <;>
+    simp only [show UInt64.toNat 0 = 0 from rfl, show UInt64.toNat 1 = 1 from rfl, show UInt64.toNat 2 = 2 from rfl,
+      show UInt64.toNat 3 = 3 from rfl] <;> rw [key _ (by decide) h]
+
 /-- A block state is held by these fields, and its `seen` list by those flags. -/
-structure BlockRel (seen : ByteArray) (off : Nat) (cur prev count : UInt64) (st : BlockState) (c : BlockCategory) : Prop where
+structure BlockRel (w0 w1 w2 w3 : UInt64) (cur prev count : UInt64) (st : BlockState) (c : BlockCategory) : Prop where
   cur : st.types.cur = cur.toNat
   prev : st.types.prev = prev.toNat
   count : st.count = count.toNat
   wf : st.Wf c
-  flags : ∀ t, t < 256 → ((seen.data[off + t]?.getD 0) ≠ 0 ↔ t ∈ st.seen)
+  flags : ∀ t, t < 256 → (flagOf w0 w1 w2 w3 t = true ↔ t ∈ st.seen)
 
 /-- The parts of a state that every place has in common, with the ghost values they stand for. -/
 structure Core (w k : Nat) (m : MetaBlockHeader) (st : Cmd) (out : List Nat) (rem : Nat) (ds : Distances)
@@ -181,10 +253,9 @@ structure Core (w k : Nat) (m : MetaBlockHeader) (st : Cmd) (out : List Nat) (re
   d2 : ds.thirdToLast = st.d2.toNat
   d3 : ds.fourthToLast = st.d3.toNat
   dsLt : ds.last < 2 ^ 32 ∧ ds.secondToLast < 2 ^ 32 ∧ ds.thirdToLast < 2 ^ 32 ∧ ds.fourthToLast < 2 ^ 32
-  iRel : BlockRel st.seen 256 st.iCur st.iPrev st.iCount ic m.insertCopy
-  lRel : BlockRel st.seen 0 st.lCur st.lPrev st.lCount lit m.literal
-  dRel : BlockRel st.seen 512 st.dCur st.dPrev st.dCount dist m.distance
-  seenSize : st.seen.size = 768
+  iRel : BlockRel st.fI0 st.fI1 st.fI2 st.fI3 st.iCur st.iPrev st.iCount ic m.insertCopy
+  lRel : BlockRel st.fL0 st.fL1 st.fL2 st.fL3 st.lCur st.lPrev st.lCount lit m.literal
+  dRel : BlockRel st.fD0 st.fD1 st.fD2 st.fD3 st.dCur st.dPrev st.dCount dist m.distance
   wordLe : st.wordBuf.size ≤ 38
 
 /-- A state stands for a place in `rest`. -/
@@ -259,8 +330,5 @@ def stateBits (st : Cmd) (a : ByteArray) (pos stop : USize) (F : List Bool) : Li
 /-- Empties a state's window. Its caller reads the window first, then holds it alone, so writes to it don't copy it. It
 is not inlined, because inlined the state would stay live and share the window. -/
 @[noinline] def clearRing (st : Cmd) : Cmd := { st with ring := ByteArray.empty }
-
-/-- Empties a state's block type flags, as `clearRing` does its window. -/
-@[noinline] def clearSeen (st : Cmd) : Cmd := { st with seen := ByteArray.empty }
 
 end Brotli.Decoder

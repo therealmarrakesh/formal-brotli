@@ -531,7 +531,7 @@ theorem stepDWbits_x {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize
     {D : Dec} (M : MemD Ws X L D (D.bits a D.pos stop (bits t))) (ht : D.tag = .wbits) (hp : D.pos.toNat ≤ stop.toNat) :
     StepX Ws L a stop t D (stepDWbits a stop hs D D.pos) := by
   have hL : D.limit.toNat = L := by
-    rcases M.win with ⟨_, _, _, _, h, _⟩ | ⟨h, _⟩
+    rcases M.win with ⟨_, _, _, h, _⟩ | ⟨h, _⟩
     · exact h
     · exact absurd ht h
   obtain ⟨p, hrel, _⟩ := M.place
@@ -857,7 +857,7 @@ private theorem reply_x {Ws : Option Nat} {X L : Nat} {x : List UInt8} {R : Run 
     rfl
   have M0 : MemD Ws X L (atPos R.state.val c.pre.length)
       ((atPos R.state.val c.pre.length).bits (R.input x c) (atPos R.state.val c.pre.length).pos (USize.ofNat (c.pre.length + c.size)) (bits (x.drop (R.read + c.size)))) :=
-    M.move hb0 ⟨p, atPos_rel hrel _, by rw [hb0]; exact hw⟩ rfl rfl rfl rfl rfl rfl rfl rfl
+    M.move hb0 ⟨p, atPos_rel hrel _, by rw [hb0]; exact hw⟩ rfl rfl rfl rfl rfl rfl rfl
   refine ⟨callD (R.input x c) (USize.ofNat (c.pre.length + c.size)) hs c.final (atPos R.state.val c.pre.length) hinv c.buf.toByteArray c.space, ?_, ?_, ?_, h2, h1, callD_x _ _ _ _ M0⟩
   · unfold Run.reply
     show (decStep _ _ _ _ _ _ _).state.val = _

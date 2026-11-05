@@ -19,7 +19,7 @@ macro "split_all" : tactic => `(tactic| split <;> (try (rename_i hc; first
 
 theorem stepCommand_pos (H : Hdr) (st : Cmd) (p : USize) :
     stepCommand H st p = { stepCommand H { st with pos := 0 } 0 with pos := p } := by
-  unfold stepCommand markStep clearSeen
+  unfold stepCommand markStep
   try dsimp only
   repeat' (first | split_all | rfl)
 
@@ -69,7 +69,7 @@ theorem distanceThrough_pos (H : Hdr) (st : Cmd) (p : USize) (tree : UInt8) (htr
 
 theorem stepDistance_pos (H : Hdr) (st : Cmd) (p : USize) :
     stepDistance H st p = { stepDistance H { st with pos := 0 } 0 with pos := p } := by
-  unfold stepDistance markStep clearSeen
+  unfold stepDistance markStep
   simp only [applyDistance_pos _ p]
   try dsimp only
   repeat' (first | split_all | rfl)
@@ -425,15 +425,15 @@ theorem stepAt_badWin {st : Cmd} {pos : USize} :
     (stepAt H k a stop hs st pos).status = .bad → (stepAt H k a stop hs st pos).WinSame st := by
   unfold stepAt Cmd.WinSame
   cases ht : st.tag <;> dsimp only
-  · unfold stepCommand markStep clearSeen
+  · unfold stepCommand markStep
     badWin_tac
   · unfold stepInsertCopy insertStep markStep
     badWin_tac
   · unfold stepCopyLength markStep
     badWin_tac
-  · unfold stepLiterals literalsRun finishLiterals markStep clearSeen clearRing
+  · unfold stepLiterals literalsRun finishLiterals markStep clearRing
     badWin_tac
-  · unfold stepDistance applyDistance applyWord applyBuilt markStep clearSeen
+  · unfold stepDistance applyDistance applyWord applyBuilt markStep
     badWin_tac
   · unfold stepDistanceSymbol
     by_cases hd : st.dCur < H.nD

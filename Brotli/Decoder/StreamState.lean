@@ -173,13 +173,12 @@ structure WinRel (w k : Nat) (st : Cmd) (out : List Nat) (ds : Distances) : Prop
   d2 : ds.thirdToLast = st.d2.toNat
   d3 : ds.fourthToLast = st.d3.toNat
   dsLt : ds.last < 2 ^ 32 ∧ ds.secondToLast < 2 ^ 32 ∧ ds.thirdToLast < 2 ^ 32 ∧ ds.fourthToLast < 2 ^ 32
-  seenLe : st.seen.size ≤ 768
   wordLe : st.wordBuf.size ≤ 38
 
 /-- The window part of the command loop's state. -/
 theorem Core.toWin {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {out : List Nat} {rem : Nat} {ds : Distances} {ic lit dist : BlockState}
     (h : Core w k m st out rem ds ic lit dist) : WinRel w k st out ds :=
-  ⟨h.win, h.k24, h.ring, h.bytes, h.ctx, h.pendLe, h.pendOut, h.written, h.d0, h.d1, h.d2, h.d3, h.dsLt, Nat.le_of_eq h.seenSize, h.wordLe⟩
+  ⟨h.win, h.k24, h.ring, h.bytes, h.ctx, h.pendLe, h.pendOut, h.written, h.d0, h.d1, h.d2, h.d3, h.dsLt, h.wordLe⟩
 
 /-- What every place after WBITS has. -/
 structure WinAll (D : Dec) (w : Nat) (st : StreamState) : Prop where

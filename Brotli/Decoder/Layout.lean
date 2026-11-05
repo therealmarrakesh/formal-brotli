@@ -156,7 +156,7 @@ theorem stepLiterals_same (H : Hdr) (k : USize) {a1 a2 : ByteArray} {e1 e2 : USi
   rw [cmd_er he]
   generalize t.pos = q
   have hL := literalsRun_same H k hs1 hs2 s q h
-  unfold stepLiterals markStep clearSeen
+  unfold stepLiterals markStep
   cases s
   dsimp only at hL ⊢
   repeat' (first | split_all | exact hL | exact ⟨rfl, h⟩)
@@ -415,7 +415,7 @@ theorem stepDCmds_same {s t : Dec} (he : s.er = t.er) {p1 p2 : USize} (h : Same 
   generalize t.hd.pos = q2
   obtain ⟨e, hS⟩ := runCmd_same s.H s.k hs1 hs2 _ cmdBudget (s := s.cmd) (t := { s.cmd with pos := q1 }) rfl rfl h
   have e' := cmd_er e
-  unfold stepDCmds takeCmd clearCmd
+  unfold stepDCmds takeCmd clearCmd seenOk
   dsimp only at e' hS ⊢
   rw [e']
   generalize (runCmd s.H s.k a2 e2 hs2 cmdBudget { s.cmd with pos := q1 } p2).pos = q3 at hS ⊢

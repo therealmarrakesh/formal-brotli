@@ -177,7 +177,7 @@ def roundCost : Nat := 8
 
 /-- What the commands' end costs: the round that ends the command loop, the check that every block type occurred, the
 loop's round, and a round of the call at the next meta-block's start. -/
-def cmdsEnd : Nat := 84 + 772 + 1 + roundCost
+def cmdsEnd : Nat := 84 + 1 + 1 + roundCost
 
 /-- What a header's end costs beyond its potential: the command loop's header and first state, the loop's round, and what
 the commands' start holds. Its last step is within its place's potential. -/
@@ -676,7 +676,7 @@ theorem pay_cmds {w : Nat} {last : Bool} {m : MetaBlockHeader} {q0 : Phase} {a :
   have hlo : q.out.length - q0.out.length = l.length := by rw [hl1, List.length_append]; omega
   have hRate : hdrRate = 2980 := rfl
   have eW : stepDCmdsW a stop hs ⟨.cmds, cmd, hd, H, k, last', left, limit, pos', status⟩ pos =
-      runCmdW H k a stop hs cmdBudget cmd pos + (if (runCmd H k a stop hs cmdBudget cmd pos).status = .done then 772 else 0) := rfl
+      runCmdW H k a stop hs cmdBudget cmd pos + (if (runCmd H k a stop hs cmdBudget cmd pos).status = .done then 1 else 0) := rfl
   simp only [stateBits] at g3 c1 c3
   rw [eW]
   unfold stepDCmds takeCmd
@@ -756,7 +756,7 @@ theorem pay_cmds {w : Nat} {last : Bool} {m : MetaBlockHeader} {q0 : Phase} {a :
     have hq' := hq
     obtain ⟨hC, htg, hprod⟩ := hq'
     have hwin := hC.toWin
-    by_cases hsee : seenOk st'.seen H.nL H.nI H.nD = true
+    by_cases hsee : seenOk st' H.nL H.nI H.nD = true
     · rw [ite_eq_left hsee]
       refine ⟨fun _ => ?_, fun e => ?_, fun e => ?_⟩
       rotate_left

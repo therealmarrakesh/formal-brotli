@@ -331,7 +331,7 @@ theorem stepDCmds_lim : stepDCmds ar stop hs (decSet D l a) pos = decSet (stepDC
   show stepDCmds ar stop hs { D with limit := l, hd := hdSet D.hd a } pos = _
   simp only [stepDCmds, takeCmd, clearCmd]
   (repeat' split) <;> first | rfl | contradiction | (simp_all [decSet, hdSet]; done) |
-    (by_cases hc : seenOk (runCmd D.H D.k ar stop hs cmdBudget D.cmd pos).seen D.H.nL D.H.nI D.H.nD = true <;>
+    (by_cases hc : seenOk (runCmd D.H D.k ar stop hs cmdBudget D.cmd pos) D.H.nL D.H.nI D.H.nD = true <;>
       simp only [hc, ↓reduceIte] <;> rfl)
 
 theorem stepDRaw_lim : stepDRaw ar stop hs (decSet D l a) pos = decSet (stepDRaw ar stop hs D pos) l a := by

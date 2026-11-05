@@ -30,57 +30,19 @@ theorem stateBits_eq (st : Cmd) (a : ByteArray) (pos stop : USize) (F : List Boo
 
 /-! ### Block states -/
 
-/-- Marks a block type as having occurred, at flag `i`. -/
-@[inline] def markSeen (seen : ByteArray) (i : USize) : ByteArray :=
-  if h : i.toNat < seen.size then seen.uset i 1 h else seen
-
-private theorem data_uset (t : ByteArray) (i : USize) (v : UInt8) (h : i.toNat < t.size) :
-    (t.uset i v h).data = t.data.set i.toNat v h := by
-  cases t
-  rfl
-
-theorem size_markSeen (seen : ByteArray) (i : USize) : (markSeen seen i).size = seen.size := by
-  unfold markSeen
-  split
-  · rename_i h
-    show (seen.uset i 1 h).data.size = seen.data.size
-    rw [data_uset, Array.size_set]
-  · rfl
-
-private theorem flag_same {seen : ByteArray} {i : USize} (h : i.toNat < seen.size) :
-    ((markSeen seen i).data[i.toNat]?.getD 0) = 1 := by
-  unfold markSeen
-  rw [dite_eq_left h, data_uset]
-  simp
-
-private theorem flag_other {seen : ByteArray} {i : USize} {j : Nat} (h : j ≠ i.toNat) :
-    (markSeen seen i).data[j]? = seen.data[j]? := by
-  unfold markSeen
-  split
-  · rw [data_uset, Array.getElem?_set, ite_eq_right (Ne.symm h)]
-  · rfl
-
-/-- The position of a block type's flag. -/
-theorem seen_index {off : Nat} {t : UInt64} (hoff : off ≤ 512) (ht : t.toNat < 256) :
-    (USize.ofNat off + t.toUSize).toNat = off + t.toNat := by
-  have hu : t.toUSize.toNat = t.toNat := word_toUSize (by omega)
-  rw [USize.toNat_add, usize_ofNat' (by omega), hu, ← USize.size_eq_two_pow]
-  have := USize.le_size
-  exact Nat.mod_eq_of_lt (by omega)
-
 /-- A block state's count going down by one. -/
-theorem BlockRel.decr {seen : ByteArray} {off : Nat} {cur prev count : UInt64} {st : BlockState} {c : BlockCategory}
-    (b : BlockRel seen off cur prev count st c) (h : count.toNat ≠ 0) :
-    BlockRel seen off cur prev (count - 1) { st with count := st.count - 1 } c := by
+theorem BlockRel.decr {w0 w1 w2 w3 cur prev count : UInt64} {st : BlockState} {c : BlockCategory}
+    (b : BlockRel w0 w1 w2 w3 cur prev count st c) (h : count.toNat ≠ 0) :
+    BlockRel w0 w1 w2 w3 cur prev (count - 1) { st with count := st.count - 1 } c := by
   refine { b with count := ?_ }
   show st.count - 1 = _
   rw [u64_sub_one (by omega), b.count]
 
-/-- A block switch, for the category whose flags it marks. -/
-theorem BlockRel.switched {seen : ByteArray} {off : Nat} {i : USize} {cur prev count next cnt : UInt64} {st : BlockState}
-    {c : BlockCategory} {v : Nat} (b : BlockRel seen off cur prev count st c) (hoff : off + 256 ≤ seen.size)
-    (hi : i.toNat = off + next.toNat) (hn : next.toNat < c.n) (hv : v = cnt.toNat) :
-    BlockRel (markSeen seen i) off next cur cnt ⟨⟨cur.toNat, next.toNat⟩, v, next.toNat :: st.seen⟩ c := by
+/-- A block switch, with the new type marked in its category's flags. -/
+theorem BlockRel.switched {w0 w1 w2 w3 cur prev count next cnt : UInt64} {st : BlockState} {c : BlockCategory} {v : Nat}
+    (b : BlockRel w0 w1 w2 w3 cur prev count st c) (hn : next.toNat < c.n) (hc : c.n ≤ 256) (hv : v = cnt.toNat) :
+    BlockRel (markWord w0 next 0) (markWord w1 next 1) (markWord w2 next 2) (markWord w3 next 3) next cur cnt
+      ⟨⟨cur.toNat, next.toNat⟩, v, next.toNat :: st.seen⟩ c := by
   refine ⟨rfl, rfl, hv, ⟨fun _ => ?_, hn, ?_⟩, ?_⟩
   · have := b.wf.2.1
     rw [b.cur] at this
@@ -90,42 +52,21 @@ theorem BlockRel.switched {seen : ByteArray} {off : Nat} {i : USize} {cur prev c
     · exact hn
     · exact b.wf.2.2 t ht
   · intro t ht
-    by_cases he : t = next.toNat
-    · subst he
-      rw [← hi, flag_same (by omega)]
-      simp
-    · have hne : off + t ≠ i.toNat := by omega
-      rw [flag_other hne]
-      have hm := b.flags t ht
-      constructor
-      · intro hf
-        exact List.mem_cons_of_mem _ (hm.mp hf)
-      · intro hf
-        rcases List.mem_cons.mp hf with hf | hf
-        · exact absurd hf he
-        · exact hm.mpr hf
-
-/-- Marking another category's flag leaves a block state's flags alone. -/
-theorem BlockRel.marked {seen : ByteArray} {off : Nat} {i : USize} {cur prev count : UInt64} {st : BlockState} {c : BlockCategory}
-    (b : BlockRel seen off cur prev count st c) (hdis : ∀ t, t < 256 → off + t ≠ i.toNat) :
-    BlockRel (markSeen seen i) off cur prev count st c := by
-  refine { b with flags := ?_ }
-  intro t ht
-  rw [flag_other (hdis t ht)]
-  exact b.flags t ht
+    rw [flagOf_mark (by omega) ht, Bool.or_eq_true, b.flags t ht, decide_eq_true_iff, List.mem_cons]
+    exact Or.comm
 
 /-- A literal run keeps the block types and flags. -/
-theorem BlockRel.run {seen : ByteArray} {off : Nat} {cur prev count count' : UInt64} {st st' : BlockState} {c : BlockCategory}
-    (b : BlockRel seen off cur prev count st c) (h1 : st'.types = st.types) (h2 : st'.seen = st.seen)
-    (h3 : st'.count = count'.toNat) : BlockRel seen off cur prev count' st' c := by
+theorem BlockRel.run {w0 w1 w2 w3 cur prev count count' : UInt64} {st st' : BlockState} {c : BlockCategory}
+    (b : BlockRel w0 w1 w2 w3 cur prev count st c) (h1 : st'.types = st.types) (h2 : st'.seen = st.seen)
+    (h3 : st'.count = count'.toNat) : BlockRel w0 w1 w2 w3 cur prev count' st' c := by
   refine ⟨by rw [h1]; exact b.cur, by rw [h1]; exact b.prev, h3, ?_, by rw [h2]; exact b.flags⟩
   unfold BlockState.Wf
   rw [h1, h2]
   exact b.wf
 
 /-- With the count zero, the fields are the whole state. -/
-theorem BlockRel.eq_zero {seen : ByteArray} {off : Nat} {cur prev count : UInt64} {st : BlockState} {c : BlockCategory}
-    (b : BlockRel seen off cur prev count st c) (hz : count.toNat = 0) :
+theorem BlockRel.eq_zero {w0 w1 w2 w3 cur prev count : UInt64} {st : BlockState} {c : BlockCategory}
+    (b : BlockRel w0 w1 w2 w3 cur prev count st c) (hz : count.toNat = 0) :
     st = ⟨⟨prev.toNat, cur.toNat⟩, 0, st.seen⟩ := by
   obtain ⟨⟨pr, cu⟩, co, se⟩ := st
   have h1 : cu = cur.toNat := b.cur
@@ -146,9 +87,9 @@ theorem nextElement_single {c : BlockCategory} {st : BlockState} (bs : List Bool
 
 /-- A block switch in the terms of a block state's fields. -/
 theorem blockSwitch_rel {arena : ByteArray} {h32 : arena.size < 2 ^ 32} {tBase cBase : USize}
-    {hT : TableFits arena tBase.toNat} {hCt : TableFits arena cBase.toNat} {seen : ByteArray} {off : Nat}
+    {hT : TableFits arena tBase.toNat} {hCt : TableFits arena cBase.toNat} {w0 w1 w2 w3 : UInt64}
     {cur prev count word bcount : UInt64} {st : BlockState} {c : BlockCategory} {n : UInt64} (hnn : n.toNat = c.n)
-    (cat : CatRel arena tBase cBase c) (hcw : c.Wf) (b : BlockRel seen off cur prev count st c) (hz : count.toNat = 0)
+    (cat : CatRel arena tBase cBase c) (hcw : c.Wf) (b : BlockRel w0 w1 w2 w3 cur prev count st c) (hz : count.toNat = 0)
     (hw : (BitBuffer.mk word bcount).Wf) (hn2 : 2 ≤ c.n) :
     let r := blockSwitch arena h32 tBase cBase hT hCt n cur prev word bcount
     (r.status = .ok → (BitBuffer.mk r.word r.count).Wf ∧ r.cur.toNat < c.n ∧
@@ -182,11 +123,10 @@ def stepCommand (H : Hdr) (st : Cmd) (pos : USize) : Cmd :=
         st.word st.count
       match r.status with
       | .ok =>
-        let seen := st.seen
-        let st0 := clearSeen st
-        { st0 with
-          word := r.word, count := r.count, iCur := r.cur, iPrev := st0.iCur, iCount := r.blockCount - 1
-          seen := markSeen seen (USize.ofNat 256 + r.cur.toUSize), tag := .insertCopy, pos := pos, status := .next }
+        { st with
+          word := r.word, count := r.count, iCur := r.cur, iPrev := st.iCur, iCount := r.blockCount - 1
+          fI0 := markWord st.fI0 r.cur 0, fI1 := markWord st.fI1 r.cur 1, fI2 := markWord st.fI2 r.cur 2
+          fI3 := markWord st.fI3 r.cur 3, tag := .insertCopy, pos := pos, status := .next }
       | .short => markStep st pos .needsInput
       | .bad => markStep st pos .bad
     else markStep st pos .bad
@@ -251,20 +191,12 @@ theorem stepCommand_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {
         | ok =>
           obtain ⟨hw, hlt, hc1, hc2, hnext⟩ := hok hs
           have h256 := hH.ok.insertCopy.2.1
-          have hsize := hC.seenSize
-          have hi := seen_index (off := 256) (t := r.cur) (by omega) (by omega)
           refine StepOk.ofNext (p' := .insertCopy s ⟨⟨st.iCur.toNat, r.cur.toNat⟩, r.blockCount.toNat - 1,
             r.cur.toNat :: s.insertCopy.seen⟩) rfl ⟨?_, rfl, hprod⟩ (Nat.le_refl _) hp (fun F => ?_)
             (fun F => Reach.one (by rw [stateBits_eq, cStep_command _ h0', nextIn_some (fun h => absurd h.2 (by omega)) (hnext _)]; rfl))
           · exact { hC with
               wf := hw
-              iRel := hC.iRel.switched (by omega) hi hlt (u64_sub_one hc1).symm
-              lRel := hC.lRel.marked (by rw [hi]; omega)
-              dRel := hC.dRel.marked (by rw [hi]; omega)
-              seenSize := by
-                show (markSeen st.seen _).size = _
-                rw [size_markSeen]
-                exact hsize }
+              iRel := hC.iRel.switched hlt h256 (u64_sub_one hc1).symm }
           · rw [stateBits_eq, rest_command_of hK _ h0', hnext]
             rfl
         | short =>
@@ -332,19 +264,11 @@ theorem stepCommand_cases {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {a : ByteA
         | ok =>
           obtain ⟨hw, hlt, hc1, hc2, hnext⟩ := hok hs
           have h256 := hH.ok.insertCopy.2.1
-          have hsize := hC.seenSize
-          have hi := seen_index (off := 256) (t := r.cur) (by omega) (by omega)
           refine ⟨fun _ => ⟨⟨⟨st.iCur.toNat, r.cur.toNat⟩, r.blockCount.toNat - 1, r.cur.toNat :: s.insertCopy.seen⟩, ⟨?_, rfl, hprod⟩, rfl, h0', fun F => ?_⟩,
             fun h => StepStatus.noConfusion h, fun h => StepStatus.noConfusion h, fun h => StepStatus.noConfusion h⟩
           · exact { hC with
               wf := hw
-              iRel := hC.iRel.switched (by omega) hi hlt (u64_sub_one hc1).symm
-              lRel := hC.lRel.marked (by rw [hi]; omega)
-              dRel := hC.dRel.marked (by rw [hi]; omega)
-              seenSize := by
-                show (markSeen st.seen _).size = _
-                rw [size_markSeen]
-                exact hsize }
+              iRel := hC.iRel.switched hlt h256 (u64_sub_one hc1).symm }
           · rw [stateBits_eq, hnext]
             rfl
         | short => exact ⟨fun h => StepStatus.noConfusion h, fun _ => rfl, fun h => StepStatus.noConfusion h, fun h => StepStatus.noConfusion h⟩
