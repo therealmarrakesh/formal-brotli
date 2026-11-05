@@ -390,7 +390,7 @@ theorem stepDMeta_hd {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size}
     cases h
 
 /-- A header's start holds the potential of the literal category's number of block types not yet read. -/
-theorem hpot_start {x y z : UInt64} {g : Gh} {p : HPhase} (h : HRel (hdStart x y z) g p) : hpot g p = 16772 := by
+theorem hpot_start {x y z : UInt64} {g : Gh} {p : HPhase} (h : HRel (hdStart x y z) g p) : hpot g p = 15492 := by
   have ht := h.tag_eq
   cases p with
   | cat i =>
@@ -577,7 +577,7 @@ theorem pay_hdr {w : Nat} {st : StreamState} {last : Bool} {mlen : Nat} {g : Gh}
       (fun o n order acc sum e => by subst e; exact hR.2.2.2.2.2.sumEq)
       (fun isL t r n e => by
         subst e
-        obtain ⟨_, _, _, _, h2, _, h16, hn⟩ := hR.2.2.2.2
+        obtain ⟨_, _, _, _, h2, _, _, hn⟩ := hR.2.2.2.2
         rw [hn]
         unfold contextMapAlphabetSize
         omega) (h5 (bits t))

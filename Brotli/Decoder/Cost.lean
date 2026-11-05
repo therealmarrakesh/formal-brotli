@@ -182,6 +182,26 @@ theorem sum_le_mul {α : Type} (f : α → Nat) {k : Nat} (hk : ∀ a, f a ≤ k
     have := hk a
     omega
 
+theorem termAt_const (k : Nat) (L : List Nat) (s : Nat) : termAt L (fun _ _ _ => k) s = if L[s]?.getD 0 = 0 then 0 else k := by
+  unfold termAt
+  cases L[s]? <;> simp
+
+/-- A constant for each non-zero length adds up to that constant for each of them. -/
+theorem sum_const_term (k : Nat) : ∀ L : List Nat, ((List.range L.length).map (termAt L fun _ _ _ => k)).sum = k * L.countP (· != 0)
+  | [] => by simp
+  | a :: L => by
+    have ih := sum_const_term k L
+    rw [List.length_cons, List.range_succ_eq_map, List.map_cons, List.map_map, List.sum_cons, List.countP_cons]
+    have e : ∀ s, ((termAt (a :: L) fun _ _ _ => k) ∘ Nat.succ) s = (termAt L fun _ _ _ => k) s := by
+      intro s
+      simp only [Function.comp, termAt_const, List.getElem?_cons_succ]
+    rw [List.map_congr_left (fun s _ => e s), ih, termAt_const]
+    simp only [List.getElem?_cons_zero, Option.getD_some]
+    by_cases ha : a = 0
+    · simp [ha]
+    · simp [ha, Nat.mul_add]
+      omega
+
 theorem sum_add {α : Type} (f g : α → Nat) : ∀ (L : List α), (L.map fun a => f a + g a).sum = (L.map f).sum + (L.map g).sum
   | [] => by simp
   | a :: L => by
@@ -521,22 +541,21 @@ theorem walkW_le {L : List Nat} {t0 head next : ByteArray} {base : Nat} (F : Nat
       rw [← hs] at hstep
       exact pay_next hW hpay hstep
 
-/-- The builder's work: four rounds for each code word longer than 8 bits and three for each symbol, from the code words'
-slots and the sub-tables' zeros, and 1264 more. -/
+/-- The builder's work: four rounds for each code word longer than 8 bits and three for each code word, from the code
+words' slots and the sub-tables' zeros, and 1264 more. -/
 theorem buildFastW_le {t head next : ByteArray} {L : List Nat} (ha : BuildArgs t head next L) :
-    buildFastW t head next ≤ 3 * L.length + 4 * longCount L + 1264 := by
+    buildFastW t head next ≤ 3 * L.countP (· != 0) + 4 * longCount L + 1264 := by
   have hw := build_start ha
   rw [half_toNat ha.2.2.2.2.2.2] at hw
   obtain ⟨hC, _, _, _, _, h2, h32⟩ := ha
   have hle := chain_le hw.small _ _ (fun s hs => mem_drop_rev hs) hw.chain
   have hwk := walkW_le (L := L) (base := t.size / 2) _ rfl 16384 _ _ _ _ _ hw (by omega)
   rw [remW_start hC.1, zeroExtend_zeros] at hwk
-  have hsum : ((List.range L.length).map (wordW L)).sum ≤ longCount L + 376 + 3 * L.length := by
+  have hsum : ((List.range L.length).map (wordW L)).sum ≤ longCount L + 376 + 3 * L.countP (· != 0) := by
     unfold wordW
     rw [List.map_congr_left (fun s _ => termAt_add L (fun _ l c => fillCnt L l (rootOf l c)) (fun _ _ _ => 3) s), sum_add]
     have a := fillSum_le hC
-    have b := sum_le_mul (termAt L fun _ _ _ => 3) (k := 3) (termAt_le _ _ (fun _ _ _ => Nat.le_refl _)) (List.range L.length)
-    rw [List.length_range] at b
+    have b := sum_const_term 3 L
     omega
   have hoff := offSum_le hC
   have hz := zeroExtendW_le 512
@@ -548,22 +567,21 @@ theorem buildFastW_le {t head next : ByteArray} {L : List Nat} (ha : BuildArgs t
   generalize longCount L = Lc at hsum hoff ⊢
   omega
 
-/-- The builder's work for a code with no code word longer than 8 bits: three rounds for each symbol, the root's slots and
-zeros, and its rounds. -/
+/-- The builder's work for a code with no code word longer than 8 bits: three rounds for each code word, the root's slots
+and zeros, and its rounds. -/
 theorem buildFastW_short {t head next : ByteArray} {L : List Nat} (ha : BuildArgs t head next L) (h8 : ∀ l ∈ L, l ≤ 8) :
-    buildFastW t head next ≤ 3 * L.length + 784 := by
+    buildFastW t head next ≤ 3 * L.countP (· != 0) + 784 := by
   have hw := build_start ha
   rw [half_toNat ha.2.2.2.2.2.2] at hw
   obtain ⟨hC, _, _, _, _, h2, h32⟩ := ha
   have hle := chain_le hw.small _ _ (fun s hs => mem_drop_rev hs) hw.chain
   have hwk := walkW_le (L := L) (base := t.size / 2) _ rfl 16384 _ _ _ _ _ hw (by omega)
   rw [remW_start hC.1, zeroExtend_zeros] at hwk
-  have hsum : ((List.range L.length).map (wordW L)).sum ≤ 256 + 3 * L.length := by
+  have hsum : ((List.range L.length).map (wordW L)).sum ≤ 256 + 3 * L.countP (· != 0) := by
     unfold wordW
     rw [List.map_congr_left (fun s _ => termAt_add L (fun _ l c => fillCnt L l (rootOf l c)) (fun _ _ _ => 3) s), sum_add]
     have a := fillSum_short hC h8
-    have b := sum_le_mul (termAt L fun _ _ _ => 3) (k := 3) (termAt_le _ _ (fun _ _ _ => Nat.le_refl _)) (List.range L.length)
-    rw [List.length_range] at b
+    have b := sum_const_term 3 L
     omega
   have hoff := offSum_short hC.1 h8
   have hz := zeroExtendW_le 512
@@ -578,7 +596,9 @@ theorem buildFastW_short {t head next : ByteArray} {L : List Nat} (ha : BuildArg
 theorem buildLensW_le {t lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.size} (h : LensArgs t lens n) :
     buildLensW t lens n hn ≤ 6 * n.toNat + 4 * longCount (lensOf lens n.toNat) + 1299 := by
   have hb : buildFastW t (listsOf lens n hn).1 (listsOf lens n hn).2 ≤
-      3 * (lensOf lens n.toNat).length + 4 * longCount (lensOf lens n.toNat) + 1264 := buildFastW_le (lens_build h)
+      3 * (lensOf lens n.toNat).countP (· != 0) + 4 * longCount (lensOf lens n.toNat) + 1264 := buildFastW_le (lens_build h)
+  have hc := List.countP_le_length (p := (· != 0)) (l := lensOf lens n.toNat)
+  generalize (lensOf lens n.toNat).countP (· != 0) = nz at hb hc
   have hlen : (lensOf lens n.toNat).length = n.toNat := length_lensOf hn
   have z1 := zbW_le 32
   have z2 := zbW_le (2 * n.toNat)
@@ -587,7 +607,7 @@ theorem buildLensW_le {t lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.si
   show listsW n.toNat + buildFastW t (listsOf lens n hn).1 (listsOf lens n hn).2 ≤ _
   generalize buildFastW t (listsOf lens n hn).1 (listsOf lens n hn).2 = B at hb ⊢
   generalize longCount (lensOf lens n.toNat) = Lc at hb ⊢
-  generalize (lensOf lens n.toNat).length = m at hb hlen
+  generalize (lensOf lens n.toNat).length = m at hc hlen
   unfold listsW
   generalize zbW 32 = a at z1 ⊢
   generalize zbW (2 * n.toNat) = b at z2 ⊢
@@ -597,8 +617,10 @@ theorem buildLensW_le {t lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.si
 /-- The work of `buildLens` for a code with no code word longer than 8 bits: six rounds for each symbol, and 819. -/
 theorem buildLensW_short {t lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens.size} (h : LensArgs t lens n)
     (h8 : ∀ l ∈ lensOf lens n.toNat, l ≤ 8) : buildLensW t lens n hn ≤ 6 * n.toNat + 819 := by
-  have hb : buildFastW t (listsOf lens n hn).1 (listsOf lens n hn).2 ≤ 3 * (lensOf lens n.toNat).length + 784 :=
+  have hb : buildFastW t (listsOf lens n hn).1 (listsOf lens n hn).2 ≤ 3 * (lensOf lens n.toNat).countP (· != 0) + 784 :=
     buildFastW_short (lens_build h) h8
+  have hc := List.countP_le_length (p := (· != 0)) (l := lensOf lens n.toNat)
+  generalize (lensOf lens n.toNat).countP (· != 0) = nz at hb hc
   have hlen : (lensOf lens n.toNat).length = n.toNat := length_lensOf hn
   have z1 := zbW_le 32
   have z2 := zbW_le (2 * n.toNat)
@@ -606,7 +628,7 @@ theorem buildLensW_short {t lens : ByteArray} {n : USize} {hn : n.toNat ≤ lens
   have hd : 2 * n.toNat / 65536 = 0 := Nat.div_eq_of_lt (by omega)
   show listsW n.toNat + buildFastW t (listsOf lens n hn).1 (listsOf lens n hn).2 ≤ _
   generalize buildFastW t (listsOf lens n hn).1 (listsOf lens n hn).2 = B at hb ⊢
-  generalize (lensOf lens n.toNat).length = m at hb hlen
+  generalize (lensOf lens n.toNat).length = m at hc hlen
   unfold listsW
   generalize zbW 32 = a at z1 ⊢
   generalize zbW (2 * n.toNat) = b at z2 ⊢

@@ -576,6 +576,31 @@ theorem longCount_le (L : List Nat) : longCount L ≤ L.length := by
   rw [longCount_eq]
   exact List.countP_le_length
 
+/-- A length sum is at most 64 for each code word longer than 8 bits and 16384 for each shorter one, and the code words
+are those two kinds. -/
+private theorem sum_kinds : ∀ L : List Nat, (∀ l ∈ L, l ≤ 15) →
+    lengthSum L ≤ 64 * L.countP (fun l => 9 ≤ l && l < 16) + 16384 * L.countP (fun l => l != 0 && l ≤ 8) ∧
+      L.countP (· != 0) = L.countP (fun l => 9 ≤ l && l < 16) + L.countP (fun l => l != 0 && l ≤ 8)
+  | [], _ => by simp [lengthSum]
+  | a :: L, h => by
+    obtain ⟨ih1, ih2⟩ := sum_kinds L (fun l hl => h l (List.mem_cons_of_mem _ hl))
+    have key : ∀ a, a < 16 → (if a = 0 then 0 else 32768 >>> a) ≤
+        64 * (if (9 ≤ a && a < 16) = true then 1 else 0) + 16384 * (if (a != 0 && a ≤ 8) = true then 1 else 0) ∧
+        (if (a != 0) = true then 1 else 0) =
+          (if (9 ≤ a && a < 16) = true then 1 else 0) + (if (a != 0 && a ≤ 8) = true then 1 else 0) := by decide
+    have ka := key a (by have := h a (List.mem_cons_self ..); omega)
+    have e : lengthSum (a :: L) = (if a = 0 then 0 else 32768 >>> a) + lengthSum L := by
+      simp only [lengthSum, List.map_cons, List.sum_cons]
+    rw [e, List.countP_cons, List.countP_cons, List.countP_cons]
+    omega
+
+/-- A complete code with fewer than 512 code words has one of 8 bits or fewer. -/
+theorem longCount_lt {L : List Nat} (hl : ∀ l ∈ L, l ≤ 15) (hs : lengthSum L = 32768) (h : L.countP (· != 0) < 512) :
+    longCount L < L.countP (· != 0) := by
+  obtain ⟨h1, h2⟩ := sum_kinds L hl
+  rw [longCount_eq]
+  omega
+
 /-- With no length longer than eight, there are no long code words. -/
 theorem longCount_short {L : List Nat} (h : ∀ l ∈ L, l ≤ 8) : longCount L = 0 := by
   rw [longCount_eq, List.countP_eq_zero]

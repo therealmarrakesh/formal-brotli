@@ -16,15 +16,67 @@ open Brotli.Spec Brotli.Properties
 
 /-! ### Tables -/
 
-/-- A table's work, with its lengths complete: at most seven for each symbol and 1265 more, and for a context map's code
-the map's zeros as read and as transformed, and its three lists of 256 bytes. -/
+private theorem countP_or_le {α : Type} (p q : α → Bool) :
+    ∀ l : List α, l.countP (fun x => p x || q x) ≤ l.countP p + l.countP q
+  | [] => by simp
+  | a :: l => by
+    have := countP_or_le p q l
+    simp only [List.countP_cons]
+    cases p a <;> cases q a <;> simp <;> omega
+
+/-- The lengths that assigned pairs give have at most one non-zero length for each pair. -/
+private theorem lengthsOf_countP (size : Nat) : ∀ P : List (Nat × Nat), (lengthsOf size P).countP (· != 0) ≤ P.length
+  | [] => by simp [lengthsOf]
+  | a :: P => by
+    have ih := lengthsOf_countP size P
+    unfold lengthsOf at ih ⊢
+    rw [List.countP_map] at ih ⊢
+    have hm : (List.range size).countP ((· != 0) ∘ fun n => (((a :: P).find? (·.1 == n)).map (·.2)).getD 0) ≤
+        (List.range size).countP (fun n => (n == a.1) || ((· != 0) ∘ fun n => ((P.find? (·.1 == n)).map (·.2)).getD 0) n) := by
+      apply List.countP_mono_left
+      intro n _ hn
+      simp only [Function.comp, List.find?_cons] at hn ⊢
+      by_cases e : a.1 = n
+      · simp [e]
+      · have e' : (a.1 == n) = false := by simp [e]
+        rw [e'] at hn
+        simp only at hn
+        simp [hn]
+    have h1 := countP_or_le (fun n => n == a.1) ((· != 0) ∘ fun n => ((P.find? (·.1 == n)).map (·.2)).getD 0) (List.range size)
+    have h2 : (List.range size).countP (fun n => n == a.1) ≤ 1 := List.nodup_iff_count.mp List.nodup_range a.1
+    rw [List.length_cons]
+    omega
+
+private theorem mem_lengthsOf_le {size m : Nat} {P : List (Nat × Nat)} (h : ∀ p ∈ P, p.2 ≤ m) : ∀ l ∈ lengthsOf size P, l ≤ m := by
+  intro l hl
+  simp only [lengthsOf, List.mem_map] at hl
+  obtain ⟨n, _, e⟩ := hl
+  subst e
+  cases hf : P.find? (·.1 == n) with
+  | none => simp
+  | some p =>
+    have := h p (List.mem_of_find?_eq_some hf)
+    simp only [Option.map_some, Option.getD_some]
+    omega
+
+/-- A simple code of two symbols or more has at most four code words, none longer than 3 bits. -/
+theorem simple_lens {size s1 s2 s3 s4 e : Nat} {L : List Nat} (h : simpleCode size s1 s2 s3 s4 e = .canonical L) :
+    (∀ l ∈ L, l ≤ 3) ∧ L.countP (· != 0) ≤ 4 := by
+  unfold simpleCode at h
+  repeat' split at h
+  all_goals cases h
+  all_goals exact ⟨mem_lengthsOf_le (by simp), Nat.le_trans (lengthsOf_countP _ _) (by simp)⟩
+
+/-- A table's work, with its lengths complete: at most seven for each symbol, less four when the alphabet has fewer than
+512 symbols, and 1265 more, and for a context map's code the map's zeros as read and as transformed, and its three lists
+of 256 bytes. -/
 theorem tableDoneW_le {st : Hd} {single : Bool} {sym : UInt64} (ha : TableArgs st.size st.head st.next single sym)
     (har : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 2672 < 2 ^ 32) :
-    tableDoneW st single ≤ 7 * st.size.toNat + 1265 +
+    tableDoneW st single ≤ 7 * st.size.toNat + 1261 + 4 * (st.size.toNat / 512) +
       (if st.role = .map then 770 + zbW (mapSizeFast st) + zbW (mapSizeFast st) else 0) := by
   unfold tableDoneW
   have hb : ∀ t : ByteArray, t.size % 2 = 0 ∧ t.size + 2672 < 2 ^ 32 →
-      (if single then buildSingleW else buildFastW t st.head st.next) ≤ 7 * st.size.toNat + 1264 := by
+      (if single then buildSingleW else buildFastW t st.head st.next) ≤ 7 * st.size.toNat + 1260 + 4 * (st.size.toNat / 512) := by
     intro t ht
     cases hs : single with
     | true =>
@@ -40,7 +92,11 @@ theorem tableDoneW_le {st : Hd} {single : Bool} {sym : UInt64} (ha : TableArgs s
       have h704 := hf.small
       have h1 := buildFastW_le (⟨hC, by omega, hl, hf.hsz, hf.nsz, ht.1, ht.2⟩ : BuildArgs t st.head st.next L)
       have h2 := longCount_le L
-      omega
+      have h3 := List.countP_le_length (p := (· != 0)) (l := L)
+      by_cases h512 : st.size.toNat < 512
+      · have h4 := longCount_lt hC.1 hC.2 (by omega)
+        omega
+      · omega
   cases hr : st.role with
   | map =>
     simp only [↓reduceIte]
@@ -59,6 +115,54 @@ theorem tableDoneW_le {st : Hd} {single : Bool} {sym : UInt64} (ha : TableArgs s
     simp only [reduceCtorEq, ↓reduceIte]
     have := hb st.d.arena har
     omega
+
+/-- A one-symbol code's table's work. -/
+theorem tableDoneW_single (st : Hd) :
+    tableDoneW st true ≤ 771 + (if st.role = .map then 770 + zbW (mapSizeFast st) + zbW (mapSizeFast st) else 0) := by
+  unfold tableDoneW
+  have := buildSingleW_le
+  cases hr : st.role with
+  | map =>
+    simp only [↓reduceIte]
+    have := zbW_le 256
+    omega
+  | type => simp only [reduceCtorEq, ↓reduceIte]; omega
+  | count => simp only [reduceCtorEq, ↓reduceIte]; omega
+  | codes => simp only [reduceCtorEq, ↓reduceIte]; omega
+
+/-- A simple code's table's work, with two symbols or more: at most four code words, none longer than 3 bits. -/
+theorem tableDoneW_simple {st : Hd} {r : Rd} {pos : USize} (h : SimpleRead st.size r) (he : ¬ r.e = 0)
+    (har : st.d.arena.size % 2 = 0 ∧ st.d.arena.size + 2672 < 2 ^ 32) :
+    tableDoneW (simpleLists st r pos h.fits) false ≤
+      797 + (if st.role = .map then 770 + zbW (mapSizeFast st) + zbW (mapSizeFast st) else 0) := by
+  have hf : TableFor (simpleLists st r pos h.fits).size (simpleLists st r pos h.fits).head (simpleLists st r pos h.fits).next
+      false 0 (simpleValue st.size r) := h.canon he st.headSz st.nextSz
+  obtain ⟨L, hc, hlen, hl⟩ := hf.canon rfl
+  have hC := hf.complete
+  rw [hc] at hC
+  have h704 := hf.small
+  obtain ⟨h3, h4⟩ := simple_lens (by unfold simpleValue at hc; exact hc)
+  have hb : ∀ t : ByteArray, t.size % 2 = 0 ∧ t.size + 2672 < 2 ^ 32 →
+      buildFastW t (simpleLists st r pos h.fits).head (simpleLists st r pos h.fits).next ≤ 796 := by
+    intro t ht
+    have := buildFastW_short (⟨hC, by omega, hl, hf.hsz, hf.nsz, ht.1, ht.2⟩ :
+      BuildArgs t (simpleLists st r pos h.fits).head (simpleLists st r pos h.fits).next L) (fun l hl' => by have := h3 l hl'; omega)
+    omega
+  unfold tableDoneW
+  have e : (simpleLists st r pos h.fits).role = st.role := rfl
+  have e2 : mapSizeFast (simpleLists st r pos h.fits) = mapSizeFast st := rfl
+  have e3 : (simpleLists st r pos h.fits).d.arena = st.d.arena := rfl
+  rw [e, e2, e3]
+  simp only [Bool.false_eq_true, ↓reduceIte]
+  cases hr : st.role with
+  | map =>
+    simp only [↓reduceIte]
+    have := zbW_le 256
+    have := hb (ByteArray.emptyWithCapacity soloCap) ⟨rfl, by decide⟩
+    omega
+  | type => simp only [reduceCtorEq, ↓reduceIte]; have := hb st.d.arena har; omega
+  | count => simp only [reduceCtorEq, ↓reduceIte]; have := hb st.d.arena har; omega
+  | codes => simp only [reduceCtorEq, ↓reduceIte]; have := hb st.d.arena har; omega
 
 /-- A finished code length code's table's work: its eighteen lengths are at most five, so it has no long code words. -/
 theorem clTableW_le {st : Hd} (h : ∃ acc, ClDone st acc) : clTableW st ≤ 927 := by
@@ -94,7 +198,7 @@ def zb (k : Nat) : Nat := k + k / 65536 + 1
 
 /-- What a context map of `S` values holds before its number of trees: its zeros, and what the trees' number, the run
 length's bits and the code's bits do not pay of the values a code gives without reading. -/
-def mapPre (S : Nat) : Nat := 2 * S + 5268
+def mapPre (S : Nat) : Nat := 2 * S + 4628
 
 /-- What follows the second context map: the groups' steps, their arrays' zeros and the header's last step. -/
 def afterD (nI tL tD : Nat) : Nat := 3 * tL + zb (4 * nI) + 4 + 3 * nI + zb (4 * tD) + 4 + 3 * tD + 4
@@ -123,10 +227,10 @@ def imtfTail (g : Gh) (isL : Bool) (t : Nat) : Nat := t + 4 + mapFin g isL + map
 
 /-- From a context map's code on: what follows its values, and what the code's five bits or more do not pay of the values a
 code that reads no bits gives, every value written as read and transformed, and flagged, with the code's table. -/
-def mapOwner (g : Gh) (isL : Bool) (t : Nat) : Nat := imtfTail g isL t + max 3 (2 * mapSize g isL + 9 * t + 1436 - 5 * hdrRate)
+def mapOwner (g : Gh) (isL : Bool) (t : Nat) : Nat := imtfTail g isL t + max 3 (2 * mapSize g isL + 2 * t + 856 - 5 * hdrRate)
 
 /-- From a context map's run length on: what its code holds, less what the run length's bit pays. -/
-def mapOwnerR (g : Gh) (isL : Bool) (t : Nat) : Nat := imtfTail g isL t + max 3 (2 * mapSize g isL + 9 * t + 1439 - 6 * hdrRate)
+def mapOwnerR (g : Gh) (isL : Bool) (t : Nat) : Nat := imtfTail g isL t + max 3 (2 * mapSize g isL + 2 * t + 859 - 6 * hdrRate)
 
 /-- From a group's next code on. -/
 def codesPot (g : Gh) : CK → Nat → Nat
@@ -148,7 +252,7 @@ def ownerPot (g : Gh) : Owner → Nat
   | .codes k _ left => codesPot g k left
 
 /-- A code's table's step, with a refill and a round of the stream's loop, besides what it does for its owner. -/
-def symsTable (n : Nat) : Nat := 7 * n + 1268
+def symsTable (n : Nat) : Nat := 7 * n + 1264 + 4 * (n / 512)
 
 /-- The code length code's last step: its table, and the lists' links emptied. -/
 def clDone : Nat := 963
@@ -197,7 +301,7 @@ the bytes its refill takes pay for themselves. -/
 def hcost (g : Gh) : HPhase → HPhase → Nat
   | .cat _, _ => 3
   | .code _ _, .clens .. => 22
-  | .code o n, _ => 7 * n + 1301 + ownerX g o
+  | .code o _, _ => 833 + ownerX g o
   | .clens .., .syms .. => clDone
   | .clens .., _ => 3
   | .syms _ _ _ ls, .syms _ _ _ ls' => if ls'.rep.map (·.1) = some 16 then ls'.lens.length - ls.lens.length + 3 else 3
@@ -283,16 +387,16 @@ theorem varLen_pay {bs b : List Bool} {v : Nat} (h : readVarLen bs = some (v, b)
             generalize 2 ^ n = P at x8 key
             omega
 
-private theorem trees_key : ∀ k, k < 8 → 18 * 2 ^ (k + 1) + 11838 ≤ 2980 * (4 + k) := by decide
+private theorem trees_key : ∀ k, k < 8 → 11 * 2 ^ (k + 1) + 11898 ≤ 2980 * (4 + k) := by decide
+
+private theorem max_sub (a b : Nat) : max 3 (a - b) ≤ 3 ∨ max 3 (a - b) + b ≤ a := by omega
 
 /-- A number of two trees or more, in `4 + k` bits, pays for the map's code's share of the values it may give without
 reading. -/
-private theorem max_sub (a b : Nat) : max 3 (a - b) ≤ 3 ∨ max 3 (a - b) + b ≤ a := by omega
-
 private theorem trees_pay {S Z v Fn A0 Av P K C B M : Nat} (hS : S ≤ 16384) (hZ : Z = S + 1)
-    (hA : Av ≤ A0 + 8 * v) (hvk : v ≤ P) (hkey : 18 * P + 11838 ≤ K) (hm : B = C + K)
-    (hM : M ≤ 3 ∨ M + 6 * 2980 ≤ 2 * S + 9 * v + 1439) :
-    3 + (770 + Z + Z + ((v + 4 + Fn + Av) + M)) + C ≤ 2 * S + 5268 + Fn + A0 + B := by
+    (hA : Av ≤ A0 + 8 * v) (hvk : v ≤ P) (hkey : 11 * P + 11898 ≤ K) (hm : B = C + K)
+    (hM : M ≤ 3 ∨ M + 6 * 2980 ≤ 2 * S + 2 * v + 859) :
+    3 + (770 + Z + Z + ((v + 4 + Fn + Av) + M)) + C ≤ 2 * S + 4628 + Fn + A0 + B := by
   omega
 
 /-- A code length code's length fills at most four of its 32 for each bit it takes, and takes two bits or more. -/
@@ -556,7 +660,7 @@ theorem hpot_owner_le (g : Gh) (o : Owner) (c : PrefixCode) (ho : ∀ isL t r, o
 /-- A context map's code holds what its table leads to, less what five of its bits pay: a code that reads no bits gives
 the map's values without reading. -/
 theorem hpot_owner_map (g : Gh) (isL : Bool) (t r : Nat) (c : PrefixCode) :
-    hpot g (ownerPlace g (.map isL t r) c) + 7 * (t + 16) + 1301 ≤ mapOwner g isL t + 5 * hdrRate := by
+    hpot g (ownerPlace g (.map isL t r) c) + 833 ≤ mapOwner g isL t + 5 * hdrRate := by
   simp only [ownerPlace, hpot, mapOwner]
   split
   · omega
@@ -583,7 +687,7 @@ theorem alphabetBits_pos {n : Nat} (h : 2 ≤ n) : 1 ≤ alphabetBits n := by
   omega
 
 theorem hcost_code_owner (g : Gh) (o : Owner) (n : Nat) (c : PrefixCode) :
-    hcost g (.code o n) (ownerPlace g o c) = 7 * n + 1301 + ownerX g o := by
+    hcost g (.code o n) (ownerPlace g o c) = 833 + ownerX g o := by
   cases o <;> rfl
 
 theorem hcost_syms_owner (g : Gh) (o : Owner) (n : Nat) (clc : PrefixCode) (ls : LengthState) (c : PrefixCode) :
@@ -620,7 +724,7 @@ theorem hstage_pos (g : Gh) (p : HPhase) : 1 ≤ hstage g p := by
 theorem hpay {g : Gh} {p : HPhase} {bs c : List Bool} {g' : Gh} {p' : HPhase} (hsz : psize p ≤ 704) (hvl : vleft p ≤ 16384)
     (hts : ∀ isL, p = .trees isL → mapSize g isL ≤ 16384)
     (hcl : ∀ o n order acc sum, p = .clens o n order acc sum → lengthSum (acc.map (·.2)) = 1024 * sum)
-    (hmn : ∀ isL t r n, p = .code (.map isL t r) n → 2 ≤ n ∧ n ≤ t + 16)
+    (hmn : ∀ isL t r n, p = .code (.map isL t r) n → 2 ≤ n)
     (h : hStepP (g, p) bs = .next (g', p') c) :
     hcost g p p' + hpot g' p' + hdrRate * c.length ≤ hpot g p + hdrRate * bs.length := by
   rw [hdrRate_eq]
@@ -650,11 +754,10 @@ theorem hpay {g : Gh} {p : HPhase} {bs c : List Bool} {g' : Gh} {p' : HPhase} (h
       rw [hcost_code_owner]
       cases o with
       | map isL t r =>
-        obtain ⟨h2, hnt⟩ := hmn isL t r n rfl
-        have hab := alphabetBits_pos h2
+        have hab := alphabetBits_pos (hmn isL t r n rfl)
         have hle := hpot_owner_map g isL t r cd
         rw [hdrRate_eq] at hle
-        show 7 * n + 1301 + ownerX g (.map isL t r) + hpot g (ownerPlace g (.map isL t r) cd) + _ ≤
+        show 833 + ownerX g (.map isL t r) + hpot g (ownerPlace g (.map isL t r) cd) + _ ≤
           ownerX g (.map isL t r) + mapOwner g isL t + _
         omega
       | type i k =>
@@ -844,11 +947,11 @@ theorem hpay {g : Gh} {p : HPhase} {bs c : List Bool} {g' : Gh} {p' : HPhase} (h
         congr 1
         omega
       show 3 + (770 + zb (mapSize g isL) + zb (mapSize g isL) +
-        ((v + 4 + mapFin g isL + mapAfter g isL v) + max 3 (2 * mapSize g isL + 9 * v + 1439 - 6 * hdrRate))) + _ ≤ _
+        ((v + 4 + mapFin g isL + mapAfter g isL v) + max 3 (2 * mapSize g isL + 2 * v + 859 - 6 * hdrRate))) + _ ≤ _
       have hZ : zb (mapSize g isL) = mapSize g isL + 1 := by
         unfold zb
         omega
-      have hM := max_sub (2 * mapSize g isL + 9 * v + 1439) (6 * hdrRate)
+      have hM := max_sub (2 * mapSize g isL + 2 * v + 859) (6 * hdrRate)
       rw [hdrRate_eq] at hM ⊢
       exact trees_pay hS hZ hle hvk hkey hm hM
   | rlemax isL t =>
@@ -970,7 +1073,7 @@ theorem hcost_ge (g : Gh) (p p' : HPhase) : 3 ≤ hcost g p p' := by
   | _ => simp only [hcost]; omega
 
 theorem hcost_code (g : Gh) (o : Owner) (n : Nat) (p' : HPhase) :
-    hcost g (.code o n) p' = if ptag p' = .clens then 22 else 7 * n + 1301 + ownerX g o := by
+    hcost g (.code o n) p' = if ptag p' = .clens then 22 else 833 + ownerX g o := by
   cases p' <;> rfl
 
 theorem hcost_clens (g : Gh) (o : Owner) (n : Nat) (order : List Nat) (acc : List (Nat × Nat)) (sum : Nat) (p' : HPhase) :
@@ -1294,9 +1397,8 @@ theorem wCode {st : Hd} {g : Gh} {o : Owner} {n : Nat} {pos : USize} {g' : Gh} {
           have hnc : ptag p' ≠ .clens := by rw [← htag]; exact tableDone_tag.1
           rw [ite_eq_right hnc]
           have hT' : tableDoneW { st with word := r.word, count := r.count, pos := pos, status := .next } true ≤
-              7 * st.size.toNat + 1265 + (if st.role = .map then 770 + zbW (mapSizeFast st) + zbW (mapSizeFast st) else 0) :=
-            tableDoneW_le (st := { st with word := r.word, count := r.count, pos := pos, status := .next })
-              ⟨_, (hra hsr).single he st.headSz st.nextSz⟩ hu.arenaOk
+              771 + (if st.role = .map then 770 + zbW (mapSizeFast st) + zbW (mapSizeFast st) else 0) :=
+            tableDoneW_single { st with word := r.word, count := r.count, pos := pos, status := .next }
           omega
         · rw [dite_eq_right he] at htag
           have hf : r.a.toNat < 704 ∧ r.b.toNat < 704 ∧ r.c.toNat < 704 ∧ r.d.toNat < 704 := (hra hsr).fits
@@ -1306,8 +1408,8 @@ theorem wCode {st : Hd} {g : Gh} {o : Owner} {n : Nat} {pos : USize} {g' : Gh} {
             exact tableDone_tag.1
           rw [ite_eq_right hnc]
           have hT' : tableDoneW (simpleLists st r pos hf) false ≤
-              7 * st.size.toNat + 1265 + (if st.role = .map then 770 + zbW (mapSizeFast st) + zbW (mapSizeFast st) else 0) :=
-            tableDoneW_le (st := simpleLists st r pos hf) (simpleLists_args (hra hsr) he) hu.arenaOk
+              797 + (if st.role = .map then 770 + zbW (mapSizeFast st) + zbW (mapSizeFast st) else 0) :=
+            tableDoneW_simple (pos := pos) (hra hsr) he hu.arenaOk
           have hz := zbW_le 32
           omega
     · rw [ite_eq_right h1] at htag ⊢
@@ -1447,9 +1549,10 @@ theorem wSyms {st : Hd} {g : Gh} {o : Owner} {n : Nat} {clc : PrefixCode} {ls : 
     have hns : ptag p' ≠ .syms := by rw [← hr.tag_eq]; exact tableDone_tag.2
     rw [hcost_syms_other g o n clc ls hns]
     have hT' : tableDoneW { st with pos := pos, status := .next } false ≤
-        7 * st.size.toNat + 1265 + (if st.role = .map then 770 + zbW (mapSizeFast st) + zbW (mapSizeFast st) else 0) :=
+        7 * st.size.toNat + 1261 + 4 * (st.size.toNat / 512) +
+          (if st.role = .map then 770 + zbW (mapSizeFast st) + zbW (mapSizeFast st) else 0) :=
       tableDoneW_le (st := { st with pos := pos, status := .next }) (syms_args (st := st) hH hT hsum) hu.arenaOk
-    have hst : symsTable n = 7 * n + 1268 := rfl
+    have hst : symsTable n = 7 * n + 1264 + 4 * (n / 512) := rfl
     omega
   · rw [dite_eq_right hsum] at hr hn
     rw [ite_eq_right hsum]
@@ -1768,14 +1871,15 @@ theorem symsW_stop {st : Hd} {g : Gh} {o : Owner} {n : Nat} {clc : PrefixCode} {
   obtain ⟨hs1, hs2, hs3⟩ := hs
   have hX := ownerX_ge ho hu
   have e0 : hpot g (.syms o n clc ls) = symsPre clc n ls.lens.length + symsTable n + ownerX g o + ownerPot g o := rfl
-  have hst : symsTable n = 7 * n + 1268 := rfl
+  have hst : symsTable n = 7 * n + 1264 + 4 * (n / 512) := rfl
   rw [e0]
   unfold stepHSymsW
   unfold stepHSyms at hn
   by_cases hsum : st.symSum = 32768
   · rw [ite_eq_left hsum]
     have hT' : tableDoneW { st with pos := pos, status := .next } false ≤
-        7 * st.size.toNat + 1265 + (if st.role = .map then 770 + zbW (mapSizeFast st) + zbW (mapSizeFast st) else 0) :=
+        7 * st.size.toNat + 1261 + 4 * (st.size.toNat / 512) +
+          (if st.role = .map then 770 + zbW (mapSizeFast st) + zbW (mapSizeFast st) else 0) :=
       tableDoneW_le (st := { st with pos := pos, status := .next }) (syms_args (st := st) hH hT hsum) hu.arenaOk
     omega
   · rw [dite_eq_right hsum] at hn
@@ -2207,21 +2311,21 @@ theorem stepHW_short {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size}
 /-! ### The most a header's place holds
 
 With at most 256 block types in a category, 256 trees in a context map and 16384 values in it, a header's place holds at
-most 77492: a literal context map's code's lengths, with the table's work for the map and what the map holds. -/
+most 74476: a literal context map's code's lengths, with the table's work for the map and what the map holds. -/
 
-theorem beforeMaps_le {nL nI nD : Nat} (h1 : nL ≤ 256) (h2 : nI ≤ 256) (h3 : nD ≤ 256) : beforeMaps nL nI nD ≤ 53380 := by
+theorem beforeMaps_le {nL nI nD : Nat} (h1 : nL ≤ 256) (h2 : nI ≤ 256) (h3 : nD ≤ 256) : beforeMaps nL nI nD ≤ 52100 := by
   unfold beforeMaps afterL afterD mapPre zb smallMax catMax treeMax
   omega
 
 theorem catPot_most {g : Gh} {i : Cat} {n : Nat} (h0 : g.m.literal.n ≤ 256) (hI : i = .D → g.m.insertCopy.n ≤ 256) (hn : n ≤ 256) :
-    catPot g i n ≤ 53380 := by
+    catPot g i n ≤ 52100 := by
   cases i with
   | L => exact beforeMaps_le hn (by omega) (by omega)
   | I => exact beforeMaps_le h0 hn (by omega)
   | D => exact beforeMaps_le h0 (hI rfl) hn
 
 theorem mapTail_le {g : Gh} {isL : Bool} {t : Nat} (ht : t ≤ 256) (hI : g.m.insertCopy.n ≤ 256) (hD : g.m.distance.n ≤ 256)
-    (hL : isL = false → g.treesL ≤ 256) : mapFin g isL + mapAfter g isL t ≤ 17133 := by
+    (hL : isL = false → g.treesL ≤ 256) : mapFin g isL + mapAfter g isL t ≤ 16493 := by
   unfold mapFin mapAfter afterL afterD mapPre zb smallMax catMax treeMax
   cases isL with
   | false =>
@@ -2233,13 +2337,13 @@ theorem mapTail_le {g : Gh} {isL : Bool} {t : Nat} (ht : t ≤ 256) (hI : g.m.in
     omega
 
 theorem imtfTail_le {g : Gh} {isL : Bool} {t : Nat} (ht : t ≤ 256) (hI : g.m.insertCopy.n ≤ 256)
-    (hD : g.m.distance.n ≤ 256) (hL : isL = false → g.treesL ≤ 256) : imtfTail g isL t ≤ 17393 := by
+    (hD : g.m.distance.n ≤ 256) (hL : isL = false → g.treesL ≤ 256) : imtfTail g isL t ≤ 16753 := by
   have := mapTail_le ht hI hD hL
   unfold imtfTail
   omega
 
 theorem mapOwner_le {g : Gh} {isL : Bool} {t : Nat} (hS : mapSize g isL ≤ 16384) (ht : t ≤ 256) (hI : g.m.insertCopy.n ≤ 256)
-    (hD : g.m.distance.n ≤ 256) (hL : isL = false → g.treesL ≤ 256) : mapOwner g isL t ≤ 39001 := by
+    (hD : g.m.distance.n ≤ 256) (hL : isL = false → g.treesL ≤ 256) : mapOwner g isL t ≤ 35989 := by
   have := imtfTail_le ht hI hD hL
   unfold mapOwner hdrRate
   omega
@@ -2259,7 +2363,7 @@ theorem ownerX_le {g : Gh} (hg : GOk g) (o : Owner) : ownerX g o ≤ 33540 := by
 /-- What a code's owner settled: a category's block types before a category's code, the categories before a context map,
 and the maps before the groups of codes. -/
 theorem ownerPot_le {st : Hd} {g : Gh} {n : Nat} {o : Owner} (ho : OwnerRel st g n o) (hu : Upto st.d g (ownerStage o)) (hg : GOk g) :
-    ownerPot g o ≤ 53380 := by
+    ownerPot g o ≤ 52100 := by
   have hI : 1 < ownerStage o → g.m.insertCopy.n ≤ 256 := fun h => (hu.cat .I h).wf.2.1
   cases o with
   | type i k =>
@@ -2295,7 +2399,7 @@ theorem ownerPot_le {st : Hd} {g : Gh} {n : Nat} {o : Owner} (ho : OwnerRel st g
 
 /-- What a code's owner holds, with the most the code's lengths carry. -/
 theorem codeOwner_le {st : Hd} {g : Gh} {n : Nat} {o : Owner} (ho : OwnerRel st g n o) (hu : Upto st.d g (ownerStage o))
-    (hg : GOk g) (hn : n ≤ 704) : ownerX g o + ownerPot g o + clDone + symsTable n + 3 * n ≤ 77492 := by
+    (hg : GOk g) (hn : n ≤ 704) : ownerX g o + ownerPot g o + clDone + symsTable n + 3 * n ≤ 74476 := by
   have hP := ownerPot_le ho hu hg
   have hI : 1 < ownerStage o → g.m.insertCopy.n ≤ 256 := fun h => (hu.cat .I h).wf.2.1
   unfold clDone symsTable
@@ -2331,7 +2435,7 @@ theorem codeOwner_le {st : Hd} {g : Gh} {n : Nat} {o : Owner} (ho : OwnerRel st 
     omega
 
 /-- The most a header's place holds. -/
-theorem hpot_le {st : Hd} {g : Gh} {p : HPhase} (hrel : HRel st g p) (hg : GOk g) (hp : HOk p) : hpot g p ≤ 77492 := by
+theorem hpot_le {st : Hd} {g : Gh} {p : HPhase} (hrel : HRel st g p) (hg : GOk g) (hp : HOk p) : hpot g p ≤ 74476 := by
   obtain ⟨_, hu, hm⟩ := hrel
   have hS := mapSize_le hg
   have hI : 1 < stageOf p → g.m.insertCopy.n ≤ 256 := fun h => (hu.cat .I h).wf.2.1
