@@ -23,6 +23,22 @@ theorem clOrderLut_at {i : Nat} (h : i < 18) : ∃ x, codeLengthOrder[i]? = some
   simp only [clOrderLut, List.data_toByteArray, List.getElem?_toArray]
   exact h3
 
+theorem clOrderLut_size : clOrderLut.size = 18 := by decide +kernel
+
+/-- The code length symbol at place `i` of the order. -/
+@[inline] def clOrderAt (i : UInt64) (h : i.toNat < 18) : UInt64 :=
+  (clOrderLut.uget i.toUSize (by rw [clOrderLut_size, word_toUSize (by omega)]; exact h)).toUInt64
+
+theorem clOrderAt_eq {i : UInt64} {h : i.toNat < 18} : clOrderAt i h = (getU clOrderLut i.toUSize).toUInt64 := by
+  simp only [clOrderAt, uget_getU]
+
+theorem clOrderAt_lt {i : UInt64} (h : i.toNat < 18) : (clOrderAt i h).toUSize.toNat < 18 := by
+  obtain ⟨x, _, hx18, hlut⟩ := clOrderLut_at h
+  have hx : (clOrderAt i h).toNat = x := by
+    rw [clOrderAt_eq, UInt8.toNat_toUInt64, getU_toNat, word_toUSize (by omega), hlut]
+  rw [word_toUSize (by omega), hx]
+  exact hx18
+
 section
 variable {α : Type} (K : HK α)
 
@@ -302,6 +318,20 @@ theorem clens_ex {st : Hd} (h : ∃ g p, HRel st g p) (ht : st.tag = .clens) :
   | np => exact absurd (hr.2.2.symm.trans ht) (fun e => HTag.noConfusion e)
   | _ => exact absurd (hr.2.2.1.symm.trans ht) (fun e => HTag.noConfusion e)
 
+/-- At a code length code's lengths, with lengths left to read, the place in the order is in range. -/
+theorem clens_idx {st : Hd} (h : ∃ g p, HRel st g p) (ht : st.tag = .clens) (h18 : ¬ st.clIdx = 18) : st.clIdx.toNat < 18 := by
+  obtain ⟨_, _, _, _, _, _, hrel⟩ := clens_ex h ht
+  have hidx18 : st.clIdx.toNat ≠ 18 := fun e => h18 (UInt64.toNat_inj.mp e)
+  have := hrel.2.2.2.2.2.le
+  omega
+
+/-- At a code length code's lengths, the next symbol's length is in range. -/
+theorem clens_put {st : Hd} (h : ∃ g p, HRel st g p) (ht : st.tag = .clens) (h18 : ¬ st.clIdx = 18) :
+    (clOrderAt st.clIdx (clens_idx h ht h18)).toUSize.toNat < st.clLens.size := by
+  obtain ⟨_, _, _, _, _, _, hrel⟩ := clens_ex h ht
+  rw [hrel.2.2.2.2.2.size]
+  exact clOrderAt_lt _
+
 /-- With all eighteen lengths read and one of them non-zero, the code length code is finished. -/
 theorem clens_done0 {st : Hd} {pos : USize} (h : ∃ g p, HRel st g p) (ht : st.tag = .clens) (h18 : st.clIdx = 18)
     (hnz : st.clNz = 1) : ∃ acc, ClDone { st with pos := pos, status := .next } acc := by
@@ -398,6 +428,17 @@ theorem clens_done1 {st : Hd} {pos : USize} {r : Rd} (h : ∃ g p, HRel st g p) 
     have h1 : (st.clNz + 1).toNat = 1 := by rw [hnz1]; omega
     exact e (UInt64.toNat_inj.mp h1)
 
+/-- `clens_done1` for the state as the step writes it. -/
+theorem clens_done1U {st : Hd} {pos : USize} {r : Rd} (h : ∃ g p, HRel st g p) (ht : st.tag = .clens) (h18 : ¬ st.clIdx = 18)
+    (hr5 : r.a.toNat ≤ 5) (h0 : ¬ r.a = 0) (h32 : st.clSum + ((32 : UInt64) >>> r.a) = 32) :
+    ∃ acc, ClDone { st with
+      word := r.word, count := r.count, pos := pos, status := .next
+      clLens := setLenU st.clLens (clOrderAt st.clIdx (clens_idx h ht h18)) r.a (clens_put h ht h18)
+      clSum := st.clSum + ((32 : UInt64) >>> r.a)
+      clNz := st.clNz + 1, clSym := clOrderAt st.clIdx (clens_idx h ht h18), clIdx := st.clIdx + 1 } acc := by
+  simp only [setLenU_eq, clOrderAt_eq]
+  exact clens_done1 h ht h18 hr5 h0 h32
+
 /-- The place at the next code length of a code length symbol. -/
 def stepHClens (st : Hd) (pos : USize) (h : ∃ g p, HRel st g p) (ht : st.tag = .clens) : Hd :=
   if h18 : st.clIdx = 18 then
@@ -415,11 +456,12 @@ def stepHClens (st : Hd) (pos : USize) (h : ∃ g p, HRel st g p) (ht : st.tag =
         if h32 : st.clSum + ((32 : UInt64) >>> r.a) = 32 then
           clFinish { st with
             word := r.word, count := r.count, pos := pos, status := .next
-            clLens := setLen st.clLens (getU clOrderLut st.clIdx.toUSize).toUInt64 r.a, clSum := st.clSum + ((32 : UInt64) >>> r.a)
-            clNz := st.clNz + 1, clSym := (getU clOrderLut st.clIdx.toUSize).toUInt64, clIdx := st.clIdx + 1 }
-            (clens_done1 h ht h18 hr5 h0 h32)
+            clLens := setLenU st.clLens (clOrderAt st.clIdx (clens_idx h ht h18)) r.a (clens_put h ht h18)
+            clSum := st.clSum + ((32 : UInt64) >>> r.a)
+            clNz := st.clNz + 1, clSym := clOrderAt st.clIdx (clens_idx h ht h18), clIdx := st.clIdx + 1 }
+            (clens_done1U h ht h18 hr5 h0 h32)
         else
-          let sym := (getU clOrderLut st.clIdx.toUSize).toUInt64
+          let sym := clOrderAt st.clIdx (clens_idx h ht h18)
           let sum := st.clSum + ((32 : UInt64) >>> r.a)
           if 32 < sum then markH st pos .bad
           else
@@ -427,7 +469,8 @@ def stepHClens (st : Hd) (pos : USize) (h : ∃ g p, HRel st g p) (ht : st.tag =
             let nz := st.clNz + 1
             let st0 := clearClLens st
             { st0 with
-              word := r.word, count := r.count, pos := pos, status := .next, clLens := setLen lens sym r.a, clSum := sum, clNz := nz
+              word := r.word, count := r.count, pos := pos, status := .next, clLens := setLenU lens sym r.a (clens_put h ht h18)
+              clSum := sum, clNz := nz
               clSym := sym, clIdx := st.clIdx + 1 }
 
 section
@@ -443,6 +486,7 @@ theorem stepHClens_ok {o : Owner} {size : Nat} {order : List Nat} {acc : List (N
   have hidxLe := hc.le
   unfold stepHClens
   dsimp only
+  simp only [setLenU_eq, clOrderAt_eq]
   by_cases h18 : st.clIdx = 18
   · rw [dite_eq_left h18]
     have hnil : order = [] := by

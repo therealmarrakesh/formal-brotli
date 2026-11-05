@@ -67,6 +67,12 @@ theorem LensIs.pushZero {t : ByteArray} {size : Nat} {P : List (Nat × Nat)} (h 
 /-- Sets one code length. -/
 @[inline] def setLen (t : ByteArray) (s l : UInt64) : ByteArray := setU t s.toUSize l.toUInt8
 
+/-- Sets one code length, in bounds. -/
+@[inline] def setLenU (t : ByteArray) (s l : UInt64) (h : s.toUSize.toNat < t.size) : ByteArray := t.uset s.toUSize l.toUInt8 h
+
+theorem setLenU_eq {t : ByteArray} {s l : UInt64} {h : s.toUSize.toNat < t.size} : setLenU t s l h = setLen t s l :=
+  uset_setU t s.toUSize l.toUInt8 h
+
 /-! ### A simple code -/
 
 /-- A simple code that reads: what it leaves holds the rest of the bits, and the code is the spec's reading. -/
