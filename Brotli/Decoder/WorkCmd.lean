@@ -439,22 +439,26 @@ theorem wordW_le {k : USize} {st : Cmd} {pos : USize} (hk : k.toNat ≤ 24) :
   · rw [ite_eq_right hc, dite_eq_right hc]
     split <;> omega
 
+/-- A literal step's work: three, two for each byte it adds and a round for each byte its refills take, and one for a step
+that goes on having added none: a run of literals goes on only once it has written them all. -/
 theorem literalsW_le {H : Hdr} {k : USize} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {st : Cmd} {pos : USize}
-    (hk : k.toNat ≤ 24) : stepLiteralsW H k a stop hs st pos ≤ 3 + 2 * addedW st.pend (stepLiterals H k a stop hs st pos) +
-      ((stepLiterals H k a stop hs st pos).pos.toNat - pos.toNat) := by
+    (hk : k.toNat ≤ 24) : stepLiteralsW H k a stop hs st pos ≤
+      if (stepLiterals H k a stop hs st pos).status = .next ∧ addedW st.pend (stepLiterals H k a stop hs st pos) = 0 then 1
+      else 3 + 2 * addedW st.pend (stepLiterals H k a stop hs st pos) + ((stepLiterals H k a stop hs st pos).pos.toNat - pos.toNat) := by
+  have one : ∀ (c : Prop) [Decidable c] (x y : Nat), 1 ≤ if c then 1 else 3 + 2 * x + y := fun c _ x y => by split <;> omega
   unfold addedW
   unfold stepLiteralsW stepLiterals
   by_cases h0 : st.left = 0
   · rw [ite_eq_left h0]
-    omega
+    exact one _ _ _
   rw [ite_eq_right h0, ite_eq_right h0]
   by_cases hc : st.lCount = 0
   · rw [ite_eq_left hc]
-    omega
+    exact one _ _ _
   rw [ite_eq_right hc, ite_eq_right hc]
   by_cases hr : room k st.cap ≤ st.pend
   · rw [ite_eq_left hr]
-    omega
+    exact one _ _ _
   rw [ite_eq_right hr, ite_eq_right hr]
   have h1 := room_lt hr
   have h2 := room_le (cap := st.cap) hk
@@ -463,36 +467,57 @@ theorem literalsW_le {H : Hdr} {k : USize} {a : ByteArray} {stop : USize} {hs : 
   split
   · split
     · dsimp only
+      have hs : (room k st.cap - st.pend).toNat = (room k st.cap).toNat - st.pend.toNat := room_sub' (by omega)
+      have hm1 := umin_toNat st.left (umin st.lCount (room k st.cap - st.pend).toUInt64)
+      have hm2 := umin_toNat st.lCount (room k st.cap - st.pend).toUInt64
+      have h4 : (2 : Nat) ^ 24 < 2 ^ 32 := by decide
+      rw [USize.toNat_toUInt64, hs] at hm2
+      have hl0 : st.left.toNat ≠ 0 := fun e => h0 (UInt64.toNat_inj.mp (by rw [e]; rfl))
+      have hc0 : st.lCount.toNat ≠ 0 := fun e => hc (UInt64.toNat_inj.mp (by rw [e]; rfl))
       have hrun' : (umin st.left (umin st.lCount (room k st.cap - st.pend).toUInt64)).toUSize.toNat ≤
-          (room k st.cap).toNat - st.pend.toNat := by
-        have hm1 := umin_toNat st.left (umin st.lCount (room k st.cap - st.pend).toUInt64)
-        have hm2 := umin_toNat st.lCount (room k st.cap - st.pend).toUInt64
-        have hs : (room k st.cap - st.pend).toNat = (room k st.cap).toNat - st.pend.toNat := room_sub' (by omega)
-        have h4 : (2 : Nat) ^ 24 < 2 ^ 32 := by decide
-        rw [USize.toNat_toUInt64, hs] at hm2
+          (room k st.cap).toNat - st.pend.toNat ∧ 1 ≤ (umin st.left (umin st.lCount (room k st.cap - st.pend).toUInt64)).toUSize.toNat := by
         rw [word_toUSize (by rw [hm1, hm2]; omega), hm1, hm2]
         omega
       generalize (umin st.left (umin st.lCount (room k st.cap - st.pend).toUInt64)).toUSize = run at hrun' ⊢
       have key : ∀ (W : Nat) (L : LitRun), W + 2 * L.left.toNat ≤ 2 * run.toNat + 2 + (L.pos.toNat - pos.toNat) →
           L.left.toNat ≤ run.toNat →
-          W + 1 ≤ 3 + 2 * (if (finishLiterals (clearRing st) L run (ringSize k)).status = .bad then 0
-            else (finishLiterals (clearRing st) L run (ringSize k)).pend.toNat - st.pend.toNat) +
-            ((finishLiterals (clearRing st) L run (ringSize k)).pos.toNat - pos.toNat) := by
+          W + 1 ≤ if (finishLiterals (clearRing st) L run (ringSize k)).status = .next ∧
+              (if (finishLiterals (clearRing st) L run (ringSize k)).status = .bad then 0
+                else (finishLiterals (clearRing st) L run (ringSize k)).pend.toNat - st.pend.toNat) = 0 then 1
+            else 3 + 2 * (if (finishLiterals (clearRing st) L run (ringSize k)).status = .bad then 0
+              else (finishLiterals (clearRing st) L run (ringSize k)).pend.toNat - st.pend.toNat) +
+              ((finishLiterals (clearRing st) L run (ringSize k)).pos.toNat - pos.toNat) := by
         intro W L hW hL
         have hnb : (finishLiterals (clearRing st) L run (ringSize k)).status ≠ .bad := by
           unfold finishLiterals
           dsimp only
           split <;> exact fun e => StepStatus.noConfusion e
-        rw [ite_eq_right hnb]
-        show W + 1 ≤ 3 + 2 * (((clearRing st).pend + (run - L.left)).toNat - st.pend.toNat) + (L.pos.toNat - pos.toNat)
         have hsub : (run - L.left).toNat = run.toNat - L.left.toNat := USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr hL)
-        rw [show (clearRing st).pend = st.pend from rfl, pend_add (by rw [hsub]; omega), hsub]
+        have hpe : (finishLiterals (clearRing st) L run (ringSize k)).pend.toNat - st.pend.toNat = run.toNat - L.left.toNat := by
+          show ((clearRing st).pend + (run - L.left)).toNat - st.pend.toNat = _
+          rw [show (clearRing st).pend = st.pend from rfl, pend_add (by rw [hsub]; omega), hsub]
+          omega
+        have hnx : ¬ ((finishLiterals (clearRing st) L run (ringSize k)).status = .next ∧
+            (if (finishLiterals (clearRing st) L run (ringSize k)).status = .bad then 0
+              else (finishLiterals (clearRing st) L run (ringSize k)).pend.toNat - st.pend.toNat) = 0) := by
+          rintro ⟨hn, hz⟩
+          rw [ite_eq_right hnb, hpe] at hz
+          have hst : (finishLiterals (clearRing st) L run (ringSize k)).status = if L.left = 0 then .next else .needsInput := rfl
+          rw [hst] at hn
+          by_cases hl : L.left = 0
+          · rw [hl] at hz
+            rw [show (0 : USize).toNat = 0 from rfl] at hz
+            omega
+          · rw [ite_eq_right hl] at hn
+            exact StepStatus.noConfusion hn
+        rw [ite_eq_right hnx, ite_eq_right hnb, hpe]
+        show W + 1 ≤ 3 + 2 * (run.toNat - L.left.toNat) + (L.pos.toNat - pos.toNat)
         omega
       exact key _ _ (literalRunW_le _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ rfl).1
         (literalRun_left_le _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ rfl)
     · dsimp only
-      omega
-  · omega
+      exact one _ _ _
+  · exact one _ _ _
 
 /-- The word cost a step may have: none when it goes on to anything but a word's bytes. -/
 def wordCost (t : Tag) (r : Cmd) : Nat := if r.status = .next ∧ ¬ (r.tag = .word ∧ t ≠ .word) then 0 else 80
@@ -616,7 +641,10 @@ theorem stepAtW_le {H : Hdr} {k : USize} {a : ByteArray} {stop : USize} {hs : st
   | command => dsimp only; omega
   | insertCopy => dsimp only; omega
   | copyLength => dsimp only; omega
-  | literals => have := literalsW_le (H := H) (a := a) (hs := hs) (st := st) (pos := pos) hk; dsimp only; omega
+  | literals =>
+    have := literalsW_le (H := H) (a := a) (hs := hs) (st := st) (pos := pos) hk
+    dsimp only
+    split at this <;> omega
   | distance =>
     have := distanceW_le (H := H) (pos := pos) ht
     rw [ht] at this
@@ -653,6 +681,107 @@ theorem stepCmdW_le {H : Hdr} {k : USize} {a : ByteArray} {stop : USize} {hs : s
     (pos := (refill st.word st.count a pos stop hs hp).pos) (k := k)
   dsimp only at h2 h3
   exact Nat.le_trans (Nat.add_le_add_left h2 _) (by omega)
+
+/-- What a command loop step's kind adds to its work: for literals two and two for each byte, but nothing for a step that
+goes on having added none, and for a copy or a word one for each byte. -/
+def kindW (t : Tag) (r : Cmd) (added : Nat) : Nat :=
+  match t with
+  | .literals => if r.status = .next ∧ added = 0 then 0 else 2 + 2 * added
+  | .copy => added
+  | .word => added
+  | _ => 0
+
+/-- A command loop step's work by its kind, once the buffer is refilled: one, what its kind adds, a dictionary word's
+building, and a round for each byte its literals' refills take. -/
+theorem stepAtW_kind {H : Hdr} {k : USize} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {st : Cmd} {pos : USize}
+    (hk : k.toNat ≤ 24) : stepAtW H k a stop hs st pos ≤
+      1 + (wcost st.pend st.tag (stepAt H k a stop hs st pos) - 1) +
+        kindW st.tag (stepAt H k a stop hs st pos) (addedW st.pend (stepAt H k a stop hs st pos)) +
+        ((stepAt H k a stop hs st pos).pos.toNat - pos.toNat) := by
+  unfold stepAtW stepAt
+  cases ht : st.tag with
+  | command => dsimp only; omega
+  | insertCopy => dsimp only; omega
+  | copyLength => dsimp only; omega
+  | literals =>
+    have := literalsW_le (H := H) (a := a) (hs := hs) (st := st) (pos := pos) hk
+    dsimp only [kindW]
+    split at this
+    · rename_i hc
+      rw [ite_eq_left hc]
+      omega
+    · rename_i hc
+      rw [ite_eq_right hc]
+      omega
+  | distance =>
+    have := distanceW_le (H := H) (pos := pos) ht
+    rw [ht] at this
+    dsimp only
+    unfold wcost kindW
+    rw [ite_eq_left this.2]
+    omega
+  | distanceSymbol =>
+    have := distanceSymbolW_le (H := H) (pos := pos) ht
+    rw [ht] at this
+    dsimp only
+    unfold wcost kindW
+    rw [ite_eq_left this.2]
+    omega
+  | copy => have := copyW_le (st := st) (pos := pos) hk; dsimp only [kindW]; omega
+  | word => have := wordW_le (st := st) (pos := pos) hk; dsimp only [kindW]; omega
+
+/-- A command loop step's work by its kind: the refill's, then the step's. -/
+theorem stepCmdW_kind {H : Hdr} {k : USize} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {st : Cmd} {pos : USize}
+    (hk : k.toNat ≤ 24) (hp : pos.toNat ≤ stop.toNat) (hw : (BitBuffer.mk st.word st.count).Wf) : stepCmdW H k a stop hs st pos ≤
+      2 + (wcost st.pend st.tag (stepCmd H k a stop hs st pos) - 1) +
+        kindW st.tag (stepCmd H k a stop hs st pos) (addedW st.pend (stepCmd H k a stop hs st pos)) +
+        ((stepCmd H k a stop hs st pos).pos.toNat - pos.toNat) := by
+  have hp' : pos ≤ stop := USize.le_iff_toNat_le.mpr hp
+  unfold stepCmdW stepCmd
+  rw [dite_eq_left hp', dite_eq_left hp']
+  dsimp only
+  have h1 := refillW_take (word := st.word) (count := st.count) hs hp
+  have h1' := (refill_spec hs hp hw).2.1
+  have h2 := stepAtW_kind (H := H) (a := a) (hs := hs)
+    (st := { st with word := (refill st.word st.count a pos stop hs hp).word, count := (refill st.word st.count a pos stop hs hp).count })
+    (pos := (refill st.word st.count a pos stop hs hp).pos) hk
+  have h3 := stepAt_ge (H := H) (a := a) (hs := hs)
+    (st := { st with word := (refill st.word st.count a pos stop hs hp).word, count := (refill st.word st.count a pos stop hs hp).count })
+    (pos := (refill st.word st.count a pos stop hs hp).pos) (k := k)
+  dsimp only at h2 h3
+  exact Nat.le_trans (Nat.add_le_add_left h2 _) (by omega)
+
+/-- A step, once the buffer is refilled, that is neither literals, a copy nor a word adds no byte. -/
+theorem stepAt_pend_other {H : Hdr} {k : USize} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {st : Cmd}
+    {pos : USize} (h1 : st.tag ≠ .literals) (h2 : st.tag ≠ .copy) (h3 : st.tag ≠ .word) :
+    (stepAt H k a stop hs st pos).pend = st.pend := by
+  unfold stepAt
+  cases ht : st.tag with
+  | command => exact stepCommand_pend _ _ _
+  | insertCopy =>
+    dsimp only
+    unfold stepInsertCopy insertStep markStep
+    try dsimp only
+    repeat' (first | split_all | rfl)
+  | copyLength =>
+    dsimp only
+    unfold stepCopyLength markStep
+    try dsimp only
+    repeat' (first | split_all | rfl)
+  | distance => exact (distanceW_le (H := H) (pos := pos) ht).2
+  | distanceSymbol => exact (distanceSymbolW_le (H := H) (pos := pos) ht).2
+  | literals => exact absurd ht h1
+  | copy => exact absurd ht h2
+  | word => exact absurd ht h3
+
+/-- A step that is neither literals, a copy nor a word adds no byte. -/
+theorem stepCmd_pend_other {H : Hdr} {k : USize} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {st : Cmd}
+    {pos : USize} (h1 : st.tag ≠ .literals) (h2 : st.tag ≠ .copy) (h3 : st.tag ≠ .word) :
+    (stepCmd H k a stop hs st pos).pend = st.pend := by
+  unfold stepCmd
+  split
+  · exact stepAt_pend_other h1 h2 h3
+  · rfl
 
 /-! ### Pausing for output
 
@@ -847,6 +976,367 @@ theorem reachN_zero {P E : Type} {step : P → List Bool → ORes P E} {p q : P}
     q = p ∧ b = a := by
   cases h
   exact ⟨rfl, rfl⟩
+
+/-! ### Copies and dictionary words reached without reading
+
+A copy is at least two bytes. A dictionary word reached without reading a bit has a special distance, at most three past
+the four last distances, or a direct one, at most 120, so its word offset is below 120, which selects one of the first
+four transforms: it has at least four bytes. -/
+
+/-- The transforms a word offset below 120 selects keep at least 4 bytes. -/
+private theorem tid_small : ∀ l, l < 25 → 4 ≤ l → ∀ x, x < 120 →
+    x >>> NDBITS.getD l 0 ≤ 2 ∨ (x >>> NDBITS.getD l 0 = 3 ∧ 23 ≤ l) := by decide
+
+/-- A dictionary word at most 120 past the largest backward distance has at least four bytes. -/
+theorem dictionaryWord_four {l d maxd : Nat} {word : List Nat} (h : dictionaryWord l d maxd = some word)
+    (hd : d ≤ maxd + 120) : 4 ≤ word.length := by
+  unfold dictionaryWord at h
+  split at h
+  · simp at h
+  · rename_i hlen
+    obtain ⟨t, ht, rfl⟩ := Option.map_eq_some_iff.mp h
+    have key := tid_small l (by omega) (by omega) (d - (maxd + 1)) (by omega)
+    generalize (d - (maxd + 1)) >>> NDBITS.getD l 0 = i at key ht
+    have hw : ((List.range l).map fun k => DICT (wordOffset l ((d - (maxd + 1)) % NWORDS l) + k)).length = l := by simp
+    generalize ((List.range l).map fun k => DICT (wordOffset l ((d - (maxd + 1)) % NWORDS l) + k)) = w0 at hw ⊢
+    have e0 : transforms[0]? = some ⟨"", .identity, ""⟩ := rfl
+    have e1 : transforms[1]? = some ⟨"", .identity, " "⟩ := rfl
+    have e2 : transforms[2]? = some ⟨" ", .identity, " "⟩ := rfl
+    have e3 : transforms[3]? = some ⟨"", .omitFirst 1, ""⟩ := rfl
+    have hid : ∀ p s : String, 4 ≤ (applyTransform ⟨p, .identity, s⟩ w0).length := by
+      intro p s
+      simp only [applyTransform, applyElementary, List.length_append]
+      omega
+    rcases key with hi | ⟨hi, h23⟩
+    · obtain rfl | rfl | rfl : i = 0 ∨ i = 1 ∨ i = 2 := by omega
+      · rw [e0] at ht; cases ht; exact hid _ _
+      · rw [e1] at ht; cases ht; exact hid _ _
+      · rw [e2] at ht; cases ht; exact hid _ _
+    · subst hi
+      rw [e3] at ht
+      cases ht
+      simp only [applyTransform, applyElementary, List.length_append, List.length_drop]
+      omega
+
+/-- A distance's place that is a dictionary word is the word of that distance. -/
+theorem copyPhase_wordOf {w : Nat} {s : CommandState} {clen dcode d : Nat} {s' : CommandState} {pending : List Nat}
+    (h : copyPhase w s clen dcode d = some (.word s' pending)) :
+    dictionaryWord clen d (maxBackwardDistance w s.produced) = some pending := by
+  unfold copyPhase at h
+  dsimp only at h
+  split at h
+  · obtain ⟨word, hw, h2⟩ := Option.bind_eq_some_iff.mp h
+    split at h2
+    · cases h2
+    · cases h2
+      exact hw
+  · split at h
+    · cases h
+    · cases h
+
+/-- A distance's place that is a copy is the copy of its length. -/
+theorem copyPhase_copyLen {w : Nat} {s : CommandState} {clen dcode d : Nat} {s' : CommandState} {d' n : Nat}
+    (h : copyPhase w s clen dcode d = some (.copy s' d' n)) : n = clen := by
+  unfold copyPhase at h
+  dsimp only at h
+  split at h
+  · obtain ⟨word, _, h2⟩ := Option.bind_eq_some_iff.mp h
+    split at h2
+    · cases h2
+    · cases h2
+  · split at h
+    · cases h
+    · cases h
+      rfl
+
+/-- A dictionary word reached in a step that reads and produces nothing has at least four bytes. -/
+theorem word_four {w : Nat} {m : MetaBlockHeader} (hm : m.ndirect ≤ 120) {p : Phase} {bs c : List Bool} {s : CommandState}
+    {pending : List Nat} (hi : CInv w p) (h : cStep w m p bs = .next (.word s pending) c) (hb : bs.length ≤ c.length)
+    (ho : (Phase.word s pending).out.length ≤ p.out.length) : 4 ≤ pending.length := by
+  cases p with
+  | distance s0 c0 clen =>
+    obtain ⟨hd, _⟩ := hi
+    have h' : (if s0.remaining = 0 then ORes.next (Phase.command s0) bs
+        else if implicitZeroDistance c0 then
+          lookIn (distanceOf m.npostfix m.ndirect s0.distances 0 0) fun d =>
+          lookIn (copyPhase w s0 clen 0 d) fun q => .next q bs
+        else nextIn m.distance s0.distance bs fun dist b => .next (.distanceSymbol s0 clen dist) b) =
+        .next (.word s pending) c := h
+    split at h'
+    · cases h'
+    · split at h'
+      · obtain ⟨d, e1, e2⟩ := lookIn_next' h'
+        obtain ⟨q, e3, e4⟩ := lookIn_next' e2
+        cases e4
+        have hw := copyPhase_wordOf e3
+        unfold distanceOf at e1
+        simp only [show (0 : Nat) < 16 from by decide, dite_true] at e1
+        split at e1
+        · cases e1
+        · cases e1
+          have := special_le s0.distances ⟨0, by decide⟩
+          obtain ⟨d1, d2, d3, d4⟩ := hd
+          refine dictionaryWord_four hw ?_
+          omega
+      · obtain ⟨_, _, _, e⟩ := nextIn_next' h'
+        cases e
+  | distanceSymbol s0 clen dist =>
+    obtain ⟨hd, _⟩ := hi
+    obtain ⟨index, _, h1⟩ := lookIn_next' h
+    obtain ⟨code, _, h2⟩ := lookIn_next' h1
+    obtain ⟨v, b, e1, h3⟩ := readIn_next' h2
+    obtain ⟨d, e2, h4⟩ := lookIn_next' h3
+    obtain ⟨q, e3, e4⟩ := lookIn_next' h4
+    cases e4
+    have hw := copyPhase_wordOf e3
+    unfold readDistanceParts at e1
+    obtain ⟨⟨dcode, b1⟩, e5, e6⟩ := Option.bind_eq_some_iff.mp e1
+    obtain ⟨⟨dx, b2⟩, e7, e8⟩ := Option.bind_eq_some_iff.mp e6
+    cases e8
+    have l1 := Brotli.Spec.decodeSymbol_le e5
+    have l2 := readInt_length _ _ _ _ e7
+    have hx : distanceExtraBits m.npostfix m.ndirect dcode = 0 := by omega
+    have hlt : dcode < 16 + m.ndirect := by
+      unfold distanceExtraBits at hx
+      split at hx
+      · assumption
+      · exact absurd hx (by simp)
+    obtain ⟨d1, d2, d3, d4⟩ := hd
+    refine dictionaryWord_four hw ?_
+    unfold distanceOf at e2
+    dsimp only at e2
+    split at e2
+    · rename_i h16
+      split at e2
+      · cases e2
+      · cases e2
+        have := special_le s0.distances ⟨dcode, h16⟩
+        dsimp only
+        omega
+    · cases e2
+      dsimp only
+      omega
+  | command s0 =>
+    have h' : (if s0.remaining = 0 then ORes.exit s0 bs
+        else nextIn m.insertCopy s0.insertCopy bs fun ic b => .next (Phase.insertCopy s0 ic) b) = .next (.word s pending) c := h
+    split at h'
+    · cases h'
+    · obtain ⟨_, _, _, e⟩ := nextIn_next' h'
+      cases e
+  | insertCopy s0 ic =>
+    obtain ⟨_, _, h1⟩ := lookIn_next' h
+    obtain ⟨_, _, _, e⟩ := readIn_next' h1
+    cases e
+  | copyLength s0 ic c0 ilen cb cbase =>
+    have h' : (if s0.remaining < ilen then ORes.bad
+        else readIn 24 (readInt cb) bs fun e b => .next (Phase.literals s0 ic c0 ilen (cbase + e) ilen s0.literal s0.output) b) =
+        .next (Phase.word s pending) c := h
+    split at h'
+    · cases h'
+    · obtain ⟨_, _, _, e⟩ := readIn_next' h'
+      cases e
+  | literals s0 ic c0 ilen clen n lit out =>
+    cases n with
+    | zero => cases h
+    | succ n =>
+      have h' : (if lit.count = 0 then
+          nextIn m.literal lit bs fun lit b => .next (Phase.literals s0 ic c0 ilen clen (n + 1) { lit with count := lit.count + 1 } out) b
+          else .next (Phase.literalSymbol s0 ic c0 ilen clen n { lit with count := lit.count - 1 } out) bs) =
+          .next (Phase.word s pending) c := h
+      split at h'
+      · obtain ⟨_, _, _, e⟩ := nextIn_next' h'
+        cases e
+      · cases h'
+  | literalSymbol s0 ic c0 ilen clen n lit out =>
+    obtain ⟨_, _, h1⟩ := lookIn_next' h
+    obtain ⟨_, _, h2⟩ := lookIn_next' h1
+    obtain ⟨_, _, h3⟩ := lookIn_next' h2
+    obtain ⟨_, _, _, e⟩ := readIn_next' h3
+    cases e
+  | copy s0 d n =>
+    cases n with
+    | zero => cases h
+    | succ n => cases h
+  | word s0 pend =>
+    cases pend with
+    | nil => cases h
+    | cons x r =>
+      cases h
+      simp [Phase.out] at ho
+      omega
+
+/-- A copy reached in a step that produces nothing is a command's, of at least two bytes. -/
+theorem copy_two {w : Nat} {m : MetaBlockHeader} {p : Phase} {bs c : List Bool} {s : CommandState} {d n : Nat}
+    (hi : CInv w p) (h : cStep w m p bs = .next (.copy s d n) c) (ho : (Phase.copy s d n).out.length ≤ p.out.length) :
+    2 ≤ n := by
+  cases p with
+  | distance s0 c0 clen =>
+    obtain ⟨_, h2⟩ := hi
+    have h' : (if s0.remaining = 0 then ORes.next (Phase.command s0) bs
+        else if implicitZeroDistance c0 then
+          lookIn (distanceOf m.npostfix m.ndirect s0.distances 0 0) fun d =>
+          lookIn (copyPhase w s0 clen 0 d) fun q => .next q bs
+        else nextIn m.distance s0.distance bs fun dist b => .next (.distanceSymbol s0 clen dist) b) =
+        .next (.copy s d n) c := h
+    split at h'
+    · cases h'
+    · split at h'
+      · obtain ⟨_, _, e2⟩ := lookIn_next' h'
+        obtain ⟨q, e3, e4⟩ := lookIn_next' e2
+        cases e4
+        rw [copyPhase_copyLen e3]
+        exact h2
+      · obtain ⟨_, _, _, e⟩ := nextIn_next' h'
+        cases e
+  | distanceSymbol s0 clen dist =>
+    obtain ⟨_, h2⟩ := hi
+    obtain ⟨_, _, h1⟩ := lookIn_next' h
+    obtain ⟨_, _, h2'⟩ := lookIn_next' h1
+    obtain ⟨_, _, _, h3⟩ := readIn_next' h2'
+    obtain ⟨_, _, h4⟩ := lookIn_next' h3
+    obtain ⟨q, e3, e4⟩ := lookIn_next' h4
+    cases e4
+    rw [copyPhase_copyLen e3]
+    exact h2
+  | command s0 =>
+    have h' : (if s0.remaining = 0 then ORes.exit s0 bs
+        else nextIn m.insertCopy s0.insertCopy bs fun ic b => .next (Phase.insertCopy s0 ic) b) = .next (.copy s d n) c := h
+    split at h'
+    · cases h'
+    · obtain ⟨_, _, _, e⟩ := nextIn_next' h'
+      cases e
+  | insertCopy s0 ic =>
+    obtain ⟨_, _, h1⟩ := lookIn_next' h
+    obtain ⟨_, _, _, e⟩ := readIn_next' h1
+    cases e
+  | copyLength s0 ic c0 ilen cb cbase =>
+    have h' : (if s0.remaining < ilen then ORes.bad
+        else readIn 24 (readInt cb) bs fun e b => .next (Phase.literals s0 ic c0 ilen (cbase + e) ilen s0.literal s0.output) b) =
+        .next (Phase.copy s d n) c := h
+    split at h'
+    · cases h'
+    · obtain ⟨_, _, _, e⟩ := readIn_next' h'
+      cases e
+  | literals s0 ic c0 ilen clen k lit out =>
+    cases k with
+    | zero => cases h
+    | succ k =>
+      have h' : (if lit.count = 0 then
+          nextIn m.literal lit bs fun lit b => .next (Phase.literals s0 ic c0 ilen clen (k + 1) { lit with count := lit.count + 1 } out) b
+          else .next (Phase.literalSymbol s0 ic c0 ilen clen k { lit with count := lit.count - 1 } out) bs) =
+          .next (Phase.copy s d n) c := h
+      split at h'
+      · obtain ⟨_, _, _, e⟩ := nextIn_next' h'
+        cases e
+      · cases h'
+  | literalSymbol s0 ic c0 ilen clen k lit out =>
+    obtain ⟨_, _, h1⟩ := lookIn_next' h
+    obtain ⟨_, _, h2⟩ := lookIn_next' h1
+    obtain ⟨_, _, h3⟩ := lookIn_next' h2
+    obtain ⟨_, _, _, e⟩ := readIn_next' h3
+    cases e
+  | copy s0 d0 k =>
+    cases k with
+    | zero => cases h
+    | succ k =>
+      cases h
+      simp [Phase.out] at ho
+      omega
+  | word s0 pend =>
+    cases pend with
+    | nil => cases h
+    | cons x r => cases h
+
+/-- The bits and bytes of a run of the commands read in order, and its first step's. -/
+private theorem reach_first {w : Nat} {m : MetaBlockHeader} (hm : m.ndirect ≤ 120) {n : Nat} {p p' q : Phase}
+    {bs bs' c : List Bool} (hi : CInv w p) (hs : cStep w m p bs = .next p' bs') (hr : ReachN (cStep w m) n p' bs' q c) :
+    CInv w p' ∧ c.length ≤ bs'.length ∧ bs'.length ≤ bs.length ∧ p.out.length ≤ p'.out.length ∧ p'.out.length ≤ q.out.length := by
+  obtain ⟨hi', ⟨l, hl⟩, _⟩ := cStep_rank hm hi hs
+  obtain ⟨-, c1, c2, -, -⟩ := creach hm hr hi'
+  have hs' : sStep (.cmds w false m p) bs = .next (.cmds w false m p') bs' := by simp only [sStep, hs]
+  obtain ⟨u, hu, _⟩ := nfaith_sStep _ bs _ bs' hs'
+  have hb' : bs'.length + u.length = bs.length := by rw [hu, List.length_append]; omega
+  have ho' : p'.out.length = l.length + p.out.length := by rw [hl, List.length_append]
+  exact ⟨hi', c1, by omega, by omega, c2⟩
+
+/-- A run that reads and produces nothing, ending at a dictionary word, ends at one of at least four bytes. -/
+theorem reach_word_four {w : Nat} {m : MetaBlockHeader} (hm : m.ndirect ≤ 120) : ∀ {n : Nat} {p : Phase} {bs : List Bool}
+    {q : Phase} {c : List Bool}, ReachN (cStep w m) n p bs q c → CInv w p → 1 ≤ n → bs.length ≤ c.length →
+      q.out.length ≤ p.out.length → ∀ s pending, q = .word s pending → 4 ≤ pending.length := by
+  intro n p bs q c h
+  induction h with
+  | refl => intro _ h1; omega
+  | @next n p bs p' bs' q c hs hr ih =>
+    intro hi _ hb ho s pending hq
+    obtain ⟨hi', c1, c2, c3, c4⟩ := reach_first hm hi hs hr
+    cases n with
+    | zero =>
+      cases hr
+      subst hq
+      exact word_four hm hi hs (by omega) (by omega)
+    | succ n => exact ih hi' (by omega) (by omega) (by omega) s pending hq
+
+/-- A run that reads and produces nothing, ending at a copy, ends at a command's copy, of at least two bytes. -/
+theorem reach_copy_two {w : Nat} {m : MetaBlockHeader} (hm : m.ndirect ≤ 120) : ∀ {n : Nat} {p : Phase} {bs : List Bool}
+    {q : Phase} {c : List Bool}, ReachN (cStep w m) n p bs q c → CInv w p → 1 ≤ n → bs.length ≤ c.length →
+      q.out.length ≤ p.out.length → ∀ s d k, q = .copy s d k → 2 ≤ k := by
+  intro n p bs q c h
+  induction h with
+  | refl => intro _ h1; omega
+  | @next n p bs p' bs' q c hs hr ih =>
+    intro hi _ hb ho s d k hq
+    obtain ⟨hi', c1, c2, c3, c4⟩ := reach_first hm hi hs hr
+    cases n with
+    | zero =>
+      cases hr
+      subst hq
+      exact copy_two hi hs (by omega)
+    | succ n => exact ih hi' (by omega) (by omega) (by omega) s d k hq
+
+/-- A run from a copy that produces fewer bytes than the copy has left stays in the copy. -/
+theorem reach_copy_left {w : Nat} {m : MetaBlockHeader} (hm : m.ndirect ≤ 120) : ∀ {N : Nat} {p : Phase} {bs : List Bool}
+    {q : Phase} {c : List Bool}, ReachN (cStep w m) N p bs q c → CInv w p → ∀ s d n, p = .copy s d n →
+      q.out.length < p.out.length + n → ∃ s', q = .copy s' d (n - (q.out.length - p.out.length)) := by
+  intro N p bs q c h
+  induction h with
+  | refl => intro _ s d n hp _; exact ⟨s, by rw [hp, Nat.sub_self, Nat.sub_zero]⟩
+  | @next N p bs p' bs' q c hs hr ih =>
+    intro hi s d n hp hlt
+    obtain ⟨hi', c1, c2, c3, c4⟩ := reach_first hm hi hs hr
+    subst hp
+    cases n with
+    | zero => omega
+    | succ n =>
+      cases hs
+      have hl : (Phase.copy { s with output := s.output.getD (d - 1) 0 :: s.output } d n).out.length =
+          (Phase.copy s d (n + 1)).out.length + 1 := by simp [Phase.out]
+      obtain ⟨s', e⟩ := ih hi' _ d n rfl (by omega)
+      have hk : n - (q.out.length - (Phase.copy { s with output := s.output.getD (d - 1) 0 :: s.output } d n).out.length) =
+          n + 1 - (q.out.length - (Phase.copy s d (n + 1)).out.length) := by omega
+      exact ⟨s', by rw [← hk]; exact e⟩
+
+/-- A run from a dictionary word that produces fewer bytes than the word has left stays in the word. -/
+theorem reach_word_left {w : Nat} {m : MetaBlockHeader} (hm : m.ndirect ≤ 120) : ∀ {N : Nat} {p : Phase} {bs : List Bool}
+    {q : Phase} {c : List Bool}, ReachN (cStep w m) N p bs q c → CInv w p → ∀ s pending, p = .word s pending →
+      q.out.length < p.out.length + pending.length →
+      ∃ s' rest, q = .word s' rest ∧ rest.length = pending.length - (q.out.length - p.out.length) := by
+  intro N p bs q c h
+  induction h with
+  | refl => intro _ s pending hp _; exact ⟨s, pending, hp, by omega⟩
+  | @next N p bs p' bs' q c hs hr ih =>
+    intro hi s pending hp hlt
+    obtain ⟨hi', c1, c2, c3, c4⟩ := reach_first hm hi hs hr
+    subst hp
+    cases pending with
+    | nil => simp at hlt; omega
+    | cons x rest =>
+      cases hs
+      have hl : (Phase.word { s with output := x :: s.output } rest).out.length = (Phase.word s (x :: rest)).out.length + 1 := by
+        simp [Phase.out]
+      obtain ⟨s', r', e, hr'⟩ := ih hi' _ rest rfl (by simp at hlt; omega)
+      refine ⟨s', r', e, ?_⟩
+      simp only [List.length_cons]
+      omega
 
 theorem Rel.k24 {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {p : Phase} (h : Rel w k m st p) : k ≤ 24 := by
   cases p
