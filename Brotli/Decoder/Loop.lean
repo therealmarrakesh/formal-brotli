@@ -342,7 +342,7 @@ structure Flushed where
   buf : ByteArray
 
 /-- Adds up to `space` bytes waiting in the window to the caller's buffer, stopping where the ring wraps. -/
-def flushCmd (k : USize) (st : Cmd) (buf : ByteArray) (space : USize) : Flushed :=
+@[inline] def flushCmd (k : USize) (st : Cmd) (buf : ByteArray) (space : USize) : Flushed :=
   if st.pend = 0 ∨ space = 0 then ⟨st, buf⟩
   else
     let start := ringBack st.wpos st.pend (ringMask k) (ringSize k)

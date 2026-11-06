@@ -515,7 +515,7 @@ structure Out where
 
 /-- The stream's end: any bits past the fill bits are rejected, and with none, it ends here if the caller says so. A byte
 past the end is rejected as used, since it decides the rejection. -/
-def endCheck (D : Dec) (stop : USize) (final : Bool) (buf : ByteArray) : Out :=
+@[inline] def endCheck (D : Dec) (stop : USize) (final : Bool) (buf : ByteArray) : Out :=
   let c := D.cmd
   let b : BitBuffer := ⟨c.word, c.count⟩
   let k := c.count &&& 7
@@ -529,7 +529,7 @@ def endCheck (D : Dec) (stop : USize) (final : Bool) (buf : ByteArray) : Out :=
 
 /-- What a call does with what the loop left, unless that needs more room. A rejection or the limit reports the input as
 used up to where the loop decided it; a rejection hands out the bytes waiting first, as many as there is room for. -/
-def afterRun (r : Dec) (stop : USize) (final : Bool) (buf : ByteArray) (space : Nat) : Out :=
+@[inline] def afterRun (r : Dec) (stop : USize) (final : Bool) (buf : ByteArray) (space : Nat) : Out :=
   match r.status with
   | .bad =>
     let f := flushD r buf space
