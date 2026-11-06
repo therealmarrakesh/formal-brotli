@@ -60,7 +60,7 @@ private theorem usize_add {p : USize} {n : Nat} (hn : n < 2 ^ 32) (h : p.toNat +
     rw [usize_add (by omega) (by omega)]
     omega)
 
-private theorem byteAt_eq {a : ByteArray} {i : USize} {k : Nat} {hk : k < 8} {h8 : i.toNat + 8 ≤ a.size}
+theorem byteAt_eq {a : ByteArray} {i : USize} {k : Nat} {hk : k < 8} {h8 : i.toNat + 8 ≤ a.size}
     {hu : i.toNat + 8 ≤ USize.size} :
     byteAt a i k hk h8 hu = a.data[i.toNat + k]'(by have : a.size = a.data.size := rfl; omega) := by
   have hi : (i + USize.ofNat k).toNat = i.toNat + k := usize_add (by omega) (by omega)

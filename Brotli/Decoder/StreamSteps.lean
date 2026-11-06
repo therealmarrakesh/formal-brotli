@@ -2,6 +2,7 @@ module
 
 public import Brotli.Decoder.StreamCmds
 public import Brotli.Decoder.StreamStart
+public import Brotli.Decoder.RawFast
 
 @[expose] public section
 

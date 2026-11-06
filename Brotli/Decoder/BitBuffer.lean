@@ -112,7 +112,7 @@ theorem BitBuffer.empty_held : BitBuffer.empty.held = [] := rfl
 @[inline] def BitBuffer.push (b : BitBuffer) (x : UInt8) : BitBuffer :=
   ⟨b.word ||| (x.toUInt64 <<< b.count), b.count + 8⟩
 
-private theorem push_word {b : BitBuffer} {x : UInt8} (hw : b.Wf) (hc : b.count.toNat ≤ 56) :
+theorem push_word {b : BitBuffer} {x : UInt8} (hw : b.Wf) (hc : b.count.toNat ≤ 56) :
     (b.push x).word.toNat = b.word.toNat + 2 ^ b.count.toNat * x.toNat := by
   have hx : x.toNat < 256 := x.toNat_lt
   have hlt : b.count.toNat < 64 := by omega
