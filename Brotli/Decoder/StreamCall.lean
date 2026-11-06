@@ -5,6 +5,7 @@ public import Brotli.Decoder.StreamOut
 public import Brotli.Decoder.HeaderDone
 public import Brotli.Decoder.StreamSteps
 public import Brotli.Decoder.StreamRun
+public import Brotli.Decoder.StreamRunF
 
 @[expose] public section
 
