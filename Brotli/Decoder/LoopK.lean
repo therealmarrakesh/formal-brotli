@@ -148,6 +148,104 @@ theorem literalRunC_eq (cell : RunOut) {nTrees : Nat} {arena litBase lMap : Byte
   literalRunC_eq' cell C a stop hs mapBase modeOff mask k hmb hm hd hmask hk _ n word count pos wpos ring p1 p2 hp hw
     hsize hwp rfl
 
+/-- `literalRunT`, building its result in `cell`. -/
+def literalRunCT (cell : RunOut) (arena : ByteArray) (h32 : arena.size < 2 ^ 32) (base : USize)
+    (hfit : TableFits arena base.toNat) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (mask : USize) (k : Nat)
+    (hmask : mask.toNat = 2 ^ k - 1) (n : USize) (word count : UInt64) (pos wpos : USize) (ring : ByteArray) (p1 p2 : UInt8)
+    (hp : pos.toNat ≤ stop.toNat) (hw : (BitBuffer.mk word count).Wf) (hsize : ring.size = 2 ^ k)
+    (hwp : wpos.toNat < 2 ^ k) : RunOut :=
+  if hn : n = 0 then
+    { cell with word := word, count := count, pos := pos, wpos := wpos, ring := ring, p1 := p1, p2 := p2, left := 0 }
+  else
+    let r := refill word count a pos stop hs hp
+    let rw := r.word
+    let rc := r.count
+    let rp := r.pos
+    have hspec := refill_spec hs hp hw
+    let v := lookup arena base rw hfit h32
+    let l := v &&& 15
+    if hl : l ≤ rc then
+      let byte := (v >>> 4).toUInt8
+      have hl63 : l.toNat < 64 := by
+        have : (v &&& 15).toNat = v.toNat % 16 := by
+          rw [UInt64.toNat_and]
+          exact Nat.and_two_pow_sub_one_eq_mod v.toNat 4
+        show (v &&& 15).toNat < 64
+        omega
+      have hr : wpos.toNat < ring.size := by omega
+      let ring' := ringWrite ring wpos byte hr
+      have hsize' : ring'.size = 2 ^ k := (size_ringWrite ring wpos byte hr).trans hsize
+      have hnext : (ringNext wpos mask).toNat < 2 ^ k := by
+        unfold ringNext
+        rw [USize.toNat_and, hmask, Nat.and_two_pow_sub_one_eq_mod]
+        exact Nat.mod_lt _ (Nat.two_pow_pos _)
+      let b := (BitBuffer.mk rw rc).drop l
+      literalRunCT cell arena h32 base hfit a stop hs mask k hmask (n - USize.ofNat 1) b.word b.count rp (ringNext wpos mask)
+        ring' byte p1 hspec.2.2.1 (BitBuffer.drop_wf hspec.1 hl63 (UInt64.le_iff_toNat_le.mp hl)) hsize' hnext
+    else { cell with word := rw, count := rc, pos := rp, wpos := wpos, ring := ring, p1 := p1, p2 := p2, left := n }
+termination_by n.toNat
+decreasing_by
+  have := usize_pred hn
+  have := usize_ne hn
+  omega
+
+theorem literalRunCT_eq' (cell : RunOut) (arena : ByteArray) (h32 : arena.size < 2 ^ 32) (base : USize)
+    (hfit : TableFits arena base.toNat) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (mask : USize) (k : Nat)
+    (hmask : mask.toNat = 2 ^ k - 1) :
+    ∀ (N : Nat) (n : USize) (word count : UInt64) (pos wpos : USize) (ring : ByteArray) (p1 p2 : UInt8)
+      (hp : pos.toNat ≤ stop.toNat) (hw : (BitBuffer.mk word count).Wf) (hsize : ring.size = 2 ^ k)
+      (hwp : wpos.toNat < 2 ^ k), n.toNat = N →
+      literalRunCT cell arena h32 base hfit a stop hs mask k hmask n word count pos wpos ring p1 p2 hp hw hsize hwp =
+        litInto cell (literalRunT arena h32 base hfit a stop hs mask k hmask n word count pos wpos ring p1 p2 hp hw hsize
+          hwp) := by
+  intro N
+  induction N with
+  | zero =>
+    intro n word count pos wpos ring p1 p2 hp hw hsize hwp hN
+    have hn : n = 0 := usize_zero hN
+    rw [literalRunCT, literalRunT, dite_eq_left hn, dite_eq_left hn]
+    rfl
+  | succ N ih =>
+    intro n word count pos wpos ring p1 p2 hp hw hsize hwp hN
+    have hn : n ≠ 0 := fun e => by rw [e] at hN; exact Nat.succ_ne_zero _ hN.symm
+    rw [literalRunCT, literalRunT, dite_eq_right hn, dite_eq_right hn]
+    dsimp only
+    -- one `split` takes both sides' test, which is the same term
+    split
+    · apply ih
+      rw [usize_pred hn]
+      omega
+    · rfl
+
+/-- The literal run on a record for block type `t`, selected as `literalRunS` selects. -/
+@[inline] def literalRunCS (cell : RunOut) (H : Hdr) (t : UInt64) (ht : t.toNat < H.nL.toNat) (a : ByteArray)
+    (stop : USize) (hs : stop.toNat ≤ a.size) (modeOff mask : USize) (k : Nat) (hm : modeOff.toNat + 512 ≤ 2048)
+    (hd : modeOff.toNat % 512 = 0) (hmask : mask.toNat = 2 ^ k - 1) (hk : k ≤ 24) (n : USize) (word count : UInt64)
+    (pos wpos : USize) (ring : ByteArray) (p1 p2 : UInt8) (hp : pos.toNat ≤ stop.toNat) (hw : (BitBuffer.mk word count).Wf)
+    (hsize : ring.size = 2 ^ k) (hwp : wpos.toNat < 2 ^ k) : RunOut :=
+  if hb : trivBase H t ht = 4294967295 then
+    literalRunC cell H.lit a stop hs (t <<< 6).toUSize modeOff mask k (mapBase_le ht) hm hd hmask hk n word count pos wpos
+      ring p1 p2 hp hw hsize hwp
+  else
+    literalRunCT cell H.arena H.lit.arena32 (trivBase H t ht).toUSize (trivBase_spec ht hb).1 a stop hs mask k hmask n word
+      count pos wpos ring p1 p2 hp hw hsize hwp
+
+/-- The selected run on a record is the selected run, with the record's spare field kept. -/
+theorem literalRunCS_eq (cell : RunOut) (H : Hdr) (t : UInt64) (ht : t.toNat < H.nL.toNat) (a : ByteArray)
+    (stop : USize) (hs : stop.toNat ≤ a.size) (modeOff mask : USize) (k : Nat) (hm : modeOff.toNat + 512 ≤ 2048)
+    (hd : modeOff.toNat % 512 = 0) (hmask : mask.toNat = 2 ^ k - 1) (hk : k ≤ 24) (n : USize) (word count : UInt64)
+    (pos wpos : USize) (ring : ByteArray) (p1 p2 : UInt8) (hp : pos.toNat ≤ stop.toNat) (hw : (BitBuffer.mk word count).Wf)
+    (hsize : ring.size = 2 ^ k) (hwp : wpos.toNat < 2 ^ k) :
+    literalRunCS cell H t ht a stop hs modeOff mask k hm hd hmask hk n word count pos wpos ring p1 p2 hp hw hsize hwp =
+      litInto cell (literalRunS H t ht a stop hs modeOff mask k hm hd hmask hk n word count pos wpos ring p1 p2 hp hw hsize
+        hwp) := by
+  unfold literalRunCS literalRunS
+  by_cases hb : trivBase H t ht = 4294967295
+  · rw [dite_eq_left hb, dite_eq_left hb]
+    exact literalRunC_eq _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+  · rw [dite_eq_right hb, dite_eq_right hb]
+    exact literalRunCT_eq' _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ rfl
+
 /-- What a literal run on a record leaves: the window's size, the write position in it, the bits well formed and the
 position within the chunk. -/
 def LitInvC (k : Nat) (stop : USize) (r : RunOut) : Prop :=
@@ -164,6 +262,16 @@ theorem literalRunC_inv (cell : RunOut) {nTrees : Nat} {arena litBase lMap : Byt
   rw [literalRunC_eq]
   exact literalRun_inv C a stop hs mapBase modeOff mask k hmb hm hd hmask hk n word count pos wpos ring p1 p2 hp hw hsize
     hwp
+
+theorem literalRunCS_inv (cell : RunOut) (H : Hdr) (t : UInt64) (ht : t.toNat < H.nL.toNat) (a : ByteArray)
+    (stop : USize) (hs : stop.toNat ≤ a.size) (modeOff mask : USize) (k : Nat) (hm : modeOff.toNat + 512 ≤ 2048)
+    (hd : modeOff.toNat % 512 = 0) (hmask : mask.toNat = 2 ^ k - 1) (hk : k ≤ 24) (n : USize) (word count : UInt64)
+    (pos wpos : USize) (ring : ByteArray) (p1 p2 : UInt8) (hp : pos.toNat ≤ stop.toNat) (hw : (BitBuffer.mk word count).Wf)
+    (hsize : ring.size = 2 ^ k) (hwp : wpos.toNat < 2 ^ k) :
+    LitInvC k stop (literalRunCS cell H t ht a stop hs modeOff mask k hm hd hmask hk n word count pos wpos ring p1 p2 hp hw
+      hsize hwp) := by
+  rw [literalRunCS_eq, literalRunS_eq]
+  exact literalRun_inv H.lit a stop hs _ modeOff mask k _ hm hd hmask hk n word count pos wpos ring p1 p2 hp hw hsize hwp
 
 /-- The command state from its fields. -/
 def mkCmd (word count : UInt64) (ring : ByteArray) (wpos pend cap written : USize) (p1 p2 : UInt8)
@@ -351,12 +459,8 @@ def kcase {α : Type} (cont : KCont α) (exit : Cmd → α) (r : Cmd) : α :=
           exact ht'
         have hmLt := H.modesLt _ hm
         let run := (umin left (umin lCount (room k cap - pend).toUInt64)).toUSize
-        let r := literalRunC cell H.lit a stop hs (lCur <<< 6).toUSize
-          ((H.modes.uget lCur.toUSize hm).toUInt64 <<< 9).toUSize
+        let r := literalRunCS cell H lCur ht' a stop hs ((H.modes.uget lCur.toUSize hm).toUInt64 <<< 9).toUSize
           (ringMask k) k.toNat
-          (by
-            rw [mapBase_toNat ht', H.lMapSize]
-            omega)
           (by
             rw [modeOff_toNat hmLt]
             omega)
@@ -364,11 +468,8 @@ def kcase {α : Type} (cont : KCont α) (exit : Cmd → α) (r : Cmd) : α :=
             rw [modeOff_toNat hmLt]
             omega)
           (ringMask_toNat hr.k24) hr.k24 run w c p wpos ring p1 p2 hr.pos hr.wf hr.size hr.wpos
-        have hri := literalRunC_inv cell H.lit a stop hs (lCur <<< 6).toUSize
-          ((H.modes.uget lCur.toUSize hm).toUInt64 <<< 9).toUSize (ringMask k) k.toNat
-          (by
-            rw [mapBase_toNat ht', H.lMapSize]
-            omega)
+        have hri := literalRunCS_inv cell H lCur ht' a stop hs ((H.modes.uget lCur.toUSize hm).toUInt64 <<< 9).toUSize
+          (ringMask k) k.toNat
           (by
             rw [modeOff_toNat hmLt]
             omega)
@@ -670,7 +771,7 @@ theorem kstep_literals (hcont : Drops H k stop contC g)
   have hwf : ∀ hq, wfCheck (refill word count a pos stop hs hq).word (refill word count a pos stop hs hq).count = true :=
     fun hq => wfCheck_of_wf (refill_spec hs hq hinv.wf).1
   simp only [mkCmd, stepAt, stepLiterals, literalsRun, finishLiterals, clearRing, markStep, Cmd.lCur, Cmd.lPrev,
-    literalRunC_eq, litInto, hL, hwin, hp', hwf, and_self, ↓reduceDIte]
+    literalRunCS_eq, litInto, hL, hwin, hp', hwf, and_self, ↓reduceDIte]
   ksplit
 
 theorem kstep_distance (hcont : Drops H k stop contC g)

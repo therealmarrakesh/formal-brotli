@@ -17,6 +17,7 @@ public import Brotli.Decoder.Window
 public import Brotli.Decoder.ContextLut
 public import Brotli.Decoder.Fixed
 public import Brotli.Decoder.Literals
+public import Brotli.Decoder.LitTriv
 public import Brotli.Decoder.Reader
 public import Brotli.Decoder.Block
 public import Brotli.Decoder.SmallRead

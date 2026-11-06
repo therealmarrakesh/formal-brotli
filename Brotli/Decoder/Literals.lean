@@ -128,6 +128,107 @@ decreasing_by
   have := usize_ne hn
   omega
 
+/-! ### A block type whose contexts share one table
+
+When all 64 context-map entries of the block type name tables at the same base, the loop needs neither the context ID
+nor the map nor the table bases. `literalRunT` is `literalRun` for that case, given the base; it still keeps the last
+two bytes, which the next block type may need. `literalRunT_eq` proves the two equal. -/
+
+/-- `literalRun` with every literal's table at `base`. -/
+def literalRunT (arena : ByteArray) (h32 : arena.size < 2 ^ 32) (base : USize) (hfit : TableFits arena base.toNat)
+    (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (mask : USize) (k : Nat) (hmask : mask.toNat = 2 ^ k - 1)
+    (n : USize) (word count : UInt64) (pos wpos : USize) (ring : ByteArray) (p1 p2 : UInt8) (hp : pos.toNat ≤ stop.toNat)
+    (hw : (BitBuffer.mk word count).Wf) (hsize : ring.size = 2 ^ k) (hwp : wpos.toNat < 2 ^ k) : LitRun :=
+  if hn : n = 0 then ⟨word, count, pos, wpos, ring, p1, p2, 0⟩
+  else
+    let r := refill word count a pos stop hs hp
+    let rw := r.word
+    let rc := r.count
+    let rp := r.pos
+    have hspec := refill_spec hs hp hw
+    let v := lookup arena base rw hfit h32
+    let l := v &&& 15
+    if hl : l ≤ rc then
+      let byte := (v >>> 4).toUInt8
+      have hl63 : l.toNat < 64 := by
+        have : (v &&& 15).toNat = v.toNat % 16 := by
+          rw [UInt64.toNat_and]
+          exact Nat.and_two_pow_sub_one_eq_mod v.toNat 4
+        show (v &&& 15).toNat < 64
+        omega
+      have hr : wpos.toNat < ring.size := by omega
+      let ring' := ringWrite ring wpos byte hr
+      have hsize' : ring'.size = 2 ^ k := (size_ringWrite ring wpos byte hr).trans hsize
+      have hnext : (ringNext wpos mask).toNat < 2 ^ k := by
+        unfold ringNext
+        rw [USize.toNat_and, hmask, Nat.and_two_pow_sub_one_eq_mod]
+        exact Nat.mod_lt _ (Nat.two_pow_pos _)
+      let b := (BitBuffer.mk rw rc).drop l
+      literalRunT arena h32 base hfit a stop hs mask k hmask (n - USize.ofNat 1) b.word b.count rp (ringNext wpos mask) ring'
+        byte p1 hspec.2.2.1 (BitBuffer.drop_wf hspec.1 hl63 (UInt64.le_iff_toNat_le.mp hl)) hsize' hnext
+    else ⟨rw, rc, rp, wpos, ring, p1, p2, n⟩
+termination_by n.toNat
+decreasing_by
+  have := usize_pred hn
+  have := usize_ne hn
+  omega
+
+/-- A lookup at a tree's base is the lookup at any base equal to it. -/
+theorem lookup_treeBase {arena litBase : ByteArray} {tree : UInt8} {base : USize} (h2 : TableFits arena base.toNat)
+    (e : u32At litBase tree.toNat = base.toNat) {hb : 4 * tree.toNat + 4 ≤ litBase.size}
+    {hb32 : litBase.size < 2 ^ 32} {h1 : TableFits arena (treeBase litBase tree hb hb32).toNat} {w : UInt64}
+    {h32 : arena.size < 2 ^ 32} :
+    lookup arena (treeBase litBase tree hb hb32) w h1 h32 = lookup arena base w h2 h32 := by
+  have : treeBase litBase tree hb hb32 = base := USize.toNat_inj.mp (by rw [treeBase_toNat]; exact e)
+  subst this
+  rfl
+
+theorem uget_lit (t : ByteArray) (i : USize) (h : i.toNat < t.size) :
+    (t.uget i h).toNat = (t.data[i.toNat]?.getD 0).toNat := by
+  cases t with
+  | mk bs =>
+    have h' : i.toNat < bs.size := h
+    simp [ByteArray.uget, h']
+
+/-- With every context's table at `base`, the loop that skips the context is the loop. -/
+theorem literalRunT_eq {nTrees : Nat} {arena litBase lMap : ByteArray} (C : LitChecked arena litBase lMap nTrees)
+    (base : USize) (hfit : TableFits arena base.toNat) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size)
+    (mapBase modeOff mask : USize) (k : Nat) (hmb : mapBase.toNat + 64 ≤ lMap.size) (hm : modeOff.toNat + 512 ≤ 2048)
+    (hd : modeOff.toNat % 512 = 0) (hmask : mask.toNat = 2 ^ k - 1) (hk : k ≤ 24)
+    (hT : ∀ c, c < 64 → u32At litBase (lMap.data[mapBase.toNat + c]?.getD 0).toNat = base.toNat) :
+    ∀ (N : Nat) (n : USize) (word count : UInt64) (pos wpos : USize) (ring : ByteArray) (p1 p2 : UInt8)
+      (hp : pos.toNat ≤ stop.toNat) (hw : (BitBuffer.mk word count).Wf) (hsize : ring.size = 2 ^ k)
+      (hwp : wpos.toNat < 2 ^ k), n.toNat = N →
+      literalRunT arena C.arena32 base hfit a stop hs mask k hmask n word count pos wpos ring p1 p2 hp hw hsize hwp =
+        literalRun C a stop hs mapBase modeOff mask k hmb hm hd hmask hk n word count pos wpos ring p1 p2 hp hw hsize hwp := by
+  intro N
+  induction N with
+  | zero =>
+    intro n word count pos wpos ring p1 p2 hp hw hsize hwp hN
+    have hn : n = 0 := usize_zero hN
+    rw [literalRunT, literalRun, dite_eq_left hn, dite_eq_left hn]
+  | succ N ih =>
+    intro n word count pos wpos ring p1 p2 hp hw hsize hwp hN
+    have hn : n ≠ 0 := fun e => by rw [e] at hN; exact Nat.succ_ne_zero _ hN.symm
+    rw [literalRunT, literalRun, dite_eq_right hn, dite_eq_right hn]
+    dsimp only
+    have hcid := cid_lt (p1 := p1) (p2 := p2) hm hd
+    have hidx : (mapIndex mapBase (cidFast modeOff p1 p2 hm)).toNat = mapBase.toNat + (cidFast modeOff p1 p2 hm).toNat :=
+      mapIndex_toNat (by have := C.map32; omega)
+    have hi : (mapIndex mapBase (cidFast modeOff p1 p2 hm)).toNat < lMap.size := by
+      rw [hidx]
+      omega
+    have e : u32At litBase (lMap.uget (mapIndex mapBase (cidFast modeOff p1 p2 hm)) hi).toNat = base.toNat := by
+      rw [uget_lit, hidx]
+      exact hT _ hcid
+    simp only [lookup_treeBase hfit e]
+    -- one `split` takes both sides' test, which is now the same term
+    split
+    · apply ih
+      rw [usize_pred hn]
+      omega
+    · rfl
+
 /-! ### What the loop does -/
 
 /-- The literal tables match the spec's header: the map's bytes are its context map, and each tree's table decodes

@@ -133,6 +133,9 @@ def Hdr.none : Hdr where
   swL := fun h => absurd h (by decide)
   swI := fun h => absurd h (by decide)
   swD := fun h => absurd h (by decide)
+  lTriv := ByteArray.empty
+  trivSize := rfl
+  trivOk := fun _ h => (Nat.not_lt_zero _ h).elim
 
 /-- The whole decoder's state between steps. -/
 structure Dec where

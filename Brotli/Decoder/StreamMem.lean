@@ -300,7 +300,8 @@ def Hd.holds (h : Hd) : Nat := h.d.holds + h.fill.size + h.head.size + h.next.si
   h.xf.size + h.mtf.size + h.seenR.size + h.seenX.size
 
 /-- The bytes a meta-block's fast header holds: its arena's reservation, and its arrays. -/
-def Hdr.holds (H : Hdr) : Nat := H.arenaCap.toNat + H.litBase.size + H.lMap.size + H.icBase.size + H.dBase.size + H.dMap.size + H.modes.size
+def Hdr.holds (H : Hdr) : Nat := H.arenaCap.toNat + H.litBase.size + H.lMap.size + H.icBase.size + H.dBase.size + H.dMap.size + H.modes.size +
+  H.lTriv.size
 
 /-- The bytes a state holds, and a constant for its fields. -/
 def Dec.holds (D : Dec) : Nat := D.cmd.ring.size + D.cmd.wordBuf.size + D.hd.holds + D.H.holds + fieldBytes
@@ -313,6 +314,13 @@ structure HSmall (H : Hdr) : Prop where
   dBase : H.dBase.size ≤ 1024
   dMap : H.dMap.size ≤ 1024
   modes : H.modes.size ≤ 256
+  lTriv : H.lTriv.size ≤ 1024
+
+/-- A fast header's shared table bases: 4 bytes for each literal block type, of which there are at most 256. -/
+theorem triv_le {H : Hdr} (h : H.lMap.size ≤ 16384) : H.lTriv.size ≤ 1024 := by
+  have := H.trivSize
+  have := H.lMapSize
+  omega
 
 /-- Why a stream's memory limit was reached: `L` is below what it needs, and not because it was clipped. -/
 def MemWhy (Ws : Option Nat) (X L : Nat) : Prop := L < Ws.elim 0 (· + 16) + X ∧ L < 4294958407
@@ -400,9 +408,10 @@ theorem MemD.holds_le {Ws : Option Nat} {X L : Nat} {D : Dec} {B : List Bool} (M
   have b4 := M.H.dBase
   have b5 := M.H.dMap
   have b6 := M.H.modes
+  have b7 := M.H.lTriv
   have hsm : smallMax = 6216 := rfl
   have hhd : D.hd.holds ≤ D.hd.d.arenaCap.toNat + 57814 := by unfold Hd.holds Done.holds; omega
-  have hHH : D.H.holds ≤ D.H.arenaCap.toNat + 20736 := by unfold Hdr.holds; omega
+  have hHH : D.H.holds ≤ D.H.arenaCap.toNat + 21760 := by unfold Hdr.holds; omega
   have h0 : Hd.none.d.arenaCap.toNat = 0 := rfl
   have h0' : Hdr.none.arenaCap.toNat = 0 := rfl
   -- A header's reading and a meta-block's fast header are never held together.
@@ -600,7 +609,8 @@ theorem stepDCmds_keeps (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.si
     · exact ⟨rfl, rfl, rfl, (fun e => DStatus.noConfusion e), fun _ => rfl, Or.inl ⟨rfl, rfl⟩⟩
 
 /-- `Hdr.none` holds nothing. -/
-theorem hsmall_none : HSmall Hdr.none := ⟨Nat.zero_le _, Nat.zero_le _, Nat.zero_le _, Nat.zero_le _, Nat.zero_le _, Nat.zero_le _⟩
+theorem hsmall_none : HSmall Hdr.none :=
+  ⟨Nat.zero_le _, Nat.zero_le _, Nat.zero_le _, Nat.zero_le _, Nat.zero_le _, Nat.zero_le _, Nat.zero_le _⟩
 
 /-- `Hd.none` holds only small tables. -/
 theorem hsize_none : HSize Hd.none where
@@ -1148,7 +1158,7 @@ theorem hdr_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs
       have hk0 : (tableK.k g'.m (availBits r.word r.count a r.pos stop (bits t))).getD 0 = 0 := rfl
       rw [hk0] at hT
       refine ⟨hA, hB, fun e => DTag.noConfusion e, fun _ => ⟨?_, ?_, ?_⟩, fun _ => rfl, fun e => absurd rfl e, hsize_none,
-        ⟨hS.litBase, hS.lMap, hS.icBase, hS.dBase, hS.dMap, hS.modes⟩,
+        ⟨hS.litBase, hS.lMap, hS.icBase, hS.dBase, hS.dMap, hS.modes, triv_le hS.lMap⟩,
         Or.inr ⟨fun e => DTag.noConfusion e, w0, g1, g2, g3⟩⟩
       · show r.d.arenaCap.toNat ≤ smallMax + X
         rw [hcapE]

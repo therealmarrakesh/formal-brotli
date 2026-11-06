@@ -85,6 +85,86 @@ theorem modeOff_toNat {m : UInt8} (h : m.toNat < 4) : (m.toUInt64 <<< 9).toUSize
     exact Nat.mod_eq_of_lt (by omega)
   rw [word_toUSize (by rw [hv]; omega), hv]
 
+theorem mapBase_le {H : Hdr} {t : UInt64} (ht : t.toNat < H.nL.toNat) : (t <<< 6).toUSize.toNat + 64 ≤ H.lMap.size := by
+  rw [mapBase_toNat ht, H.lMapSize]
+  omega
+
+/-! ### Block types whose contexts share one table -/
+
+theorem triv_idx {H : Hdr} {t : UInt64} (ht : t.toNat < H.nL.toNat) : 4 * t.toUSize.toNat + 4 ≤ H.lTriv.size := by
+  rw [cur_usize ht, H.trivSize]
+  omega
+
+theorem triv32 (H : Hdr) : H.lTriv.size < 2 ^ 32 := by
+  have h1 := H.lit.map32
+  have h2 := H.lMapSize
+  have h3 := H.trivSize
+  omega
+
+/-- The table base all of block type `t`'s contexts share, or `0xFFFFFFFF`. -/
+@[inline] def trivBase (H : Hdr) (t : UInt64) (ht : t.toNat < H.nL.toNat) : UInt64 :=
+  slotWord H.lTriv t.toUSize (triv_idx ht) (triv32 H)
+
+/-- A shared base is each context's table base, and so a table that fits. -/
+theorem trivBase_spec {H : Hdr} {t : UInt64} (ht : t.toNat < H.nL.toNat) (hne : ¬ trivBase H t ht = 4294967295) :
+    TableFits H.arena (trivBase H t ht).toUSize.toNat ∧
+      ∀ c, c < 64 → u32At H.litBase (H.lMap.data[(t <<< 6).toUSize.toNat + c]?.getD 0).toNat =
+        (trivBase H t ht).toUSize.toNat := by
+  have hv : (trivBase H t ht).toNat = u32At H.lTriv t.toNat := by
+    unfold trivBase
+    rw [slotWord_toNat, cur_usize ht]
+  have hu : (trivBase H t ht).toUSize.toNat = u32At H.lTriv t.toNat := by
+    rw [word_toUSize (by rw [hv]; exact u32At_lt _ _), hv]
+  have hne' : u32At H.lTriv t.toNat ≠ 4294967295 := fun e => hne (UInt64.toNat_inj.mp (by rw [hv, e]; rfl))
+  have hall := H.trivOk _ ht hne'
+  rw [hu, mapBase_toNat ht]
+  refine ⟨?_, hall⟩
+  have hp : 64 * t.toNat < H.lMap.size := by
+    rw [H.lMapSize]
+    omega
+  have hpu : (USize.ofNat (64 * t.toNat)).toNat = 64 * t.toNat := by
+    rw [USize.toNat_ofNat', Nat.mod_eq_of_lt]
+    have h1 := USize.le_size
+    have h2 := H.lit.map32
+    rw [USize.size_eq_two_pow] at h1
+    omega
+  have htree := H.lit.treeLt (USize.ofNat (64 * t.toNat)) (by rw [hpu]; exact hp)
+  rw [uget_lit, hpu] at htree
+  have e0 := hall 0 (by decide)
+  rw [Nat.add_zero] at e0
+  rw [← e0]
+  exact H.lit.fits _ htree
+
+/-- The literal loop for block type `t`: the loop that skips the context when all the type's contexts share a table,
+the loop otherwise. -/
+@[inline] def literalRunS (H : Hdr) (t : UInt64) (ht : t.toNat < H.nL.toNat) (a : ByteArray) (stop : USize)
+    (hs : stop.toNat ≤ a.size) (modeOff mask : USize) (k : Nat) (hm : modeOff.toNat + 512 ≤ 2048)
+    (hd : modeOff.toNat % 512 = 0) (hmask : mask.toNat = 2 ^ k - 1) (hk : k ≤ 24) (n : USize) (word count : UInt64)
+    (pos wpos : USize) (ring : ByteArray) (p1 p2 : UInt8) (hp : pos.toNat ≤ stop.toNat) (hw : (BitBuffer.mk word count).Wf)
+    (hsize : ring.size = 2 ^ k) (hwp : wpos.toNat < 2 ^ k) : LitRun :=
+  if hb : trivBase H t ht = 4294967295 then
+    literalRun H.lit a stop hs (t <<< 6).toUSize modeOff mask k (mapBase_le ht) hm hd hmask hk n word count pos wpos ring
+      p1 p2 hp hw hsize hwp
+  else
+    literalRunT H.arena H.lit.arena32 (trivBase H t ht).toUSize (trivBase_spec ht hb).1 a stop hs mask k hmask n word count
+      pos wpos ring p1 p2 hp hw hsize hwp
+
+/-- The selected loop is the loop. -/
+theorem literalRunS_eq (H : Hdr) (t : UInt64) (ht : t.toNat < H.nL.toNat) (a : ByteArray) (stop : USize)
+    (hs : stop.toNat ≤ a.size) (modeOff mask : USize) (k : Nat) (hm : modeOff.toNat + 512 ≤ 2048)
+    (hd : modeOff.toNat % 512 = 0) (hmask : mask.toNat = 2 ^ k - 1) (hk : k ≤ 24) (n : USize) (word count : UInt64)
+    (pos wpos : USize) (ring : ByteArray) (p1 p2 : UInt8) (hp : pos.toNat ≤ stop.toNat) (hw : (BitBuffer.mk word count).Wf)
+    (hsize : ring.size = 2 ^ k) (hwp : wpos.toNat < 2 ^ k) :
+    literalRunS H t ht a stop hs modeOff mask k hm hd hmask hk n word count pos wpos ring p1 p2 hp hw hsize hwp =
+      literalRun H.lit a stop hs (t <<< 6).toUSize modeOff mask k (mapBase_le ht) hm hd hmask hk n word count pos wpos ring
+        p1 p2 hp hw hsize hwp := by
+  unfold literalRunS
+  by_cases hb : trivBase H t ht = 4294967295
+  · rw [dite_eq_left hb]
+  · rw [dite_eq_right hb]
+    exact literalRunT_eq H.lit _ _ a stop hs _ modeOff mask k _ hm hd hmask hk (trivBase_spec ht hb).2 _ n word count pos
+      wpos ring p1 p2 hp hw hsize hwp rfl
+
 /-- Runs the literal loop. -/
 def literalsRun (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (st : Cmd) (pos : USize) : Cmd :=
   if ht : st.lCur < H.nL then
@@ -97,11 +177,8 @@ def literalsRun (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.
       let run := (umin st.left (umin st.lCount (room k st.cap - st.pend).toUInt64)).toUSize
       let ring := st.ring
       let st0 := clearRing st
-      let r := literalRun H.lit a stop hs (st.lCur <<< 6).toUSize ((H.modes.uget st.lCur.toUSize hm).toUInt64 <<< 9).toUSize
+      let r := literalRunS H st.lCur ht' a stop hs ((H.modes.uget st.lCur.toUSize hm).toUInt64 <<< 9).toUSize
         (ringMask k) k.toNat
-        (by
-          rw [mapBase_toNat ht', H.lMapSize]
-          omega)
         (by
           rw [modeOff_toNat hmLt]
           omega)
@@ -113,151 +190,6 @@ def literalsRun (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.
       finishLiterals st0 r run (ringSize k)
     else markStep st pos .bad
   else markStep st pos .bad
-
-/-! ### The compiled literal step
-
-`literalsRunK` is `literalsRun` with the loop ending in the step's new state itself, so that the loop's result is never
-allocated as a record. The proofs are about `literalsRun`; `literalsRun_csimp` proves the two equal, and the compiler
-runs `literalsRunK`. -/
-
-/-- `finishLiterals` from the loop's result as plain values, written out, so that no result record is built. -/
-@[noinline] def finishLitS (st0 : Cmd) (word count : UInt64) (pos wpos : USize) (ring : ByteArray) (p1 p2 : UInt8)
-    (left run size : USize) : Cmd :=
-  let used := run - left
-  { st0 with
-    word := word, count := count, ring := ring, wpos := wpos, p1 := p1, p2 := p2
-    left := st0.left - used.toUInt64, lCount := st0.lCount - used.toUInt64, remaining := st0.remaining - used.toUInt64
-    pend := st0.pend + used
-    written := usmin (size - USize.ofNat 16) (st0.written + used)
-    pos := pos, status := if left = 0 then .next else .needsInput }
-
-/-- `literalRun`, ending in `finishLitS`. -/
-def literalRunK (st0 : Cmd) (run size : USize) {nTrees : Nat} {arena litBase lMap : ByteArray}
-    (C : LitChecked arena litBase lMap nTrees)
-    (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (mapBase modeOff mask : USize) (k : Nat)
-    (hmb : mapBase.toNat + 64 ≤ lMap.size) (hm : modeOff.toNat + 512 ≤ 2048) (hd : modeOff.toNat % 512 = 0)
-    (hmask : mask.toNat = 2 ^ k - 1) (hk : k ≤ 24) (n : USize) (word count : UInt64) (pos wpos : USize) (ring : ByteArray)
-    (p1 p2 : UInt8) (hp : pos.toNat ≤ stop.toNat) (hw : (BitBuffer.mk word count).Wf) (hsize : ring.size = 2 ^ k)
-    (hwp : wpos.toNat < 2 ^ k) : Cmd :=
-  if hn : n = 0 then finishLitS st0 word count pos wpos ring p1 p2 0 run size
-  else
-    let r := refill word count a pos stop hs hp
-    let rw := r.word
-    let rc := r.count
-    let rp := r.pos
-    have hspec := refill_spec hs hp hw
-    let cid := cidFast modeOff p1 p2 hm
-    have hcid : cid.toNat < 64 := cid_lt hm hd
-    have hi : (mapIndex mapBase cid).toNat < lMap.size := by
-      rw [mapIndex_toNat (by have := C.map32; omega)]
-      omega
-    let tree := lMap.uget (mapIndex mapBase cid) hi
-    have htree : tree.toNat < nTrees := C.treeLt _ hi
-    have hb : 4 * tree.toNat + 4 ≤ litBase.size := by
-      rw [C.baseSize]
-      omega
-    let base := treeBase litBase tree hb C.base32
-    have hfit : TableFits arena base.toNat := by
-      rw [treeBase_toNat]
-      exact C.fits _ htree
-    let v := lookup arena base rw hfit C.arena32
-    let l := v &&& 15
-    if hl : l ≤ rc then
-      let byte := (v >>> 4).toUInt8
-      have hl63 : l.toNat < 64 := by
-        have : (v &&& 15).toNat = v.toNat % 16 := by
-          rw [UInt64.toNat_and]
-          exact Nat.and_two_pow_sub_one_eq_mod v.toNat 4
-        show (v &&& 15).toNat < 64
-        omega
-      have hr : wpos.toNat < ring.size := by omega
-      let ring' := ringWrite ring wpos byte hr
-      have hsize' : ring'.size = 2 ^ k := (size_ringWrite ring wpos byte hr).trans hsize
-      have hnext : (ringNext wpos mask).toNat < 2 ^ k := by
-        unfold ringNext
-        rw [USize.toNat_and, hmask, Nat.and_two_pow_sub_one_eq_mod]
-        exact Nat.mod_lt _ (Nat.two_pow_pos _)
-      let b := (BitBuffer.mk rw rc).drop l
-      literalRunK st0 run size C a stop hs mapBase modeOff mask k hmb hm hd hmask hk (n - USize.ofNat 1) b.word b.count rp
-        (ringNext wpos mask) ring' byte p1 hspec.2.2.1 (BitBuffer.drop_wf hspec.1 hl63 (UInt64.le_iff_toNat_le.mp hl))
-        hsize' hnext
-    else finishLitS st0 rw rc rp wpos ring p1 p2 n run size
-termination_by n.toNat
-decreasing_by
-  have := usize_pred hn
-  have := usize_ne hn
-  omega
-
-/-- The loop ending in the new state is the loop, then `finishLiterals`. -/
-theorem literalRunK_eq (st0 : Cmd) (run size : USize) {nTrees : Nat} {arena litBase lMap : ByteArray}
-    (C : LitChecked arena litBase lMap nTrees) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size)
-    (mapBase modeOff mask : USize) (k : Nat) (hmb : mapBase.toNat + 64 ≤ lMap.size) (hm : modeOff.toNat + 512 ≤ 2048)
-    (hd : modeOff.toNat % 512 = 0) (hmask : mask.toNat = 2 ^ k - 1) (hk : k ≤ 24) :
-    ∀ (N : Nat) (n : USize) (word count : UInt64) (pos wpos : USize) (ring : ByteArray) (p1 p2 : UInt8)
-      (hp : pos.toNat ≤ stop.toNat) (hw : (BitBuffer.mk word count).Wf) (hsize : ring.size = 2 ^ k)
-      (hwp : wpos.toNat < 2 ^ k), n.toNat = N →
-      literalRunK st0 run size C a stop hs mapBase modeOff mask k hmb hm hd hmask hk n word count pos wpos ring p1 p2 hp hw
-          hsize hwp =
-        finishLiterals st0 (literalRun C a stop hs mapBase modeOff mask k hmb hm hd hmask hk n word count pos wpos ring p1 p2
-          hp hw hsize hwp) run size := by
-  intro N
-  induction N with
-  | zero =>
-    intro n word count pos wpos ring p1 p2 hp hw hsize hwp hN
-    have hn : n = 0 := usize_zero hN
-    rw [literalRunK, literalRun, dite_eq_left hn, dite_eq_left hn]
-    rfl
-  | succ N ih =>
-    intro n word count pos wpos ring p1 p2 hp hw hsize hwp hN
-    have hn : n ≠ 0 := fun e => by rw [e] at hN; exact Nat.succ_ne_zero _ hN.symm
-    rw [literalRunK, literalRun, dite_eq_right hn, dite_eq_right hn]
-    dsimp only
-    -- `split` takes the same branch on both sides, whose conditions are the same
-    split
-    · exact ih _ _ _ _ _ _ _ _ _ _ _ _ (by rw [usize_pred hn]; omega)
-    · rfl
-
-/-- `literalsRun`, with the loop ending in the new state. -/
-def literalsRunK (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (st : Cmd) (pos : USize) :
-    Cmd :=
-  if ht : st.lCur < H.nL then
-    have ht' := UInt64.lt_iff_toNat_lt.mp ht
-    have hm : st.lCur.toUSize.toNat < H.modes.size := by
-      rw [cur_usize ht', H.modesSize]
-      exact ht'
-    have hmLt := H.modesLt _ hm
-    if h : winCheck k st.wpos st.ring = true ∧ pos ≤ stop ∧ wfCheck st.word st.count = true then
-      let run := (umin st.left (umin st.lCount (room k st.cap - st.pend).toUInt64)).toUSize
-      let ring := st.ring
-      let st0 := clearRing st
-      literalRunK st0 run (ringSize k) H.lit a stop hs (st.lCur <<< 6).toUSize
-        ((H.modes.uget st.lCur.toUSize hm).toUInt64 <<< 9).toUSize
-        (ringMask k) k.toNat
-        (by
-          rw [mapBase_toNat ht', H.lMapSize]
-          omega)
-        (by
-          rw [modeOff_toNat hmLt]
-          omega)
-        (by
-          rw [modeOff_toNat hmLt]
-          omega)
-        (ringMask_toNat (winCheck_k h.1)) (winCheck_k h.1) run st0.word st0.count pos st0.wpos ring st0.p1 st0.p2
-        (USize.le_iff_toNat_le.mp h.2.1) (wfCheck_wf h.2.2) (winCheck_size h.1) (winCheck_pos h.1)
-    else markStep st pos .bad
-  else markStep st pos .bad
-
-@[csimp] theorem literalsRun_csimp : @literalsRun = @literalsRunK := by
-  funext H k a stop hs st pos
-  unfold literalsRun literalsRunK
-  by_cases ht : st.lCur < H.nL
-  · rw [dite_eq_left ht, dite_eq_left ht]
-    by_cases h : winCheck k st.wpos st.ring = true ∧ pos ≤ stop ∧ wfCheck st.word st.count = true
-    · rw [dite_eq_left h, dite_eq_left h]
-      dsimp only
-      exact (literalRunK_eq _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ rfl).symm
-    · rw [dite_eq_right h, dite_eq_right h]
-  · rw [dite_eq_right ht, dite_eq_right ht]
 
 /-- A step in a command's literals. -/
 def stepLiterals (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (st : Cmd) (pos : USize) : Cmd :=
@@ -402,6 +334,8 @@ theorem literalsRun_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBloc
   have hguard : winCheck k st.wpos st.ring = true ∧ pos ≤ stop ∧ wfCheck st.word st.count = true :=
     ⟨winCheck_of hk hC.ring.size hC.ring.pos_lt, USize.le_iff_toNat_le.mpr hp, wfCheck_of_wf hC.wf⟩
   rw [dite_eq_left hguard]
+  dsimp only
+  rw [literalRunS_eq]
   dsimp only [clearRing]
   have hmodeNat : m.contextModes[st.lCur.toNat]? =
       some (((H.modes.uget st.lCur.toUSize hm).toUInt64 <<< 9).toUSize.toNat / 512) := by

@@ -137,6 +137,7 @@ theorem literalsRun_same (H : Hdr) (k : USize) {a1 a2 : ByteArray} {e1 e2 : USiz
     by_cases hc : winCheck k s.wpos s.ring = true ∧ wfCheck s.word s.count = true
     · rw [dite_eq_left (show winCheck k s.wpos s.ring = true ∧ p1 ≤ e1 ∧ wfCheck s.word s.count = true from ⟨hc.1, hq1, hc.2⟩),
         dite_eq_left (show winCheck k s.wpos s.ring = true ∧ p2 ≤ e2 ∧ wfCheck s.word s.count = true from ⟨hc.1, hq2, hc.2⟩)]
+      rw [literalRunS_eq, literalRunS_eq]
       obtain ⟨e, hS⟩ := literalRun_same H.lit hs1 hs2
         _ _ _ _ _ _ _ _ _
         _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _

@@ -221,7 +221,8 @@ theorem literalsRun_pendLe (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) 
   try dsimp only
   split
   · split
-    · exact PendLe.ofRun rfl hroom rfl (Nat.le_trans (sub_left_le (literalRun_left _ rfl)) (umin2_run_le _ _ _))
+    · rw [literalRunS_eq]
+      exact PendLe.ofRun rfl hroom rfl (Nat.le_trans (sub_left_le (literalRun_left _ rfl)) (umin2_run_le _ _ _))
     · exact PendLe.keep rfl rfl
   · exact PendLe.keep rfl rfl
 

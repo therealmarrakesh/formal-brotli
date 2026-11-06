@@ -180,6 +180,12 @@ structure Hdr where
   swL : 2 ≤ nL.toNat → TableFits arena baseTL.toNat ∧ TableFits arena baseCL.toNat
   swI : 2 ≤ nI.toNat → TableFits arena baseTI.toNat ∧ TableFits arena baseCI.toNat
   swD : 2 ≤ nD.toNat → TableFits arena baseTD.toNat ∧ TableFits arena baseCD.toNat
+  /-- For each literal block type, 4 bytes: the table base all its 64 contexts share, or `0xFFFFFFFF` when they don't
+  share one (libbrotli's `trivial_literal_context`). -/
+  lTriv : ByteArray
+  trivSize : lTriv.size = 4 * nL.toNat
+  trivOk : ∀ t, t < nL.toNat → u32At lTriv t ≠ 4294967295 →
+    ∀ c, c < 64 → u32At litBase (lMap.data[64 * t + c]?.getD 0).toNat = u32At lTriv t
 
 /-- What a meta-block header gives the lookups that follow it. -/
 structure HeaderOk (m : MetaBlockHeader) : Prop where

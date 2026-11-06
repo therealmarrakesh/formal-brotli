@@ -471,6 +471,7 @@ theorem literalsW_le {H : Hdr} {k : USize} {a : ByteArray} {stop : USize} {hs : 
   split
   · split
     · dsimp only
+      simp only [literalRunS_eq]
       have hs : (room k st.cap - st.pend).toNat = (room k st.cap).toNat - st.pend.toNat := room_sub' (by omega)
       have hm1 := umin_toNat st.left (umin st.lCount (room k st.cap - st.pend).toUInt64)
       have hm2 := umin_toNat st.lCount (room k st.cap - st.pend).toUInt64
@@ -617,7 +618,7 @@ theorem stepLiterals_ge {H : Hdr} {k : USize} {a : ByteArray} {stop : USize} {hs
   repeat' (first | split | dsimp only)
   all_goals first
     | exact Nat.le_refl _
-    | exact (literalRunW_le _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ rfl).2
+    | (rw [literalRunS_eq]; exact (literalRunW_le _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ rfl).2)
 
 /-- A command loop step goes no further back than where it starts. -/
 theorem stepAt_ge {H : Hdr} {k : USize} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {st : Cmd} {pos : USize} :

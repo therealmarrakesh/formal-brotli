@@ -3,6 +3,7 @@ module
 public import Brotli.Decoder.HeaderMap
 public import Brotli.Decoder.HeaderLens
 public import Brotli.Decoder.HeaderStep2
+public import Brotli.Decoder.LitTriv
 
 @[expose] public section
 
@@ -276,7 +277,10 @@ def mkHdr (d : Done) (h : ∃ g, Upto d g 10) : Hdr :=
     dFits := hf.2.dFits
     swL := hf.2.swL
     swI := hf.2.swI
-    swD := hf.2.swD }
+    swD := hf.2.swD
+    lTriv := trivBuild d.lMap d.litBase d.treesL.toNat d.nL hf.1.2.2.2.2.2.2.1 hf.1.2.2.1 hf.1.2.2.2.1 hf.1.2.1 hf.2.treeLt
+    trivSize := trivBuild_spec.1
+    trivOk := trivBuild_spec.2 }
 
 /-- The header made from a header that was read matches the spec's. -/
 theorem mkHdr_ok {d : Done} {g : Gh} (hu : Upto d g 10) (h : ∃ g, Upto d g 10) : HdrRel (mkHdr d h) g.m := by
