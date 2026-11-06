@@ -184,9 +184,9 @@ def roundCost : Nat := 8
 loop's round, and a round of the call at the next meta-block's start. -/
 def cmdsEnd : Nat := 84 + 1 + 1 + roundCost
 
-/-- What a header's end costs beyond its potential: the command loop's header and first state, the loop's round, and what
-the commands' start holds. Its last step is within its place's potential. -/
-def hdrEnd : Nat := 770 + 1 + 100 + cmdsEnd
+/-- What a header's end costs beyond its potential: the command loop's header with its shared table bases and first
+state, the loop's round, and what the commands' start holds. Its last step is within its place's potential. -/
+def hdrEnd : Nat := 770 + trivRounds + 1 + 100 + cmdsEnd
 
 /-- What a metadata block's or an uncompressed block's end costs: its last step and the loop's round, and a round of the
 call at the next meta-block's start. -/
@@ -472,7 +472,7 @@ theorem pay_mblock {w : Nat} {st : StreamState} {a : ByteArray} {stop : USize} {
         dsimp only
         omega
       rw [this, hpot_start hrh]
-      unfold hdrEnd cmdsEnd roundCost
+      unfold hdrEnd cmdsEnd roundCost trivRounds
       omega
     | _ => exact absurd hsd id
   · obtain ⟨b1, b2, p', hR', _, _, hsd, _, hout, hj, _⟩ := hok.needsInput hn
@@ -566,7 +566,7 @@ theorem pay_hdr {w : Nat} {st : StreamState} {last : Bool} {mlen : Nat} {g : Gh}
   have hstep := stepH_ok (K := hdrK w (specSem.after w last) st mlen) (a := a) (hs := hs) (h := hH) hR hp hb
   have hsz := psize_le hR
   have eW : stepDHdrW a stop hs ⟨.hdr, cmd, hd, H, k, last', left, limit, pos', status⟩ pos (fun _ => hH) hp =
-      stepHW a stop hs hd pos + (if (stepH a stop hs hd pos hH hp).status = .ready then 770 else 0) := rfl
+      stepHW a stop hs hd pos + (if (stepH a stop hs hd pos hH hp).status = .ready then 770 + trivRounds else 0) := rfl
   rw [eW]
   unfold stepDHdr takeHd at hok ⊢
   dsimp only at hok ⊢

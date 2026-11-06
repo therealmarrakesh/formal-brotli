@@ -81,12 +81,16 @@ def stepDRawW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : D
           (USize.le_iff_toNat_le.mp h.2) hsize hwp + 1
     else 1
 
-/-- The work of `stepDHdr`: the header step, and at a header's end the command loop's header, made with no check, and
-its first state, its block type flags copied from the shared ones. -/
+/-- The rounds `trivBuild` can take: one for each of at most 256 literal block types, and the one that ends it. -/
+def trivRounds : Nat := 257
+
+/-- The work of `stepDHdr`: the header step, and at a header's end the command loop's header, made with no check but for
+its literal block types' shared table bases, and its first state, its block type flags copied from the shared ones. -/
 def stepDHdrW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize)
     (hH : D.tag = .hdr → HIn D.hd) (hp : pos.toNat ≤ stop.toNat) : Nat :=
   stepHW a stop hs D.hd pos +
-    if ht : D.tag = .hdr then (if (stepH a stop hs D.hd pos (hH ht) hp).status = .ready then 770 else 0) else 0
+    if ht : D.tag = .hdr then (if (stepH a stop hs D.hd pos (hH ht) hp).status = .ready then 770 + trivRounds else 0)
+    else 0
 
 /-- The work of `stepDCmds`: the command loop, and at the commands' end the check that every block type occurred. -/
 def stepDCmdsW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize) : Nat :=

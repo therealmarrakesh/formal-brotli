@@ -256,7 +256,7 @@ def trivBuild (lMap litBase : ByteArray) (nT : Nat) (nL : UInt64) (hm : lMap.siz
     (hm32 : lMap.size < 2 ^ 32) (hb : litBase.size = 4 * nT) (hb32 : litBase.size < 2 ^ 32)
     (hlt : ∀ p : USize, ∀ h : p.toNat < lMap.size, (lMap.uget p h).toNat < nT) : ByteArray :=
   trivLoop lMap litBase nT nL.toUSize (by rw [word_toUSize (by omega)]; exact hm) hm32 hb hb32 hlt 0
-    (freshBytes (4 * nL.toNat))
+    (freshBytes (nL * 4).toNat)
 
 theorem trivBuild_spec {lMap litBase : ByteArray} {nT : Nat} {nL : UInt64} {hm : lMap.size = 64 * nL.toNat}
     {hm32 : lMap.size < 2 ^ 32} {hb : litBase.size = 4 * nT} {hb32 : litBase.size < 2 ^ 32}
@@ -265,10 +265,10 @@ theorem trivBuild_spec {lMap litBase : ByteArray} {nT : Nat} {nL : UInt64} {hm :
       TrivInv lMap litBase (trivBuild lMap litBase nT nL hm hm32 hb hb32 hlt) nL.toNat := by
   have hn : nL.toUSize.toNat = nL.toNat := word_toUSize (by omega)
   have h0 : (0 : USize).toNat = 0 := rfl
-  have hf : (freshBytes (4 * nL.toNat)).size = 0 := rfl
+  have hf : (freshBytes (nL * 4).toNat).size = 0 := rfl
   have := trivLoop_spec (lMap := lMap) (litBase := litBase) (nT := nT) (n := nL.toUSize)
     (hm := by rw [hn]; exact hm) (hm32 := hm32) (hb := hb) (hb32 := hb32) (hlt := hlt) _ 0
-    (freshBytes (4 * nL.toNat)) rfl (by rw [h0]; omega) (by rw [hf, h0]) (fun s hs => absurd hs (by rw [h0]; omega))
+    (freshBytes (nL * 4).toNat) rfl (by rw [h0]; omega) (by rw [hf, h0]) (fun s hs => absurd hs (by rw [h0]; omega))
   exact ⟨this.1.trans (by rw [hn]), fun s hs => this.2 s (by rw [hn]; exact hs)⟩
 
 end Brotli.Decoder
