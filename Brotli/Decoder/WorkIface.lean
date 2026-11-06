@@ -24,7 +24,7 @@ def callWork (s : DState) (a : ByteArray) (start stop : Nat) (buf : ByteArray) (
     callDW a (USize.ofNat stop) hs final (atPos s.val start) (atPos_inv s h.2.1 h.2.2) buf space
   else 1
 
-/-- The window a call allocates: WBITS's, when the call starts there and reads it. -/
+/-- The window a call allocates: the one its loop allocates, when the call starts with none. -/
 def callWin (s : DState) (a : ByteArray) (start stop : Nat) (space : Nat) : Nat :=
   if h : stop ≤ a.size ∧ start ≤ stop ∧ stop < USize.size then
     have hs : (USize.ofNat stop).toNat ≤ a.size := by
@@ -179,9 +179,151 @@ theorem call_pays (hin : R.read + c.size ≤ x.length) (hfit : c.pre.length + c.
     rw [hstop] at h2
     exact arith_any (by omega) h2 (by omega) (by omega) i
 
-/-- The window a call allocates is the one the stream declares: a call that starts at WBITS and gets past it allocates
-the window its WBITS gives, and any other call allocates none. Zero-filling the window takes a round for each byte and
-for each 65536 of them, at most 256. -/
+/-- The window a place is read with: none at WBITS and at the stream's end. -/
+def placeWin : SPhase → Nat
+  | .wbits => 0
+  | .mblock w _ => w
+  | .skip w _ _ _ => w
+  | .raw w _ _ _ => w
+  | .hdr w _ _ _ _ _ => w
+  | .cmds w _ _ _ => w
+  | .ended _ => 0
+
+theorem placeWin_after (w : Nat) (last : Bool) (st : StreamState) : placeWin (afterBlock w last st) ≤ w := by
+  unfold afterBlock
+  cases last
+  · exact Nat.le_refl _
+  · exact Nat.zero_le _
+
+/-- No step of the reading in order past WBITS raises the window a place is read with. -/
+theorem sStep_win : ∀ (p : SPhase) (bs : List Bool) (q : SPhase) (c : List Bool), p ≠ .wbits → sStep p bs = .next q c →
+    placeWin q ≤ placeWin p
+  | .wbits, _, _, _, hp, _ => absurd rfl hp
+  | .mblock w st, bs, q, c, _, h => by
+    obtain ⟨ms, b, -, e2⟩ := readIn_next' h
+    cases ms with
+    | lastEmpty =>
+      cases e2
+      exact Nat.zero_le _
+    | metadata last skip =>
+      cases hf : readFill b with
+      | none => simp only [startPlace, hf] at e2; cases e2
+      | some b' =>
+        simp only [startPlace, hf] at e2
+        cases e2
+        exact Nat.le_refl _
+    | data last mlen unc =>
+      cases unc with
+      | true =>
+        cases hf : readFill b with
+        | none => simp only [startPlace, hf, ↓reduceIte] at e2; cases e2
+        | some b' =>
+          simp only [startPlace, hf, ↓reduceIte] at e2
+          cases e2
+          exact Nat.le_refl _
+      | false =>
+        simp only [startPlace, Bool.false_eq_true, ↓reduceIte] at e2
+        cases e2
+        exact blockWindow_le w st last mlen
+  | .skip w st last 0, bs, q, c, _, h => by
+    cases h
+    exact placeWin_after w last st
+  | .skip w st last (n + 1), bs, q, c, _, h => by
+    obtain ⟨v, b, -, e2⟩ := readIn_next' h
+    cases e2
+    exact Nat.le_refl _
+  | .raw w st last 0, bs, q, c, _, h => by
+    cases h
+    exact placeWin_after w last st
+  | .raw w st last (n + 1), bs, q, c, _, h => by
+    obtain ⟨v, b, -, e2⟩ := readIn_next' h
+    cases e2
+    exact Nat.le_refl _
+  | .hdr w st last mlen g p, bs, q, c, _, h => by
+    cases e : hStep g p bs with
+    | next q' b =>
+      have h' : sStep (.hdr w st last mlen g p) bs = .next (.hdr w st last mlen q'.1 q'.2) b := by
+        simp only [sStep, e]
+      rw [h'] at h
+      cases h
+      exact Nat.le_refl _
+    | exit m' b =>
+      have h' : sStep (.hdr w st last mlen g p) bs = .next (.cmds w last m' (.command (startState st mlen m'))) b := by
+        simp only [sStep, e]
+      rw [h'] at h
+      cases h
+      exact Nat.le_refl _
+    | bad =>
+      have h' : sStep (.hdr w st last mlen g p) bs = .bad := by simp only [sStep, e]
+      rw [h'] at h
+      cases h
+    | short =>
+      have h' : sStep (.hdr w st last mlen g p) bs = .short := by simp only [sStep, e]
+      rw [h'] at h
+      cases h
+  | .cmds w last m p, bs, q, c, _, h => by
+    cases e : cStep w m p bs with
+    | next p' b =>
+      have h' : sStep (.cmds w last m p) bs = .next (.cmds w last m p') b := by simp only [sStep, e]
+      rw [h'] at h
+      cases h
+      exact Nat.le_refl _
+    | exit s b =>
+      by_cases hc : (usesEveryType m.literal s.literal && usesEveryType m.insertCopy s.insertCopy &&
+          usesEveryType m.distance s.distance) = true
+      · have h' : sStep (.cmds w last m p) bs = .next (afterBlock w last ⟨s.output, s.produced, s.distances⟩) b := by
+          simp only [sStep, e, hc, ↓reduceIte]
+        rw [h'] at h
+        cases h
+        exact placeWin_after _ _ _
+      · have h' : sStep (.cmds w last m p) bs = .bad := by
+          simp only [sStep, e]
+          exact ite_eq_right hc
+        rw [h'] at h
+        cases h
+    | bad =>
+      have h' : sStep (.cmds w last m p) bs = .bad := by simp only [sStep, e]
+      rw [h'] at h
+      cases h
+    | short =>
+      have h' : sStep (.cmds w last m p) bs = .short := by simp only [sStep, e]
+      rw [h'] at h
+      cases h
+  | .ended st, bs, q, c, _, h => by
+    by_cases hm : bs.length % 8 = 0
+    · simp only [sStep, hm, ↓reduceIte] at h
+      split at h <;> cases h
+    · cases e : readFill bs with
+      | none => simp only [sStep, hm, ↓reduceIte, e] at h; cases h
+      | some b =>
+        simp only [sStep, hm, ↓reduceIte, e] at h
+        cases h
+        exact Nat.le_refl _
+
+theorem reach_placeWin {p q : SPhase} {bs c : List Bool} (h : Reach sStep p bs q c) (hp : p ≠ .wbits) :
+    placeWin q ≤ placeWin p := by
+  induction h with
+  | refl => exact Nat.le_refl _
+  | @next p0 b0 q1 c1 q0 c0 hs r ih =>
+    have hq1 : q1 ≠ .wbits := by
+      intro e
+      subst e
+      exact hp (reach_to_wbits (.next hs (.refl _ _))).1
+    exact Nat.le_trans (ih hq1) (sStep_win _ _ _ _ hp hs)
+
+/-- A place the reading in order reaches past WBITS is read with at most the window the stream declares. -/
+theorem wbits_reach_win {q : SPhase} {bs c : List Bool} (h : Reach sStep .wbits bs q c) (hq : q ≠ .wbits) :
+    ∃ v r, readWBITS bs = some (v, r) ∧ placeWin q ≤ windowSize v := by
+  cases h with
+  | refl => exact absurd rfl hq
+  | next hs r =>
+    obtain ⟨v, b, e1, e2⟩ := readIn_next' hs
+    cases e2
+    exact ⟨v, _, e1, reach_placeWin r (fun e => SPhase.noConfusion e)⟩
+
+/-- The window a call allocates is at most the one the stream declares: the loop allocates no window larger than the
+one its WBITS gives, or than the one its state holds the log size of before it has a window. Zero-filling the window
+takes a round for each byte and for each 65536 of them, at most 256. -/
 theorem callWin_le {limit : Nat} (h : Reaches decoder limit x R) (ha : R.Allowed x c) :
     callWin R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.space ≤ declaredWindow x + 272 := by
   have hin := ha.inside
@@ -202,20 +344,26 @@ theorem callWin_le {limit : Nat} (h : Reaches decoder limit x R) (ha : R.Allowed
     rw [dite_eq_left hg]
   rw [eW]
   unfold winD
-  by_cases hw : (atPos R.state.val c.pre.length).tag = .wbits ∧
+  by_cases hw : (atPos R.state.val c.pre.length).cmd.ring.size = 0 ∧
       (runD (R.input x c) (USize.ofNat (c.pre.length + c.size)) hs (withCap (atPos R.state.val c.pre.length) c.space)
-        ((atPos_inv R.state hg.2.1 hg.2.2).withCap c.space)).tag ≠ .wbits
-  · rw [ite_eq_left hw]
-    obtain ⟨hn, hk⟩ := runD_past ⟨withCap (atPos R.state.val c.pre.length) c.space, (atPos_inv R.state hg.2.1 hg.2.2).withCap c.space⟩
-      hw.1 hw.2
-    dsimp only at hn hk
-    rw [hk]
-    have hw0 : R.state.val.tag = .wbits := hw.1
-    have hp : p = .wbits := by
+        ((atPos_inv R.state hg.2.1 hg.2.2).withCap c.space)).cmd.ring.size ≠ 0
+  rotate_left
+  · rw [ite_eq_right hw]
+    exact Nat.zero_le _
+  rw [ite_eq_left hw]
+  have hr0 : R.state.val.cmd.ring.size = 0 := hw.1
+  suffices hK : 2 ^ (runD (R.input x c) (USize.ofNat (c.pre.length + c.size)) hs (withCap (atPos R.state.val c.pre.length) c.space)
+      ((atPos_inv R.state hg.2.1 hg.2.2).withCap c.space)).k.toNat ≤ declaredWindow x + 16 by omega
+  by_cases hw0 : R.state.val.tag = .wbits
+  · have hp : p = .wbits := by
       cases p <;> first | rfl | exact absurd (hrel.1.symm.trans hw0) (fun e => DTag.noConfusion e)
     subst hp
     have hwf : (BitBuffer.mk (withCap (atPos R.state.val c.pre.length) c.space).cmd.word
         (withCap (atPos R.state.val c.pre.length) c.space).cmd.count).Wf := hrel.2.1
+    obtain ⟨hn, hk⟩ := runD_past ⟨withCap (atPos R.state.val c.pre.length) c.space, (atPos_inv R.state hg.2.1 hg.2.2).withCap c.space⟩
+      hw0 hwf (by show _ ≠ R.state.val.cmd.ring.size; rw [hr0]; exact hw.2)
+    dsimp only at hn hk
+    have hpk := Nat.pow_le_pow_right (show 0 < 2 by decide) hk
     have hpp : (withCap (atPos R.state.val c.pre.length) c.space).pos.toNat ≤ (USize.ofNat (c.pre.length + c.size)).toNat := by
       show (atPos R.state.val c.pre.length).pos.toNat ≤ _
       rw [hpos0, hstop]
@@ -246,25 +394,56 @@ theorem callWin_le {limit : Nat} (h : Reaches decoder limit x R) (ha : R.Allowed
     rw [Nat.shiftLeft_eq, Nat.one_mul] at hd
     have h16 : 16 ≤ 2 ^ (stepDWbits (R.input x c) (USize.ofNat (c.pre.length + c.size)) hs
         (withCap (atPos R.state.val c.pre.length) c.space) (withCap (atPos R.state.val c.pre.length) c.space).pos).k.toNat :=
-      Nat.le_trans (by decide) (Nat.pow_le_pow_right (by decide) hk10)
+      Nat.le_trans (by decide) (Nat.pow_le_pow_right (by decide) hk10.1)
     omega
-  · rw [ite_eq_right hw]
-    exact Nat.zero_le _
+  · -- No window yet past WBITS: the state holds the log size of the window its place is read with.
+    have hreachx : Reach sStep .wbits (bits x) p (R.state.val.held ++ bits ((x.take R.offered).drop R.read ++ x.drop R.offered)) := by
+      have e := hreach (x.drop R.offered)
+      rw [List.take_append_drop] at e
+      exact e
+    have hpw : p ≠ .wbits := fun e => by rw [e] at hrel; exact hw0 hrel.1
+    obtain ⟨v, rv, ev, hle⟩ := wbits_reach_win hreachx hpw
+    have hd : declaredWindow x = windowSize v := by
+      unfold declaredWindow
+      rw [ev]
+    have hnr : ∃ w st, NoRing R.state.val w st ∧ placeWin p = w := by
+      cases p with
+      | wbits => exact absurd rfl hpw
+      | mblock w st => exact ⟨w, st, hrel.2.2.noRing hr0, rfl⟩
+      | skip w st l n => exact ⟨w, st, hrel.2.2.1.noRing hr0, rfl⟩
+      | ended st =>
+        exfalso
+        apply hw.2
+        have he : (withCap (atPos R.state.val c.pre.length) c.space).tag = .ended := hrel.1
+        rw [runD, dite_eq_left he]
+        exact hr0
+      | raw => exact absurd hrel.1 (hrel.noRing hr0).2.2
+      | hdr => exact absurd hrel.1 (hrel.noRing hr0).1
+      | cmds => exact absurd hrel.1 (hrel.noRing hr0).2.1
+    obtain ⟨w, st, hn, hpw'⟩ := hnr
+    have hkr := (runD_kr (hs := hs) ⟨withCap (atPos R.state.val c.pre.length) c.space, (atPos_inv R.state hg.2.1 hg.2.2).withCap c.space⟩
+      hw0 ⟨hn.k10, hn.k24⟩).2.2.2
+    have hpk : 2 ^ (runD (R.input x c) (USize.ofNat (c.pre.length + c.size)) hs (withCap (atPos R.state.val c.pre.length) c.space)
+        ((atPos_inv R.state hg.2.1 hg.2.2).withCap c.space)).k.toNat ≤ 2 ^ R.state.val.k.toNat :=
+      Nat.pow_le_pow_right (by decide) hkr
+    have hwin := hn.win
+    omega
 
-/-- A call from past WBITS allocates no window. -/
+/-- A call from a state that holds a window allocates none. -/
 theorem callWin_zero (hin : R.read + c.size ≤ x.length) (hfit : c.pre.length + c.size + c.post.length < USize.size)
-    (ht : R.state.val.tag ≠ .wbits) : callWin R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.space = 0 := by
+    (ht : R.state.val.cmd.ring.size ≠ 0) : callWin R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.space = 0 := by
   have hg : c.pre.length + c.size ≤ (R.input x c).size ∧ c.pre.length ≤ c.pre.length + c.size ∧ c.pre.length + c.size < USize.size :=
     ⟨by rw [input_size hin]; omega, by omega, by omega⟩
   unfold callWin winD
   rw [dite_eq_left hg]
   exact ite_eq_right (fun h => ht h.1)
 
-/-- A call that allocates a window, or starts past WBITS, pauses past WBITS if it pauses. -/
-theorem callWin_tag (hin : R.read + c.size ≤ x.length) (hfit : c.pre.length + c.size + c.post.length < USize.size)
-    (ht : callWin R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.space ≠ 0 ∨ R.state.val.tag ≠ .wbits)
+/-- A call that allocates a window, or starts with one, pauses with one if it pauses. -/
+theorem callWin_ring (hin : R.read + c.size ≤ x.length) (hfit : c.pre.length + c.size + c.post.length < USize.size)
+    {p : SPhase} (hrel : DRel R.state.val p)
+    (ht : callWin R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.space ≠ 0 ∨ R.state.val.cmd.ring.size ≠ 0)
     (hst : (R.reply decoder x c).status = .needsInput ∨ (R.reply decoder x c).status = .needsOutput) :
-    (R.reply decoder x c).state.val.tag ≠ .wbits := by
+    (R.reply decoder x c).state.val.cmd.ring.size ≠ 0 := by
   have hg : c.pre.length + c.size ≤ (R.input x c).size ∧ c.pre.length ≤ c.pre.length + c.size ∧ c.pre.length + c.size < USize.size :=
     ⟨by rw [input_size hin]; omega, by omega, by omega⟩
   have hs : (USize.ofNat (c.pre.length + c.size)).toNat ≤ (R.input x c).size := by
@@ -290,18 +469,20 @@ theorem callWin_tag (hin : R.read + c.size ≤ x.length) (hfit : c.pre.length + 
   rw [eSt]
   rw [eT] at hst
   have hr : (runD (R.input x c) (USize.ofNat (c.pre.length + c.size)) hs (withCap (atPos R.state.val c.pre.length) c.space)
-      ((atPos_inv R.state hg.2.1 hg.2.2).withCap c.space)).tag ≠ .wbits := by
+      ((atPos_inv R.state hg.2.1 hg.2.2).withCap c.space)).cmd.ring.size ≠ 0 := by
     rcases ht with ht | ht
     · rw [eW] at ht
       unfold winD at ht
-      by_cases hw : (atPos R.state.val c.pre.length).tag = .wbits ∧
+      by_cases hw : (atPos R.state.val c.pre.length).cmd.ring.size = 0 ∧
           (runD (R.input x c) (USize.ofNat (c.pre.length + c.size)) hs (withCap (atPos R.state.val c.pre.length) c.space)
-            ((atPos_inv R.state hg.2.1 hg.2.2).withCap c.space)).tag ≠ .wbits
+            ((atPos_inv R.state hg.2.1 hg.2.2).withCap c.space)).cmd.ring.size ≠ 0
       · exact hw.2
       · rw [ite_eq_right hw] at ht
         exact absurd rfl ht
-    · exact (runD_wk ⟨withCap (atPos R.state.val c.pre.length) c.space, (atPos_inv R.state hg.2.1 hg.2.2).withCap c.space⟩ ht).1
-  exact callD_tag c.space _ _ _ hr hst
+    · rw [(runD_ring ⟨withCap (atPos R.state.val c.pre.length) c.space, (atPos_inv R.state hg.2.1 hg.2.2).withCap c.space⟩ p
+        ((atPos_rel hrel _).withCap _) ht).1]
+      exact ht
+  exact callD_ring c.space _ _ _ p (atPos_rel hrel _) hr hst
 
 end
 

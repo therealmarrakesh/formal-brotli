@@ -515,6 +515,129 @@ theorem cStep_moves {w : Nat} {m : MetaBlockHeader} (hm : m.ndirect ≤ 120) : �
     cases h
     exact ⟨hi, ⟨[b], rfl⟩, Or.inl (Or.inr (by simp [Phase.out]))⟩
 
+/-! ### Bytes a meta-block's commands produce -/
+
+/-- What a place in the commands has: bytes produced or still to come, and, in the literals, an insert length within what
+is left. Bytes produced and to come stay the same over a meta-block's commands, so a meta-block of at least one byte ends
+with bytes produced. -/
+def CLive : Phase → Prop
+  | .command s | .insertCopy s _ | .copyLength s .. | .distance s .. | .distanceSymbol s .. | .copy s .. | .word s _ =>
+    1 ≤ s.produced + s.remaining
+  | .literals s _ _ ilen _ _ _ _ | .literalSymbol s _ _ ilen _ _ _ _ => 1 ≤ s.produced + s.remaining ∧ ilen ≤ s.remaining
+
+/-- A copy keeps the bytes produced and to come. -/
+theorem copyPhase_live {w : Nat} {s : CommandState} {clen dcode d : Nat} {q : Phase} (hs : 1 ≤ s.produced + s.remaining)
+    (h : copyPhase w s clen dcode d = some q) : CLive q := by
+  unfold copyPhase at h
+  dsimp only at h
+  split at h
+  · cases hw : dictionaryWord clen d (maxBackwardDistance w s.produced) with
+    | none => rw [hw] at h; cases h
+    | some word =>
+      rw [hw] at h
+      dsimp only [Option.bind] at h
+      split at h
+      · cases h
+      · cases h
+        show 1 ≤ s.produced + word.length + (s.remaining - word.length)
+        omega
+  · split at h
+    · cases h
+    · cases h
+      show 1 ≤ s.produced + clen + (s.remaining - clen)
+      omega
+
+/-- Each step of the commands read in order keeps what its places have. -/
+theorem cStep_live {w : Nat} {m : MetaBlockHeader} : ∀ (p : Phase) (bs : List Bool) (q : Phase) (c : List Bool),
+    CLive p → cStep w m p bs = .next q c → CLive q
+  | .command s, bs, q, c, hi, h => by
+    have h' : (if s.remaining = 0 then ORes.exit s bs else nextIn m.insertCopy s.insertCopy bs fun ic b => .next (.insertCopy s ic) b) =
+        .next q c := h
+    split at h'
+    · cases h'
+    · obtain ⟨ic, b, _, e2⟩ := nextIn_next' h'
+      cases e2
+      exact hi
+  | .insertCopy s ic, bs, q, c, hi, h => by
+    obtain ⟨code, _, h2⟩ := lookIn_next' h
+    obtain ⟨v, b, _, e2⟩ := readIn_next' h2
+    cases e2
+    exact hi
+  | .copyLength s ic c0 ilen copyBits copyBase, bs, q, c, hi, h => by
+    have h' : (if s.remaining < ilen then ORes.bad else readIn 24 (readInt copyBits) bs fun e b =>
+        .next (.literals s ic c0 ilen (copyBase + e) ilen s.literal s.output) b) = .next q c := h
+    split at h'
+    · cases h'
+    · rename_i hl
+      obtain ⟨e, b, _, e2⟩ := readIn_next' h'
+      cases e2
+      exact ⟨hi, by omega⟩
+  | .literals s ic c0 ilen clen 0 lit out, bs, q, c, hi, h => by
+    cases h
+    have hi' : 1 ≤ s.produced + s.remaining ∧ ilen ≤ s.remaining := hi
+    show 1 ≤ s.produced + ilen + (s.remaining - ilen)
+    omega
+  | .literals s ic c0 ilen clen (n + 1) lit out, bs, q, c, hi, h => by
+    have h' : (if lit.count = 0 then nextIn m.literal lit bs fun lit b =>
+          .next (.literals s ic c0 ilen clen (n + 1) { lit with count := lit.count + 1 } out) b
+        else .next (.literalSymbol s ic c0 ilen clen n { lit with count := lit.count - 1 } out) bs) = .next q c := h
+    split at h'
+    · obtain ⟨lit', b, _, e2⟩ := nextIn_next' h'
+      cases e2
+      exact hi
+    · cases h'
+      exact hi
+  | .literalSymbol s ic c0 ilen clen n lit out, bs, q, c, hi, h => by
+    obtain ⟨_, _, h2⟩ := lookIn_next' h
+    obtain ⟨_, _, h3⟩ := lookIn_next' h2
+    obtain ⟨_, _, h4⟩ := lookIn_next' h3
+    obtain ⟨byte, b, _, e2⟩ := readIn_next' h4
+    cases e2
+    exact hi
+  | .distance s c0 clen, bs, q, c, hi, h => by
+    have h' : (if s.remaining = 0 then ORes.next (Phase.command s) bs
+        else if implicitZeroDistance c0 then
+          lookIn (distanceOf m.npostfix m.ndirect s.distances 0 0) fun d => lookIn (copyPhase w s clen 0 d) fun q => .next q bs
+        else nextIn m.distance s.distance bs fun dist b => .next (.distanceSymbol s clen dist) b) = .next q c := h
+    split at h'
+    · cases h'
+      exact hi
+    · split at h'
+      · obtain ⟨d, _, h2⟩ := lookIn_next' h'
+        obtain ⟨q', hq, e2⟩ := lookIn_next' h2
+        cases e2
+        exact copyPhase_live hi hq
+      · obtain ⟨dist, b, _, e2⟩ := nextIn_next' h'
+        cases e2
+        exact hi
+  | .distanceSymbol s clen dist, bs, q, c, hi, h => by
+    obtain ⟨_, _, h2⟩ := lookIn_next' h
+    obtain ⟨_, _, h3⟩ := lookIn_next' h2
+    obtain ⟨⟨dc, e⟩, b, _, h4⟩ := readIn_next' h3
+    obtain ⟨d, _, h5⟩ := lookIn_next' h4
+    obtain ⟨q', hq, e2⟩ := lookIn_next' h5
+    cases e2
+    exact copyPhase_live (s := { s with distance := dist }) hi hq
+  | .copy s d 0, bs, q, c, hi, h => by
+    cases h
+    exact hi
+  | .copy s d (n + 1), bs, q, c, hi, h => by
+    cases h
+    exact hi
+  | .word s [], bs, q, c, hi, h => by
+    cases h
+    exact hi
+  | .word s (b :: pending), bs, q, c, hi, h => by
+    cases h
+    exact hi
+
+/-- The commands read in order keep what their places have. -/
+theorem reach_live {w : Nat} {m : MetaBlockHeader} {p q : Phase} {bs c : List Bool} (h : Reach (cStep w m) p bs q c)
+    (hi : CLive p) : CLive q := by
+  induction h with
+  | refl => exact hi
+  | next hs _ ih => exact ih (cStep_live _ _ _ _ hi hs)
+
 /-! ### A header -/
 
 /-- A read that looks at no bit after the ones it takes, and fails on no bits, takes at least one. -/
@@ -1249,6 +1372,21 @@ theorem sstage_le {p : SPhase} (h : SInv p) : sstage p ≤ 17500 := by
   | mblock => simp only [sstage]; omega
   | ended => simp only [sstage]; omega
 
+/-- A compressed meta-block's window keeps the distances used so far, of which there are none when it differs. -/
+theorem distOk_blockWindow {w : Nat} {st : StreamState} {last : Bool} {mlen : Nat} (h : DistOk w st.distances st.produced) :
+    DistOk (blockWindow w st last mlen) st.distances st.produced := by
+  unfold blockWindow
+  split
+  · rename_i hc
+    have e : ∀ x, maxBackwardDistance x st.produced = 0 := fun x => by
+      unfold maxBackwardDistance
+      rw [hc.2]
+      exact Nat.min_zero x
+    unfold DistOk at h ⊢
+    rw [e] at h ⊢
+    exact h
+  · exact h
+
 theorem afterBlock_facts (w : Nat) (last : Bool) (st : StreamState) (h : DistOk w st.distances st.produced) :
     SInv (afterBlock w last st) ∧ (afterBlock w last st).out = st.output ∧ sstage (afterBlock w last st) = 1 := by
   cases last
@@ -1308,7 +1446,8 @@ theorem sStep_moves : ∀ (p : SPhase) (bs : List Bool) (q : SPhase) (c : List B
       | false =>
         simp only [startPlace, Bool.false_eq_true, ↓reduceIte] at e2
         cases e2
-        exact ⟨⟨hi, ⟨Nat.zero_le _, Nat.zero_le _, Nat.zero_le _, Nat.zero_le _⟩, trivial⟩, ⟨[], rfl⟩, Or.inl (Or.inl hl)⟩
+        exact ⟨⟨distOk_blockWindow hi, ⟨Nat.zero_le _, Nat.zero_le _, Nat.zero_le _, Nat.zero_le _⟩, trivial⟩, ⟨[], rfl⟩,
+          Or.inl (Or.inl hl)⟩
   | .skip w st last 0, bs, q, c, hi, h => by
     cases h
     obtain ⟨f1, f2, f3⟩ := afterBlock_facts w last st hi

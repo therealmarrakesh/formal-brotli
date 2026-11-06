@@ -329,7 +329,7 @@ theorem stepDCmds_ok {α : Type} {S : Sem α} {w : Nat} {last : Bool} {m : MetaB
     {pos : USize} (hrel : DRel D (.cmds w last m p)) (hp : pos.toNat ≤ stop.toNat) :
     DStepOk S a stop (.cmds w last m p) D pos (stepDCmds a stop hs D pos) := by
   obtain ⟨tag, cmd, hd, H, k, last', left, limit, pos', status⟩ := D
-  obtain ⟨ht, hl, hlim, hH, hR⟩ := hrel
+  obtain ⟨ht, hl, hlim, hH, hR, hL⟩ := hrel
   have ht' : tag = .cmds := ht
   subst ht'
   have hl0 : last' = last := hl
@@ -343,18 +343,21 @@ theorem stepDCmds_ok {α : Type} {S : Sem α} {w : Nat} {last : Bool} {m : MetaB
   | next =>
     dsimp only
     obtain ⟨p', hR', h1, h2, h3, h4, h5⟩ := hstep.next hst
-    exact ⟨fun _ => ⟨.cmds w last' m p', ⟨ht, hl, hlim, hH, hR'⟩, h1, h2, (fun t => h3 _), trivial, h4, fun t => sreach_cmds (h5 _)⟩,
+    exact ⟨fun _ => ⟨.cmds w last' m p', ⟨ht, hl, hlim, hH, hR', reach_live (h5 []) hL⟩, h1, h2, (fun t => h3 _), trivial, h4,
+      fun t => sreach_cmds (h5 _)⟩,
       fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
   | needsInput =>
     dsimp only
     obtain ⟨h1, h2, p', hR', h3, h4, h5, h6, h7⟩ := hstep.needsInput hst
-    exact ⟨fun e => DStatus.noConfusion e, fun _ => ⟨h1, h2, .cmds w last' m p', ⟨ht, hl, hlim, hH, hR'⟩, (fun t => h3 _), h4, trivial,
+    exact ⟨fun e => DStatus.noConfusion e, fun _ => ⟨h1, h2, .cmds w last' m p', ⟨ht, hl, hlim, hH, hR', reach_live (h6 []) hL⟩,
+      (fun t => h3 _), h4, trivial,
       (fun _ _ e => SPhase.noConfusion e), h5, (fun t => sreach_cmds (h6 _)), short_cmds h7⟩, fun e => DStatus.noConfusion e,
       fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
   | needsOutput =>
     dsimp only
     obtain ⟨p', hR', h1, h2, h3, h4, h5, h6⟩ := hstep.needsOutput hst
-    exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun _ => ⟨.cmds w last' m p', ⟨ht, hl, hlim, hH, hR'⟩, h1, h2, (fun t => h3 _),
+    exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun _ => ⟨.cmds w last' m p',
+      ⟨ht, hl, hlim, hH, hR', reach_live (h6 []) hL⟩, h1, h2, (fun t => h3 _),
       h4,
       trivial, (fun _ _ e => SPhase.noConfusion e), h5, fun t => sreach_cmds (h6 _)⟩, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
   | bad =>
@@ -366,6 +369,9 @@ theorem stepDCmds_ok {α : Type} {S : Sem α} {w : Nat} {last : Bool} {m : MetaB
   | done =>
     obtain ⟨s, hR', h1, h2, h3, h4, h5, h6⟩ := hstep.done hst
     have hsee := seenOk_iff hH hR'
+    have hne : s.produced ≠ 0 := by
+      have : 1 ≤ s.produced + s.remaining := reach_live (h6 []) hL
+      omega
     dsimp only
     by_cases hc : seenOk r H.nL H.nI H.nD = true
     · rw [ite_eq_left hc]
@@ -385,10 +391,12 @@ theorem stepDCmds_ok {α : Type} {S : Sem α} {w : Nat} {last : Bool} {m : MetaB
         (sreach_cmds (h6 F)).snoc (fun _ _ e => SPhase.noConfusion e) (sStep_cmds_end _ h4 hc)
       cases last' with
       | true =>
-        exact ⟨fun _ => ⟨.ended ⟨s.output, s.produced, s.distances⟩, ⟨rfl, hC.wf, w, ⟨hwin, hprod, hlim⟩⟩, h1, h2, (fun t => (hfin _).trans (S.after_true ..)), trivial, h5,
+        exact ⟨fun _ => ⟨.ended ⟨s.output, s.produced, s.distances⟩, ⟨rfl, hC.wf, w, Or.inl ⟨⟨hwin, hprod, hlim⟩, hne⟩⟩, h1, h2,
+          (fun t => (hfin _).trans (S.after_true ..)), trivial, h5,
           fun t => hj _⟩, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
       | false =>
-        exact ⟨fun _ => ⟨.mblock w ⟨s.output, s.produced, s.distances⟩, ⟨rfl, hC.wf, ⟨hwin, hprod, hlim⟩⟩, h1, h2, (fun t => (hfin _).trans (S.after_false ..)), trivial, h5,
+        exact ⟨fun _ => ⟨.mblock w ⟨s.output, s.produced, s.distances⟩, ⟨rfl, hC.wf, Or.inl ⟨⟨hwin, hprod, hlim⟩, hne⟩⟩, h1, h2,
+          (fun t => (hfin _).trans (S.after_false ..)), trivial, h5,
           fun t => hj _⟩, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
     · rw [ite_eq_right hc]
       rw [hsee] at hc
@@ -430,7 +438,7 @@ theorem stepDCmds_badWin {w : Nat} {last : Bool} {m : MetaBlockHeader} {p : Phas
     {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize} (hrel : DRel D (.cmds w last m p)) (hp : pos.toNat ≤ stop.toNat) :
     (stepDCmds a stop hs D pos).status = .bad → WinOk (stepDCmds a stop hs D pos) := by
   obtain ⟨tag, cmd, hd, H, k, last', left, limit, pos', status⟩ := D
-  obtain ⟨ht, hl, hlim, hH, hR⟩ := hrel
+  obtain ⟨ht, hl, hlim, hH, hR, -⟩ := hrel
   have ht' : tag = .cmds := ht
   subst ht'
   have hstep := runCmd_ok (hs := hs) (K := cmdK w (specSem.after w last') m) (a := a) (fun s bs h0 => cmdK_step s bs h0) hH _ cmdBudget p cmd pos rfl hR hp

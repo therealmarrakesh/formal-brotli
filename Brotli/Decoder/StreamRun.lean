@@ -32,7 +32,7 @@ theorem DInv.hd {stop : USize} {D : Dec} (h : DInv stop D) (ht : D.tag = .hdr) :
 theorem DInv.cmd {stop : USize} {D : Dec} (h : DInv stop D) (ht : D.tag = .cmds) : CmdInv D.H D.k stop D.cmd D.pos := by
   obtain ⟨⟨p, hrel⟩, hpos⟩ := h
   cases p with
-  | cmds w last m q => exact KInv.of_rel hrel.2.2.2.1 hrel.2.2.2.2 hpos
+  | cmds w last m q => exact KInv.of_rel hrel.2.2.2.1 hrel.2.2.2.2.1 hpos
   | _ => exact absurd (hrel.1.symm.trans ht) (fun e => DTag.noConfusion e)
 
 /-- One step of the whole decoder. -/
@@ -164,15 +164,15 @@ theorem readCommand_cK {w : Nat} {last : Bool} {m : MetaBlockHeader} {s : Comman
 /-- What steps of the commands do to the measure, with `R` the order moving on follows. -/
 structure CDown (R : (Nat × Nat) × (Nat × Nat) → (Nat × Nat) × (Nat × Nat) → Prop) (w k : Nat) (last : Bool) (m : MetaBlockHeader) (a : ByteArray)
     (stop : USize) (p : Phase) (st : Cmd) (pos : USize) (r : Cmd) : Prop where
-  next : r.status = .next → ∃ p', Rel w k m r p' ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
+  next : r.status = .next → ∃ p', (Rel w k m r p' ∧ (CLive p → CLive p')) ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
     ∀ F, R (cMeas w last m p' (stateBits r a r.pos stop F)) (cMeas w last m p (stateBits st a pos stop F))
-  needsInput : r.status = .needsInput → ∃ p', Rel w k m r p' ∧
+  needsInput : r.status = .needsInput → ∃ p', (Rel w k m r p' ∧ (CLive p → CLive p')) ∧
     ((∀ F, Lex4 (cMeas w last m p' (stateBits r a r.pos stop F)) (cMeas w last m p (stateBits st a pos stop F))) ∨
       (r.pend = st.pend ∧ ∀ F, cMeas w last m p' (stateBits r a r.pos stop F) = cMeas w last m p (stateBits st a pos stop F)))
-  needsOutput : r.status = .needsOutput → ∃ p', Rel w k m r p' ∧
+  needsOutput : r.status = .needsOutput → ∃ p', (Rel w k m r p' ∧ (CLive p → CLive p')) ∧
     ((∀ F, Lex4 (cMeas w last m p' (stateBits r a r.pos stop F)) (cMeas w last m p (stateBits st a pos stop F))) ∨
       (r.pend = st.pend ∧ ∀ F, cMeas w last m p' (stateBits r a r.pos stop F) = cMeas w last m p (stateBits st a pos stop F)))
-  done : r.status = .done → ∃ s, Rel w k m r (.command s) ∧ s.remaining = 0 ∧
+  done : r.status = .done → ∃ s, (Rel w k m r (.command s) ∧ (CLive p → CLive (.command s))) ∧ s.remaining = 0 ∧
     ∀ F, Lex4Eq (cMeas w last m (.command s) (stateBits r a r.pos stop F)) (cMeas w last m p (stateBits st a pos stop F))
 
 /-- Moves on, then pauses: the measure is lower than it was. -/
@@ -204,43 +204,43 @@ theorem stepCmd_down {w : Nat} {k : USize} {last : Bool} {H : Hdr} {m : MetaBloc
     generalize stepCmd H k a stop hs st pos = r at c1 c2 c3 c4 ⊢
     refine ⟨fun e => ?_, fun e => ?_, fun e => absurd e c4, fun e => ?_⟩
     · obtain ⟨ic, r1, r2, r3, r4, r5⟩ := c1 e
-      refine ⟨.insertCopy s ic, r1, r2, r3, fun F => Or.inl ?_⟩
+      refine ⟨.insertCopy s ic, ⟨r1, id⟩, r2, r3, fun F => Or.inl ?_⟩
       have h := readCommand_cK (w := w) (last := last) (m := m) (s := s) (bs := stateBits st a pos stop F) r4
       rw [readCommand_rest, r5 F] at h
       exact h
     · obtain ⟨r1, r0, r2⟩ := c2 e
-      exact ⟨.command s, r1, Or.inr ⟨r0, fun F => by rw [r2 F]⟩⟩
+      exact ⟨.command s, ⟨r1, id⟩, Or.inr ⟨r0, fun F => by rw [r2 F]⟩⟩
     · obtain ⟨r1, r2, r3⟩ := c3 e
-      exact ⟨s, r1, r2, fun F => Or.inr (by rw [r3 F])⟩
+      exact ⟨s, ⟨r1, id⟩, r2, fun F => Or.inr (by rw [r3 F])⟩
   · have hne : ∀ s, p ≠ .command s := fun s e => hc ⟨s, e⟩
     have hstep := stepCmd_inside (K := cK w last m) (a := a) (stop := stop) (hs := hs) hne hH hrel hp
     have hrk := rank_ne hne
     generalize stepCmd H k a stop hs st pos = r at hstep ⊢
     refine ⟨fun e => ?_, fun e => ?_, fun e => ?_, fun e => ?_⟩
-    · obtain ⟨p', r1, r2, r3, r4, r5, _⟩ := hstep.next e
-      refine ⟨p', r1, r2, r3, fun F => Or.inr ⟨?_, r5.resolve_left hrk⟩⟩
+    · obtain ⟨p', r1, r2, r3, r4, r5, _, r7⟩ := hstep.next e
+      refine ⟨p', ⟨r1, reach_live (r7 [])⟩, r2, r3, fun F => Or.inr ⟨?_, r5.resolve_left hrk⟩⟩
       show (rest w m (cK w last m) p' _).getD (0, 0) = (rest w m (cK w last m) p _).getD (0, 0)
       rw [r4]
-    · obtain ⟨_, _, p', r1, r2, _, r3, _⟩ := hstep.needsInput e
+    · obtain ⟨_, _, p', r1, r2, _, r3, _, r7, _⟩ := hstep.needsInput e
       have hv : ∀ F, cVal w last m p' (stateBits r a r.pos stop F) = cVal w last m p (stateBits st a pos stop F) := by
         intro F
         show (rest w m (cK w last m) p' _).getD (0, 0) = (rest w m (cK w last m) p _).getD (0, 0)
         rw [r2]
-      refine ⟨p', r1, ?_⟩
+      refine ⟨p', ⟨r1, reach_live (r7 [])⟩, ?_⟩
       rcases r3 with h | ⟨h1, h2⟩
       · exact Or.inl fun F => Or.inr ⟨hv F, h⟩
       · exact Or.inr ⟨h2, fun F => Prod.ext (hv F) h1⟩
-    · obtain ⟨p', r1, _, _, r2, _, r3, _⟩ := hstep.needsOutput e
+    · obtain ⟨p', r1, _, _, r2, _, r3, _, r7⟩ := hstep.needsOutput e
       have hv : ∀ F, cVal w last m p' (stateBits r a r.pos stop F) = cVal w last m p (stateBits st a pos stop F) := by
         intro F
         show (rest w m (cK w last m) p' _).getD (0, 0) = (rest w m (cK w last m) p _).getD (0, 0)
         rw [r2]
-      refine ⟨p', r1, ?_⟩
+      refine ⟨p', ⟨r1, reach_live (r7 [])⟩, ?_⟩
       rcases r3 with h | ⟨h1, h2⟩
       · exact Or.inl fun F => Or.inr ⟨hv F, h⟩
       · exact Or.inr ⟨h2, fun F => Prod.ext (hv F) h1⟩
-    · obtain ⟨s, r1, _, _, r2, r3, _⟩ := hstep.done e
-      refine ⟨s, r1, r3, fun F => Or.inl (Or.inr ⟨?_, Or.inl (Nat.pos_of_ne_zero hrk)⟩)⟩
+    · obtain ⟨s, r1, _, _, r2, r3, _, r7⟩ := hstep.done e
+      refine ⟨s, ⟨r1, reach_live (r7 [])⟩, r3, fun F => Or.inl (Or.inr ⟨?_, Or.inl (Nat.pos_of_ne_zero hrk)⟩)⟩
       show (rest w m (cK w last m) (.command s) _).getD (0, 0) = (rest w m (cK w last m) p _).getD (0, 0)
       rw [r2]
 
@@ -253,8 +253,8 @@ theorem runCmd_le {w : Nat} {k : USize} {last : Bool} {H : Hdr} {m : MetaBlockHe
   | zero =>
     intro n p st pos hN hrel hp
     rw [runCmd, dite_eq_left (usize_zero hN)]
-    exact ⟨fun _ => ⟨p, hrel.mark _ _, Nat.le_refl _, hp, fun _ => Or.inr rfl⟩, fun e => StepStatus.noConfusion e, fun e => StepStatus.noConfusion e,
-      fun e => StepStatus.noConfusion e⟩
+    exact ⟨fun _ => ⟨p, ⟨hrel.mark _ _, id⟩, Nat.le_refl _, hp, fun _ => Or.inr rfl⟩, fun e => StepStatus.noConfusion e,
+      fun e => StepStatus.noConfusion e, fun e => StepStatus.noConfusion e⟩
   | succ N ih =>
     intro n p st pos hN hrel hp
     have hn : n ≠ 0 := fun e => by rw [e] at hN; exact Nat.succ_ne_zero _ hN.symm
@@ -265,20 +265,20 @@ theorem runCmd_le {w : Nat} {k : USize} {last : Bool} {H : Hdr} {m : MetaBlockHe
     generalize stepCmd H k a stop hs st pos = r at hstep
     cases hst : r.status with
     | next =>
-      obtain ⟨p', hR, h1, h2, h3⟩ := hstep.next hst
+      obtain ⟨p', ⟨hR, hL⟩, h1, h2, h3⟩ := hstep.next hst
       have hin := ih (n - USize.ofNat 1) p' r r.pos (by omega) hR h2
       generalize runCmd H k a stop hs (n - USize.ofNat 1) r r.pos = r2 at hin
       refine ⟨fun e => ?_, fun e => ?_, fun e => ?_, fun e => ?_⟩
-      · obtain ⟨p2, b1, b2, b3, b4⟩ := hin.next e
-        exact ⟨p2, b1, Nat.le_trans h1 b2, b3, fun F => (b4 F).trans (Or.inl (h3 F))⟩
-      · obtain ⟨p2, b1, b2⟩ := hin.needsInput e
-        refine ⟨p2, b1, Or.inl (pause_after (R := Lex4) (x := r2.pend) (y := r.pend) (fun a b => a.trans b) h3 ?_)⟩
+      · obtain ⟨p2, ⟨b1, bL⟩, b2, b3, b4⟩ := hin.next e
+        exact ⟨p2, ⟨b1, fun h => bL (hL h)⟩, Nat.le_trans h1 b2, b3, fun F => (b4 F).trans (Or.inl (h3 F))⟩
+      · obtain ⟨p2, ⟨b1, bL⟩, b2⟩ := hin.needsInput e
+        refine ⟨p2, ⟨b1, fun h => bL (hL h)⟩, Or.inl (pause_after (R := Lex4) (x := r2.pend) (y := r.pend) (fun a b => a.trans b) h3 ?_)⟩
         exact b2
-      · obtain ⟨p2, b1, b2⟩ := hin.needsOutput e
-        refine ⟨p2, b1, Or.inl (pause_after (R := Lex4) (x := r2.pend) (y := r.pend) (fun a b => a.trans b) h3 ?_)⟩
+      · obtain ⟨p2, ⟨b1, bL⟩, b2⟩ := hin.needsOutput e
+        refine ⟨p2, ⟨b1, fun h => bL (hL h)⟩, Or.inl (pause_after (R := Lex4) (x := r2.pend) (y := r.pend) (fun a b => a.trans b) h3 ?_)⟩
         exact b2
-      · obtain ⟨s, b1, b2, b3⟩ := hin.done e
-        exact ⟨s, b1, b2, fun F => (b3 F).trans (Or.inl (h3 F))⟩
+      · obtain ⟨s, ⟨b1, bL⟩, b2, b3⟩ := hin.done e
+        exact ⟨s, ⟨b1, fun h => bL (hL h)⟩, b2, fun F => (b3 F).trans (Or.inl (h3 F))⟩
     | needsInput =>
       exact ⟨fun e => absurd (hst.symm.trans e) (by decide), hstep.needsInput, fun e => absurd (hst.symm.trans e) (by decide), fun e => absurd (hst.symm.trans e) (by decide)⟩
     | needsOutput =>
@@ -300,20 +300,20 @@ theorem runCmd_down {w : Nat} {k : USize} {last : Bool} {H : Hdr} {m : MetaBlock
   generalize stepCmd H k a stop hs st pos = r at hstep
   cases hst : r.status with
   | next =>
-    obtain ⟨p', hR, h1, h2, h3⟩ := hstep.next hst
+    obtain ⟨p', ⟨hR, hL⟩, h1, h2, h3⟩ := hstep.next hst
     have hin := runCmd_le (last := last) (a := a) (stop := stop) (hs := hs) hH _ (n - USize.ofNat 1) p' r r.pos rfl hR h2
     generalize runCmd H k a stop hs (n - USize.ofNat 1) r r.pos = r2 at hin
     refine ⟨fun e => ?_, fun e => ?_, fun e => ?_, fun e => ?_⟩
-    · obtain ⟨p2, b1, b2, b3, b4⟩ := hin.next e
-      exact ⟨p2, b1, Nat.le_trans h1 b2, b3, fun F => (b4 F).trans_lt (h3 F)⟩
-    · obtain ⟨p2, b1, b2⟩ := hin.needsInput e
-      refine ⟨p2, b1, Or.inl (pause_after (R := Lex4) (x := r2.pend) (y := r.pend) (fun a b => a.trans b) h3 ?_)⟩
+    · obtain ⟨p2, ⟨b1, bL⟩, b2, b3, b4⟩ := hin.next e
+      exact ⟨p2, ⟨b1, fun h => bL (hL h)⟩, Nat.le_trans h1 b2, b3, fun F => (b4 F).trans_lt (h3 F)⟩
+    · obtain ⟨p2, ⟨b1, bL⟩, b2⟩ := hin.needsInput e
+      refine ⟨p2, ⟨b1, fun h => bL (hL h)⟩, Or.inl (pause_after (R := Lex4) (x := r2.pend) (y := r.pend) (fun a b => a.trans b) h3 ?_)⟩
       exact b2
-    · obtain ⟨p2, b1, b2⟩ := hin.needsOutput e
-      refine ⟨p2, b1, Or.inl (pause_after (R := Lex4) (x := r2.pend) (y := r.pend) (fun a b => a.trans b) h3 ?_)⟩
+    · obtain ⟨p2, ⟨b1, bL⟩, b2⟩ := hin.needsOutput e
+      refine ⟨p2, ⟨b1, fun h => bL (hL h)⟩, Or.inl (pause_after (R := Lex4) (x := r2.pend) (y := r.pend) (fun a b => a.trans b) h3 ?_)⟩
       exact b2
-    · obtain ⟨s, b1, b2, b3⟩ := hin.done e
-      exact ⟨s, b1, b2, fun F => (b3 F).trans (Or.inl (h3 F))⟩
+    · obtain ⟨s, ⟨b1, bL⟩, b2, b3⟩ := hin.done e
+      exact ⟨s, ⟨b1, fun h => bL (hL h)⟩, b2, fun F => (b3 F).trans (Or.inl (h3 F))⟩
   | needsInput => exact hstep
   | needsOutput => exact hstep
   | done => exact hstep
@@ -547,7 +547,7 @@ theorem stepDCmds_down {w : Nat} {last : Bool} {m : MetaBlockHeader} {p : Phase}
     DDown a stop (.cmds w last m p) D pos (stepDCmds a stop hs D pos) := by
   have hok := stepDCmds_ok (S := specSem) (a := a) (hs := hs) hrel hp
   obtain ⟨tag, cmd, hd, H, k, last', left, limit, pos', status⟩ := D
-  obtain ⟨ht, hl, hlim, hH, hR⟩ := hrel
+  obtain ⟨ht, hl, hlim, hH, hR, hL⟩ := hrel
   have ht' : tag = .cmds := ht
   subst ht'
   have hl0 : last' = last := hl
@@ -560,22 +560,22 @@ theorem stepDCmds_down {w : Nat} {last : Bool} {m : MetaBlockHeader} {p : Phase}
   | next =>
     rw [hst] at hok
     dsimp only at hok ⊢
-    obtain ⟨p', hR', h1, h2, h3⟩ := hstep.next hst
-    exact ⟨fun _ => ⟨.cmds w last' m p', ⟨ht, hl, hlim, hH, hR'⟩, h1, h2, fun t => mlt_of_lex (h3 _)⟩, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
+    obtain ⟨p', ⟨hR', hL'⟩, h1, h2, h3⟩ := hstep.next hst
+    exact ⟨fun _ => ⟨.cmds w last' m p', ⟨ht, hl, hlim, hH, hR', hL' hL⟩, h1, h2, fun t => mlt_of_lex (h3 _)⟩, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
   | needsInput =>
     rw [hst] at hok
     dsimp only at hok ⊢
-    obtain ⟨p', hR', h3⟩ := hstep.needsInput hst
-    refine ⟨fun e => DStatus.noConfusion e, fun _ => ⟨(hok.needsInput rfl).1, .cmds w last' m p', ⟨ht, hl, hlim, hH, hR'⟩, ?_⟩, fun e => DStatus.noConfusion e⟩
+    obtain ⟨p', ⟨hR', hL'⟩, h3⟩ := hstep.needsInput hst
+    refine ⟨fun e => DStatus.noConfusion e, fun _ => ⟨(hok.needsInput rfl).1, .cmds w last' m p', ⟨ht, hl, hlim, hH, hR', hL' hL⟩, ?_⟩, fun e => DStatus.noConfusion e⟩
     rcases h3 with h | ⟨h1, h2⟩
     · exact Or.inl fun t => mlt_of_lex (h _)
     · exact Or.inr ⟨h1, fun t => meq_of_eq (h2 _)⟩
   | needsOutput =>
     rw [hst] at hok
     dsimp only at hok ⊢
-    obtain ⟨p', hR', h3⟩ := hstep.needsOutput hst
+    obtain ⟨p', ⟨hR', hL'⟩, h3⟩ := hstep.needsOutput hst
     obtain ⟨_, _, h1, h2, _, h4, _, _, _⟩ := hok.needsOutput rfl
-    refine ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun _ => ⟨.cmds w last' m p', ⟨ht, hl, hlim, hH, hR'⟩, h1, h2, h4, ?_⟩⟩
+    refine ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun _ => ⟨.cmds w last' m p', ⟨ht, hl, hlim, hH, hR', hL' hL⟩, h1, h2, h4, ?_⟩⟩
     rcases h3 with h | ⟨h5, h6⟩
     · exact Or.inl fun t => mlt_of_lex (h _)
     · exact Or.inr ⟨h5, fun t => meq_of_eq (h6 _)⟩
@@ -584,7 +584,10 @@ theorem stepDCmds_down {w : Nat} {last : Bool} {m : MetaBlockHeader} {p : Phase}
     exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
   | done =>
     rw [hst] at hok
-    obtain ⟨s, hR', h4, h3⟩ := hstep.done hst
+    obtain ⟨s, ⟨hR', hL'⟩, h4, h3⟩ := hstep.done hst
+    have hne : s.produced ≠ 0 := by
+      have : 1 ≤ s.produced + s.remaining := hL' hL
+      omega
     have hsee := seenOk_iff hH hR'
     dsimp only at hok ⊢
     by_cases hc : seenOk r H.nL H.nI H.nD = true
@@ -619,10 +622,11 @@ theorem stepDCmds_down {w : Nat} {last : Bool} {m : MetaBlockHeader} {p : Phase}
         exact hfst (h3 F)
       cases last' with
       | true =>
-        exact ⟨fun _ => ⟨.ended ⟨s.output, s.produced, s.distances⟩, ⟨rfl, hC.wf, w, ⟨hwin, hprod, hlim⟩⟩, h1, h2, fun t => hend (hlow _) (by decide)⟩,
-          fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
+        exact ⟨fun _ => ⟨.ended ⟨s.output, s.produced, s.distances⟩, ⟨rfl, hC.wf, w, Or.inl ⟨⟨hwin, hprod, hlim⟩, hne⟩⟩, h1, h2,
+          fun t => hend (hlow _) (by decide)⟩, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
       | false =>
-        exact ⟨fun _ => ⟨.mblock w ⟨s.output, s.produced, s.distances⟩, ⟨rfl, hC.wf, ⟨hwin, hprod, hlim⟩⟩, h1, h2, fun t => hend (hlow _) (by decide)⟩,
+        exact ⟨fun _ => ⟨.mblock w ⟨s.output, s.produced, s.distances⟩, ⟨rfl, hC.wf, Or.inl ⟨⟨hwin, hprod, hlim⟩, hne⟩⟩, h1, h2,
+          fun t => hend (hlow _) (by decide)⟩,
           fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
     · rw [ite_eq_right hc]
       exact ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩

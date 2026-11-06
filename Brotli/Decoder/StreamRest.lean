@@ -2,6 +2,7 @@ module
 
 public import Brotli.Decoder.HeaderRest
 public import Brotli.Decoder.Rest
+public import Brotli.Spec.Window
 
 @[expose] public section
 
@@ -82,6 +83,21 @@ theorem cmdK_stop {w : Nat} {A : StreamState → List Bool → Option α} {m : M
   unfold cmdK
   rw [commandsFrom_stop bs h0]
   rfl
+
+/-- The commands from a state are the same under any window the meta-block's output fits. -/
+theorem cmdK_window {w w' : Nat} (A : StreamState → List Bool → Option α) (m : MetaBlockHeader) (s : CommandState)
+    (bs : List Bool) (h : s.produced + s.remaining ≤ w) (h' : s.produced + s.remaining ≤ w') :
+    cmdK w A m s bs = cmdK w' A m s bs := by
+  unfold cmdK commandsFrom readCommands
+  rw [readCommandsWith_window m none _ s bs h h']
+
+/-- The header's hook is the same under any window the meta-block's output fits. -/
+theorem hdrK_window {w w' : Nat} (A : StreamState → List Bool → Option α) (st : StreamState) (mlen : Nat)
+    (h : st.produced + mlen ≤ w) (h' : st.produced + mlen ≤ w') : hdrK w A st mlen = hdrK w' A st mlen := by
+  unfold hdrK
+  congr 1
+  funext m bs
+  exact cmdK_window A m _ bs h h'
 
 end
 

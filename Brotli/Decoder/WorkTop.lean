@@ -26,7 +26,7 @@ theorem DRel.held_le {D : Dec} {p : SPhase} (h : DRel D p) : D.held.length ≤ 6
     | skip => obtain ⟨ht, hw, _⟩ := h; rw [ht]; exact hw
     | raw => obtain ⟨ht, hw, _⟩ := h; rw [ht]; exact hw
     | hdr => obtain ⟨ht, _, _, _, _, _, hh, _⟩ := h; rw [ht]; exact hh.wf
-    | cmds => obtain ⟨ht, _, _, _, hr⟩ := h; rw [ht]; exact hr.wf
+    | cmds => obtain ⟨ht, _, _, _, hr, -⟩ := h; rw [ht]; exact hr.wf
     | ended => obtain ⟨ht, hw, _⟩ := h; rw [ht]; exact hw
   unfold Dec.held
   rw [BitBuffer.held_length]
@@ -46,9 +46,9 @@ theorem ReachesW.reaches {limit : Nat} {x : List UInt8} {R : Run DState} {W n : 
   | start => exact .start
   | call _ ha ih => exact .call ih ha
 
-/-- The window a run has paid for: none while it runs at WBITS, and the declared window's after. -/
+/-- The window a run has paid for: none while it runs with no window, and the declared window's after. -/
 def winPaid (x : List UInt8) (R : Run DState) : Nat :=
-  if R.status.stopped = false ∧ R.state.val.tag = .wbits then 0 else (declaredWindow x + 272)
+  if R.status.stopped = false ∧ R.state.val.cmd.ring.size = 0 then 0 else (declaredWindow x + 272)
 
 theorem stopped_false {s : Status} : s.stopped = false ↔ s = .needsInput ∨ s = .needsOutput := by
   cases s <;> simp [Status.stopped]
@@ -148,9 +148,9 @@ theorem work_inv {limit : Nat} {x : List UInt8} {R : Run DState} {W n : Nat} (h 
     have hrd : (R.after decoder x c).read = R.read + (R.reply decoder x c).used := rfl
     have hs1 : (R.after decoder x c).status = (R.reply decoder x c).status := rfl
     have hs2 : (R.after decoder x c).state = (R.reply decoder x c).state := rfl
-    have hwR : winPaid x R = if R.state.val.tag = .wbits then 0 else (declaredWindow x + 272) := by
+    have hwR : winPaid x R = if R.state.val.cmd.ring.size = 0 then 0 else (declaredWindow x + 272) := by
       unfold winPaid
-      by_cases ht : R.state.val.tag = .wbits
+      by_cases ht : R.state.val.cmd.ring.size = 0
       · rw [ite_eq_left ⟨ha.running, ht⟩, ite_eq_left ht]
       · rw [ite_eq_right (fun e => ht e.2), ite_eq_right ht]
     refine ⟨fun hst => ?_, fun hst => ?_⟩
@@ -160,23 +160,23 @@ theorem work_inv {limit : Nat} {x : List UInt8} {R : Run DState} {W n : Nat} (h 
       have hwq : winPaid x R + callWin R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.space ≤
           winPaid x (R.after decoder x c) := by
         have hwR' : winPaid x (R.after decoder x c) =
-            if (R.reply decoder x c).state.val.tag = .wbits then 0 else (declaredWindow x + 272) := by
+            if (R.reply decoder x c).state.val.cmd.ring.size = 0 then 0 else (declaredWindow x + 272) := by
           unfold winPaid
           rw [hs1, hs2]
-          by_cases ht : (R.reply decoder x c).state.val.tag = .wbits
+          by_cases ht : (R.reply decoder x c).state.val.cmd.ring.size = 0
           · rw [ite_eq_left ⟨hst, ht⟩, ite_eq_left ht]
           · rw [ite_eq_right (fun e => ht e.2), ite_eq_right ht]
         rw [hwR, hwR']
-        by_cases ht : R.state.val.tag = .wbits
+        by_cases ht : R.state.val.cmd.ring.size = 0
         · rw [ite_eq_left ht]
-          by_cases ht' : (R.reply decoder x c).state.val.tag = .wbits
+          by_cases ht' : (R.reply decoder x c).state.val.cmd.ring.size = 0
           · rw [ite_eq_left ht']
             by_cases hc : callWin R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.space = 0
             · omega
-            · exact absurd ht' (callWin_tag hin hfit (Or.inl hc) hst')
+            · exact absurd ht' (callWin_ring hin hfit hrel (Or.inl hc) hst')
           · rw [ite_eq_right ht']
             omega
-        · rw [ite_eq_right ht, callWin_zero hin hfit ht, ite_eq_right (callWin_tag hin hfit (Or.inr ht) hst')]
+        · rw [ite_eq_right ht, callWin_zero hin hfit ht, ite_eq_right (callWin_ring hin hfit hrel (Or.inr ht) hst')]
           omega
       refine ⟨q, by rw [hs2]; exact d1, d2, by rw [hs2]; exact d3, by rw [hs2]; omega, ?_⟩
       rw [hs2, hrd, em]
@@ -185,7 +185,7 @@ theorem work_inv {limit : Nat} {x : List UInt8} {R : Run DState} {W n : Nat} (h 
       have hwq : winPaid x R + callWin R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.space ≤
           (declaredWindow x + 272) := by
         rw [hwR]
-        by_cases ht : R.state.val.tag = .wbits
+        by_cases ht : R.state.val.cmd.ring.size = 0
         · rw [ite_eq_left ht]
           omega
         · rw [ite_eq_right ht, callWin_zero hin hfit ht]
@@ -238,8 +238,8 @@ theorem decoder_potential {limit : Nat} {x : List UInt8} {R : Run DState} (h : R
 
 /-- The work bound for one call. A call's work, in the work model, is at most the potential it starts with, at most
 `psiMax`, and 23841 for each byte it uses, 33 for each byte it hands out, the window it allocates, and 132. The window
-it allocates, `callWin`, is the window the stream declares and 272 more for zero-filling it for the call that gets past
-WBITS (`callWin_le`), and nothing for any call that starts past it (`callWin_zero`). -/
+it allocates, `callWin`, is at most the window the stream declares and 272 more for zero-filling it, for the call that
+allocates the window (`callWin_le`), and nothing for any call that starts with one (`callWin_zero`). -/
 theorem decoder_callWork {limit : Nat} {x : List UInt8} {R : Run DState} {c : Call} (h : Reaches decoder limit x R)
     (ha : R.Allowed x c) :
     callWork R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.buf.toByteArray c.space c.final ≤

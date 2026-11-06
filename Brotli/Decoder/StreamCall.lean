@@ -37,7 +37,7 @@ structure RunD (a : ByteArray) (stop : USize) (p : SPhase) (D r : Dec) : Prop wh
   memory : r.status = .memory → D.pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧
     ∃ p' D', DRel D' p' ∧ D.pos.toNat ≤ D'.pos.toNat ∧ D'.pos.toNat ≤ stop.toNat ∧ OutD p p' D D' ∧
     (∀ t : List UInt8, Reach sStep p (D.bits a D.pos stop (bits t)) p' (D'.bits a D'.pos stop (bits t))) ∧ D'.cmd.pend = 0 ∧
-    (p' = .wbits ∨ ∃ w st last mlen g q, p' = .hdr w st last mlen g q)
+    ((∃ w, p' = .mblock w ⟨[], 0, initialDistances⟩) ∨ ∃ w st last mlen g q, p' = .hdr w st last mlen g q)
 
 /-- The cap on waiting bytes changes nothing the loop's contract says of where it started. -/
 theorem RunD.uncap {a : ByteArray} {stop : USize} {p : SPhase} {D r : Dec} {x : USize}
@@ -67,8 +67,8 @@ theorem runD_ok {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} : �
       cases p with
       | ended st =>
         have hrel' : DRel { D with status := .next } (.ended st) := by
-          obtain ⟨h1, h2, w, h3, h4, h5⟩ := hrel
-          exact ⟨h1, h2, w, { h3 with }, h4, h5⟩
+          obtain ⟨h1, h2, w, h3⟩ := hrel
+          exact ⟨h1, h2, w, h3.congr rfl rfl rfl⟩
         refine ⟨fun _ => ⟨st, hrel', Nat.le_refl _, hinv.2, ⟨[], rfl, rfl⟩, (fun t => ?_), fun t => Reach.refl _ _⟩, fun e => DStatus.noConfusion e,
           fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
         have hb : Dec.bits { D with status := .next } a D.pos stop (bits t) = Dec.bits D a D.pos stop (bits t) := rfl
@@ -224,8 +224,8 @@ theorem DRel.congr {D D' : Dec} {p : SPhase} (h : DRel D p) (e1 : D'.tag = D.tag
     (e6 : D'.last = D.last) (e7 : D'.left = D.left) (e8 : D'.limit = D.limit) : DRel D' p := by
   cases p with
   | wbits =>
-    obtain ⟨a1, a2, a3, a4⟩ := h
-    exact ⟨e1.trans a1, by rw [e2]; exact a2, by rw [e8]; exact a3, by rw [e2]; exact a4⟩
+    obtain ⟨a1, a2, a3, a4, a5⟩ := h
+    exact ⟨e1.trans a1, by rw [e2]; exact a2, by rw [e8]; exact a3, by rw [e2]; exact a4, by rw [e2]; exact a5⟩
   | mblock =>
     obtain ⟨a1, a2, a3⟩ := h
     exact ⟨e1.trans a1, by rw [e2]; exact a2, a3.congr e5 e2 e8⟩
@@ -233,15 +233,15 @@ theorem DRel.congr {D D' : Dec} {p : SPhase} (h : DRel D p) (e1 : D'.tag = D.tag
     obtain ⟨a1, a2, a3, a4, a5, a6, a7⟩ := h
     exact ⟨e1.trans a1, by rw [e2]; exact a2, a3.congr e5 e2 e8, e6.trans a4, by rw [e7]; exact a5, by rw [e2]; exact a6, a7⟩
   | raw =>
-    obtain ⟨a1, a2, a3, a4, a5, a6⟩ := h
-    exact ⟨e1.trans a1, by rw [e2]; exact a2, a3.congr e5 e2 e8, e6.trans a4, by rw [e7]; exact a5, a6⟩
+    obtain ⟨a1, a2, a3, a4, a5, a6, a7⟩ := h
+    exact ⟨e1.trans a1, by rw [e2]; exact a2, a3.congr e5 e2 e8, e6.trans a4, by rw [e7]; exact a5, a6, a7⟩
   | hdr =>
     obtain ⟨a1, a2, a3, a4, a5, a6, a7, a8, a9⟩ := h
     exact ⟨e1.trans a1, a2.congr e5 e2 e8, e6.trans a3, by rw [e7]; exact a4, a5, a6, by rw [e3]; exact a7, by rw [e2]; exact a8,
       by rw [e3]; exact a9⟩
   | cmds =>
-    obtain ⟨a1, a2, a3, a4, a5⟩ := h
-    exact ⟨e1.trans a1, e6.trans a2, by rw [e8]; exact a3, by rw [e4]; exact a4, by rw [e5, e2]; exact a5⟩
+    obtain ⟨a1, a2, a3, a4, a5, a6⟩ := h
+    exact ⟨e1.trans a1, e6.trans a2, by rw [e8]; exact a3, by rw [e4]; exact a4, by rw [e5, e2]; exact a5, a6⟩
   | ended =>
     obtain ⟨a1, a2, w, a3⟩ := h
     exact ⟨e1.trans a1, by rw [e2]; exact a2, w, a3.congr e5 e2 e8⟩
@@ -253,81 +253,98 @@ theorem DRel.withPend {D : Dec} {p : SPhase} (h : DRel D p) {x : USize} (hx : x.
     have h1 := a.win.pendLe
     have h2 := a.win.pendOut
     exact ⟨{ a.win with pendLe := Nat.le_trans hx h1, pendOut := Nat.le_trans hx h2 }, a.produced, a.limit⟩
+  have hat : ∀ {w st}, WinAt D w st → WinAt { D with cmd := { D.cmd with pend := x } } w st := by
+    intro w st a
+    rcases a with ⟨a, hne⟩ | hn
+    · exact Or.inl ⟨hwin a, hne⟩
+    · have h0 : D.cmd.pend.toNat = 0 := by rw [hn.pend]; rfl
+      exact Or.inr { hn with pend := USize.toNat_inj.mp (by show x.toNat = 0; omega) }
   cases p with
   | wbits =>
-    obtain ⟨a1, a2, a3, a4⟩ := h
-    refine ⟨a1, a2, a3, ?_⟩
+    obtain ⟨a1, a2, a3, a4, a5⟩ := h
+    refine ⟨a1, a2, a3, ?_, a5⟩
     have h0 : D.cmd.pend.toNat = 0 := by rw [a4]; rfl
     show x = 0
     exact USize.toNat_inj.mp (by show x.toNat = 0; omega)
   | mblock =>
     obtain ⟨a1, a2, a3⟩ := h
-    exact ⟨a1, a2, hwin a3⟩
+    exact ⟨a1, a2, hat a3⟩
   | skip =>
     obtain ⟨a1, a2, a3, a4, a5, a6, a7⟩ := h
-    exact ⟨a1, a2, hwin a3, a4, a5, a6, a7⟩
+    exact ⟨a1, a2, hat a3, a4, a5, a6, a7⟩
   | raw =>
-    obtain ⟨a1, a2, a3, a4, a5, a6⟩ := h
-    exact ⟨a1, a2, hwin a3, a4, a5, a6⟩
+    obtain ⟨a1, a2, a3, a4, a5, a6, a7⟩ := h
+    exact ⟨a1, a2, hwin a3, a4, a5, a6, a7⟩
   | hdr =>
     obtain ⟨a1, a2, a3, a4, a5, a6, a7, a8, a9⟩ := h
     have h0 : D.cmd.pend.toNat = 0 := by rw [a8]; rfl
     exact ⟨a1, hwin a2, a3, a4, a5, a6, a7, USize.toNat_inj.mp (by show x.toNat = 0; omega), a9⟩
   | cmds =>
-    obtain ⟨a1, a2, a3, a4, a5⟩ := h
-    exact ⟨a1, a2, a3, a4, a5.withPend hx⟩
+    obtain ⟨a1, a2, a3, a4, a5, a6⟩ := h
+    exact ⟨a1, a2, a3, a4, a5.withPend hx, a6⟩
   | ended =>
     obtain ⟨a1, a2, w, a3⟩ := h
-    exact ⟨a1, a2, w, hwin a3⟩
+    exact ⟨a1, a2, w, hat a3⟩
 
 /-- The cap on waiting bytes keeps a state's place. -/
 theorem DRel.withCap {D : Dec} {p : SPhase} (h : DRel D p) (x : USize) : DRel { D with cmd := { D.cmd with cap := x } } p := by
   have hwin : ∀ {w st}, WinAll D w st → WinAll { D with cmd := { D.cmd with cap := x } } w st :=
     fun a => ⟨{ a.win with }, a.produced, a.limit⟩
+  have hat : ∀ {w st}, WinAt D w st → WinAt { D with cmd := { D.cmd with cap := x } } w st := by
+    intro w st a
+    rcases a with ⟨a, hne⟩ | hn
+    · exact Or.inl ⟨hwin a, hne⟩
+    · exact Or.inr { hn with }
   cases p with
   | wbits =>
-    obtain ⟨a1, a2, a3, a4⟩ := h
-    exact ⟨a1, a2, a3, a4⟩
+    obtain ⟨a1, a2, a3, a4, a5⟩ := h
+    exact ⟨a1, a2, a3, a4, a5⟩
   | mblock =>
     obtain ⟨a1, a2, a3⟩ := h
-    exact ⟨a1, a2, hwin a3⟩
+    exact ⟨a1, a2, hat a3⟩
   | skip =>
     obtain ⟨a1, a2, a3, a4, a5, a6, a7⟩ := h
-    exact ⟨a1, a2, hwin a3, a4, a5, a6, a7⟩
+    exact ⟨a1, a2, hat a3, a4, a5, a6, a7⟩
   | raw =>
-    obtain ⟨a1, a2, a3, a4, a5, a6⟩ := h
-    exact ⟨a1, a2, hwin a3, a4, a5, a6⟩
+    obtain ⟨a1, a2, a3, a4, a5, a6, a7⟩ := h
+    exact ⟨a1, a2, hwin a3, a4, a5, a6, a7⟩
   | hdr =>
     obtain ⟨a1, a2, a3, a4, a5, a6, a7, a8⟩ := h
     exact ⟨a1, hwin a2, a3, a4, a5, a6, a7, a8⟩
   | cmds =>
-    obtain ⟨a1, a2, a3, a4, a5⟩ := h
-    exact ⟨a1, a2, a3, a4, a5.withCap x⟩
+    obtain ⟨a1, a2, a3, a4, a5, a6⟩ := h
+    exact ⟨a1, a2, a3, a4, a5.withCap x, a6⟩
   | ended =>
     obtain ⟨a1, a2, w, a3⟩ := h
-    exact ⟨a1, a2, w, hwin a3⟩
+    exact ⟨a1, a2, w, hat a3⟩
 
 /-- What handing bytes out needs of a state. -/
 theorem DRel.window {D : Dec} {p : SPhase} (h : DRel D p) :
     D.cmd.pend = 0 ∨ (RingOk D.cmd.ring D.k.toNat D.cmd.wpos.toNat p.out ∧ D.cmd.pend.toNat ≤ 2 ^ D.k.toNat ∧ D.cmd.pend.toNat ≤ p.out.length ∧ D.k.toNat ≤ 24) := by
   have hwin : ∀ {w st}, WinAll D w st → (RingOk D.cmd.ring D.k.toNat D.cmd.wpos.toNat st.output ∧ D.cmd.pend.toNat ≤ 2 ^ D.k.toNat ∧ D.cmd.pend.toNat ≤ st.output.length ∧ D.k.toNat ≤ 24) :=
     fun a => ⟨a.win.ring, a.win.pendLe, a.win.pendOut, a.win.k24⟩
+  have hat : ∀ {w st}, WinAt D w st → D.cmd.pend = 0 ∨ (RingOk D.cmd.ring D.k.toNat D.cmd.wpos.toNat st.output ∧
+      D.cmd.pend.toNat ≤ 2 ^ D.k.toNat ∧ D.cmd.pend.toNat ≤ st.output.length ∧ D.k.toNat ≤ 24) := by
+    intro w st a
+    rcases a with ⟨a, _⟩ | hn
+    · exact Or.inr (hwin a)
+    · exact Or.inl hn.pend
   cases p with
-  | wbits => exact Or.inl h.2.2.2
-  | mblock => exact Or.inr (hwin h.2.2)
-  | skip => exact Or.inr (hwin h.2.2.1)
+  | wbits => exact Or.inl h.2.2.2.1
+  | mblock => exact hat h.2.2
+  | skip => exact hat h.2.2.1
   | raw => exact Or.inr (hwin h.2.2.1)
   | hdr => exact Or.inr (hwin h.2.1)
-  | cmds => exact Or.inr h.2.2.2.2.window
+  | cmds => exact Or.inr h.2.2.2.2.1.window
   | ended =>
     obtain ⟨_, _, _, a⟩ := h
-    exact Or.inr (hwin a)
+    exact hat a
 
 /-- A state with nothing in it, left when a stream has stopped. -/
 def deadD : Dec := ⟨.wbits, Cmd.none, Hd.none, Hdr.none, 0, false, 0, 0, 0, .next⟩
 
 theorem deadD_rel : DRel deadD .wbits :=
-  ⟨rfl, ⟨by decide, by decide⟩, by decide, rfl⟩
+  ⟨rfl, ⟨by decide, by decide⟩, by decide, rfl, rfl⟩
 
 /-! ### Handing out a state's bytes -/
 
@@ -425,7 +442,7 @@ variable {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {
 
 theorem stepDWbits_badWin : (stepDWbits a stop hs D pos).status = .bad →
     (stepDWbits a stop hs D pos).cmd.WinSame D.cmd ∧ (stepDWbits a stop hs D pos).k = D.k := by
-  unfold stepDWbits winStart
+  unfold stepDWbits
   badWinD_tac
 
 theorem stepDMeta_badWin : (stepDMeta a stop hs D pos).status = .bad →
@@ -689,7 +706,7 @@ theorem endCheck_ok {a : ByteArray} {stop : USize} (hs : stop.toNat ≤ a.size) 
           rfl
         have hrelN : DRel { D with cmd := { D.cmd with word := b1.word, count := b1.count }, status := .needsInput } (.ended st) := by
           obtain ⟨a1, _, w, a3⟩ := hrel
-          exact ⟨a1, fa2, w, ⟨{ a3.win with }, a3.produced, a3.limit⟩⟩
+          exact ⟨a1, fa2, w, a3.words rfl rfl rfl⟩
         show D.pos.toNat ≤ D.pos.toNat ∧ D.pos.toNat ≤ stop.toNat ∧ buf = buf ∧ (∃ p', DRel { D with cmd := { D.cmd with word := b1.word, count := b1.count }, status := .needsInput } p') ∧ _ ∧ _ ∧ _ ∧ _ ∧ _
         refine ⟨Nat.le_refl _, hp, rfl, ⟨.ended st, hrelN⟩, fun _ => ⟨rfl, hps, rfl, hrelN, rfl, (fun t => ?_), ⟨(BitBuffer.mk D.cmd.word D.cmd.count).count.toNat, fun t => ?_⟩,
           (fun t => ?_), ?_⟩, fun e => Status.noConfusion e, fun e => Status.noConfusion e, fun e => Status.noConfusion e, fun e => Status.noConfusion e⟩
@@ -850,7 +867,7 @@ structure CallOk (a : ByteArray) (stop : USize) (final : Bool) (p : SPhase) (D :
     (o.status = .memoryLimit → (∀ (t : List UInt8) (y : List UInt8), srest specSem p (D.bits a D.pos stop (bits t)) = some y → (E ++ n).map Nat.toUInt8 <+: y) ∧
       ∃ p' D', DRel D' p' ∧ D.pos.toNat ≤ D'.pos.toNat ∧ D'.pos.toNat ≤ stop.toNat ∧ Pend p' D' (E ++ n) ∧
         (∀ t : List UInt8, Reach sStep p (D.bits a D.pos stop (bits t)) p' (D'.bits a D'.pos stop (bits t))) ∧ D'.cmd.pend = 0 ∧
-        (p' = .wbits ∨ ∃ w st last mlen g q, p' = .hdr w st last mlen g q))
+        ((∃ w, p' = .mblock w ⟨[], 0, initialDistances⟩) ∨ ∃ w st last mlen g q, p' = .hdr w st last mlen g q))
   /-- A rejection is the end of a stream cut short, or decided on the bytes up to the position reported. -/
   decided : o.status = .rejected → (final = true ∧ o.pos = stop) ∨
     DecidedAt a stop p (fun t => D.bits a D.pos stop (bits t)) D.pos o.pos (fun p1 bs => srest specSem p1 bs = none)
@@ -871,7 +888,7 @@ private theorem callOk_stop {a : ByteArray} {stop : USize} {final : Bool} {p : S
     (h1 : s ≠ .needsInput) (h2 : s ≠ .needsOutput) (h3 : s ≠ .done)
     (hm : s = .memoryLimit → ∃ p' D', DRel D' p' ∧ D.pos.toNat ≤ D'.pos.toNat ∧ D'.pos.toNat ≤ stop.toNat ∧ Pend p' D' E ∧
       (∀ t : List UInt8, Reach sStep p (D.bits a D.pos stop (bits t)) p' (D'.bits a D'.pos stop (bits t))) ∧ D'.cmd.pend = 0 ∧
-      (p' = .wbits ∨ ∃ w st last mlen g q, p' = .hdr w st last mlen g q)) :
+      ((∃ w, p' = .mblock w ⟨[], 0, initialDistances⟩) ∨ ∃ w st last mlen g q, p' = .hdr w st last mlen g q)) :
     CallOk a stop final p D E buf space ⟨deadD, buf, q, s⟩ :=
   ⟨hq1, hq2, ⟨_, deadD_rel⟩, ⟨[], by simp, Nat.zero_le _, fun e => absurd e h1, fun e => absurd e h2, fun e => absurd e h3, hr,
     fun e => ⟨fun t y hy => by rw [List.append_nil]; exact hE.prefix (srest_out hy), by rw [List.append_nil]; exact hm e⟩⟩, hd⟩

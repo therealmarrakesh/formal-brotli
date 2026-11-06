@@ -650,7 +650,9 @@ private theorem startAgree (w : Nat) (st : StreamState) :
   | .metadata last skip => agrees_fill (.skip w st last skip) (fun _ => rfl) (fun _ => rfl)
   | .data last mlen _ =>
     agrees_congr (agrees_ite (agrees_fill (.raw w st last mlen) (fun _ => rfl) (fun _ => rfl))
-      (agrees_congr (agrees_next _) fun bs => readCompressed_eq w (amK w last) st mlen Gh.start bs)) fun _ => rfl
+      (agrees_congr (agrees_next (SPhase.hdr (blockWindow w st last mlen) st last mlen Gh.start (.cat .L))) fun bs =>
+        (readCompressed_eq w (amK w last) st mlen Gh.start bs).trans
+          (srest_blockWindow specSem w st last mlen Gh.start (.cat .L) bs))) fun _ => rfl
 
 /-- Each step of the stream read in order says what the spec says. -/
 theorem sAgree : ∀ p, Agrees (srest specSem) (fun y _ => some y) (sStep p) (srest specSem p)
@@ -779,7 +781,9 @@ private theorem startAgreeS (w : Nat) (st : StreamState) :
   | .metadata last skip => agrees_fill (.skip w st last skip) (fun _ => rfl) (fun _ => rfl)
   | .data last mlen _ =>
     agrees_congr (agrees_ite (agrees_fill (.raw w st last mlen) (fun _ => rfl) (fun _ => rfl))
-      (agrees_congr (agrees_next _) fun bs => readCompressed_eq w (S.after w last) st mlen Gh.start bs)) fun _ => rfl
+      (agrees_congr (agrees_next (SPhase.hdr (blockWindow w st last mlen) st last mlen Gh.start (.cat .L))) fun bs =>
+        (readCompressed_eq w (S.after w last) st mlen Gh.start bs).trans
+          (srest_blockWindow S w st last mlen Gh.start (.cat .L) bs))) fun _ => rfl
 
 /-- Each step of the reading in order away from the stream's end says what leaving its place is worth. -/
 theorem sAgreeS : ∀ p, (∀ st, p ≠ .ended st) → Agrees (srest S) (fun _ _ => none) (sStep p) (sLeave S p)

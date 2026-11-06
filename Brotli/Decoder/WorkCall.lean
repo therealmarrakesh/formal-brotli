@@ -40,16 +40,12 @@ theorem stepDWbits_reads {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.s
   · rename_i heq
     obtain ⟨-, ha2⟩ := hrange heq
     obtain ⟨-, hr⟩ := hok.ok heq
-    split at hn
-    · rename_i hl
-      rw [ite_eq_left hl]
-      show ∃ rest, _ = some ((wbitsFast ⟨(refill D.cmd.word D.cmd.count a pos stop hs (USize.le_iff_toNat_le.mp hp')).word,
-        (refill D.cmd.word D.cmd.count a pos stop hs (USize.le_iff_toNat_le.mp hp')).count⟩).a.toUSize.toNat, rest)
-      have ha2' : (wbitsFast ⟨(refill D.cmd.word D.cmd.count a pos stop hs (USize.le_iff_toNat_le.mp hp')).word,
-          (refill D.cmd.word D.cmd.count a pos stop hs (USize.le_iff_toNat_le.mp hp')).count⟩).a.toNat ≤ 24 := ha2
-      rw [word_toUSize (by omega)]
-      exact ⟨_, hr _⟩
-    · exact absurd hn (fun e => DStatus.noConfusion e)
+    show ∃ rest, _ = some ((wbitsFast ⟨(refill D.cmd.word D.cmd.count a pos stop hs (USize.le_iff_toNat_le.mp hp')).word,
+      (refill D.cmd.word D.cmd.count a pos stop hs (USize.le_iff_toNat_le.mp hp')).count⟩).a.toUSize.toNat, rest)
+    have ha2' : (wbitsFast ⟨(refill D.cmd.word D.cmd.count a pos stop hs (USize.le_iff_toNat_le.mp hp')).word,
+        (refill D.cmd.word D.cmd.count a pos stop hs (USize.le_iff_toNat_le.mp hp')).count⟩).a.toNat ≤ 24 := ha2
+    rw [word_toUSize (by omega)]
+    exact ⟨_, hr _⟩
 
 theorem endCheck_k (D : Dec) (stop : USize) (final : Bool) (buf : ByteArray) :
     (endCheck D stop final buf).status = .needsInput → (endCheck D stop final buf).D.k = D.k := by
@@ -78,23 +74,24 @@ theorem runD_k10' {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} (x
     · rw [dite_eq_left h1] at ht ⊢
       have hw' : DRel D .wbits := by cases p <;> first | exact hrel | exact absurd hw (by rw [hrel.1]; exact fun e => DTag.noConfusion e)
       have ht1 : (stepD a stop hs D hinv).tag ≠ .wbits := by rw [e]; exact stepDWbits_tag (by rw [← e]; exact h1)
-      have hk1 : 10 ≤ (stepD a stop hs D hinv).k.toNat := by
+      have hk1 : 10 ≤ (stepD a stop hs D hinv).k.toNat ∧ (stepD a stop hs D hinv).k.toNat ≤ 24 := by
         rw [e]
         exact stepDWbits_k hw'.2.1 hinv.2 (by rw [← e]; exact h1)
-      rw [(runD_wk ⟨_, hinv.step he h1⟩ ht1).2]
-      exact hk1
+      exact (runD_kr ⟨_, hinv.step he h1⟩ ht1 hk1).2.1
     · rw [dite_eq_right h1] at ht
       rw [e] at ht h1
       exact absurd (stepDWbits_stay hw h1) ht
-  · rw [(runD_wk ⟨D, hinv⟩ hw).2]
-    exact hk hw
+  · exact (runD_kr ⟨D, hinv⟩ hw ⟨hk hw, hrel.k24 hw⟩).2.1
 
-/-- A loop that starts at WBITS and gets past it has WBITS's step go on, with the window's size that step read. -/
+/-- A loop that starts at WBITS and allocates a window has WBITS's step go on, and a window no larger than the one that
+step read. -/
 theorem runD_past {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} (x : RunArg a stop hs) (hw : x.D.tag = .wbits)
-    (ht : (runD a stop hs x.D x.inv).tag ≠ .wbits) :
-    (stepDWbits a stop hs x.D x.D.pos).status = .next ∧ (runD a stop hs x.D x.inv).k = (stepDWbits a stop hs x.D x.D.pos).k := by
+    (hwf : (BitBuffer.mk x.D.cmd.word x.D.cmd.count).Wf)
+    (ht : (runD a stop hs x.D x.inv).cmd.ring.size ≠ x.D.cmd.ring.size) :
+    (stepDWbits a stop hs x.D x.D.pos).status = .next ∧
+      (runD a stop hs x.D x.inv).k.toNat ≤ (stepDWbits a stop hs x.D x.D.pos).k.toNat := by
   obtain ⟨D, hinv⟩ := x
-  dsimp only at hw ht ⊢
+  dsimp only at hw hwf ht ⊢
   have he : D.tag ≠ .ended := by rw [hw]; exact fun e => DTag.noConfusion e
   have e : stepD a stop hs D hinv = stepDWbits a stop hs D D.pos := stepD_wbits hw
   rw [runD, dite_eq_right he] at ht ⊢
@@ -102,12 +99,16 @@ theorem runD_past {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} (x
   by_cases h1 : (stepD a stop hs D hinv).status = .next
   · rw [dite_eq_left h1] at ht ⊢
     have ht1 : (stepD a stop hs D hinv).tag ≠ .wbits := by rw [e]; exact stepDWbits_tag (by rw [← e]; exact h1)
+    have hk1 : 10 ≤ (stepD a stop hs D hinv).k.toNat ∧ (stepD a stop hs D hinv).k.toNat ≤ 24 := by
+      rw [e]
+      exact stepDWbits_k hwf hinv.2 (by rw [← e]; exact h1)
     refine ⟨by rw [← e]; exact h1, ?_⟩
-    rw [(runD_wk ⟨_, hinv.step he h1⟩ ht1).2]
-    exact congrArg Dec.k e
+    have := (runD_kr (hs := hs) ⟨_, hinv.step he h1⟩ ht1 hk1).2.2.2
+    rw [← e]
+    exact this
   · rw [dite_eq_right h1] at ht
-    rw [e] at ht h1
-    exact absurd (stepDWbits_stay hw h1) ht
+    rw [e, stepDWbits_ring] at ht
+    exact absurd rfl ht
 
 theorem endCheck_out (D : Dec) (stop : USize) (final : Bool) (buf : ByteArray) : (endCheck D stop final buf).status ≠ .needsOutput := by
   unfold endCheck
@@ -138,7 +139,7 @@ theorem callD_tag {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {f
         by_cases hlt : (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).space < space
         · rw [dite_eq_left hlt] at hst ⊢
           refine ih _ hlt _ _ _ ?_ hst
-          exact (runD_wk ⟨_, (flushD_inv (runD_full hO) buf space).withCap _⟩ ht).1
+          exact runD_tag ⟨_, (flushD_inv (runD_full hO) buf space).withCap _⟩ ht
         · rw [dite_eq_right hlt] at hst
           rcases hst with e | e <;> cases e
       · rw [ite_eq_right hz]
@@ -173,6 +174,83 @@ theorem callD_tag {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {f
           exact ht
         · rw [ite_eq_right hz]
           exact ht
+
+theorem endCheck_ring (D : Dec) (stop : USize) (final : Bool) (buf : ByteArray) :
+    (endCheck D stop final buf).status = .needsInput → (endCheck D stop final buf).D.cmd.ring = D.cmd.ring := by
+  unfold endCheck
+  dsimp only
+  repeat' (first | split_all | (intro _; rfl) | (intro _; trivial) | (intro h; exact absurd h (fun e => Status.noConfusion e)))
+
+/-- A call whose loop holds a window, if it pauses, pauses with it. -/
+theorem callD_ring {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {final : Bool} :
+    ∀ (space : Nat) (D : Dec) (h : DInv stop D) (buf : ByteArray) (p : SPhase), DRel D p →
+    (runD a stop hs (withCap D space) (h.withCap space)).cmd.ring.size ≠ 0 →
+    (callD a stop hs final D h buf space).status = .needsInput ∨ (callD a stop hs final D h buf space).status = .needsOutput →
+    (callD a stop hs final D h buf space).D.cmd.ring.size ≠ 0 := by
+  intro space
+  induction space using Nat.strongRecOn with
+  | _ space ih =>
+    intro D h buf p hrel ht hst
+    have hok := runD_ok (hs := hs) ⟨withCap D space, h.withCap space⟩ p (hrel.withCap _)
+    dsimp only at hok
+    rw [callD] at hst ⊢
+    dsimp only at hst ⊢
+    by_cases hO : (runD a stop hs (withCap D space) (h.withCap space)).status = .needsOutput
+    · rw [dite_eq_left hO] at hst ⊢
+      obtain ⟨q, hR, -⟩ := hok.needsOutput hO
+      have hfr0 : (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D.cmd.ring.size ≠ 0 := by
+        rw [(flushD_rings hR buf space).1]
+        exact ht
+      obtain ⟨_, _, _, _, a4, -⟩ := flushD_spec hR buf space
+      by_cases hz : (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D.cmd.pend = 0
+      · rw [ite_eq_left hz] at hst ⊢
+        by_cases hlt : (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).space < space
+        · rw [dite_eq_left hlt] at hst ⊢
+          refine ih _ hlt _ _ _ q a4 ?_ hst
+          rw [(runD_ring ⟨_, (flushD_inv (runD_full hO) buf space).withCap _⟩ q (a4.withCap _) hfr0).1]
+          exact hfr0
+        · rw [dite_eq_right hlt] at hst
+          rcases hst with e | e <;> cases e
+      · rw [ite_eq_right hz]
+        exact hfr0
+    · rw [dite_eq_right hO] at hst ⊢
+      unfold afterRun at hst ⊢
+      cases hst2 : (runD a stop hs (withCap D space) (h.withCap space)).status with
+      | needsOutput => exact absurd hst2 hO
+      | bad => rw [hst2] at hst; rcases hst with e | e <;> cases e
+      | memory => rw [hst2] at hst; rcases hst with e | e <;> cases e
+      | needsInput =>
+        obtain ⟨-, -, q, hR, -⟩ := hok.needsInput hst2
+        have hfr0 : (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D.cmd.ring.size ≠ 0 := by
+          rw [(flushD_rings hR buf space).1]
+          exact ht
+        rw [hst2] at hst
+        dsimp only at hst ⊢
+        by_cases hz : (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D.cmd.pend = 0
+        · rw [ite_eq_left hz] at hst ⊢
+          cases final with
+          | false => exact hfr0
+          | true => rcases hst with e | e <;> cases e
+        · rw [ite_eq_right hz]
+          exact hfr0
+      | next =>
+        obtain ⟨st, hR, -⟩ := hok.next hst2
+        have hfr0 : (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D.cmd.ring.size ≠ 0 := by
+          rw [(flushD_rings hR buf space).1]
+          exact ht
+        rw [hst2] at hst
+        dsimp only at hst ⊢
+        by_cases hz : (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D.cmd.pend = 0
+        · rw [ite_eq_left hz] at hst ⊢
+          have hin : (endCheck (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D stop final
+              (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).buf).status = .needsInput := by
+            rcases hst with e | e
+            · exact e
+            · exact absurd e (endCheck_out _ _ _ _)
+          rw [endCheck_ring _ _ _ _ hin]
+          exact hfr0
+        · rw [ite_eq_right hz]
+          exact hfr0
 
 /-- A call's work against the potential. A call that pauses leaves the potential of where it pauses and its bits to pay
 later, at most one more byte waiting than it found, and pays 2980 for each bit it reads, 33 for each byte it hands out,
@@ -244,14 +322,6 @@ theorem pay_callD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {f
         · rw [dite_eq_left hlt, dite_eq_left hlt]
           have hlen1 : 1 ≤ len' := by omega
           have hlenp : len' = (runD a stop hs (withCap D space) (h.withCap space)).cmd.pend.toNat := by omega
-          have htw : (runD a stop hs (withCap D space) (h.withCap space)).tag ≠ .wbits := by
-            intro e
-            cases q with
-            | wbits =>
-              have h0 : (runD a stop hs (withCap D space) (h.withCap space)).cmd.pend = 0 := hR.2.2.2
-              rw [h0] at hlenp
-              exact absurd hlenp (by rw [show (0 : USize).toNat = 0 from rfl]; omega)
-            | _ => exact absurd (hR.1.symm.trans e) (fun e => DTag.noConfusion e)
           -- The round's own work beyond its bytes: paid by the meta-block's round or by a unit of each byte.
           have hov : stopCost (runD a stop hs (withCap D space) (h.withCap space)) + 7 +
               dpot q (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D ≤
@@ -293,8 +363,14 @@ theorem pay_callD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {f
               (runD a stop hs (withCap (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D
                 (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).space)
                 ((flushD_inv (runD_full hO) buf space).withCap _)) = 0 := by
+            have hpe : (runD a stop hs (withCap D space) (h.withCap space)).cmd.pend ≠ 0 := fun e => by
+              rw [e, show (0 : USize).toNat = 0 from rfl] at hlenp
+              omega
+            have hrr : (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D.cmd.ring.size ≠ 0 := by
+              rw [(flushD_rings hR buf space).1]
+              exact hR.ring_of_pend hpe
             unfold winD
-            exact ite_eq_right (fun h => htw h.1)
+            exact ite_eq_right (fun h => hrr h.1)
           obtain ⟨I0, I1, I2⟩ := ih _ hlt (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D
             (flushD_inv (runD_full hO) buf space) q (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).buf
             a4 (hsiq hsi) (fun _ => hk10)

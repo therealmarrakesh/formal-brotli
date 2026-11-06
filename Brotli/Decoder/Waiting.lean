@@ -311,12 +311,12 @@ macro "keepD_tac" : tactic => `(tactic| ((try dsimp only) <;> repeat' (first | s
 
 theorem stepDWbits_pendLe (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize) :
     PendLeD D (stepDWbits a stop hs D pos) := by
-  unfold PendLeD stepDWbits winStart
+  unfold PendLeD stepDWbits
   keepD_tac
 
 theorem stepDMeta_pendLe (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize) :
     PendLeD D (stepDMeta a stop hs D pos) := by
-  unfold PendLeD stepDMeta metaGo
+  unfold PendLeD stepDMeta metaGo winStart
   keepD_tac
 
 theorem stepDSkip_pendLe (stop : USize) (D : Dec) (pos : USize) : PendLeD D (stepDSkip stop D pos) := by

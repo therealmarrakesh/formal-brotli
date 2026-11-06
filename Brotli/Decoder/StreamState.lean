@@ -1,6 +1,7 @@
 module
 
 public import Brotli.Decoder.StreamRaw
+public import Brotli.Decoder.Progress
 
 @[expose] public section
 
@@ -49,6 +50,20 @@ def srest {α : Type} (S : Sem α) : SPhase → List Bool → Option α
   | .hdr w st last mlen g p, bs => hrest (hdrK w (S.after w last) st mlen) g p bs
   | .cmds w last m p, bs => rest w m (cmdK w (S.after w last) m) p bs
   | .ended st, bs => S.finish st bs
+
+/-- A compressed meta-block is worth the same under the window it is read with: they differ only for a last meta-block,
+which any worth follows by the stream's end, whatever the window. -/
+theorem srest_blockWindow {α : Type} (S : Sem α) (w : Nat) (st : StreamState) (last : Bool) (mlen : Nat) (g : Gh) (p : HPhase)
+    (bs : List Bool) : srest S (.hdr w st last mlen g p) bs = srest S (.hdr (blockWindow w st last mlen) st last mlen g p) bs := by
+  show hrest (hdrK w (S.after w last) st mlen) g p bs =
+    hrest (hdrK (blockWindow w st last mlen) (S.after (blockWindow w st last mlen) last) st mlen) g p bs
+  by_cases hc : last = true ∧ st.produced = 0
+  · obtain ⟨rfl, _⟩ := hc
+    have e : ∀ x, S.after x true = S.finish := fun x => funext fun st => funext fun bs => S.after_true x st bs
+    simp only [e]
+    rw [← hdrK_blockWindow]
+  · unfold blockWindow
+    rw [ite_eq_right hc]
 
 /-- What a place does on leaving it: a meta-block's start reads that meta-block. It differs from the worth on arriving only
 for a worth that isn't the output. -/
@@ -187,24 +202,64 @@ theorem Core.toWin {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {out : List Nat}
     (h : Core w k m st out rem ds ic lit dist) : WinRel w k st out ds :=
   ⟨h.win, h.k24, h.ring, h.bytes, h.ctx, h.pendLe, h.pendOut, h.written, h.d0, h.d1, h.d2, h.d3, h.dsLt, h.wordLe⟩
 
-/-- What every place after WBITS has. -/
+/-- What every place with a window has. -/
 structure WinAll (D : Dec) (w : Nat) (st : StreamState) : Prop where
   win : WinRel w D.k.toNat D.cmd st.output st.distances
   produced : st.produced = st.output.length
   limit : D.limit.toNat + 8888 < 2 ^ 32
 
+/-- No window yet: from WBITS to the stream's first meta-block with data, the ring is empty, nothing is produced or
+waiting, and `k` is the log size of the window the stream declares. -/
+structure NoRing (D : Dec) (w : Nat) (st : StreamState) : Prop where
+  win : w + 16 = 2 ^ D.k.toNat
+  k10 : 10 ≤ D.k.toNat
+  k24 : D.k.toNat ≤ 24
+  ring : D.cmd.ring.size = 0
+  pend : D.cmd.pend = 0
+  st : st = ⟨[], 0, initialDistances⟩
+  limit : D.limit.toNat + 8888 < 2 ^ 32
+
+/-- What a place outside a meta-block's data has: a window, once a meta-block with data has produced bytes, or none
+before the first. -/
+def WinAt (D : Dec) (w : Nat) (st : StreamState) : Prop := (WinAll D w st ∧ st.produced ≠ 0) ∨ NoRing D w st
+
+/-- A window's place, for a state with the same window and limit. -/
+theorem WinAt.congr {D D' : Dec} {w : Nat} {st : StreamState} (h : WinAt D w st) (ek : D'.k = D.k) (ec : D'.cmd = D.cmd)
+    (el : D'.limit = D.limit) : WinAt D' w st := by
+  rcases h with ⟨⟨h1, h2, h3⟩, h4⟩ | hn
+  · exact Or.inl ⟨⟨by rw [ek, ec]; exact h1, h2, by rw [el]; exact h3⟩, h4⟩
+  · exact Or.inr ⟨by rw [ek]; exact hn.win, by rw [ek]; exact hn.k10, by rw [ek]; exact hn.k24, by rw [ec]; exact hn.ring,
+      by rw [ec]; exact hn.pend, hn.st, by rw [el]; exact hn.limit⟩
+
+/-- A window's place, for a state with the same window and limit and another bit buffer. -/
+theorem WinAt.words {D D' : Dec} {w : Nat} {st : StreamState} (h : WinAt D w st) {word count : UInt64} (ek : D'.k = D.k)
+    (ec : D'.cmd = { D.cmd with word := word, count := count }) (el : D'.limit = D.limit) : WinAt D' w st := by
+  rcases h with ⟨⟨h1, h2, h3⟩, h4⟩ | hn
+  · refine Or.inl ⟨⟨?_, h2, by rw [el]; exact h3⟩, h4⟩
+    rw [ek, ec]
+    exact { h1 with }
+  · exact Or.inr ⟨by rw [ek]; exact hn.win, by rw [ek]; exact hn.k10, by rw [ek]; exact hn.k24, by rw [ec]; exact hn.ring,
+      by rw [ec]; exact hn.pend, hn.st, by rw [el]; exact hn.limit⟩
+
+theorem WinAt.limit {D : Dec} {w : Nat} {st : StreamState} (h : WinAt D w st) : D.limit.toNat + 8888 < 2 ^ 32 := by
+  rcases h with ⟨h1, _⟩ | h1
+  · exact h1.limit
+  · exact h1.limit
+
 /-- A state stands for a place in a stream. -/
 def DRel (D : Dec) : SPhase → Prop
-  | .wbits => D.tag = .wbits ∧ (BitBuffer.mk D.cmd.word D.cmd.count).Wf ∧ D.limit.toNat + 8888 < 2 ^ 32 ∧ D.cmd.pend = 0
-  | .mblock w st => D.tag = .mblock ∧ (BitBuffer.mk D.cmd.word D.cmd.count).Wf ∧ WinAll D w st
-  | .skip w st last n => D.tag = .skip ∧ (BitBuffer.mk D.cmd.word D.cmd.count).Wf ∧ WinAll D w st ∧ D.last = last ∧ D.left.toNat = n ∧
+  | .wbits => D.tag = .wbits ∧ (BitBuffer.mk D.cmd.word D.cmd.count).Wf ∧ D.limit.toNat + 8888 < 2 ^ 32 ∧ D.cmd.pend = 0 ∧
+    D.cmd.ring.size = 0
+  | .mblock w st => D.tag = .mblock ∧ (BitBuffer.mk D.cmd.word D.cmd.count).Wf ∧ WinAt D w st
+  | .skip w st last n => D.tag = .skip ∧ (BitBuffer.mk D.cmd.word D.cmd.count).Wf ∧ WinAt D w st ∧ D.last = last ∧ D.left.toNat = n ∧
     D.cmd.count.toNat % 8 = 0 ∧ n < 2 ^ 32
   | .raw w st last n => D.tag = .raw ∧ (BitBuffer.mk D.cmd.word D.cmd.count).Wf ∧ WinAll D w st ∧ D.last = last ∧ D.left.toNat = n ∧
-    n < 2 ^ 32
+    n < 2 ^ 32 ∧ 1 ≤ st.produced + n
   | .hdr w st last mlen g p => D.tag = .hdr ∧ WinAll D w st ∧ D.last = last ∧ D.left.toNat = mlen ∧ 1 ≤ mlen ∧ mlen ≤ 16777216 ∧ HRel D.hd g p ∧
     D.cmd.pend = 0 ∧ D.hd.d.arena.size + budH g p ≤ D.hd.d.arenaCap.toNat
-  | .cmds w last m p => D.tag = .cmds ∧ D.last = last ∧ D.limit.toNat + 8888 < 2 ^ 32 ∧ HdrRel D.H m ∧ Rel w D.k.toNat m D.cmd p
-  | .ended st => D.tag = .ended ∧ (BitBuffer.mk D.cmd.word D.cmd.count).Wf ∧ ∃ w, WinAll D w st
+  | .cmds w last m p => D.tag = .cmds ∧ D.last = last ∧ D.limit.toNat + 8888 < 2 ^ 32 ∧ HdrRel D.H m ∧ Rel w D.k.toNat m D.cmd p ∧
+    CLive p
+  | .ended st => D.tag = .ended ∧ (BitBuffer.mk D.cmd.word D.cmd.count).Wf ∧ ∃ w, WinAt D w st
 
 /-- The stream's bits at a state and position, with what follows. -/
 def Dec.bits (D : Dec) (a : ByteArray) (pos stop : USize) (F : List Bool) : List Bool := availBits D.word D.count a pos stop F
@@ -292,7 +347,7 @@ structure DStepOk {α : Type} (S : Sem α) (a : ByteArray) (stop : USize) (p : S
     (∀ w st, p = .mblock w st → ∀ t : List UInt8, r.bits a r.pos stop (bits t) = D.bits a pos stop (bits t)) ∧ OutD p p' D r ∧
     ∀ t : List UInt8, SReach p (D.bits a pos stop (bits t)) p' (r.bits a r.pos stop (bits t))
   memory : r.status = .memory → pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧ r.limit = D.limit ∧ D.cmd.pend = 0 ∧
-    (p = .wbits ∨ ∃ w st last mlen g q, p = .hdr w st last mlen g q)
+    ((∃ w, p = .mblock w ⟨[], 0, initialDistances⟩) ∨ ∃ w st last mlen g q, p = .hdr w st last mlen g q)
   bad : r.status = .bad → (∀ t : List UInt8, sLeave S p (D.bits a pos stop (bits t)) = none) ∧
     DecidedAt a stop p (fun t => D.bits a pos stop (bits t)) pos r.pos (fun p1 bs => sLeave S p1 bs = none)
 

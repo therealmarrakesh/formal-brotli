@@ -343,11 +343,75 @@ theorem stepDRaw_lim : stepDRaw ar stop hs (decSet D l a) pos = decSet (stepDRaw
   simp only [stepDRaw, takeRing, moveOn, clearCmd, rawFinish]
   (repeat' split) <;> first | rfl | contradiction | (simp_all [decSet, hdSet]; done)
 
+theorem metaGo_lim (r : Rd) (p : USize) : DLim (metaGo (decSet D l a) D.cmd r p) (metaGo D D.cmd r p) := by
+  show DLim (metaGo { D with limit := l, hd := hdSet D.hd a } D.cmd r p) _
+  unfold metaGo
+  dsimp only
+  by_cases h0 : r.a = 0
+  · rw [ite_eq_left h0, ite_eq_left h0]
+    exact DLim.same (l := l) (a := a) (by rfl)
+  rw [ite_eq_right h0, ite_eq_right h0]
+  by_cases h1 : r.a = 1
+  · rw [ite_eq_left h1, ite_eq_left h1]
+    by_cases hz : r.buf.peek (r.count &&& 7) = 0
+    · rw [ite_eq_left hz, ite_eq_left hz]
+      exact DLim.same (l := l) (a := a) (by rfl)
+    · rw [ite_eq_right hz, ite_eq_right hz]
+      exact DLim.same (l := l) (a := a) (by rfl)
+  rw [ite_eq_right h1, ite_eq_right h1]
+  by_cases hu : (r.d != 0) = true
+  · rw [ite_eq_left hu, ite_eq_left hu]
+    by_cases hz : r.buf.peek (r.count &&& 7) = 0
+    · rw [ite_eq_left hz, ite_eq_left hz]
+      by_cases hr : D.cmd.ring.size = 0
+      · rw [ite_eq_left hr, ite_eq_left hr]
+        by_cases c1 : (1 : UInt64) <<< D.k.toUInt64 ≤ l
+        · rw [ite_eq_left c1]
+          by_cases c2 : (1 : UInt64) <<< D.k.toUInt64 ≤ D.limit
+          · rw [ite_eq_left c2]
+            exact DLim.same (l := l - (1 : UInt64) <<< D.k.toUInt64) (a := a) (by rfl)
+          · rw [ite_eq_right c2]
+            exact Or.inr (Or.inl rfl)
+        · rw [ite_eq_right c1]
+          exact Or.inl rfl
+      · rw [ite_eq_right hr, ite_eq_right hr]
+        exact DLim.same (l := l) (a := a) (by rfl)
+    · rw [ite_eq_right hz, ite_eq_right hz]
+      exact DLim.same (l := l) (a := a) (by rfl)
+  · rw [ite_eq_right hu, ite_eq_right hu]
+    by_cases hr : D.cmd.ring.size = 0
+    · rw [ite_eq_left hr, ite_eq_left hr]
+      by_cases c1 : (1 : UInt64) <<< allocBits D.k (r.b != 0) r.c ≤ l
+      · rw [ite_eq_left c1]
+        by_cases c2 : (1 : UInt64) <<< allocBits D.k (r.b != 0) r.c ≤ D.limit
+        · rw [ite_eq_left c2]
+          exact DLim.same (l := l - (1 : UInt64) <<< allocBits D.k (r.b != 0) r.c)
+            (a := l - (1 : UInt64) <<< allocBits D.k (r.b != 0) r.c) (by rfl)
+        · rw [ite_eq_right c2]
+          exact Or.inr (Or.inl rfl)
+      · rw [ite_eq_right c1]
+        exact Or.inl rfl
+    · rw [ite_eq_right hr, ite_eq_right hr]
+      exact DLim.same (l := l) (a := l) (by rfl)
+
 theorem stepDMeta_lim : DLim (stepDMeta ar stop hs (decSet D l a) pos) (stepDMeta ar stop hs D pos) := by
   show DLim (stepDMeta ar stop hs { D with limit := l, hd := hdSet D.hd a } pos) _
-  simp only [stepDMeta, metaGo]
-  (repeat' split) <;>
-    first | exact DLim.same (l := l) (a := a) (by rfl) | exact DLim.same (l := l) (a := l) (by rfl) | contradiction | (simp_all [decSet, hdSet]; done)
+  unfold stepDMeta
+  by_cases h0 : D.cmd.pend = 0
+  · rw [ite_eq_left (show ({ D with limit := l, hd := hdSet D.hd a } : Dec).cmd.pend = 0 from h0), ite_eq_left h0]
+    by_cases hp : pos ≤ stop
+    · rw [dite_eq_left hp, dite_eq_left hp]
+      dsimp only
+      generalize refill D.cmd.word D.cmd.count ar pos stop hs _ = rf
+      generalize metaStartFast ⟨rf.word, rf.count⟩ = r
+      cases hr : r.status with
+      | short => exact DLim.same (l := l) (a := a) (by rfl)
+      | bad => exact DLim.same (l := l) (a := a) (by rfl)
+      | ok => exact metaGo_lim D l a r rf.pos
+    · rw [dite_eq_right hp, dite_eq_right hp]
+      exact DLim.same (l := l) (a := a) (by rfl)
+  · rw [ite_eq_right (show ¬ ({ D with limit := l, hd := hdSet D.hd a } : Dec).cmd.pend = 0 from h0), ite_eq_right h0]
+    exact DLim.same (l := l) (a := a) (by rfl)
 
 theorem stepDWbits_lim : DLim (stepDWbits ar stop hs (decSet D l a) pos) (stepDWbits ar stop hs D pos) := by
   show DLim (stepDWbits ar stop hs { D with limit := l, hd := hdSet D.hd a } pos) _
@@ -355,22 +419,7 @@ theorem stepDWbits_lim : DLim (stepDWbits ar stop hs (decSet D l a) pos) (stepDW
   by_cases hp : pos ≤ stop
   · rw [dite_eq_left hp, dite_eq_left hp]
     dsimp only
-    split
-    · exact DLim.same (l := l) (a := a) (by rfl)
-    · exact DLim.same (l := l) (a := a) (by rfl)
-    · rename_i hok
-      by_cases h1 : (1 : UInt64) <<< (wbitsFast ⟨(refill D.cmd.word D.cmd.count ar pos stop hs (USize.le_iff_toNat_le.mp hp)).word,
-          (refill D.cmd.word D.cmd.count ar pos stop hs (USize.le_iff_toNat_le.mp hp)).count⟩).a ≤ l
-      · rw [ite_eq_left h1]
-        by_cases h2 : (1 : UInt64) <<< (wbitsFast ⟨(refill D.cmd.word D.cmd.count ar pos stop hs (USize.le_iff_toNat_le.mp hp)).word,
-            (refill D.cmd.word D.cmd.count ar pos stop hs (USize.le_iff_toNat_le.mp hp)).count⟩).a ≤ D.limit
-        · rw [ite_eq_left h2]
-          exact DLim.same (l := l - (1 : UInt64) <<< (wbitsFast ⟨(refill D.cmd.word D.cmd.count ar pos stop hs (USize.le_iff_toNat_le.mp hp)).word,
-            (refill D.cmd.word D.cmd.count ar pos stop hs (USize.le_iff_toNat_le.mp hp)).count⟩).a) (a := a) (by rfl)
-        · rw [ite_eq_right h2]
-          exact Or.inr (Or.inl rfl)
-      · rw [ite_eq_right h1]
-        exact Or.inl rfl
+    split <;> exact DLim.same (l := l) (a := a) (by rfl)
   · rw [dite_eq_right hp, dite_eq_right hp]
     exact DLim.same (l := l) (a := a) (by rfl)
 

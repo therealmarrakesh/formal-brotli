@@ -43,6 +43,103 @@ def Gh.start : Gh :=
 /-- The place after a meta-block, by whether it was the last. -/
 def afterBlock (w : Nat) (last : Bool) (st : StreamState) : SPhase := if last then .ended st else .mblock w st
 
+/-- The least `k` from 10 to 23 with `n + 16 ≤ 2 ^ k`, or 24. -/
+def fitBits (n : Nat) : Nat :=
+  if n ≤ 1008 then 10 else if n ≤ 2032 then 11 else if n ≤ 4080 then 12 else if n ≤ 8176 then 13
+  else if n ≤ 16368 then 14 else if n ≤ 32752 then 15 else if n ≤ 65520 then 16 else if n ≤ 131056 then 17
+  else if n ≤ 262128 then 18 else if n ≤ 524272 then 19 else if n ≤ 1048560 then 20 else if n ≤ 2097136 then 21
+  else if n ≤ 4194288 then 22 else if n ≤ 8388592 then 23 else 24
+
+/-- The window a meta-block of `mlen` bytes needs, within the window `w`: the least `2 ^ k - 16`, from `k = 10`, that
+holds its bytes, and `w` if that is smaller or none does. -/
+def fitW (w mlen : Nat) : Nat := if mlen + 16 ≤ 2 ^ fitBits mlen then min w (2 ^ fitBits mlen - 16) else w
+
+/-- The window a compressed meta-block is read with: for the stream's last meta-block, when it is its first with data,
+the window that holds it, as the decoder allocates it; otherwise the stream's. A last meta-block can't be uncompressed,
+and after it nothing reads the window. -/
+def blockWindow (w : Nat) (st : StreamState) (last : Bool) (mlen : Nat) : Nat :=
+  if last = true ∧ st.produced = 0 then fitW w mlen else w
+
+/-- What `fitBits n` is: at least 10, and 24 or the least that holds `n` bytes and 16. -/
+def FitOk (n k : Nat) : Prop := 10 ≤ k ∧ (k = 24 ∨ (k < 24 ∧ n + 16 ≤ 2 ^ k))
+
+private theorem fitOk_ite {n : Nat} {c : Prop} [Decidable c] {a b : Nat} (ha : c → FitOk n a) (hb : ¬c → FitOk n b) :
+    FitOk n (if c then a else b) := by
+  by_cases h : c
+  · rw [ite_eq_left h]
+    exact ha h
+  · rw [ite_eq_right h]
+    exact hb h
+
+theorem fitBits_spec (n : Nat) : FitOk n (fitBits n) := by
+  unfold fitBits
+  repeat' refine fitOk_ite (fun _ => ?_) (fun _ => ?_)
+  all_goals first
+    | exact ⟨by decide, Or.inl rfl⟩
+    | exact ⟨by decide, Or.inr ⟨by decide, Nat.le_trans (Nat.add_le_add_right ‹n ≤ _› 16) (by decide)⟩⟩
+
+theorem fitBits_range (n : Nat) : 10 ≤ fitBits n ∧ fitBits n ≤ 24 := by
+  obtain ⟨h1, h2⟩ := fitBits_spec n
+  omega
+
+theorem fitBits_fits (n : Nat) (h : fitBits n < 24) : n + 16 ≤ 2 ^ fitBits n := by
+  obtain ⟨_, h2 | h2⟩ := fitBits_spec n
+  · omega
+  · exact h2.2
+
+theorem fitW_le (w mlen : Nat) : fitW w mlen ≤ w := by
+  unfold fitW
+  split <;> omega
+
+/-- The window that fits a meta-block holds it, or is the stream's. -/
+theorem fitW_fits (w mlen : Nat) : mlen ≤ fitW w mlen ∨ fitW w mlen = w := by
+  unfold fitW
+  split <;> omega
+
+/-- With a window of `2 ^ k - 16` bytes, the one that fits a meta-block is `2 ^ min k (fitBits mlen) - 16`. -/
+theorem fitW_pow {w k : Nat} (mlen : Nat) (hw : w + 16 = 2 ^ k) (hk : k ≤ 24) :
+    fitW w mlen + 16 = 2 ^ min k (fitBits mlen) := by
+  have hr := fitBits_range mlen
+  have h16 : 16 ≤ 2 ^ fitBits mlen := Nat.le_trans (by decide) (Nat.pow_le_pow_right (by decide) hr.1)
+  unfold fitW
+  by_cases hc : mlen + 16 ≤ 2 ^ fitBits mlen
+  · rw [ite_eq_left hc]
+    by_cases hkf : k ≤ fitBits mlen
+    · rw [show min k (fitBits mlen) = k from Nat.min_eq_left hkf]
+      have := Nat.pow_le_pow_right (show 0 < 2 by decide) hkf
+      generalize 2 ^ fitBits mlen = P at *
+      generalize 2 ^ k = Q at *
+      omega
+    · rw [show min k (fitBits mlen) = fitBits mlen from Nat.min_eq_right (by omega)]
+      have := Nat.pow_le_pow_right (show 0 < 2 by decide) (show fitBits mlen ≤ k by omega)
+      generalize 2 ^ fitBits mlen = P at *
+      generalize 2 ^ k = Q at *
+      omega
+  · rw [ite_eq_right hc]
+    have h24 : fitBits mlen = 24 := by
+      rcases Nat.lt_or_ge (fitBits mlen) 24 with h | h
+      · exact absurd (fitBits_fits mlen h) hc
+      · omega
+    rw [h24, Nat.min_eq_left hk, hw]
+
+theorem blockWindow_le (w : Nat) (st : StreamState) (last : Bool) (mlen : Nat) : blockWindow w st last mlen ≤ w := by
+  unfold blockWindow
+  split
+  · exact fitW_le w mlen
+  · exact Nat.le_refl _
+
+/-- A compressed meta-block's hook is the same under the window it is read with. -/
+theorem hdrK_blockWindow {α : Type} (A : StreamState → List Bool → Option α) (w : Nat) (st : StreamState) (last : Bool)
+    (mlen : Nat) : hdrK w A st mlen = hdrK (blockWindow w st last mlen) A st mlen := by
+  unfold blockWindow
+  split
+  · rename_i h
+    rcases fitW_fits w mlen with h1 | h1
+    · have := fitW_le w mlen
+      exact hdrK_window A st mlen (by omega) (by omega)
+    · rw [h1]
+  · rfl
+
 /-- The place a meta-block's start leads to, with the fill bits read before metadata and uncompressed bytes. -/
 def startPlace (w : Nat) (st : StreamState) (ms : MetaStart) (bs : List Bool) : ORes SPhase (List UInt8) :=
   match ms with
@@ -56,7 +153,7 @@ def startPlace (w : Nat) (st : StreamState) (ms : MetaStart) (bs : List Bool) : 
       match readFill bs with
       | some b => .next (.raw w st last mlen) b
       | none => .bad
-    else .next (.hdr w st last mlen Gh.start (.cat .L)) bs
+    else .next (.hdr (blockWindow w st last mlen) st last mlen Gh.start (.cat .L)) bs
 
 /-- A step of the stream read in order, from each place: WBITS, a meta-block's start, a byte of metadata or of
 uncompressed data, a header's or the commands' own step, and the end, which is the fill bits, then nothing. The

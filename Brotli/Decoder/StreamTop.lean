@@ -24,7 +24,7 @@ abbrev DState := { D : Dec // ∃ p, DRel D p }
 def liveD (limit : Nat) : Dec := { deadD with limit := UInt64.ofNat (min (limit - fixedCost) 4294958407) }
 
 theorem liveD_rel (limit : Nat) : DRel (liveD limit) .wbits := by
-  refine ⟨rfl, deadD_rel.2.1, ?_, rfl⟩
+  refine ⟨rfl, deadD_rel.2.1, ?_, rfl, rfl⟩
   show (UInt64.ofNat (min (limit - fixedCost) 4294958407)).toNat + 8888 < 2 ^ 32
   rw [u64_ofNat (by omega)]
   omega
@@ -482,7 +482,8 @@ theorem order_inv {limit : Nat} {x : List UInt8} {R : Run DState} (h : Reaches d
     | memoryLimit => rw [hst] at hs0; cases hs0
 
 /-- A decoder that reports the memory limit has handed out every byte the spec's reading in order of the bytes offered has
-produced up to where the limit binds: at WBITS, for the window, or in a meta-block's header, for its tables. -/
+produced up to where the limit binds: for the window, at the stream's first meta-block with data, where nothing has been
+produced, so as at WBITS; or in a meta-block's header, for its tables. -/
 theorem decoder_limitHandsOut {limit : Nat} {x : List UInt8} {R : Run DState} (h : Reaches decoder limit x R) (hs : R.status = .memoryLimit) :
     ∃ p, (p = .wbits ∨ ∃ w st last mlen g q, p = .hdr w st last mlen g q) ∧ p.out.reverse.map Nat.toUInt8 = R.emitted ∧
       ∀ u : List UInt8, ∃ bs, Reach sStep .wbits (bits (x.take R.offered ++ u)) p bs := by
@@ -500,19 +501,23 @@ theorem decoder_limitHandsOut {limit : Nat} {x : List UInt8} {R : Run DState} (h
     have hpos0 : (atPos R0.state.val c.pre.length).pos.toNat = c.pre.length := usize_of (by omega)
     rw [hpos0] at d2
     rw [hstop] at d3
-    refine ⟨p2, d7, ?_, fun u => ⟨_, chain_reach hin hfit hro hreach d2 d3 d5 u⟩⟩
-    rw [buf_list] at c3
-    obtain ⟨L2, hL, hLn⟩ := map_split c.buf _ n c3
-    have hdrop : o.buf.data.toList.drop c.buf.length = L2 := by
-      rw [hL]
-      simp
-    have hemit : (R0.after decoder x c).emitted = R0.emitted ++ L2 := by
-      show R0.emitted ++ (R0.reply decoder x c).output.data.toList.drop c.buf.length = _
-      rw [e3, hdrop]
-    unfold Pend at d4
-    have hz : D2.cmd.pend.toNat = 0 := by rw [d6]; rfl
-    rw [hz, List.drop_zero] at d4
-    rw [d4, hemit, ← hLn, ← List.map_append, map_roundtrip]
+    have key : p2.out.reverse.map Nat.toUInt8 = (R0.after decoder x c).emitted := by
+      rw [buf_list] at c3
+      obtain ⟨L2, hL, hLn⟩ := map_split c.buf _ n c3
+      have hdrop : o.buf.data.toList.drop c.buf.length = L2 := by
+        rw [hL]
+        simp
+      have hemit : (R0.after decoder x c).emitted = R0.emitted ++ L2 := by
+        show R0.emitted ++ (R0.reply decoder x c).output.data.toList.drop c.buf.length = _
+        rw [e3, hdrop]
+      unfold Pend at d4
+      have hz : D2.cmd.pend.toNat = 0 := by rw [d6]; rfl
+      rw [hz, List.drop_zero] at d4
+      rw [d4, hemit, ← hLn, ← List.map_append, map_roundtrip]
+    -- At a meta-block's start with nothing produced, where the window doesn't fit, the stream's start stands for it.
+    rcases d7 with ⟨w, rfl⟩ | hh
+    · exact ⟨.wbits, Or.inl rfl, key, fun u => ⟨_, .refl _ _⟩⟩
+    · exact ⟨p2, Or.inr hh, key, fun u => ⟨_, chain_reach hin hfit hro hreach d2 d3 d5 u⟩⟩
 
 /-- The reading in order of the bytes offered, cut back to the bytes used. -/
 theorem reach_used {x : List UInt8} {R : Run DState} {p : SPhase} (hro : R.read ≤ R.offered)
@@ -832,7 +837,7 @@ theorem deadD_holds : deadD.holds ≤ fixedCost :=
 theorem liveD_mem (limit : Nat) (x : List UInt8) :
     MemD (winSem.first (bits x)) ((demandSem.first (bits x)).getD 0) (roomOf limit) (liveD limit) (bits x) := by
   refine ⟨⟨.wbits, liveD_rel limit, Nat.le_refl _⟩, fun e => DTag.noConfusion e, fun e => DTag.noConfusion e, fun e => DTag.noConfusion e, fun _ => rfl, fun _ => rfl,
-    hsize_none, hsmall_none, Or.inl ⟨rfl, rfl, rfl, ?_, rfl⟩⟩
+    hsize_none, hsmall_none, Or.inl ⟨rfl, rfl, ?_, .wbits, liveD_rel limit, rfl⟩⟩
   show (UInt64.ofNat (min (limit - fixedCost) 4294958407)).toNat = _
   rw [u64_ofNat (by omega)]
   rfl
@@ -867,7 +872,7 @@ private theorem reply_mem {Ws : Option Nat} {X L : Nat} {x : List UInt8} {R : Ru
     rfl
   have M0 : MemD Ws X L (atPos R.state.val c.pre.length)
       ((atPos R.state.val c.pre.length).bits (R.input x c) (atPos R.state.val c.pre.length).pos (USize.ofNat (c.pre.length + c.size)) (bits (x.drop (R.read + c.size)))) :=
-    M.move hb0 ⟨p, atPos_rel hrel _, by rw [hb0]; exact hw⟩ rfl rfl rfl rfl rfl rfl rfl
+    M.move hb0 ⟨p, atPos_rel hrel _, by rw [hb0]; exact hw⟩ (fun q h => atPos_rel h _) rfl rfl rfl rfl rfl rfl rfl
   refine ⟨callD (R.input x c) (USize.ofNat (c.pre.length + c.size)) hs c.final (atPos R.state.val c.pre.length) hinv c.buf.toByteArray c.space, ?_, ?_, ?_, h2, h1, callD_mem _ _ _ _ M0⟩
   · unfold Run.reply
     show (decStep _ _ _ _ _ _ _).state.val = _

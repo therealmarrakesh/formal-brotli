@@ -17,20 +17,35 @@ open Brotli.Spec
 
 /-! ### The steps -/
 
-/-- The work of `stepDWbits`: the refill, and the window's zeros. -/
+/-- The work of `stepDWbits`: the refill. It allocates no window. -/
 def stepDWbitsW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize) : Nat :=
-  if hp : pos ≤ stop then
-    let rf := refill D.cmd.word D.cmd.count a pos stop hs (USize.le_iff_toNat_le.mp hp)
-    let r := wbitsFast ⟨rf.word, rf.count⟩
-    refillW D.cmd.word D.cmd.count a pos stop hs + match r.status with
-      | .ok => if (1 : UInt64) <<< r.a ≤ D.limit then zbW ((1 : UInt64) <<< r.a).toNat + 1 else 1
-      | _ => 1
-  else 1
+  if pos ≤ stop then refillW D.cmd.word D.cmd.count a pos stop hs + 1 else 1
 
-/-- The work of `stepDMeta`: the refill, the start's read, and the header's first state. -/
+/-- The work of `metaGo` beyond its read: the window's zeros, at the stream's first meta-block with data. -/
+def metaGoW (D : Dec) (c : Cmd) (r : Rd) : Nat :=
+  if r.a = 0 then 0
+  else if r.a = 1 then 0
+  else if r.d != 0 then
+    if r.buf.peek (r.count &&& 7) = 0 then
+      if c.ring.size = 0 then
+        if (1 : UInt64) <<< D.k.toUInt64 ≤ D.limit then zbW ((1 : UInt64) <<< D.k.toUInt64).toNat else 0
+      else 0
+    else 0
+  else if c.ring.size = 0 then
+    if (1 : UInt64) <<< allocBits D.k (r.b != 0) r.c ≤ D.limit then zbW ((1 : UInt64) <<< allocBits D.k (r.b != 0) r.c).toNat else 0
+  else 0
+
+/-- The work of `stepDMeta`: the refill, the start's read, the header's first state, and the window's zeros when it
+allocates the window. -/
 def stepDMetaW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize) : Nat :=
   if D.cmd.pend = 0 then
-    if pos ≤ stop then refillW D.cmd.word D.cmd.count a pos stop hs + 2 else 1
+    if hp : pos ≤ stop then
+      let rf := refill D.cmd.word D.cmd.count a pos stop hs (USize.le_iff_toNat_le.mp hp)
+      let r := metaStartFast ⟨rf.word, rf.count⟩
+      refillW D.cmd.word D.cmd.count a pos stop hs + 2 + match r.status with
+        | .ok => metaGoW D D.cmd r
+        | _ => 0
+    else 1
   else 1
 
 /-- The work of `rawRun`: a round for each byte, with a refill when the buffer runs low, and one for the round that
