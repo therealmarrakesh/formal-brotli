@@ -194,6 +194,87 @@ theorem literalRun_one {nTrees : Nat} {arena litBase lMap : ByteArray} (C : LitC
   rw [dite_eq_left hl, literalRun, dite_eq_left hn1]
   rfl
 
+/-- A literal at the state's buffer, as a move: the step machine's literal with the chunk ending where it starts, for
+the real chunk. The table base is the context's tree's, and the bits at hand cover the code word. -/
+theorem lit_move {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
+    {a : ByteArray} {stop : USize} {s : CommandState} {ic : BlockState} {c ilen clen n : Nat} {lit : BlockState}
+    {out : List Nat} {st : Cmd} {pos : USize} (hH : HdrRel H m)
+    (hrel : Rel w k.toNat m st (.literals s ic c ilen clen n lit out)) (hn0 : 1 ≤ st.left.toNat)
+    (hc0 : 1 ≤ st.lCount.toNat) (hroom : st.pend.toNat + 1 + 16 ≤ 2 ^ k.toNat) (hp : pos.toNat ≤ stop.toNat)
+    (hs : stop.toNat ≤ a.size) (hlt : st.lCur.toNat < H.nL.toNat) {modeOff : USize}
+    (hmode : modeOff.toNat = 512 * (H.modes.data[st.lCur.toNat]?.getD 0).toNat) (hmo : modeOff.toNat + 512 ≤ 2048)
+    (hmd : modeOff.toNat % 512 = 0) {base : USize} (hfit : TableFits H.arena base.toNat)
+    (hbase : u32At H.litBase (byteN H.lMap (64 * st.lCur.toNat + (cidFast modeOff st.p1 st.p2 hmo).toNat)) = base.toNat)
+    (hl : lookup H.arena base st.word hfit H.lit.arena32 &&& 15 ≤ st.count)
+    (hsz : st.ring.size = 2 ^ k.toNat) (hwp : st.wpos.toNat < 2 ^ k.toNat) :
+    ∃ p', MoveOk w k.toNat m K a stop (.literals s ic c ilen clen n lit out) st pos p'
+      { st with
+        word := st.word >>> (lookup H.arena base st.word hfit H.lit.arena32 &&& 15)
+        count := st.count - (lookup H.arena base st.word hfit H.lit.arena32 &&& 15)
+        ring := ringWrite st.ring st.wpos (lookup H.arena base st.word hfit H.lit.arena32 >>> 4).toUInt8 (by omega)
+        wpos := ringNext st.wpos (ringMask k)
+        p1 := (lookup H.arena base st.word hfit H.lit.arena32 >>> 4).toUInt8
+        p2 := st.p1
+        left := st.left - 1
+        lCount := st.lCount - 1
+        remaining := st.remaining - 1
+        pend := st.pend + USize.ofNat 1
+        written := usmin (ringSize k - USize.ofNat 16) (st.written + USize.ofNat 1)
+        pos := pos
+        status := .next } := by
+  obtain ⟨hC, htag, hprod, hcode, hilen, hclen, hleft, hnle, hirem, hlen⟩ := hrel
+  have hk := hC.k24
+  have hps : pos.toNat ≤ a.size := Nat.le_trans hp hs
+  have hmodeSpec : m.contextModes[st.lCur.toNat]? = some (modeOff.toNat / 512) := by
+    have hu : (USize.ofNat st.lCur.toNat).toNat = st.lCur.toNat := fastLit (by have := cur_small hlt; omega)
+    have hmz : (USize.ofNat st.lCur.toNat).toNat < H.modes.size := by rw [hu, H.modesSize]; exact hlt
+    have := hH.modes _ hmz
+    rw [uget_toNat, hu] at this
+    rw [this, hmode]
+    congr 1
+    omega
+  have h1 : (USize.ofNat 1).toNat = 1 := fastLit (by decide)
+  have hspec := literalRun_spec H.lit (stop := pos) hps (mapBase := (st.lCur <<< 6).toUSize) (modeOff := modeOff)
+    (mask := ringMask k) (k := k.toNat) (mapBase_le hlt) hmo hmd (ringMask_toNat hk) hk (w := w) (K := K) hH.lit
+    (t := st.lCur.toNat) (mapBase_toNat hlt) hmodeSpec s ic c ilen clen (USize.ofNat 1).toNat (USize.ofNat 1) st.word
+    st.count pos st.wpos st.ring st.p1 st.p2 (Nat.le_refl _) hC.wf hC.ring.size hC.ring.pos_lt n lit out rfl
+    (by rw [h1]; omega) (by rw [h1, hC.lRel.count]; omega) hC.lRel.cur hC.ctx hC.ring hC.bytes
+  dsimp only at hspec
+  have hstep := literals_after (stop := pos) (K := K) hC htag hprod hcode hilen hclen hleft hnle hirem hlen
+    (Nat.le_refl _) _ (run := USize.ofNat 1) (by rw [h1]; decide) (by rw [h1]; omega) (by rw [h1]; exact hc0)
+    (by rw [h1]; omega) hspec
+  have hone := literalRun_one H.lit hps (st.lCur <<< 6).toUSize modeOff (ringMask k) k.toNat (mapBase_le hlt) hmo hmd
+    (ringMask_toNat hk) hk h1 st.word st.count st.wpos st.ring st.p1 st.p2 (Nat.le_refl _) hC.wf hC.ring.size
+    hC.ring.pos_lt hfit (by rw [mapBase_toNat hlt]; exact hbase) hl
+  rw [hone] at hstep
+  have hsub1 : (USize.ofNat 1).toUInt64 = 1 := by
+    apply UInt64.toNat_inj.mp
+    rw [USize.toNat_toUInt64, h1]
+    rfl
+  have hrec : finishLiterals (clearRing st)
+      ⟨st.word >>> (lookup H.arena base st.word hfit H.lit.arena32 &&& 15),
+        st.count - (lookup H.arena base st.word hfit H.lit.arena32 &&& 15), pos, ringNext st.wpos (ringMask k),
+        ringWrite st.ring st.wpos (lookup H.arena base st.word hfit H.lit.arena32 >>> 4).toUInt8 (by omega),
+        (lookup H.arena base st.word hfit H.lit.arena32 >>> 4).toUInt8, st.p1, 0⟩ (USize.ofNat 1) (ringSize k) =
+      { st with
+        word := st.word >>> (lookup H.arena base st.word hfit H.lit.arena32 &&& 15)
+        count := st.count - (lookup H.arena base st.word hfit H.lit.arena32 &&& 15)
+        ring := ringWrite st.ring st.wpos (lookup H.arena base st.word hfit H.lit.arena32 >>> 4).toUInt8 (by omega)
+        wpos := ringNext st.wpos (ringMask k)
+        p1 := (lookup H.arena base st.word hfit H.lit.arena32 >>> 4).toUInt8
+        p2 := st.p1
+        left := st.left - 1
+        lCount := st.lCount - 1
+        remaining := st.remaining - 1
+        pend := st.pend + USize.ofNat 1
+        written := usmin (ringSize k - USize.ofNat 16) (st.written + USize.ofNat 1)
+        pos := pos
+        status := .next } := by
+    unfold finishLiterals clearRing
+    simp only [USize.sub_zero, hsub1, ↓reduceIte]
+  rw [hrec] at hstep
+  exact hstep.widen rfl rfl hp
+
 /-! ### The masked byte loop is the step machine's copy -/
 
 theorem uset_congr {t : ByteArray} {i j : USize} {v v' : UInt8} {hi : i.toNat < t.size} {hj : j.toNat < t.size}
