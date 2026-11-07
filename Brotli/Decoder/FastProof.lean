@@ -532,6 +532,137 @@ theorem dEntry_split {np nd dc : UInt64} (hnp : np.toNat ≤ 3) (hnd : nd.toNat 
       Nat.mul_add_div (by decide), Nat.div_eq_of_lt (by have : (2 : Nat) ^ 24 < 2 ^ 32 := by decide
                                                         omega), Nat.add_zero]
 
+/-- A base plus an offset less 3, as the branch-free short codes compute it, against the step machine's: where it is
+not 0 and doesn't wrap past `2 ^ 32`, it is the spec's. -/
+theorem short_off {b : UInt64} {o : Nat} (hb : b.toNat < 2 ^ 32) (ho : o ≤ 6)
+    (hne : b + UInt64.ofNat o - 3 ≠ 0) (hlt : (b + UInt64.ofNat o - 3).toNat < 2 ^ 32) :
+    (b + UInt64.ofNat o - 3).toNat = b.toNat + o - 3 ∧ 3 ≤ b.toNat + o ∧ b.toNat + o ≠ 3 := by
+  have ho' : (UInt64.ofNat o).toNat = o := by rw [UInt64.toNat_ofNat']; exact Nat.mod_eq_of_lt (by omega)
+  have hadd : (b + UInt64.ofNat o).toNat = b.toNat + o := by rw [u64_add_small (by rw [ho']; omega), ho']
+  have h3 : (3 : UInt64).toNat = 3 := rfl
+  have hne' : (b + UInt64.ofNat o - 3).toNat ≠ 0 := fun e => hne (UInt64.toNat_inj.mp (by rw [e]; rfl))
+  by_cases hge : 3 ≤ b.toNat + o
+  · rw [u64_sub_le (by rw [hadd, h3]; exact hge), hadd, h3] at hne' hlt ⊢
+    exact ⟨rfl, hge, by omega⟩
+  · exfalso
+    rw [UInt64.toNat_sub, hadd, h3] at hlt
+    have : (2 ^ 64 - 3 + (b.toNat + o)) % 2 ^ 64 = 2 ^ 64 - 3 + (b.toNat + o) := Nat.mod_eq_of_lt (by omega)
+    rw [this] at hlt
+    have : (2 : Nat) ^ 64 = 18446744073709551616 := by decide
+    omega
+
+theorem short_sub_case {b : UInt64} {x : Nat} (hx : 1 ≤ x ∧ x ≤ 3) (hb : b.toNat < 2 ^ 32)
+    (hne : b + UInt64.ofNat (3 - x) - 3 ≠ 0) (hlt : (b + UInt64.ofNat (3 - x) - 3).toNat < 2 ^ 32) :
+    b + UInt64.ofNat (3 - x) - 3 = shortSub b (UInt64.ofNat x) := by
+  obtain ⟨e, h3, hn3⟩ := short_off hb (by omega) hne hlt
+  have hx' : (UInt64.ofNat x).toNat = x := by rw [UInt64.toNat_ofNat']; exact Nat.mod_eq_of_lt (by omega)
+  unfold shortSub
+  have hgt : ¬ b ≤ UInt64.ofNat x := fun h => by
+    have := UInt64.le_iff_toNat_le.mp h
+    rw [hx'] at this
+    omega
+  rw [ite_eq_right hgt]
+  apply UInt64.toNat_inj.mp
+  rw [e, u64_sub_le (by rw [hx']; omega), hx']
+  omega
+
+theorem short_add_case {b : UInt64} {x : Nat} (hx : x ≤ 3) (hb : b.toNat < 2 ^ 32) :
+    b + UInt64.ofNat (3 + x) - 3 = b + UInt64.ofNat x := by
+  apply UInt64.toNat_inj.mp
+  have hx' : (UInt64.ofNat x).toNat = x := by rw [UInt64.toNat_ofNat']; exact Nat.mod_eq_of_lt (by omega)
+  have hx3 : (UInt64.ofNat (3 + x)).toNat = 3 + x := by rw [UInt64.toNat_ofNat']; exact Nat.mod_eq_of_lt (by omega)
+  have h3 : (3 : UInt64).toNat = 3 := rfl
+  rw [u64_sub_le (by rw [u64_add_small (by rw [hx3]; omega), hx3, h3]; omega), u64_add_small (by rw [hx3]; omega), hx3,
+    h3, u64_add_small (by rw [hx']; omega), hx']
+  omega
+
+/-- The branch-free short codes are the step machine's wherever the fast loop goes on with them: a distance not 0 and
+below `2 ^ 32`. -/
+theorem shortFast_eq {d0 d1 d2 d3 dc : UInt64} (h0 : d0.toNat < 2 ^ 32) (h1 : d1.toNat < 2 ^ 32) (hd : dc.toNat < 16)
+    (hne : shortFast d0 d1 d2 d3 dc ≠ 0) (hlt : (shortFast d0 d1 d2 d3 dc).toNat < 2 ^ 32) :
+    shortFast d0 d1 d2 d3 dc = shortDist d0 d1 d2 d3 dc := by
+  have hid : dc = UInt64.ofNat dc.toNat := by simp
+  generalize hn : dc.toNat = n at hd
+  rw [hn] at hid
+  subst hid
+  have hA : ∀ b : UInt64, b + 3 - 3 = b := fun b => by
+    apply UInt64.toNat_inj.mp
+    have h3 : (3 : UInt64).toNat = 3 := rfl
+    have hb := b.toNat_lt
+    rw [UInt64.toNat_sub, UInt64.toNat_add, h3]
+    have : (2 : Nat) ^ 64 = 18446744073709551616 := by decide
+    omega
+  -- each code's offset plus 3 (which last distance the code takes, `decide` settles in place)
+  have tab : ∀ j, j < 16 →
+      ((6940401482202231603 : UInt64) >>> (UInt64.ofNat j <<< 2) &&& 15) =
+        UInt64.ofNat ([3, 3, 3, 3, 2, 4, 1, 5, 0, 6, 2, 4, 1, 5, 0, 6].getD j 0) := by decide
+  match n, hd with
+  | 0, _ =>
+    have e2 := tab 0 (by decide)
+    simp (config := { decide := true }) only [shortFast, shortDist, e2, List.getD, ↓reduceIte]
+    exact hA _
+  | 1, _ =>
+    have e2 := tab 1 (by decide)
+    simp (config := { decide := true }) only [shortFast, shortDist, e2, List.getD, ↓reduceIte]
+    exact hA _
+  | 2, _ =>
+    have e2 := tab 2 (by decide)
+    simp (config := { decide := true }) only [shortFast, shortDist, e2, List.getD, ↓reduceIte]
+    exact hA _
+  | 3, _ =>
+    have e2 := tab 3 (by decide)
+    simp (config := { decide := true }) only [shortFast, shortDist, e2, List.getD, ↓reduceIte]
+    exact hA _
+  | 4, _ =>
+    have e2 := tab 4 (by decide)
+    simp (config := { decide := true }) only [shortFast, shortDist, shortAdjust, e2, List.getD, ↓reduceIte] at hne hlt ⊢
+    exact short_sub_case (x := 1) (by decide) h0 hne hlt
+  | 5, _ =>
+    have e2 := tab 5 (by decide)
+    simp (config := { decide := true }) only [shortFast, shortDist, shortAdjust, e2, List.getD, ↓reduceIte]
+    exact short_add_case (x := 1) (by decide) h0
+  | 6, _ =>
+    have e2 := tab 6 (by decide)
+    simp (config := { decide := true }) only [shortFast, shortDist, shortAdjust, e2, List.getD, ↓reduceIte] at hne hlt ⊢
+    exact short_sub_case (x := 2) (by decide) h0 hne hlt
+  | 7, _ =>
+    have e2 := tab 7 (by decide)
+    simp (config := { decide := true }) only [shortFast, shortDist, shortAdjust, e2, List.getD, ↓reduceIte]
+    exact short_add_case (x := 2) (by decide) h0
+  | 8, _ =>
+    have e2 := tab 8 (by decide)
+    simp (config := { decide := true }) only [shortFast, shortDist, shortAdjust, e2, List.getD, ↓reduceIte] at hne hlt ⊢
+    exact short_sub_case (x := 3) (by decide) h0 hne hlt
+  | 9, _ =>
+    have e2 := tab 9 (by decide)
+    simp (config := { decide := true }) only [shortFast, shortDist, shortAdjust, e2, List.getD, ↓reduceIte]
+    exact short_add_case (x := 3) (by decide) h0
+  | 10, _ =>
+    have e2 := tab 10 (by decide)
+    simp (config := { decide := true }) only [shortFast, shortDist, shortAdjust, e2, List.getD, ↓reduceIte] at hne hlt ⊢
+    exact short_sub_case (x := 1) (by decide) h1 hne hlt
+  | 11, _ =>
+    have e2 := tab 11 (by decide)
+    simp (config := { decide := true }) only [shortFast, shortDist, shortAdjust, e2, List.getD, ↓reduceIte]
+    exact short_add_case (x := 1) (by decide) h1
+  | 12, _ =>
+    have e2 := tab 12 (by decide)
+    simp (config := { decide := true }) only [shortFast, shortDist, shortAdjust, e2, List.getD, ↓reduceIte] at hne hlt ⊢
+    exact short_sub_case (x := 2) (by decide) h1 hne hlt
+  | 13, _ =>
+    have e2 := tab 13 (by decide)
+    simp (config := { decide := true }) only [shortFast, shortDist, shortAdjust, e2, List.getD, ↓reduceIte]
+    exact short_add_case (x := 2) (by decide) h1
+  | 14, _ =>
+    have e2 := tab 14 (by decide)
+    simp (config := { decide := true }) only [shortFast, shortDist, shortAdjust, e2, List.getD, ↓reduceIte] at hne hlt ⊢
+    exact short_sub_case (x := 3) (by decide) h1 hne hlt
+  | 15, _ =>
+    have e2 := tab 15 (by decide)
+    simp (config := { decide := true }) only [shortFast, shortDist, shortAdjust, e2, List.getD, ↓reduceIte]
+    exact short_add_case (x := 3) (by decide) h1
+  | _ + 16, h => exact absurd h (by omega)
+
 /-! ### A literal round -/
 
 theorem ringWrite_wput {ring : ByteArray} {opos mask : USize} {k : Nat} (hk : k ≤ 24) (hm : mask.toNat = 2 ^ k - 1)
