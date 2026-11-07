@@ -1070,47 +1070,115 @@ theorem copyF_run (ring : ByteArray) (wpos d n mask size : USize) {k : Nat} (hk 
 
 /-- The position `d + 1` before `x`, reduced modulo the window, is where the ring next written at `x`'s place holds the
 byte `d` back. -/
-theorem ringIdx_mod {x R d : Nat} (hR : 0 < R) (hd : d < R) (hx : d + 1 ≤ x) :
-    (x - 1 - d) % R = ringIdx R (x % R) d := by
+theorem ringIdx_mod {x R d : Nat} (hR : 0 < R) (hd : d < R) :
+    (x + R - 1 - d) % R = ringIdx R (x % R) d := by
   have hq := Nat.div_add_mod x R
   have hr := Nat.mod_lt x hR
   unfold ringIdx
   split
-  · rw [show x - 1 - d = (x % R - 1 - d) + R * (x / R) by omega, Nat.add_mul_mod_self_left,
-      Nat.mod_eq_of_lt (by omega)]
-  · have hq1 : 1 ≤ x / R := by
-      rcases Nat.eq_zero_or_pos (x / R) with e | e
-      · rw [e, Nat.mul_zero, Nat.zero_add] at hq
-        omega
-      · exact e
-    have e1 : R * (x / R - 1) = R * (x / R) - R := by rw [Nat.mul_sub, Nat.mul_one]
-    have e2 : R ≤ R * (x / R) := Nat.le_mul_of_pos_right _ hq1
-    rw [show x - 1 - d = (x % R + R - 1 - d) + R * (x / R - 1) by omega, Nat.add_mul_mod_self_left,
+  · rw [show x + R - 1 - d = (x % R - 1 - d) + R * (x / R + 1) by rw [Nat.mul_add, Nat.mul_one]; omega,
+      Nat.add_mul_mod_self_left, Nat.mod_eq_of_lt (by omega)]
+  · rw [show x + R - 1 - d = (x % R + R - 1 - d) + R * (x / R) by omega, Nat.add_mul_mod_self_left,
       Nat.mod_eq_of_lt (by omega)]
 
+/-- A position less `c`, masked to the window: the difference modulo the window, even where the subtraction wraps. -/
+theorem sub_mask {x c mask : USize} {k : Nat} (hk : k ≤ 24) (hm : mask.toNat = 2 ^ k - 1) (hc : c.toNat ≤ 2 ^ k) :
+    ((x - c) &&& mask).toNat = (x.toNat + 2 ^ k - c.toNat) % 2 ^ k := by
+  have hb : 32 ≤ System.Platform.numBits := by rcases System.Platform.numBits_eq with h | h <;> omega
+  have hR : 2 ^ k ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
+  have hP : 2 ^ 32 ≤ 2 ^ System.Platform.numBits := Nat.pow_le_pow_right (by decide) hb
+  have hdv : 2 ^ k ∣ 2 ^ System.Platform.numBits := Nat.pow_dvd_pow 2 (by omega)
+  rw [USize.toNat_and, hm, Nat.and_two_pow_sub_one_eq_mod, USize.toNat_sub, Nat.mod_mod_of_dvd _ hdv]
+  obtain ⟨q, hq⟩ := hdv
+  have hq1 : 1 ≤ q := by
+    rcases Nat.eq_zero_or_pos q with e | e
+    · rw [e, Nat.mul_zero] at hq
+      have := Nat.two_pow_pos System.Platform.numBits
+      omega
+    · exact e
+  have e1 : 2 ^ k * (q - 1) = 2 ^ k * q - 2 ^ k := by rw [Nat.mul_sub, Nat.mul_one]
+  have e2 : 2 ^ k ≤ 2 ^ k * q := Nat.le_mul_of_pos_right _ hq1
+  rw [hq, show 2 ^ k * q - c.toNat + x.toNat = (x.toNat + 2 ^ k - c.toNat) + 2 ^ k * (q - 1) by omega,
+    Nat.add_mul_mod_self_left]
+
 /-- The byte `d + 1` before the loop's unmasked position, read through the mask, is the output's byte `d` back. -/
-theorem wget_back {ring : ByteArray} {x mask c : USize} {k d : Nat} {out : List Nat} (hm : mask.toNat = 2 ^ k - 1) (hs : ring.size = 2 ^ k) (h : RingOk ring k (x &&& mask).toNat out)
-    (hc : c.toNat = d + 1) (hd : d + 1 + 16 ≤ 2 ^ k) (hdl : d < out.length) (hx : d + 1 ≤ x.toNat) :
+theorem wget_back {ring : ByteArray} {x mask c : USize} {k d : Nat} {out : List Nat} (hk : k ≤ 24)
+    (hm : mask.toNat = 2 ^ k - 1) (hs : ring.size = 2 ^ k) (h : RingOk ring k (x &&& mask).toNat out)
+    (hc : c.toNat = d + 1) (hd : d + 1 + 16 ≤ 2 ^ k) (hdl : d < out.length) :
     (wget ring (x - c) mask hm hs).toNat = out.getD d 0 := by
   unfold wget
   have e := h.read (d := d + 1) (by omega) hd (by omega) (p := (x - c) &&& mask) ?_
     (by have := mask_lt (i := x - c) hm; omega)
   · rw [Nat.add_sub_cancel] at e
     exact e
-  · simp only [USize.toNat_and, hm, Nat.and_two_pow_sub_one_eq_mod]
-    rw [USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr (by rw [hc]; exact hx)), hc, Nat.add_sub_cancel,
-      show x.toNat - (d + 1) = x.toNat - 1 - d by omega]
-    exact ringIdx_mod (Nat.two_pow_pos _) (by omega) hx
+  · rw [sub_mask hk hm (by omega), hc, Nat.add_sub_cancel, USize.toNat_and, hm, Nat.and_two_pow_sub_one_eq_mod,
+      show x.toNat + 2 ^ k - (d + 1) = x.toNat + 2 ^ k - 1 - d by omega]
+    exact ringIdx_mod (Nat.two_pow_pos _) (by omega)
 
 /-- The two bytes before the loop's unmasked position, read through the mask, are the output's context bytes. -/
-theorem wget_ctx {ring : ByteArray} {x mask : USize} {k : Nat} {out : List Nat} (hm : mask.toNat = 2 ^ k - 1) (h18 : 18 ≤ 2 ^ k) (hs : ring.size = 2 ^ k) (h : RingOk ring k (x &&& mask).toNat out)
-    (hl : 2 ≤ out.length) (hx : 2 ≤ x.toNat) :
+theorem wget_ctx {ring : ByteArray} {x mask : USize} {k : Nat} {out : List Nat} (hk : k ≤ 24)
+    (hm : mask.toNat = 2 ^ k - 1) (h18 : 18 ≤ 2 ^ k) (hs : ring.size = 2 ^ k) (h : RingOk ring k (x &&& mask).toNat out)
+    (hl : 2 ≤ out.length) :
     contextBytes out =
       ((wget ring (x - USize.ofNat 1) mask hm hs).toNat, (wget ring (x - USize.ofNat 2) mask hm hs).toNat) := by
-  rw [wget_back (d := 0) hm hs h (fastLit (by decide)) (by omega) (by omega) (by omega),
-    wget_back (d := 1) hm hs h (fastLit (by decide)) (by omega) (by omega) (by omega)]
+  rw [wget_back (d := 0) hk hm hs h (fastLit (by decide)) (by omega) (by omega),
+    wget_back (d := 1) hk hm hs h (fastLit (by decide)) (by omega) (by omega)]
   match out, hl with
   | _ :: _ :: _, _ => rfl
+
+/-! ### A copy -/
+
+/-- A whole copy, as a move: the step machine's copy with the chunk ending where it starts and room for all of it, with
+the fast copy's window and the context bytes read back from it. -/
+theorem copy_move {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
+    {a : ByteArray} {stop : USize} {s : CommandState} {d n : Nat} {st : Cmd} {pos : USize}
+    (hrel : Rel w k.toNat m st (.copy s d n)) (hn1 : 1 ≤ n) (hroom : st.pend.toNat + n + 16 ≤ 2 ^ k.toNat)
+    (hp : pos.toNat ≤ stop.toNat) (hk : k.toNat ≤ 24) (hsz : st.ring.size = 2 ^ k.toNat)
+    (hwp : st.wpos.toNat < 2 ^ k.toNat) (hd : st.dist.toUSize.toNat + 16 ≤ 2 ^ k.toNat) {ring' : ByteArray}
+    (hR : ring' = copyF st.ring st.wpos st.dist.toUSize st.left.toUSize (ringMask k) (ringSize k) hk
+      (ringMask_toNat hk) (ringSize_toNat hk) hsz hwp hd) (hs' : ring'.size = 2 ^ k.toNat) :
+    ∃ p', MoveOk w k.toNat m K a stop (.copy s d n) st pos p'
+      { st with
+        ring := ring', wpos := (st.wpos + st.left.toUSize) &&& ringMask k
+        p1 := wget ring' (st.wpos + st.left.toUSize - USize.ofNat 1) (ringMask k) (ringMask_toNat hk) hs'
+        p2 := wget ring' (st.wpos + st.left.toUSize - USize.ofNat 2) (ringMask k) (ringMask_toNat hk) hs'
+        left := 0, pend := st.pend + st.left.toUSize
+        written := usmin (ringSize k - USize.ofNat 16) (st.written + st.left.toUSize), pos := pos
+        status := .next } := by
+  obtain ⟨hC, htag, hprod, hdist, hleft, hd1, hdw, hdo⟩ := hrel
+  have hR24 : 2 ^ k.toNat ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
+  have hR10 : 2 ^ 10 ≤ 2 ^ k.toNat := Nat.pow_le_pow_right (by decide) hC.k10
+  have h1024 : (2 : Nat) ^ 10 = 1024 := rfl
+  have hpL := hC.pendLe
+  have hwin := hC.win
+  have hrunN : st.left.toUSize.toNat = n := by rw [word_toUSize (by omega), hleft]
+  have hdU : st.dist.toUSize.toNat = d := by rw [word_toUSize (by omega), hdist]
+  have hd1' : 1 ≤ st.dist.toUSize.toNat := by omega
+  have hd2' : st.dist.toUSize.toNat ≤ 2 ^ k.toNat := by omega
+  have hspec := copyRun_spec hk (ringMask_toNat hk) (ringSize_toNat hk) hd1' hd2' hd n st.left.toUSize st.ring st.wpos
+    st.p1 st.p2 hsz hwp s.output hrunN (by omega) hC.ring hC.ctx hC.bytes
+  dsimp only at hspec
+  rw [hdU] at hspec
+  obtain ⟨h1, _, h3, h4⟩ := hspec
+  have h1' := copyF_run st.ring st.wpos st.dist.toUSize st.left.toUSize (ringMask k) (ringSize k) hk
+    (ringMask_toNat hk) (ringSize_toNat hk) hsz hwp hd (by omega) hd1' hd2' st.p1 st.p2 h1
+  rw [← hR, copyRun_wpos hk (ringMask_toNat hk) (ringSize_toNat hk) hd1' hd2' _ st.left.toUSize st.ring st.wpos st.p1
+    st.p2 hsz hwp rfl] at h1'
+  rw [← hrunN] at h1' h3 h4
+  have h2' := wget_ctx (x := st.wpos + st.left.toUSize) hk (ringMask_toNat hk) (by omega) hs' h1' (by omega)
+  have hstep := copy_after (stop := pos) (K := K) (a := a) hC htag hprod hdist hleft hd1 hdw hdo (Nat.le_refl _)
+    (run := st.left.toUSize)
+    (r := ⟨ring', (st.wpos + st.left.toUSize) &&& ringMask k,
+      wget ring' (st.wpos + st.left.toUSize - USize.ofNat 1) (ringMask k) (ringMask_toNat hk) hs',
+      wget ring' (st.wpos + st.left.toUSize - USize.ofNat 2) (ringMask k) (ringMask_toNat hk) hs'⟩)
+    (by omega) (by omega) (by omega) h1' h2' h3 h4
+  obtain ⟨p', hmv⟩ := hstep.widen rfl rfl hp
+  refine ⟨p', ?_⟩
+  have e0 : st.left.toUSize.toUInt64 = st.left :=
+    UInt64.toNat_inj.mp (by rw [USize.toNat_toUInt64, word_toUSize (by omega)])
+  dsimp only [finishCopy, clearRing] at hmv
+  rw [e0, UInt64.sub_self] at hmv
+  exact hmv
 
 /-! ### A literal round -/
 
