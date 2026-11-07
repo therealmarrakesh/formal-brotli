@@ -255,7 +255,7 @@ def stepCopy (k : USize) (st : Cmd) (pos : USize) : Cmd :=
     else markStep st pos .bad
 
 /-- What follows the copy loop, whatever it returned. -/
-private theorem copy_after {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
+theorem copy_after {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
     {a : ByteArray} {stop : USize} {s : CommandState} {d n : Nat} {st : Cmd} {pos run : USize} {r : CopyRun}
     (hC : Core w k.toNat m st s.output s.remaining s.distances s.insertCopy s.literal s.distance)
     (htag : st.tag = .copy) (hprod : s.produced = s.output.length + n) (hdn : st.dist.toNat = d) (hleft : st.left.toNat = n)

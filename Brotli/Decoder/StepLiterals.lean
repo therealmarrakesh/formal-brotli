@@ -214,7 +214,7 @@ def stepLiterals (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop
   else literalsRun H k a stop hs st pos
 
 /-- What follows the literal loop, whatever it returned. -/
-private theorem literals_after {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
+theorem literals_after {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
     {a : ByteArray} {stop : USize} {s : CommandState} {ic : BlockState} {c ilen clen n : Nat} {lit : BlockState}
     {out : List Nat} {st : Cmd} {pos : USize}
     (hC : Core w k.toNat m st out (s.remaining - (ilen - n)) s.distances ic lit s.distance) (htag : st.tag = .literals)

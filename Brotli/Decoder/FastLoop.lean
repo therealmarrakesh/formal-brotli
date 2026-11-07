@@ -479,9 +479,67 @@ theorem copy16_ok {wpos d mask size : USize} {k : Nat} (hk : k ≤ 24) (hm : mas
     rw [hsub, e]
     omega
 
+/-! ### Blocks of 8 -/
+
+/-- A window of a known size, through stores that keep it. -/
+abbrev Win (n : Nat) : Type := { w : ByteArray // w.size = n }
+
+@[inline] def wst {n : Nat} (w : Win n) (i : USize) (v : UInt8) (h : i.toNat < n) : Win n :=
+  ⟨w.1.uset i v (by rw [w.2]; exact h), by rw [size_uset']; exact w.2⟩
+
+@[inline] def wld {n : Nat} (w : Win n) (i : USize) (h : i.toNat < n) : UInt8 := w.1.uget i (by rw [w.2]; exact h)
+
+theorem idx8 {d : USize} {n i : Nat} (hd : d.toNat + 8 ≤ n) (h32 : n < 2 ^ 32) (hi : i < 8) :
+    (d + USize.ofNat i).toNat < n := by
+  rw [fastIdx_add (by omega)]
+  omega
+
+/-- A byte copied from `s` to `d`, the store's index masked (`wix`). -/
+@[inline] def cp1 {n : Nat} (w : Win n) (d s : USize) (hd : d.toNat < n) (hs : s.toNat < n) (h24 : n ≤ 2 ^ 24) : Win n :=
+  wst w (wix d) (wld w s hs) (by rw [wix_toNat (by omega)]; exact hd)
+
+/-- 8 bytes copied one at a time from `s` to `d`, in order: with `s` fewer than 8 bytes before `d`, bytes the copy wrote
+are read again, as the format's copy repeats them. -/
+@[inline] def cp8 {n : Nat} (w : Win n) (d s : USize) (hd : d.toNat + 8 ≤ n) (hs : s.toNat + 8 ≤ n) (h24 : n ≤ 2 ^ 24) :
+    Win n :=
+  have h32 : n < 2 ^ 32 := by omega
+  let w := cp1 w d s (by omega) (by omega) h24
+  let w := cp1 w (d + USize.ofNat 1) (s + USize.ofNat 1) (idx8 hd h32 (by decide)) (idx8 hs h32 (by decide)) h24
+  let w := cp1 w (d + USize.ofNat 2) (s + USize.ofNat 2) (idx8 hd h32 (by decide)) (idx8 hs h32 (by decide)) h24
+  let w := cp1 w (d + USize.ofNat 3) (s + USize.ofNat 3) (idx8 hd h32 (by decide)) (idx8 hs h32 (by decide)) h24
+  let w := cp1 w (d + USize.ofNat 4) (s + USize.ofNat 4) (idx8 hd h32 (by decide)) (idx8 hs h32 (by decide)) h24
+  let w := cp1 w (d + USize.ofNat 5) (s + USize.ofNat 5) (idx8 hd h32 (by decide)) (idx8 hs h32 (by decide)) h24
+  let w := cp1 w (d + USize.ofNat 6) (s + USize.ofNat 6) (idx8 hd h32 (by decide)) (idx8 hs h32 (by decide)) h24
+  cp1 w (d + USize.ofNat 7) (s + USize.ofNat 7) (idx8 hd h32 (by decide)) (idx8 hs h32 (by decide)) h24
+
+theorem win_size {n : Nat} (w : Win n) : w.1.size = n := w.2
+
+/-- 8 bytes of `x` stored from `d`, lowest first. -/
+@[inline] def put8At {n : Nat} (w : Win n) (d : USize) (x : UInt64) (hd : d.toNat + 8 ≤ n) (h32 : n < 2 ^ 32) : Win n :=
+  let w := wst w d x.toUInt8 (by omega)
+  let w := wst w (d + USize.ofNat 1) (x >>> 8).toUInt8 (idx8 hd h32 (by decide))
+  let w := wst w (d + USize.ofNat 2) (x >>> 16).toUInt8 (idx8 hd h32 (by decide))
+  let w := wst w (d + USize.ofNat 3) (x >>> 24).toUInt8 (idx8 hd h32 (by decide))
+  let w := wst w (d + USize.ofNat 4) (x >>> 32).toUInt8 (idx8 hd h32 (by decide))
+  let w := wst w (d + USize.ofNat 5) (x >>> 40).toUInt8 (idx8 hd h32 (by decide))
+  let w := wst w (d + USize.ofNat 6) (x >>> 48).toUInt8 (idx8 hd h32 (by decide))
+  wst w (d + USize.ofNat 7) (x >>> 56).toUInt8 (idx8 hd h32 (by decide))
+
+/-- 8 bytes of `x` stored from `d`, lowest first, the base index masked once (`wix`). -/
+@[inline] def put8 {n : Nat} (w : Win n) (d : USize) (x : UInt64) (hd : d.toNat + 8 ≤ n) (h24 : n ≤ 2 ^ 24) : Win n :=
+  put8At w (wix d) x (by rw [wix_toNat (by omega)]; exact hd) (by omega)
+
+/-- A block of 8 of the format's copy at distance `dist`: one 8-byte load when the distance is at least 8 (so the block
+reads no byte it writes), byte by byte otherwise. -/
+@[inline] def blk8 {n : Nat} (w : Win n) (d s dist : USize) (hd : d.toNat + 8 ≤ n) (hs : s.toNat + 8 ≤ n)
+    (h24 : n ≤ 2 ^ 24) : Win n :=
+  if dist < USize.ofNat 8 then cp8 w d s hd hs h24
+  else put8 w d (load64 w.1 s (by rw [w.2]; exact hs) (by rw [w.2]; omega)) hd h24
+
 /-- The format's copy of `n` bytes from `d` back to `wpos`, `d` within the window: two 16-byte blocks at a distance of
-16 or more (writing up to 15 bytes past the copy, in the window's slack), one `memmove` at a distance of at least the
-length, the masked byte loop otherwise. The tests choose how; none is redundant. -/
+16 or more, up to 32 bytes; one `memmove` at a distance of at least the length, beyond 32 bytes; blocks of 8 up to 32
+bytes otherwise; the masked byte loop when the copy wraps or is long and overlapping. The blocks write up to 15 bytes
+past the copy, in the window's slack. The tests choose how; none is redundant. -/
 @[inline] def copyF (ring : ByteArray) (wpos d n mask size : USize) {k : Nat} (hk : k ≤ 24) (hm : mask.toNat = 2 ^ k - 1)
     (hsz : size.toNat = 2 ^ k) (hs : ring.size = 2 ^ k) (hw : wpos.toNat < 2 ^ k) (hd : d.toNat + 16 ≤ 2 ^ k) :
     ByteArray :=
@@ -503,15 +561,33 @@ length, the masked byte loop otherwise. The tests choose how; none is redundant.
         (by
           rw [fastIdx_add (by omega), fastIdx_add (by omega), winCopy16_size]
           exact ⟨by omega, by omega, by omega⟩)
-  else if h2 : n ≤ d ∧ s + n ≤ size ∧ wpos + n ≤ size then
+  else if h2 : USize.ofNat 32 < n ∧ n ≤ d ∧ s + n ≤ size ∧ wpos + n ≤ size then
     winMove ring wpos s n
       (by
-        have hnd := USize.le_iff_toNat_le.mp h2.1
-        have e1 := USize.le_iff_toNat_le.mp h2.2.1
-        have e2 := USize.le_iff_toNat_le.mp h2.2.2
+        have hnd := USize.le_iff_toNat_le.mp h2.2.1
+        have e1 := USize.le_iff_toNat_le.mp h2.2.2.1
+        have e2 := USize.le_iff_toNat_le.mp h2.2.2.2
         rw [fastAdd (by omega), hsz] at e1
         rw [fastAdd (by omega), hsz] at e2
         exact ⟨by omega, by omega⟩)
+  else if h3 : n ≤ USize.ofNat 32 ∧ s + USize.ofNat 32 ≤ size ∧ wpos + USize.ofNat 32 ≤ size then
+    have hs32 : s.toNat + 32 ≤ 2 ^ k := by
+      have := USize.le_iff_toNat_le.mp h3.2.1; rwa [fastIdx_add (by omega), hsz] at this
+    have hw32 : wpos.toNat + 32 ≤ 2 ^ k := by
+      have := USize.le_iff_toNat_le.mp h3.2.2; rwa [fastIdx_add (by omega), hsz] at this
+    let w1 := blk8 ⟨ring, hs⟩ wpos s d (by omega) (by omega) hR
+    if n ≤ USize.ofNat 8 then w1.1
+    else
+    let w2 := blk8 w1 (wpos + USize.ofNat 8) (s + USize.ofNat 8) d (by rw [fastIdx_add (by omega)]; omega)
+      (by rw [fastIdx_add (by omega)]; omega) hR
+    if n ≤ USize.ofNat 16 then w2.1
+    else
+    let w3 := blk8 w2 (wpos + USize.ofNat 16) (s + USize.ofNat 16) d (by rw [fastIdx_add (by omega)]; omega)
+      (by rw [fastIdx_add (by omega)]; omega) hR
+    if n ≤ USize.ofNat 24 then w3.1
+    else
+    (blk8 w3 (wpos + USize.ofNat 24) (s + USize.ofNat 24) d (by rw [fastIdx_add (by omega)]; omega)
+      (by rw [fastIdx_add (by omega)]; omega) hR).1
   else copyMasked ring wpos s n mask hk hm hs
 
 theorem copyF_size (ring : ByteArray) (wpos d n mask size : USize) {k : Nat} (hk : k ≤ 24)
@@ -525,7 +601,15 @@ theorem copyF_size (ring : ByteArray) (wpos d n mask size : USize) {k : Nat} (hk
     · rw [winCopy16_size, winCopy16_size]; exact hs
   · split
     · rw [winMove_size]; exact hs
-    · exact copyMasked_size hk hm _ _ _ _ _ hs rfl
+    · split
+      · split
+        · exact win_size _
+        · split
+          · exact win_size _
+          · split
+            · exact win_size _
+            · exact win_size _
+      · exact copyMasked_size hk hm _ _ _ _ _ hs rfl
 
 /-! ### Bits taken -/
 
@@ -746,8 +830,10 @@ def fastLoop (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.to
     (iCount lCount dCount d01 d23 code ilen clen lits m : UInt64) (p1 p2 : UInt8)
     (S : FSt kk stop posLim word count pos ring m) : FOut H kk stop :=
   if _hn : n = 0 then
+    -- the place the state stands for: the command's literals, or its distance when none are left
     fexitP C X W word count ring opos pB cap wB rEnd iCount (lCount + m) dCount flags d01 d23 code ilen clen p1 p2
-      .literals (lits + m) pos S.wf S.posStop S.size (Or.inl rfl)
+      (if m = 0 ∧ lits = 0 then .distance else .literals) (lits + m) pos S.wf S.posStop S.size
+      (by split <;> simp)
   else
   have hk := W.k24
   have hmk := W.mask
@@ -904,7 +990,7 @@ def fastLoop (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.to
     else
       fastLoop H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase iRow iFb
         dRow s0 C X W (n - USize.ofNat 1) word4 count4 pos3 ring' opos' (iCount - 1) lCount dCount' n01 n23 code' ilen'
-        clen' ilen' 0 q2 q1
+        clen' ilen' 0 q1 q2
         ⟨hok1 (by cases h : ok1 with
           | false => exact absurd (Or.inl h) h1
           | true => rfl), hf3.posStop, hsz', fun h => absurd rfl h⟩
