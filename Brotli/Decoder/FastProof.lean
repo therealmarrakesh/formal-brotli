@@ -916,6 +916,111 @@ theorem src_cases {wpos d mask : USize} {k : Nat} (hk : k ≤ 24) (hm : mask.toN
     rw [e2, Nat.add_mul_mod_self_left, Nat.mod_eq_of_lt (by omega)]
     omega
 
+/-- A 16-byte snapshot copy between separate ranges is the forward copy of those 16 bytes. -/
+theorem winCopy16_fwd (w : ByteArray) (d s : USize)
+    (h : d.toNat + 16 ≤ w.size ∧ s.toNat + 16 ≤ w.size ∧ (s.toNat + 16 ≤ d.toNat ∨ d.toNat + 16 ≤ s.toNat)) :
+    winCopy16 w d s h = fwdCopy w d.toNat s.toNat 16 :=
+  (fwdCopy_snap w _ _ 16 h.1 h.2.1 (by omega)).symm
+
+/-- The fast copy is the forward copy of at least its length and at most 15 bytes more, within the window, or the masked
+byte loop. -/
+theorem copyF_cases (ring : ByteArray) (wpos d n mask size : USize) {k : Nat} (hk : k ≤ 24)
+    (hm : mask.toNat = 2 ^ k - 1) (hsz : size.toNat = 2 ^ k) (hs : ring.size = 2 ^ k) (hw : wpos.toNat < 2 ^ k)
+    (hd : d.toNat + 16 ≤ 2 ^ k) (hn1 : 1 ≤ n.toNat) :
+    (∃ N, n.toNat ≤ N ∧ N ≤ n.toNat + 15 ∧ wpos.toNat + N ≤ 2 ^ k ∧ ((wpos - d) &&& mask).toNat + N ≤ 2 ^ k ∧
+      copyF ring wpos d n mask size hk hm hsz hs hw hd = fwdCopy ring wpos.toNat ((wpos - d) &&& mask).toNat N) ∨
+    copyF ring wpos d n mask size hk hm hsz hs hw hd = copyMasked ring wpos ((wpos - d) &&& mask) n mask hk hm hs := by
+  have hR : 2 ^ k ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
+  have hsrc := src_cases hk hm hw hd
+  have hSl : ((wpos - d) &&& mask).toNat < 2 ^ k := mask_lt hm
+  have h8 : (USize.ofNat 8).toNat = 8 := fastLit (by decide)
+  have h16 : (USize.ofNat 16).toNat = 16 := fastLit (by decide)
+  have h24 : (USize.ofNat 24).toNat = 24 := fastLit (by decide)
+  have h32 : (USize.ofNat 32).toNat = 32 := fastLit (by decide)
+  unfold copyF
+  dsimp only
+  split
+  · rename_i h
+    have hd16 : 16 ≤ d.toNat := by have := USize.le_iff_toNat_le.mp h.1; rwa [h16] at this
+    have hn32 : n.toNat ≤ 32 := by have := USize.le_iff_toNat_le.mp h.2.1; rwa [h32] at this
+    have hs32 : ((wpos - d) &&& mask).toNat + 32 ≤ 2 ^ k := by
+      have := USize.le_iff_toNat_le.mp h.2.2.1; rwa [fastIdx_add (by omega), hsz] at this
+    have hw32 : wpos.toNat + 32 ≤ 2 ^ k := by
+      have := USize.le_iff_toNat_le.mp h.2.2.2; rwa [fastIdx_add (by omega), hsz] at this
+    have sep : ∀ j, j ≤ 16 → wpos.toNat + j ≤ ((wpos - d) &&& mask).toNat + j ∨
+        ((wpos - d) &&& mask).toNat + j + 16 ≤ wpos.toNat + j := fun j _ => by rcases hsrc with e | e <;> omega
+    left
+    split
+    · rename_i hn16
+      have hn16' : n.toNat ≤ 16 := by have := USize.le_iff_toNat_le.mp hn16; rwa [h16] at this
+      refine ⟨16, by omega, by omega, by omega, by omega, ?_⟩
+      exact (fwdCopy_snap ring _ _ 16 (by omega) (by omega) (by have := sep 0 (by decide); omega)).symm
+    · rename_i hn16
+      have hn16' : ¬ n.toNat ≤ 16 := fun e => hn16 (USize.le_iff_toNat_le.mpr (by rw [h16]; exact e))
+      refine ⟨32, by omega, by omega, by omega, by omega, ?_⟩
+      rw [winCopy16_fwd, winCopy16_fwd, fastIdx_add (by omega), fastIdx_add (by omega),
+        show (32 : Nat) = 16 + 16 from rfl, fwdCopy_add]
+  · split
+    · rename_i _ h2
+      have hnd := USize.le_iff_toNat_le.mp h2.2.1
+      have e1 := USize.le_iff_toNat_le.mp h2.2.2.1
+      have e2 := USize.le_iff_toNat_le.mp h2.2.2.2
+      rw [fastAdd (by omega), hsz] at e1
+      rw [fastAdd (by omega), hsz] at e2
+      left
+      refine ⟨n.toNat, Nat.le_refl _, by omega, by omega, by omega, ?_⟩
+      exact (fwdCopy_snap ring _ _ _ (by omega) (by omega) (by rcases hsrc with e | e <;> omega)).symm
+    · split
+      · rename_i _ _ h3
+        have hn32 : n.toNat ≤ 32 := by have := USize.le_iff_toNat_le.mp h3.1; rwa [h32] at this
+        have hs32 : ((wpos - d) &&& mask).toNat + 32 ≤ 2 ^ k := by
+          have := USize.le_iff_toNat_le.mp h3.2.1; rwa [fastIdx_add (by omega), hsz] at this
+        have hw32 : wpos.toNat + 32 ≤ 2 ^ k := by
+          have := USize.le_iff_toNat_le.mp h3.2.2; rwa [fastIdx_add (by omega), hsz] at this
+        have sep : ∀ j, j ≤ 24 → ¬ d < USize.ofNat 8 → wpos.toNat + j ≤ ((wpos - d) &&& mask).toNat + j ∨
+            ((wpos - d) &&& mask).toNat + j + 8 ≤ wpos.toNat + j := fun j _ hd8 => by
+          have : 8 ≤ d.toNat := Nat.le_of_not_lt fun e => hd8 (USize.lt_iff_toNat_lt.mpr (by rw [h8]; exact e))
+          rcases hsrc with e | e <;> omega
+        have b1 := blk8_fwd ⟨ring, hs⟩ wpos ((wpos - d) &&& mask) d (by omega) (by omega) hR
+          (fun hd8 => by have := sep 0 (by decide) hd8; omega)
+        have bj : ∀ (j : Nat) (w : Win (2 ^ k)) (hj : j ≤ 24) (hjd : (wpos + USize.ofNat j).toNat + 8 ≤ 2 ^ k)
+            (hjs : (((wpos - d) &&& mask) + USize.ofNat j).toNat + 8 ≤ 2 ^ k),
+            (blk8 w (wpos + USize.ofNat j) (((wpos - d) &&& mask) + USize.ofNat j) d hjd hjs hR).1 =
+              fwdCopy w.1 (wpos.toNat + j) (((wpos - d) &&& mask).toNat + j) 8 := by
+          intro j w hj hjd hjs
+          rw [blk8_fwd w _ _ d hjd hjs hR (fun hd8 => by
+            rw [fastIdx_add (by omega), fastIdx_add (by omega)]
+            exact sep j hj hd8), fastIdx_add (by omega), fastIdx_add (by omega)]
+        have le : ∀ c, c < 2 ^ 32 → (n ≤ USize.ofNat c ↔ n.toNat ≤ c) := fun c hc => by
+          rw [USize.le_iff_toNat_le, fastLit hc]
+        left
+        split
+        · rename_i hb
+          have := (le 8 (by decide)).mp hb
+          refine ⟨8, by omega, by omega, by omega, by omega, b1⟩
+        · rename_i hb
+          have := mt (le 8 (by decide)).mpr hb
+          split
+          · rename_i hb'
+            have := (le 16 (by decide)).mp hb'
+            refine ⟨16, by omega, by omega, by omega, by omega, ?_⟩
+            rw [bj 8 _ (by decide) _ _, b1, show (16 : Nat) = 8 + 8 from rfl, fwdCopy_add]
+          · rename_i hb'
+            have := mt (le 16 (by decide)).mpr hb'
+            split
+            · rename_i hb''
+              have := (le 24 (by decide)).mp hb''
+              refine ⟨24, by omega, by omega, by omega, by omega, ?_⟩
+              rw [bj 16 _ (by decide) _ _, bj 8 _ (by decide) _ _, b1, show (24 : Nat) = 8 + 8 + 8 from rfl,
+                fwdCopy_add, fwdCopy_add]
+            · rename_i hb''
+              have := mt (le 24 (by decide)).mpr hb''
+              refine ⟨32, by omega, by omega, by omega, by omega, ?_⟩
+              rw [bj 24 _ (by decide) _ _, bj 16 _ (by decide) _ _, bj 8 _ (by decide) _ _, b1,
+                show (32 : Nat) = 8 + 8 + 8 + 8 from rfl, fwdCopy_add, fwdCopy_add, fwdCopy_add]
+      · right
+        rfl
+
 /-! ### A literal round -/
 
 theorem ringWrite_wput {ring : ByteArray} {opos mask : USize} {k : Nat} (hk : k ≤ 24) (hm : mask.toNat = 2 ^ k - 1)
