@@ -867,6 +867,55 @@ theorem put8At_snap {n : Nat} (w : Win n) (d s : USize) (hd : d.toNat + 8 ≤ n)
     rw [ite_eq_right (by omega), ite_eq_right (by omega), ite_eq_right (by omega), ite_eq_right (by omega),
       ite_eq_right (by omega), ite_eq_right (by omega), ite_eq_right (by omega), ite_eq_right (by omega)]
 
+/-- A block of 8 is 8 bytes of the forward copy: byte by byte, or by one load where the distance keeps the source out of
+the block. -/
+theorem blk8_fwd {n : Nat} (w : Win n) (d s dist : USize) (hd : d.toNat + 8 ≤ n) (hs : s.toNat + 8 ≤ n)
+    (h24 : n ≤ 2 ^ 24) (hsep : ¬ dist < USize.ofNat 8 → d.toNat ≤ s.toNat ∨ s.toNat + 8 ≤ d.toNat) :
+    (blk8 w d s dist hd hs h24).1 = fwdCopy w.1 d.toNat s.toNat 8 := by
+  unfold blk8
+  split
+  · exact cp8_fwd w d s hd hs h24
+  · rename_i h
+    unfold put8
+    have hw := w.2
+    have hix : (wix d).toNat = d.toNat := wix_toNat (by omega)
+    have key : ∀ (e : USize) (he : e.toNat = d.toNat) (h1 : e.toNat + 8 ≤ n),
+        (put8At w e (load64 w.1 s (by rw [w.2]; exact hs) (by rw [w.2]; omega)) h1 (by omega)).1 =
+          fwdCopy w.1 d.toNat s.toNat 8 := by
+      intro e he h1
+      rw [put8At_snap w e s h1 (by rw [w.2]; exact hs) (by omega), he,
+        fwdCopy_snap w.1 d.toNat s.toNat 8 (by omega) (by omega) (hsep h)]
+    exact key (wix d) hix _
+
+/-- A copy's source in the window: `d` bytes before the destination, or, where that wraps, after it. -/
+theorem src_cases {wpos d mask : USize} {k : Nat} (hk : k ≤ 24) (hm : mask.toNat = 2 ^ k - 1)
+    (hw : wpos.toNat < 2 ^ k) (hd : d.toNat + 16 ≤ 2 ^ k) :
+    ((wpos - d) &&& mask).toNat + d.toNat = wpos.toNat ∨
+      ((wpos - d) &&& mask).toNat = wpos.toNat + 2 ^ k - d.toNat := by
+  have hR : 2 ^ k ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
+  have hb : 32 ≤ System.Platform.numBits := by rcases System.Platform.numBits_eq with h | h <;> omega
+  have hP : 2 ^ 32 ≤ 2 ^ System.Platform.numBits := Nat.pow_le_pow_right (by decide) hb
+  rw [USize.toNat_and, hm, Nat.and_two_pow_sub_one_eq_mod]
+  by_cases hle : d.toNat ≤ wpos.toNat
+  · left
+    rw [USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr hle), Nat.mod_eq_of_lt (by omega)]
+    omega
+  · right
+    have hsub : (wpos - d).toNat = 2 ^ System.Platform.numBits - (d.toNat - wpos.toNat) := by
+      rw [USize.toNat_sub, Nat.mod_eq_of_lt (by omega)]
+      omega
+    have h1 : 2 ^ System.Platform.numBits = 2 ^ k * 2 ^ (System.Platform.numBits - k) := by
+      rw [← Nat.pow_add, Nat.add_sub_cancel' (by omega)]
+    have h2 : 1 ≤ 2 ^ (System.Platform.numBits - k) := Nat.one_le_two_pow
+    rw [hsub, h1]
+    have e2 : 2 ^ k * 2 ^ (System.Platform.numBits - k) - (d.toNat - wpos.toNat) =
+        (2 ^ k - (d.toNat - wpos.toNat)) + 2 ^ k * (2 ^ (System.Platform.numBits - k) - 1) := by
+      rw [Nat.mul_sub, Nat.mul_one]
+      have : 2 ^ k ≤ 2 ^ k * 2 ^ (System.Platform.numBits - k) := Nat.le_mul_of_pos_right _ h2
+      omega
+    rw [e2, Nat.add_mul_mod_self_left, Nat.mod_eq_of_lt (by omega)]
+    omega
+
 /-! ### A literal round -/
 
 theorem ringWrite_wput {ring : ByteArray} {opos mask : USize} {k : Nat} (hk : k ≤ 24) (hm : mask.toNat = 2 ^ k - 1)
