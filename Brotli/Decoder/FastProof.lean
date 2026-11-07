@@ -360,8 +360,6 @@ theorem fexit_succ {word count word' count' : UInt64} {ring ring' : ByteArray} {
 
 /-! ### The masked byte loop is the step machine's copy -/
 
-/-! ### The masked byte loop is the step machine's copy -/
-
 theorem uset_congr {t : ByteArray} {i j : USize} {v v' : UInt8} {hi : i.toNat < t.size} {hj : j.toNat < t.size}
     (h : i = j) (hv : v = v') : t.uset i v hi = t.uset j v' hj := by
   subst h
@@ -427,5 +425,61 @@ theorem copyMasked_run {d mask size : USize} {k : Nat} (hk : k ≤ 24) (hm : mas
       · have : wpos.toNat + 1 = 2 ^ k := by omega
         rw [this, Nat.mod_self, show wpos.toNat + 2 ^ k - d.toNat + 1 = (0 + 2 ^ k - d.toNat) + 2 ^ k by omega,
           Nat.add_mod_right]
+
+/-! ### A literal round -/
+
+theorem ringWrite_wput {ring : ByteArray} {opos mask : USize} {k : Nat} (hk : k ≤ 24) (hm : mask.toNat = 2 ^ k - 1)
+    (hs : ring.size = 2 ^ k) (v : UInt8) (h : (opos &&& mask).toNat < ring.size) :
+    ringWrite ring (opos &&& mask) v h = wput ring opos mask hk hm hs v := by
+  unfold ringWrite wput
+  have := wix_lt (i := opos) hk hm
+  exact uset_congr (USize.toNat_inj.mp (wix_toNat this).symm) rfl
+
+/-- One literal of the fast loop (a refill to 15 bits, then the read at the context's tree) is a move from the record a
+fast state stands for to the record one byte on. -/
+theorem lit_round {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader}
+    {K : CommandState → List Bool → Option α} {a : ByteArray} {stop : USize} {s : CommandState} {ic : BlockState}
+    {c ilen clen n : Nat} {lit : BlockState} {out : List Nat} {word count : UInt64} {ring : ByteArray}
+    {opos mask pB cap cap16 wB : USize} {rEnd bEnd : UInt64} {iCount LC dCount : UInt64} {flags : Flags} {x : CmdExt}
+    {d01 d23 code ilen' clen' : UInt64} {p1 p2 : UInt8} {L : UInt64} {pos : USize} {T : ByteArray} {tb : UInt64}
+    {modeOff lRow iRow iFb dRow s0 : USize} (C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow s0)
+    (hH : HdrRel H m)
+    (hrel : Rel w k.toNat m (fexit word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code
+      ilen' clen' p1 p2 .literals L pos) (.literals s ic c ilen clen n lit out))
+    (hk : k.toNat ≤ 24) (h16 : 16 ≤ 2 ^ k.toNat) (hmk : mask = ringMask k) (hmN : mask.toNat = 2 ^ k.toNat - 1)
+    (hcap : cap16 = ringSize k - USize.ofNat 16) {ahead : Nat} (N : FNum opos pB wB rEnd bEnd k.toNat ahead)
+    (ha : 1 ≤ ahead) (hL : 1 ≤ L.toNat) (hLC : 1 ≤ LC.toNat) {word' count' : UInt64} {pos' : USize}
+    (hf : FillOk a stop word count pos 15 word' count' pos') (hs : stop.toNat ≤ a.size)
+    (hsz : ring.size = 2 ^ k.toNat) :
+    ∃ p', MoveOk w k.toNat m K a stop (.literals s ic c ilen clen n lit out)
+      (fexit word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code ilen' clen' p1 p2
+        .literals L pos) pos p'
+      (fexit (word' >>> (litT C p1 p2 word' &&& 15)) (count' - (litT C p1 p2 word' &&& 15))
+        (wput ring opos mask hk hmN hsz (litT C p1 p2 word' >>> 4).toUInt8) (opos + USize.ofNat 1) mask pB cap cap16
+        wB rEnd iCount (LC - 1) dCount flags x d01 d23 code ilen' clen' (litT C p1 p2 word' >>> 4).toUInt8 p1 .literals
+        (L - 1) pos') := by
+  have m1 := fill_move (K := K) hrel hf
+  obtain ⟨base, hfit, hb, he⟩ := C.litT_lookup p1 p2 word'
+  have hpend := N.pend
+  have hah := N.ahead
+  have hwp : (opos &&& mask).toNat < 2 ^ k.toNat := mask_lt hmN
+  obtain ⟨p', m2⟩ := lit_move (K := K) (stop := stop) (pos := pos') hH m1.rel (by exact hL) (by exact hLC)
+    (by show (opos + pB).toNat + 1 + 16 ≤ _; omega) hf.posStop hs C.hl C.mode C.hm C.hm512 hfit hb
+    (by
+      show lookup H.arena base word' hfit H.lit.arena32 &&& 15 ≤ count'
+      have := and15_lt (lookup H.arena base word' hfit H.lit.arena32)
+      have := hf.enough
+      exact UInt64.le_iff_toNat_le.mpr (by omega)) hsz hwp
+  refine ⟨p', ?_⟩
+  have e := fexit_succ (word := word) (count := count) (ring := ring)
+    (word' := word' >>> (lookup H.arena base word' hfit H.lit.arena32 &&& 15))
+    (count' := count' - (lookup H.arena base word' hfit H.lit.arena32 &&& 15))
+    (ring' := ringWrite ring (opos &&& mask) (lookup H.arena base word' hfit H.lit.arena32 >>> 4).toUInt8 (by omega))
+    (q1 := (lookup H.arena base word' hfit H.lit.arena32 >>> 4).toUInt8) (q2 := p1) (pos := pos) (pos' := pos')
+    (iCount := iCount) (lc := LC) (dCount := dCount) (flags := flags) (x := x) (d01 := d01) (d23 := d23) (code := code)
+    (ilen := ilen') (clen := clen') (p1 := p1) (p2 := p2) (tag := .literals) (lf := L) (cap := cap) hk h16 hmk hcap N ha
+  have e' := m1.trans m2
+  rw [he, ← ringWrite_wput hk hmN hsz _ (by omega), ← e]
+  exact e'
 
 end Brotli.Decoder
