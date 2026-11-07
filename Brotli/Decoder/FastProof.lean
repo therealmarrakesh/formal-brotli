@@ -1180,6 +1180,87 @@ theorem copy_move {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeader} {K : C
   rw [e0, UInt64.sub_self] at hmv
   exact hmv
 
+/-! ### The steps between the fast loop's reads, as moves -/
+
+/-- The end of a copy: the next command. -/
+theorem copyEnd_move {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
+    {a : ByteArray} {stop : USize} {s : CommandState} {d n : Nat} {st : Cmd} {pos : USize}
+    (hrel : Rel w k.toNat m st (.copy s d n)) (h0 : st.left = 0) (hp : pos.toNat ≤ stop.toNat) :
+    ∃ p', MoveOk w k.toNat m K a stop (.copy s d n) st pos p'
+      { st with tag := .command, pos := pos, status := .next } := by
+  have h := stepCopy_ok (K := K) (a := a) (stop := pos) (pos := pos) hrel (Nat.le_refl _)
+  have e : stepCopy k st pos = { st with tag := .command, pos := pos, status := .next } := by
+    unfold stepCopy
+    rw [ite_eq_left h0]
+  rw [e] at h
+  exact h.widen rfl rfl hp
+
+/-- The end of a command's literals: its distance. -/
+theorem litEnd_move {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader}
+    {K : CommandState → List Bool → Option α} {a : ByteArray} {stop : USize} {s : CommandState} {ic : BlockState}
+    {c ilen clen n : Nat} {lit : BlockState} {out : List Nat} {st : Cmd} {pos : USize} (hH : HdrRel H m)
+    (hrel : Rel w k.toNat m st (.literals s ic c ilen clen n lit out)) (h0 : st.left = 0) (hp : pos.toNat ≤ stop.toNat)
+    (hs : stop.toNat ≤ a.size) :
+    ∃ p', MoveOk w k.toNat m K a stop (.literals s ic c ilen clen n lit out) st pos p'
+      { st with tag := .distance, pos := pos, status := .next } := by
+  have h := stepLiterals_ok (K := K) (stop := pos) (hs := Nat.le_trans hp hs) hH hrel (Nat.le_refl _) (Or.inr rfl)
+  have e : stepLiterals H k a pos (Nat.le_trans hp hs) st pos =
+      { st with tag := .distance, pos := pos, status := .next } := by
+    unfold stepLiterals
+    rw [ite_eq_left h0]
+  rw [e] at h
+  exact h.widen rfl rfl hp
+
+/-- The start of a command within its block: the insert-and-copy element. -/
+theorem cmd_move {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
+    {a : ByteArray} {stop : USize} {s : CommandState} {st : Cmd} {pos : USize}
+    (hK : ∀ s bs, s.remaining ≠ 0 → K s bs = readCommand w m s bs >>= fun (s1, b) => K s1 b) (hH : HdrRel H m)
+    (hrel : Rel w k m st (.command s)) (hr : st.remaining ≠ 0) (hi : st.iCount ≠ 0) (hp : pos.toNat ≤ stop.toNat) :
+    ∃ p', MoveOk w k m K a stop (.command s) st pos p'
+      { st with iCount := st.iCount - 1, tag := .insertCopy, pos := pos, status := .next } := by
+  have h := stepCommand_ok (a := a) (stop := pos) hK hH hrel (Nat.le_refl _) (Or.inr rfl)
+  have e : stepCommand H st pos =
+      { st with iCount := st.iCount - 1, tag := .insertCopy, pos := pos, status := .next } := by
+    unfold stepCommand
+    rw [ite_eq_right hr, ite_eq_right hi]
+  rw [e] at h
+  exact h.widen rfl rfl hp
+
+/-- The start of a distance implied 0 (the last distance), within the window and the meta-block: the copy. -/
+theorem distImplicit_move {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader}
+    {K : CommandState → List Bool → Option α} {a : ByteArray} {stop : USize} {s : CommandState} {c clen : Nat} {st : Cmd}
+    {pos : USize} (hH : HdrRel H m) (hrel : Rel w k m st (.distance s c clen)) (hr : st.remaining ≠ 0)
+    (hc : st.code < 128) (hd : st.d0 ≠ 0) (hw : ¬ st.written.toUInt64 < st.d0) (hrc : ¬ st.remaining < st.clen)
+    (hp : pos.toNat ≤ stop.toNat) :
+    ∃ p', MoveOk w k m K a stop (.distance s c clen) st pos p'
+      { st with
+        remaining := st.remaining - st.clen, left := st.clen, tag := .copy, pos := pos, status := .next
+        ext := { st.ext with dist := st.d0 } } := by
+  have h := stepDistance_ok (K := K) (a := a) (stop := pos) hH hrel (Nat.le_refl _) (Or.inr rfl)
+  have e : stepDistance H st pos =
+      { st with
+        remaining := st.remaining - st.clen, left := st.clen, tag := .copy, pos := pos, status := .next
+        ext := { st.ext with dist := st.d0 } } := by
+    unfold stepDistance applyDistance
+    rw [ite_eq_right hr, ite_eq_left hc, ite_eq_right hd, ite_eq_right hw, ite_eq_right hrc, ite_eq_left rfl]
+  rw [e] at h
+  exact h.widen rfl rfl hp
+
+/-- The start of a distance read within its block: the distance's symbol. -/
+theorem distCount_move {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader}
+    {K : CommandState → List Bool → Option α} {a : ByteArray} {stop : USize} {s : CommandState} {c clen : Nat} {st : Cmd}
+    {pos : USize} (hH : HdrRel H m) (hrel : Rel w k m st (.distance s c clen)) (hr : st.remaining ≠ 0)
+    (hc : ¬ st.code < 128) (hd : st.dCount ≠ 0) (hp : pos.toNat ≤ stop.toNat) :
+    ∃ p', MoveOk w k m K a stop (.distance s c clen) st pos p'
+      { st with dCount := st.dCount - 1, tag := .distanceSymbol, pos := pos, status := .next } := by
+  have h := stepDistance_ok (K := K) (a := a) (stop := pos) hH hrel (Nat.le_refl _) (Or.inr rfl)
+  have e : stepDistance H st pos =
+      { st with dCount := st.dCount - 1, tag := .distanceSymbol, pos := pos, status := .next } := by
+    unfold stepDistance
+    rw [ite_eq_right hr, ite_eq_right hc, ite_eq_right hd]
+  rw [e] at h
+  exact h.widen rfl rfl hp
+
 /-! ### A literal round -/
 
 theorem ringWrite_wput {ring : ByteArray} {opos mask : USize} {k : Nat} (hk : k ≤ 24) (hm : mask.toNat = 2 ^ k - 1)
