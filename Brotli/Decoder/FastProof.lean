@@ -714,6 +714,50 @@ theorem fwdCopy_get' (w : ByteArray) (d s : Nat) :
       · rw [ite_eq_left hr, ite_eq_left (by omega)]
       · rw [ite_eq_right hr, ite_eq_right (by omega)]
 
+/-- With the source never in the part of the destination already written, the forward copy is the snapshot copy: what
+`winMove` and `winCopy16` compute. -/
+theorem fwdCopy_snap (w : ByteArray) (d s n : Nat) (hd : d + n ≤ w.size) (hs : s + n ≤ w.size)
+    (hsep : d ≤ s ∨ s + n ≤ d) : fwdCopy w d s n = w.copySlice s w d n := by
+  apply ByteArray.ext
+  apply Array.ext_getElem?
+  intro i
+  rw [fwdCopy_get' w d s n hsep hd hs i]
+  exact (copySlice_self_get w d s n i hd hs).symm
+
+/-- A byte of the window, as the masked byte loop reads and writes it: the masks are no change where the copy doesn't
+wrap. -/
+theorem copyMasked_fwd {mask : USize} {k : Nat} (hk : k ≤ 24) (hm : mask.toNat = 2 ^ k - 1) :
+    ∀ (N : Nat) (ring : ByteArray) (d s n : USize) (hs : ring.size = 2 ^ k), n.toNat = N →
+      d.toNat + N ≤ 2 ^ k → s.toNat + N ≤ 2 ^ k →
+      copyMasked ring d s n mask hk hm hs = fwdCopy ring d.toNat s.toNat N := by
+  have hR : 2 ^ k ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
+  intro N
+  induction N with
+  | zero =>
+    intro ring d s n hs hN _ _
+    rw [copyMasked, dite_eq_left (usize_zero hN)]
+    rfl
+  | succ N ih =>
+    intro ring d s n hs hN hd hs'
+    have hn : n ≠ 0 := fun e => by rw [e] at hN; exact Nat.succ_ne_zero _ hN.symm
+    rw [copyMasked, dite_eq_right hn]
+    have hd1 : (d + USize.ofNat 1).toNat = d.toNat + 1 := fastIdx_add (by omega)
+    have hs1 : (s + USize.ofNat 1).toNat = s.toNat + 1 := fastIdx_add (by omega)
+    have hdm : (d &&& mask).toNat = d.toNat := by
+      rw [USize.toNat_and, hm, Nat.and_two_pow_sub_one_eq_mod, Nat.mod_eq_of_lt (by omega)]
+    have hsm : (s &&& mask).toNat = s.toNat := by
+      rw [USize.toNat_and, hm, Nat.and_two_pow_sub_one_eq_mod, Nat.mod_eq_of_lt (by omega)]
+    rw [ih _ _ _ _ _ (by rw [usize_pred hn]; omega) (by rw [hd1]; omega) (by rw [hs1]; omega), hd1, hs1,
+      show N + 1 = 1 + N by omega, fwdCopy_add ring d.toNat s.toNat 1 N]
+    have hix : (wix (d &&& mask)).toNat = d.toNat := by rw [wix_toNat (by omega), hdm]
+    have hget : (wget ring s mask hm hs).toNat = (ring.data[s.toNat]?.getD 0).toNat := by
+      unfold wget
+      rw [uget_toNat, hsm]
+    congr 1
+    unfold wput
+    rw [uset_eq, hix, show wget ring s mask hm hs = ring.data[s.toNat]?.getD 0 from UInt8.toNat_inj.mp hget]
+    rfl
+
 /-! ### A literal round -/
 
 theorem ringWrite_wput {ring : ByteArray} {opos mask : USize} {k : Nat} (hk : k ≤ 24) (hm : mask.toNat = 2 ^ k - 1)
