@@ -21,7 +21,7 @@ def cmdStart (c : Cmd) (d : Done) (word count mlen : UInt64) : Cmd :=
   { c with
     word := word, count := count, remaining := mlen, iCount := d.countI, lCount := d.countL, dCount := d.countD
     flags := ⟨1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0⟩, tag := .command
-    ext := { c.ext with iCur := 0, iPrev := 1, lCur := 0, lPrev := 1, dCur := 0, dPrev := 1 } }
+    ext := { c.ext with iCur := 0, iPrev := 1, lCur := 0, lPrev := 1, dCur := 0, dPrev := 1, clen := 2, copyBase := 2 } }
 
 private theorem flagOf_start : ∀ t, t < 256 → flagOf 1 0 0 0 t = decide (t = 0) := by
   decide +kernel
@@ -70,7 +70,9 @@ theorem cmdStart_rel {c : Cmd} {d : Done} {g : Gh} {w k : Nat} {st : StreamState
     iRel := blockRel_start hI.count hI.wf
     lRel := blockRel_start hL.count hL.wf
     dRel := blockRel_start hD.count hD.wf
-    wordLe := hwin.wordLe }
+    wordLe := hwin.wordLe
+    clen1 := by show 1 ≤ (2 : UInt64).toNat; decide
+    cbase1 := by show 1 ≤ (2 : UInt64).toNat; decide }
 
 /-! ### The check at the end of the commands -/
 

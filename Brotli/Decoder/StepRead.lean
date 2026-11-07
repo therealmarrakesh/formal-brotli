@@ -361,6 +361,7 @@ private theorem insertCopy_next {α : Type} {w k : Nat} {m : MetaBlockHeader} {K
     (hC : Core w k m st s.output s.remaining s.distances ic s.literal s.distance) (hprod : s.produced = s.output.length)
     (hw : b2.Wf) (hp : pos.toNat ≤ stop.toNat) (h1 : code.toNat = sym) (h2 : ilen.toNat = ilenN)
     (h3 : copyBits.toNat = copyBitsN) (h4 : copyBase.toNat = copyBaseN) (h5 : copyBitsN ≤ 24) (h6 : copyBaseN ≤ 2118)
+    (h7 : 2 ≤ copyBaseN)
     (hrest : ∀ F, rest w m K (.insertCopy s ic) (stateBits st a pos stop F) =
       rest w m K (.copyLength s ic sym ilenN copyBitsN copyBaseN) (b2.held ++ (chunkBits a pos.toNat stop.toNat ++ F)))
     (hj : ∀ F, cStep w m (.insertCopy s ic) (stateBits st a pos stop F) =
@@ -371,7 +372,8 @@ private theorem insertCopy_next {α : Type} {w k : Nat} {m : MetaBlockHeader} {K
         ext := { st.ext with code := code, ilen := ilen, copyBits := copyBits, copyBase := copyBase }
         tag := .copyLength, pos := pos, status := .next } :=
   StepOk.ofNext (p' := .copyLength s ic sym ilenN copyBitsN copyBaseN) rfl
-    ⟨{ hC with wf := hw }, rfl, hprod, h1, h2, h3, h4, h5, h6⟩ (Nat.le_refl _) hp hrest (fun F => Reach.one (hj F))
+    ⟨{ hC with wf := hw, cbase1 := by show 1 ≤ copyBase.toNat; omega }, rfl, hprod, h1, h2, h3, h4, h5, h6⟩
+    (Nat.le_refl _) hp hrest (fun F => Reach.one (hj F))
 
 /-- The element's step does its job. -/
 theorem stepInsertCopy_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
@@ -436,7 +438,12 @@ theorem stepInsertCopy_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader
       rw [hib] at hint
       -- Abstract too, or the kernel, comparing the new state with the old field by field, unfolds the shift.
       generalize b1.drop (rowBits row) = b2 at hw2 hint ⊢
-      refine insertCopy_next hC hprod hw2 hp hE (by rw [u64_add (by omega), hibase]) hcb hcbase s3 s4 (fun F => ?_) (fun F => ?_)
+      have hc2 : 2 ≤ cells.2.2.2 := by
+        have := cmdRow_copy2 hcN
+        rw [hrow] at this
+        exact this
+      refine insertCopy_next hC hprod hw2 hp hE (by rw [u64_add (by omega), hibase]) hcb hcbase s3 s4 hc2 (fun F => ?_)
+        (fun F => ?_)
       · rw [stateBits_eq, rest_insertCopy_row hcur hcode (hread hl _) hcN, hb1, hrow, hint]
         rfl
       · rw [stateBits_eq]
@@ -515,9 +522,13 @@ theorem stepCopyLength_ok {α : Type} {w k : Nat} {m : MetaBlockHeader} {K : Com
       have hpow : 2 ^ copyBits ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hb24
       have h24 : (2 : Nat) ^ 24 = 16777216 := by decide
       refine StepOk.ofNext (p' := .literals s ic c ilen (copyBase + ((BitBuffer.mk st.word st.count).peek st.copyBits).toNat)
-        ilen s.literal s.output) rfl ⟨{ hC with wf := BitBuffer.drop_wf hC.wf hk64 hle', rem := ?_ }, rfl, hprod, hcode, hilen,
-          ?_, hilen, Nat.le_refl _, by omega, rfl⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
+        ilen s.literal s.output) rfl ⟨{ hC with wf := BitBuffer.drop_wf hC.wf hk64 hle', rem := ?_, clen1 := ?_ }, rfl,
+          hprod, hcode, hilen, ?_, hilen, Nat.le_refl _, by omega, rfl⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
       · show st.remaining.toNat = _
+        omega
+      · show 1 ≤ (st.copyBase + (BitBuffer.mk st.word st.count).peek st.copyBits).toNat
+        have := hC.cbase1
+        rw [u64_add (by omega)]
         omega
       · show (st.copyBase + (BitBuffer.mk st.word st.count).peek st.copyBits).toNat = _
         rw [u64_add (by omega), hbase]

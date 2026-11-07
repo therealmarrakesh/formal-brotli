@@ -333,6 +333,8 @@ structure Core (w k : Nat) (m : MetaBlockHeader) (st : Cmd) (out : List Nat) (re
   lRel : BlockRel st.flags.fL0 st.flags.fL1 st.flags.fL2 st.flags.fL3 st.lCur st.lPrev st.lCount lit m.literal
   dRel : BlockRel st.flags.fD0 st.flags.fD1 st.flags.fD2 st.flags.fD3 st.dCur st.dPrev st.dCount dist m.distance
   wordLe : st.wordBuf.size ≤ 38
+  clen1 : 1 ≤ st.clen.toNat
+  cbase1 : 1 ≤ st.copyBase.toNat
 
 /-- A state stands for a place in `rest`. -/
 def Rel (w k : Nat) (m : MetaBlockHeader) (st : Cmd) : Phase → Prop

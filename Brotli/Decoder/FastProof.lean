@@ -71,6 +71,17 @@ theorem MoveOk.toRun (h : MoveOk w k m K a stop p st pos p' r) (hs : r.status = 
     fun e => StepStatus.noConfusion (hs.symm.trans e), fun e => StepStatus.noConfusion (hs.symm.trans e),
     fun e => StepStatus.noConfusion (hs.symm.trans e)⟩
 
+/-- A move ends at any state for the same place with the same bits, position and bytes waiting. -/
+theorem MoveOk.congr {r' : Cmd} (h : MoveOk w k m K a stop p st pos p' r) (hrel : Rel w k m r' p')
+    (hw : r'.word = r.word) (hc : r'.count = r.count) (hp : r'.pos = r.pos) (hpe : r'.pend = r.pend) :
+    MoveOk w k m K a stop p st pos p' r' := by
+  have e : ∀ F, stateBits r' a r'.pos stop F = stateBits r a r.pos stop F := fun F => by
+    unfold stateBits
+    rw [hw, hc, hp]
+  obtain ⟨l, h1, h2⟩ := h.out
+  refine ⟨hrel, by rw [hp]; exact h.posLe, by rw [hp]; exact h.posStop, fun F => by rw [e F]; exact h.restEq F,
+    ⟨l, h1, by rw [hpe]; exact h2⟩, fun F => by rw [e F]; exact h.reach F⟩
+
 /-- A refill under the margin keeps the state's place and future: the bits are the same, held differently. -/
 theorem fill_move {w' c' : UInt64} {pos' : USize} {thr : Nat} (hrel : Rel w k m st p)
     (hf : FillOk a stop st.word st.count pos thr w' c' pos') :
@@ -1054,6 +1065,52 @@ theorem copyF_run (ring : ByteArray) (wpos d n mask size : USize) {k : Nat} (hk 
     omega
   · rw [e, hrun]
     exact h
+
+/-! ### The context bytes after a copy -/
+
+/-- The position `d + 1` before `x`, reduced modulo the window, is where the ring next written at `x`'s place holds the
+byte `d` back. -/
+theorem ringIdx_mod {x R d : Nat} (hR : 0 < R) (hd : d < R) (hx : d + 1 ≤ x) :
+    (x - 1 - d) % R = ringIdx R (x % R) d := by
+  have hq := Nat.div_add_mod x R
+  have hr := Nat.mod_lt x hR
+  unfold ringIdx
+  split
+  · rw [show x - 1 - d = (x % R - 1 - d) + R * (x / R) by omega, Nat.add_mul_mod_self_left,
+      Nat.mod_eq_of_lt (by omega)]
+  · have hq1 : 1 ≤ x / R := by
+      rcases Nat.eq_zero_or_pos (x / R) with e | e
+      · rw [e, Nat.mul_zero, Nat.zero_add] at hq
+        omega
+      · exact e
+    have e1 : R * (x / R - 1) = R * (x / R) - R := by rw [Nat.mul_sub, Nat.mul_one]
+    have e2 : R ≤ R * (x / R) := Nat.le_mul_of_pos_right _ hq1
+    rw [show x - 1 - d = (x % R + R - 1 - d) + R * (x / R - 1) by omega, Nat.add_mul_mod_self_left,
+      Nat.mod_eq_of_lt (by omega)]
+
+/-- The byte `d + 1` before the loop's unmasked position, read through the mask, is the output's byte `d` back. -/
+theorem wget_back {ring : ByteArray} {x mask c : USize} {k d : Nat} {out : List Nat} (hm : mask.toNat = 2 ^ k - 1) (hs : ring.size = 2 ^ k) (h : RingOk ring k (x &&& mask).toNat out)
+    (hc : c.toNat = d + 1) (hd : d + 1 + 16 ≤ 2 ^ k) (hdl : d < out.length) (hx : d + 1 ≤ x.toNat) :
+    (wget ring (x - c) mask hm hs).toNat = out.getD d 0 := by
+  unfold wget
+  have e := h.read (d := d + 1) (by omega) hd (by omega) (p := (x - c) &&& mask) ?_
+    (by have := mask_lt (i := x - c) hm; omega)
+  · rw [Nat.add_sub_cancel] at e
+    exact e
+  · simp only [USize.toNat_and, hm, Nat.and_two_pow_sub_one_eq_mod]
+    rw [USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr (by rw [hc]; exact hx)), hc, Nat.add_sub_cancel,
+      show x.toNat - (d + 1) = x.toNat - 1 - d by omega]
+    exact ringIdx_mod (Nat.two_pow_pos _) (by omega) hx
+
+/-- The two bytes before the loop's unmasked position, read through the mask, are the output's context bytes. -/
+theorem wget_ctx {ring : ByteArray} {x mask : USize} {k : Nat} {out : List Nat} (hm : mask.toNat = 2 ^ k - 1) (h18 : 18 ≤ 2 ^ k) (hs : ring.size = 2 ^ k) (h : RingOk ring k (x &&& mask).toNat out)
+    (hl : 2 ≤ out.length) (hx : 2 ≤ x.toNat) :
+    contextBytes out =
+      ((wget ring (x - USize.ofNat 1) mask hm hs).toNat, (wget ring (x - USize.ofNat 2) mask hm hs).toNat) := by
+  rw [wget_back (d := 0) hm hs h (fastLit (by decide)) (by omega) (by omega) (by omega),
+    wget_back (d := 1) hm hs h (fastLit (by decide)) (by omega) (by omega) (by omega)]
+  match out, hl with
+  | _ :: _ :: _, _ => rfl
 
 /-! ### A literal round -/
 

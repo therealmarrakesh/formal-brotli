@@ -110,6 +110,13 @@ theorem cmdRow_small {c : Nat} (hc : c < 704) :
     (cmdRow c).1 ≤ 24 ∧ (cmdRow c).2.1 ≤ 22594 ∧ (cmdRow c).2.2.1 ≤ 24 ∧ (cmdRow c).2.2.2 ≤ 2118 :=
   rows_small c hc
 
+private theorem rows_copy2 : ∀ c, c < 704 → 2 ≤ (cmdRow c).2.2.2 := by
+  decide +kernel
+
+/-- Every copy length is at least 2. -/
+theorem cmdRow_copy2 {c : Nat} (hc : c < 704) : 2 ≤ (cmdRow c).2.2.2 :=
+  rows_copy2 c hc
+
 private theorem u64_usize {c : UInt64} (h : c.toNat < 2 ^ 32) : c.toUSize.toNat = c.toNat :=
   word_toUSize h
 
