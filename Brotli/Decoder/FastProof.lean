@@ -1261,6 +1261,98 @@ theorem distCount_move {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader}
   rw [e] at h
   exact h.widen rfl rfl hp
 
+/-! ### A distance's symbol -/
+
+section
+variable {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow s0 : USize}
+
+/-- The arena's mask for `n` bits, below 32, is `2 ^ n - 1`. -/
+theorem FCtx.maskT_eq (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) {n : UInt64} (hn : n.toNat < 32) :
+    maskT T C.big C.size32 n = ((1 : UInt64) <<< n) - 1 := by
+  have h31 : (n &&& 31).toNat = n.toNat := by
+    rw [UInt64.toNat_and, show (31 : UInt64).toNat = 2 ^ 5 - 1 from rfl, Nat.and_two_pow_sub_one_eq_mod,
+      Nat.mod_eq_of_lt hn]
+  have hp : 2 ^ n.toNat < 2 ^ 64 := Nat.pow_lt_pow_right (by decide) (by omega)
+  have hone : ((1 : UInt64) <<< n).toNat = 2 ^ n.toNat := by
+    simp only [UInt64.toNat_shiftLeft, Nat.mod_eq_of_lt (show n.toNat < 64 by omega)]
+    rw [show (1 : UInt64).toNat = 1 from rfl, Nat.shiftLeft_eq, Nat.one_mul]
+    exact Nat.mod_eq_of_lt hp
+  apply UInt64.toNat_inj.mp
+  unfold maskT
+  rw [load64_toNat, u64_shl (by decide) (by rw [h31]; omega), h31, u64_sub_le (by rw [hone]; exact Nat.one_le_two_pow),
+    hone, show n.toNat * 2 ^ 3 = 8 * n.toNat by rw [Nat.mul_comm], C.tab.masks _ hn]
+  rfl
+
+/-- The shared distance table's entry for a symbol is `dEntry`. -/
+theorem FCtx.dshT_eq (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) {dc : UInt64} (hd : dc.toNat < 520) :
+    dshT T s0 C.s0Le C.size32 dc hd = dEntry H.npostfix H.ndirect dc := by
+  have := C.s0Le
+  have := C.size32
+  apply UInt64.toNat_inj.mp
+  unfold dshT
+  rw [load64_toNat, fastAdd (by rw [u64_shl (by decide) (by omega)]; omega), u64_shl (by decide) (by omega),
+    show dc.toNat * 2 ^ 3 = 8 * dc.toNat by rw [Nat.mul_comm], C.s0, C.tab.dsh _ hd, UInt64.ofNat_toNat]
+
+/-- A distance symbol from the context's tree is in the header's distance alphabet. -/
+theorem FCtx.dAlpha (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) {m : MetaBlockHeader}
+    (hH : HdrRel H m) (clen w : UInt64) :
+    (wordSym (lookupT T (dRowBase C clen) w (C.dIn clen) C.lim C.size32)).toNat <
+      distanceAlphabetSize H.npostfix.toNat H.ndirect.toNat := by
+  have hc := distanceContextId_lt clen.toNat
+  have hd := C.hd
+  have hJ : 4 * dCur.toNat + distanceContextId clen.toNat < H.dMap.size := by rw [H.dMapSize]; omega
+  obtain ⟨code, _, hok, hC, hS⟩ := hH.d _ (tree_dMap H hJ)
+  rw [← C.dRowBase_toNat, ← C.arena] at hok
+  rw [hH.npostfix, hH.ndirect]
+  exact lookupT_sym (C.dIn clen) C.lim C.size32 hok hC hS w
+
+end
+
+theorem lookup_base_congr {t : ByteArray} {b1 b2 : USize} {w : UInt64} {h1 : TableFits t b1.toNat}
+    {h2 : TableFits t b2.toNat} {h32 h32' : t.size < 2 ^ 32} (e : b1 = b2) :
+    lookup t b1 w h1 h32 = lookup t b2 w h2 h32' := by
+  subst e
+  rfl
+
+/-- The step machine's distance symbol reads at the fast loop's table base for the copy length's context. -/
+theorem stepDistanceSymbol_fast {H : Hdr} {T : ByteArray} {lCur iCur tb : UInt64}
+    {modeOff lRow iRow iFb dRow s0 : USize} {st : Cmd} (C : FCtx H T lCur iCur st.dCur tb modeOff lRow iRow iFb dRow s0)
+    (pos : USize) :
+    stepDistanceSymbol H st pos =
+      distanceStep H st pos (lookupT T (dRowBase C st.clen) st.word (C.dIn st.clen) C.lim C.size32) := by
+  have hd := C.hd
+  have h1 := H.dMap32
+  have h2 := H.dMapSize
+  unfold stepDistanceSymbol distanceThrough
+  rw [dite_eq_left (UInt64.lt_iff_toNat_lt.mpr hd)]
+  dsimp only
+  congr 1
+  rw [lookupT_eq]
+  have hT := C.arena
+  subst hT
+  apply lookup_base_congr
+  apply USize.toNat_inj.mp
+  rw [tableBase_toNat, UInt8.toNat_toUInt64, uget_toNat, dMapIndex_toNat (by omega), C.dRowBase_toNat]
+  rfl
+
+/-- `applyDistance` within the window and the meta-block goes on, where it is. -/
+theorem applyDistance_next {st : Cmd} {pos : USize} {dcode d : UInt64} (hw : ¬ st.written.toUInt64 < d)
+    (hrc : ¬ st.remaining < st.clen) :
+    (applyDistance st pos dcode d).status = .next ∧ (applyDistance st pos dcode d).pos = pos := by
+  unfold applyDistance
+  rw [ite_eq_right hw, ite_eq_right hrc]
+  split <;> exact ⟨rfl, rfl⟩
+
+theorem u64_shr_zero (x : UInt64) : x >>> 0 = x := by
+  apply UInt64.toNat_inj.mp
+  rw [UInt64.toNat_shiftRight]
+  rfl
+
+theorem distFast_short {np nd d0 d1 d2 d3 dc x : UInt64} (h16 : dc < 16) :
+    distFast np nd d0 d1 d2 d3 dc x = shortDist d0 d1 d2 d3 dc := by
+  unfold distFast
+  rw [ite_eq_left h16]
+
 /-! ### A literal round -/
 
 theorem ringWrite_wput {ring : ByteArray} {opos mask : USize} {k : Nat} (hk : k ≤ 24) (hm : mask.toNat = 2 ^ k - 1)
