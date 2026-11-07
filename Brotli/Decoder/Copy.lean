@@ -72,7 +72,7 @@ decreasing_by
 
 /-- What the copy loop does: exactly the spec's `copyBytes`. -/
 theorem copyRun_spec {d mask size : USize} {k : Nat} (hk : k ≤ 24) (hmask : mask.toNat = 2 ^ k - 1)
-    (hsz : size.toNat = 2 ^ k) (hd1 : 1 ≤ d.toNat) (hd2 : d.toNat ≤ 2 ^ k) :
+    (hsz : size.toNat = 2 ^ k) (hd1 : 1 ≤ d.toNat) (hd2 : d.toNat ≤ 2 ^ k) (hdw : d.toNat + 16 ≤ 2 ^ k) :
     ∀ (N : Nat) (n : USize) (ring : ByteArray) (wpos : USize) (p1 p2 : UInt8) (hsize : ring.size = 2 ^ k)
       (hwp : wpos.toNat < 2 ^ k) (out : List Nat), n.toNat = N → d.toNat ≤ out.length → RingOk ring k wpos.toNat out →
       contextBytes out = (p1.toNat, p2.toNat) → (∀ b ∈ out, b < 256) →
@@ -95,7 +95,7 @@ theorem copyRun_spec {d mask size : USize} {k : Nat} (hk : k ≤ 24) (hmask : ma
     have hbl : (ringBack wpos d mask size).toNat < ring.size := by
       rw [hback, hsize]
       exact ringIdx_lt hwp (by omega)
-    have hval := hr.read hd1 hd2 hd hback hbl
+    have hval := hr.read hd1 hdw hd hback hbl
     have hr' := hr.write (v := ring.uget (ringBack wpos d mask size) hbl) hk hmask (by omega)
     have hih := ih (n - USize.ofNat 1) (ringWrite ring wpos _ (by omega)) (ringNext wpos mask)
       (ring.uget (ringBack wpos d mask size) hbl) p1

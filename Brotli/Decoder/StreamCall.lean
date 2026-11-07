@@ -153,7 +153,7 @@ theorem drop_take_reverse {out : List Nat} {pend len : Nat} (hp : pend ≤ out.l
 
 /-- What handing bytes out does. -/
 theorem flushAll_spec {k : USize} {out : List Nat} (hk : k.toNat ≤ 24) : ∀ (N : Nat) (st : Cmd) (buf : ByteArray) (space : Nat), st.pend.toNat = N →
-    RingOk st.ring k.toNat st.wpos.toNat out → st.pend.toNat ≤ 2 ^ k.toNat → st.pend.toNat ≤ out.length →
+    RingOk st.ring k.toNat st.wpos.toNat out → st.pend.toNat + 16 ≤ 2 ^ k.toNat → st.pend.toNat ≤ out.length →
     ∃ len, len ≤ N ∧ len ≤ space ∧ (flushAll k st buf space).space = space - len ∧ (flushAll k st buf space).st = { st with pend := (flushAll k st buf space).st.pend } ∧
       (flushAll k st buf space).st.pend.toNat = N - len ∧ (N - len ≠ 0 → space - len = 0) ∧
       (flushAll k st buf space).buf.data.toList.map UInt8.toNat = buf.data.toList.map UInt8.toNat ++ ((out.take N).reverse).take len := by
@@ -253,7 +253,8 @@ theorem DRel.withPend {D : Dec} {p : SPhase} (h : DRel D p) {x : USize} (hx : x.
     intro w st a
     have h1 := a.win.pendLe
     have h2 := a.win.pendOut
-    exact ⟨{ a.win with pendLe := Nat.le_trans hx h1, pendOut := Nat.le_trans hx h2 }, a.produced, a.limit⟩
+    exact ⟨{ a.win with pendLe := Nat.le_trans (Nat.add_le_add_right hx 16) h1, pendOut := Nat.le_trans hx h2 }, a.produced,
+      a.limit⟩
   have hat : ∀ {w st}, WinAt D w st → WinAt { D with cmd := { D.cmd with pend := x } } w st := by
     intro w st a
     rcases a with ⟨a, hne⟩ | hn
@@ -321,11 +322,11 @@ theorem DRel.withCap {D : Dec} {p : SPhase} (h : DRel D p) (x : USize) : DRel { 
 
 /-- What handing bytes out needs of a state. -/
 theorem DRel.window {D : Dec} {p : SPhase} (h : DRel D p) :
-    D.cmd.pend = 0 ∨ (RingOk D.cmd.ring D.k.toNat D.cmd.wpos.toNat p.out ∧ D.cmd.pend.toNat ≤ 2 ^ D.k.toNat ∧ D.cmd.pend.toNat ≤ p.out.length ∧ D.k.toNat ≤ 24) := by
-  have hwin : ∀ {w st}, WinAll D w st → (RingOk D.cmd.ring D.k.toNat D.cmd.wpos.toNat st.output ∧ D.cmd.pend.toNat ≤ 2 ^ D.k.toNat ∧ D.cmd.pend.toNat ≤ st.output.length ∧ D.k.toNat ≤ 24) :=
+    D.cmd.pend = 0 ∨ (RingOk D.cmd.ring D.k.toNat D.cmd.wpos.toNat p.out ∧ D.cmd.pend.toNat + 16 ≤ 2 ^ D.k.toNat ∧ D.cmd.pend.toNat ≤ p.out.length ∧ D.k.toNat ≤ 24) := by
+  have hwin : ∀ {w st}, WinAll D w st → (RingOk D.cmd.ring D.k.toNat D.cmd.wpos.toNat st.output ∧ D.cmd.pend.toNat + 16 ≤ 2 ^ D.k.toNat ∧ D.cmd.pend.toNat ≤ st.output.length ∧ D.k.toNat ≤ 24) :=
     fun a => ⟨a.win.ring, a.win.pendLe, a.win.pendOut, a.win.k24⟩
   have hat : ∀ {w st}, WinAt D w st → D.cmd.pend = 0 ∨ (RingOk D.cmd.ring D.k.toNat D.cmd.wpos.toNat st.output ∧
-      D.cmd.pend.toNat ≤ 2 ^ D.k.toNat ∧ D.cmd.pend.toNat ≤ st.output.length ∧ D.k.toNat ≤ 24) := by
+      D.cmd.pend.toNat + 16 ≤ 2 ^ D.k.toNat ∧ D.cmd.pend.toNat ≤ st.output.length ∧ D.k.toNat ≤ 24) := by
     intro w st a
     rcases a with ⟨a, _⟩ | hn
     · exact Or.inr (hwin a)

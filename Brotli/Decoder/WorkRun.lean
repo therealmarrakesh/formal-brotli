@@ -1712,7 +1712,7 @@ theorem flushW_win {D : Dec} (h : WinOk D) (buf : ByteArray) (space : Nat) :
     dsimp only
     rw [ite_eq_left (Or.inl h0)]
     omega
-  · exact flushAllW_le hk _ _ _ hr.pos_lt hl
+  · exact flushAllW_le hk _ _ _ hr.pos_lt (Nat.le_trans (Nat.le_add_right _ 16) hl)
 
 /-- Handing out a state's bytes: its work is the bytes it hands out, and five. -/
 theorem flushW_le {D : Dec} {p : SPhase} (h : DRel D p) (buf : ByteArray) (space : Nat) :
@@ -1894,9 +1894,9 @@ theorem runD_next {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} :
         exact fun h => absurd h hn
 
 /-- A round that pauses for output space with no room left, and hands all its bytes out within its space, hands out a
-whole window. -/
-theorem room_full {k cap pend : USize} {space : Nat} (hk : k.toNat ≤ 24) (hc : cap = capFor space) (hr : room k cap ≤ pend)
-    (hs : pend.toNat ≤ space) : 2 ^ k.toNat ≤ pend.toNat := by
+whole window less its slack. -/
+theorem room_full {k cap pend : USize} {space : Nat} (hk : k.toNat ≤ 24) (h16 : 16 ≤ 2 ^ k.toNat) (hc : cap = capFor space)
+    (hr : room k cap ≤ pend) (hs : pend.toNat ≤ space) : 2 ^ k.toNat ≤ pend.toNat + 16 := by
   have h1 := USize.le_iff_toNat_le.mp hr
   have hcN : cap.toNat = min space 16777216 + 1 := by
     rw [hc]
@@ -1905,8 +1905,7 @@ theorem room_full {k cap pend : USize} {space : Nat} (hk : k.toNat ≤ 24) (hc :
   have hne : cap ≠ 0 := fun e => by
     rw [e, show (0 : USize).toNat = 0 from rfl] at hcN
     omega
-  unfold room at h1
-  rw [usmin_toNat, ringSize_toNat hk, ite_eq_right hne, hcN] at h1
+  rw [room_toNat hk h16, ite_eq_right hne, hcN] at h1
   have : 2 ^ k.toNat ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
   have h24 : (2 : Nat) ^ 24 = 16777216 := by decide
   omega

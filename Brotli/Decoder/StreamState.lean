@@ -185,10 +185,11 @@ structure Dec where
 structure WinRel (w k : Nat) (st : Cmd) (out : List Nat) (ds : Distances) : Prop where
   win : w + 16 = 2 ^ k
   k24 : k ≤ 24
+  k10 : 10 ≤ k
   ring : RingOk st.ring k st.wpos.toNat out
   bytes : ∀ b ∈ out, b < 256
   ctx : contextBytes out = (st.p1.toNat, st.p2.toNat)
-  pendLe : st.pend.toNat ≤ 2 ^ k
+  pendLe : st.pend.toNat + 16 ≤ 2 ^ k
   pendOut : st.pend.toNat ≤ out.length
   written : st.written.toNat = min w out.length
   d0 : ds.last = st.d0.toNat
@@ -201,7 +202,7 @@ structure WinRel (w k : Nat) (st : Cmd) (out : List Nat) (ds : Distances) : Prop
 /-- The window part of the command loop's state. -/
 theorem Core.toWin {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {out : List Nat} {rem : Nat} {ds : Distances} {ic lit dist : BlockState}
     (h : Core w k m st out rem ds ic lit dist) : WinRel w k st out ds :=
-  ⟨h.win, h.k24, h.ring, h.bytes, h.ctx, h.pendLe, h.pendOut, h.written, h.d0, h.d1, h.d2, h.d3, h.dsLt, h.wordLe⟩
+  ⟨h.win, h.k24, h.k10, h.ring, h.bytes, h.ctx, h.pendLe, h.pendOut, h.written, h.d0, h.d1, h.d2, h.d3, h.dsLt, h.wordLe⟩
 
 /-- What every place with a window has. -/
 structure WinAll (D : Dec) (w : Nat) (st : StreamState) : Prop where

@@ -19,11 +19,13 @@ would otherwise be made once for the whole program and shared, so that its first
 def ringIdx (R pos d : Nat) : Nat :=
   if d < pos then pos - 1 - d else pos + R - 1 - d
 
-/-- The ring of `2 ^ k` bytes, next written at `pos`, holds the newest bytes of `out`. -/
+/-- The ring of `2 ^ k` bytes, next written at `pos`, holds the newest `2 ^ k - 16` bytes of `out`: the format's window,
+the most a distance reaches back. The 16 bytes past it are slack, which a copy may write ahead of the output (they are
+rewritten before anything reads them). -/
 structure RingOk (ring : ByteArray) (k pos : Nat) (out : List Nat) : Prop where
   size : ring.size = 2 ^ k
   pos_lt : pos < 2 ^ k
-  holds : ∀ d, d < 2 ^ k → d < out.length →
+  holds : ∀ d, d + 16 < 2 ^ k → d < out.length →
     (ring.data[ringIdx (2 ^ k) pos d]?.getD 0).toNat = out.getD d 0
 
 /-- An empty ring holds an empty output. -/
@@ -124,18 +126,30 @@ theorem usmin_toNat (a b : USize) : (usmin a b).toNat = min a.toNat b.toNat := b
     omega
 
 /-- How many bytes may wait in a window before a step stops for output space: the cap, at least one, and at most the
-window. -/
-@[inline] def room (k cap : USize) : USize := usmin (if cap = 0 then USize.ofNat 1 else cap) (ringSize k)
+window less its 16 bytes of slack. -/
+@[inline] def room (k cap : USize) : USize :=
+  usmin (usmin (if cap = 0 then USize.ofNat 1 else cap) (ringSize k - USize.ofNat 16)) (ringSize k)
+
+theorem room_toNat {k cap : USize} (hk : k.toNat ≤ 24) (h16 : 16 ≤ 2 ^ k.toNat) :
+    (room k cap).toNat = min (if cap = 0 then USize.ofNat 1 else cap).toNat (2 ^ k.toNat - 16) := by
+  unfold room
+  rw [usmin_toNat, usmin_toNat, usize_sub (by rw [usize_ofNat (by decide), ringSize_toNat hk]; exact h16),
+    usize_ofNat (by decide), ringSize_toNat hk]
+  omega
 
 theorem room_le {k cap : USize} (hk : k.toNat ≤ 24) : (room k cap).toNat ≤ 2 ^ k.toNat := by
   unfold room
   rw [usmin_toNat, ringSize_toNat hk]
   omega
 
-theorem room_one {k cap : USize} (hk : k.toNat ≤ 24) : 1 ≤ (room k cap).toNat := by
-  unfold room
-  rw [usmin_toNat, ringSize_toNat hk]
-  have : 1 ≤ 2 ^ k.toNat := Nat.one_le_two_pow
+theorem room_le16 {k cap : USize} (hk : k.toNat ≤ 24) (h16 : 16 ≤ 2 ^ k.toNat) :
+    (room k cap).toNat + 16 ≤ 2 ^ k.toNat := by
+  rw [room_toNat hk h16]
+  omega
+
+theorem room_one {k cap : USize} (hk : k.toNat ≤ 24) (h17 : 17 ≤ 2 ^ k.toNat) : 1 ≤ (room k cap).toNat := by
+  rw [room_toNat hk (by omega)]
+  have : 1 ≤ 2 ^ k.toNat - 16 := by omega
   split
   · rw [usize_ofNat (by decide)]
     omega
@@ -246,7 +260,7 @@ theorem ringBack_toNat {k : Nat} {pos d mask size : USize} (hk : k ≤ 24) (hm :
 
 /-- Reading back within the ring gives the spec's byte. -/
 theorem RingOk.read {ring : ByteArray} {k pos : Nat} {out : List Nat} {d : Nat} (h : RingOk ring k pos out)
-    (hd1 : 1 ≤ d) (hd2 : d ≤ 2 ^ k) (hdl : d ≤ out.length) {p : USize} (hp : p.toNat = ringIdx (2 ^ k) pos (d - 1))
+    (hd1 : 1 ≤ d) (hd2 : d + 16 ≤ 2 ^ k) (hdl : d ≤ out.length) {p : USize} (hp : p.toNat = ringIdx (2 ^ k) pos (d - 1))
     (hb : p.toNat < ring.size) : (ring.uget p hb).toNat = out.getD (d - 1) 0 := by
   rw [← h.holds (d - 1) (by omega) (by omega), ← hp]
   cases ring with
@@ -285,7 +299,7 @@ theorem emitRun_data (ring buf : ByteArray) {start len : Nat} (h : start + len �
 
 /-- A run of ring bytes is the next of the bytes waiting to go out, oldest first. -/
 theorem RingOk.emit_bytes {ring : ByteArray} {k pos : Nat} {out : List Nat} (h : RingOk ring k pos out) {u len : Nat}
-    (hu1 : 1 ≤ u) (huR : u ≤ 2 ^ k) (hul : u ≤ out.length) (hlen : len ≤ u)
+    (hu1 : 1 ≤ u) (huR : u + 16 ≤ 2 ^ k) (hul : u ≤ out.length) (hlen : len ≤ u)
     (hrun : ringStart (2 ^ k) pos u + len ≤ 2 ^ k) :
     ((ring.data.toList.drop (ringStart (2 ^ k) pos u)).take len).map UInt8.toNat = ((out.take u).reverse).take len := by
   have hsize : ring.data.size = 2 ^ k := h.size

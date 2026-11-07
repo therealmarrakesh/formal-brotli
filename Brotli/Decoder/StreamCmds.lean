@@ -54,6 +54,7 @@ theorem cmdStart_rel {c : Cmd} {d : Done} {g : Gh} {w k : Nat} {st : StreamState
     wf := hw
     win := hwin.win
     k24 := hwin.k24
+    k10 := hwin.k10
     ring := hwin.ring
     bytes := hwin.bytes
     ctx := hwin.ctx
@@ -419,7 +420,7 @@ theorem stepDCmds_ok {α : Type} {S : Sem α} {w : Nat} {last : Bool} {m : MetaB
 
 /-- What handing out a state's bytes needs: none waiting, or a window holding them. -/
 def WinOk (D : Dec) : Prop :=
-  D.cmd.pend = 0 ∨ ∃ out : List Nat, RingOk D.cmd.ring D.k.toNat D.cmd.wpos.toNat out ∧ D.cmd.pend.toNat ≤ 2 ^ D.k.toNat ∧
+  D.cmd.pend = 0 ∨ ∃ out : List Nat, RingOk D.cmd.ring D.k.toNat D.cmd.wpos.toNat out ∧ D.cmd.pend.toNat + 16 ≤ 2 ^ D.k.toNat ∧
     D.cmd.pend.toNat ≤ out.length ∧ D.k.toNat ≤ 24
 
 /-- A state whose command loop state stands for a place can hand out its bytes. -/

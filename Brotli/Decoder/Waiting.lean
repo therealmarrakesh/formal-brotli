@@ -21,7 +21,7 @@ def capE (c : USize) : Nat := max c.toNat 1
 
 theorem room_capE (k c : USize) : (room k c).toNat ≤ capE c := by
   unfold room capE
-  rw [usmin_toNat]
+  rw [usmin_toNat, usmin_toNat]
   by_cases hc : c = 0
   · rw [ite_eq_left hc, usize_ofNat' (by decide)]
     omega

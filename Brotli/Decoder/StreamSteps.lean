@@ -364,12 +364,14 @@ theorem whole_bytes {a : ByteArray} {p stop : Nat} (hs : stop ≤ a.size) (t : L
 /-! ### The window's allocation -/
 
 theorem winStart_win {c : Cmd} {word count need : UInt64} {w kv : Nat} (hws : w + 16 = 2 ^ kv) (h24 : kv ≤ 24)
-    (hn : need.toNat = 2 ^ kv) : WinRel w kv (winStart c word count need) [] initialDistances := by
+    (h10 : 10 ≤ kv) (hn : need.toNat = 2 ^ kv) : WinRel w kv (winStart c word count need) [] initialDistances := by
   have hp : 2 ^ kv ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) h24
+  have hp10 : 2 ^ 10 ≤ 2 ^ kv := Nat.pow_le_pow_right (by decide) h10
   have h224 : (2 : Nat) ^ 24 = 16777216 := rfl
   exact {
     win := hws
     k24 := h24
+    k10 := h10
     ring := by
       have : (winStart c word count need).ring.size = 2 ^ kv := by
         show (zeroBytes need.toNat).size = _
@@ -377,7 +379,7 @@ theorem winStart_win {c : Cmd} {word count need : UInt64} {w kv : Nat} (hws : w 
       exact RingOk.empty this
     bytes := by simp
     ctx := rfl
-    pendLe := Nat.zero_le _
+    pendLe := by show 0 + 16 ≤ 2 ^ kv; omega
     pendOut := Nat.zero_le _
     written := by simp; rfl
     d0 := rfl
@@ -632,7 +634,7 @@ theorem stepDMeta_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {a : 
             have hle := UInt64.le_iff_toNat_le.mp hc
             rw [hneed] at hle
             have hwin := winStart_win (c := cmd) (word := (r.buf.drop (r.count &&& 7)).word)
-              (count := (r.buf.drop (r.count &&& 7)).count) hnw' hk24' hneed
+              (count := (r.buf.drop (r.count &&& 7)).count) hnw' hk24' hk10 hneed
             have hlim' : (limit - (1 : UInt64) <<< k.toUInt64).toNat + 9144 < 2 ^ 32 := by
               rw [UInt64.toNat_sub_of_le _ _ hc, hneed]
               omega
@@ -704,7 +706,7 @@ theorem stepDMeta_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {a : 
           have hlim' : (limit - (1 : UInt64) <<< kb).toNat + 9144 < 2 ^ 32 := by
             rw [UInt64.toNat_sub_of_le _ _ hc, hneed]
             omega
-          have hwin := winStart_win (c := cmd) (word := r.word) (count := r.count) hbw hkb24 hneed
+          have hwin := winStart_win (c := cmd) (word := r.word) (count := r.count) hbw hkb24 hkb10 hneed
           refine ⟨fun _ => ⟨.hdr (blockWindow w ⟨[], 0, initialDistances⟩ (r.b != 0) r.c.toNat) ⟨[], 0, initialDistances⟩ (r.b != 0)
             r.c.toNat Gh.start (.cat .L), ⟨rfl, ⟨?_, rfl, hlim'⟩, rfl, rfl, hm1, hm2, hdStart_rel hw2 hlim', rfl, hdStart_bud _ _ _⟩, r2, r3,
             (fun t => hsl t), trivial, ⟨[], rfl, ?_⟩, fun t => hsr' t⟩,
@@ -1098,7 +1100,7 @@ def stepDRaw (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : De
 theorem rawFinish_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {last : Bool} {left : Nat} {a : ByteArray} {stop : USize} {cmd : Cmd} {hd : Hd} {H : Hdr} {k : USize}
     {left' limit : UInt64} {pos' pos : USize} {status : DStatus} {n : USize} {moved : List Nat} {r : RawRun}
     (hw : WinRel w k.toNat cmd st.output st.distances) (hprod : st.produced = st.output.length) (hlim : limit.toNat + 9144 < 2 ^ 32)
-    (hleft : left'.toNat = left) (hl32 : left < 2 ^ 32) (hnl : n.toNat ≤ left) (hn0 : n.toNat ≠ 0) (hnp : cmd.pend.toNat + n.toNat ≤ 2 ^ k.toNat)
+    (hleft : left'.toNat = left) (hl32 : left < 2 ^ 32) (hnl : n.toNat ≤ left) (hn0 : n.toNat ≠ 0) (hnp : cmd.pend.toNat + n.toNat + 16 ≤ 2 ^ k.toNat)
     (hlive : 1 ≤ st.produced + left) (hm : RawOk a stop k.toNat cmd.word cmd.count pos st.output n.toNat moved r) :
     DStepOk S a stop (.raw w st last left) ⟨.raw, cmd, hd, H, k, last, left', limit, pos', status⟩ pos
       (rawFinish (clearCmd ⟨.raw, cmd, hd, H, k, last, left', limit, pos', status⟩) (clearRing cmd) left' n r) := by
@@ -1129,6 +1131,7 @@ theorem rawFinish_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {last
     · exact {
         win := hw.win
         k24 := hk24
+        k10 := hw.k10
         ring := hm.ring
         bytes := by
           intro b hb
@@ -1137,7 +1140,7 @@ theorem rawFinish_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {last
           · exact hw.bytes b h
         ctx := hm.ctx
         pendLe := by
-          show (cmd.pend + (n - r.left)).toNat ≤ 2 ^ k.toNat
+          show (cmd.pend + (n - r.left)).toNat + 16 ≤ 2 ^ k.toNat
           rw [hpend]
           omega
         pendOut := by
@@ -1252,10 +1255,10 @@ theorem stepDRaw_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {last 
   · rw [ite_eq_left hf]
     refine ⟨fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e, fun _ => ⟨.raw w st last' n, ⟨rfl, hw, ⟨hwin, hprod, hlim⟩, rfl, hleft, hn32, hlive⟩, Nat.le_refl _, hpos, (fun t => rfl), ?_, Or.inr ⟨rfl, rfl⟩, (fun _ _ e => SPhase.noConfusion e), ⟨[], rfl, rfl⟩,
       fun t => SReach.refl _ _⟩, fun e => DStatus.noConfusion e, fun e => DStatus.noConfusion e⟩
-    exact full_ne hk24 hf
+    exact full_ne hk24 hwin'.k10 hf
   · rw [ite_eq_right hf]
     have hpn := room_lt hf
-    have hRl := room_le (cap := cmd.cap) hk24
+    have hRl := room_le16 (cap := cmd.cap) hk24 (by have := hwin'.win; omega)
     have hple := hwin'.pendLe
     have hp24 : 2 ^ k.toNat ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk24
     have h224 : (2 : Nat) ^ 24 = 16777216 := rfl

@@ -353,9 +353,9 @@ theorem pay_callD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {f
                 · rw [h0, show (0 : USize).toNat = 0 from rfl] at hlenp
                   omega
                 · exact hk
-              have hw := room_full hk24 hcapr hroom (by omega)
               have h10 : 2 ^ 10 ≤ 2 ^ (runD a stop hs (withCap D space) (h.withCap space)).k.toNat :=
                 Nat.pow_le_pow_right (by decide) hk10
+              have hw := room_full hk24 (by omega) hcapr hroom (by omega)
               have hdm := dpot_mono q (D := runD a stop hs (withCap D space) (h.withCap space))
                 (D' := (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D) (by omega)
               omega

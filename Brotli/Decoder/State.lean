@@ -316,10 +316,11 @@ structure Core (w k : Nat) (m : MetaBlockHeader) (st : Cmd) (out : List Nat) (re
   wf : (BitBuffer.mk st.word st.count).Wf
   win : w + 16 = 2 ^ k
   k24 : k ≤ 24
+  k10 : 10 ≤ k
   ring : RingOk st.ring k st.wpos.toNat out
   bytes : ∀ b ∈ out, b < 256
   ctx : contextBytes out = (st.p1.toNat, st.p2.toNat)
-  pendLe : st.pend.toNat ≤ 2 ^ k
+  pendLe : st.pend.toNat + 16 ≤ 2 ^ k
   pendOut : st.pend.toNat ≤ out.length
   written : st.written.toNat = min w out.length
   rem : st.remaining.toNat = rem

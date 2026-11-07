@@ -209,9 +209,10 @@ theorem room_sub' {k cap pend : USize} (hle : pend.toNat ≤ (room k cap).toNat)
   USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr hle)
 
 /-- No room left: some bytes wait. -/
-theorem full_ne {k cap pend : USize} (hk : k.toNat ≤ 24) (h : room k cap ≤ pend) : pend.toNat ≠ 0 := by
+theorem full_ne {k cap pend : USize} (hk : k.toNat ≤ 24) (hk10 : 10 ≤ k.toNat) (h : room k cap ≤ pend) :
+    pend.toNat ≠ 0 := by
   have := USize.le_iff_toNat_le.mp h
-  have := room_one (cap := cap) hk
+  have := room_one (cap := cap) hk (Nat.le_trans (by decide) (Nat.pow_le_pow_right (by decide) hk10))
   omega
 
 /-- Room left. -/
@@ -259,7 +260,7 @@ private theorem copy_after {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeade
     (hC : Core w k.toNat m st s.output s.remaining s.distances s.insertCopy s.literal s.distance)
     (htag : st.tag = .copy) (hprod : s.produced = s.output.length + n) (hdn : st.dist.toNat = d) (hleft : st.left.toNat = n)
     (hd1 : 1 ≤ d) (hdw : d ≤ w) (hdo : d ≤ s.output.length) (hp : pos.toNat ≤ stop.toNat) (hrunN : run.toNat ≤ n) (hrun0 : run.toNat ≠ 0)
-    (hrunR : st.pend.toNat + run.toNat ≤ 2 ^ k.toNat)
+    (hrunR : st.pend.toNat + run.toNat + 16 ≤ 2 ^ k.toNat)
     (h1 : RingOk r.ring k.toNat r.wpos.toNat (copyBytes d run.toNat s.output))
     (h2 : contextBytes (copyBytes d run.toNat s.output) = (r.p1.toNat, r.p2.toNat))
     (h3 : ∀ b ∈ copyBytes d run.toNat s.output, b < 256)
@@ -274,19 +275,20 @@ private theorem copy_after {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeade
   have h24 : (2 : Nat) ^ 24 = 16777216 := by decide
   have hrunU : run.toUInt64.toNat = run.toNat := USize.toNat_toUInt64 _
   obtain ⟨l, hl1, hl2⟩ := copyBytes_front d run.toNat s.output
+  have hrun' : st.pend.toNat + run.toNat ≤ 2 ^ k.toNat := by omega
   have hpe : (finishCopy (clearRing st) r run (ringSize k) pos).pend.toNat = st.pend.toNat + l.length := by
     rw [hl2]
-    exact pend_after hk hrunR
+    exact pend_after hk hrun'
   refine StepOk.ofNext (p' := .copy { s with output := copyBytes d run.toNat s.output } d (n - run.toNat))
     (hd := Or.inr (Or.inr ⟨rfl, show n - run.toNat < n by omega⟩)) (hout := ⟨l, hl1, hpe⟩) rfl
     ⟨?_, htag, ?_, hdn, ?_, hd1, hdw, ?_⟩ (Nat.le_refl _) hp (fun F => ?_)
     (fun F => (cReach_copy w m d _ run.toNat n s (by omega)))
   · refine { hC with ring := h1, bytes := h3, ctx := h2, pendLe := ?_, pendOut := ?_, written := ?_ }
-    · show (st.pend + run).toNat ≤ _
-      rw [pend_after hk hrunR]
+    · show (st.pend + run).toNat + 16 ≤ _
+      rw [pend_after hk hrun']
       omega
     · show (st.pend + run).toNat ≤ _
-      rw [pend_after hk hrunR, h4]
+      rw [pend_after hk hrun', h4]
       omega
     · show (usmin (ringSize k - USize.ofNat 16) (st.written + run)).toNat = _
       rw [written_after hk hwin (by omega) (by omega) rfl, h4, hwri]
@@ -336,10 +338,10 @@ theorem stepCopy_ok {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeader} {K :
     have hnzN := u64_ne hnz
     split
     · rename_i hfull
-      exact StepOk.ofFull hrel0 hp (full_ne hk hfull)
+      exact StepOk.ofFull hrel0 hp (full_ne hk hC.k10 hfull)
     · rename_i hroom
       have hplt := room_lt hroom
-      have hRl := room_le (cap := st.cap) hk
+      have hRl := room_le16 (cap := st.cap) hk (by omega)
       have hguard : winCheck k st.wpos st.ring = true ∧ USize.ofNat 1 ≤ st.dist.toUSize ∧ st.dist.toUSize ≤ ringSize k := by
         refine ⟨winCheck_of hk hC.ring.size hC.ring.pos_lt, USize.le_iff_toNat_le.mpr ?_, USize.le_iff_toNat_le.mpr ?_⟩
         · rw [usize_ofNat' (by decide), hdU]
@@ -353,7 +355,8 @@ theorem stepCopy_ok {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeader} {K :
         rw [word_toUSize (by rw [umin_toNat, room_sub (by omega)]; omega), umin_toNat, room_sub (by omega)]
       generalize (umin st.left (room k st.cap - st.pend).toUInt64).toUSize = run at hrunU ⊢
       have hspec := copyRun_spec (d := st.dist.toUSize) (mask := ringMask k) (size := ringSize k) hk (ringMask_toNat hk)
-        (ringSize_toNat hk) (by omega) (by omega) run.toNat run st.ring st.wpos st.p1 st.p2 hC.ring.size hC.ring.pos_lt
+        (ringSize_toNat hk) (by omega) (by omega) (by omega) run.toNat run st.ring st.wpos st.p1 st.p2 hC.ring.size
+        hC.ring.pos_lt
         s.output rfl (by omega) hC.ring hC.ctx hC.bytes
       dsimp only at hspec
       generalize copyRun _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ = r at hspec ⊢
@@ -395,7 +398,8 @@ private theorem word_after {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeade
     (htag : st.tag = .word) (hprod : s.produced = s.output.length + pending.length)
     (hpend : (st.wordBuf.data.toList.drop st.wordPos.toNat).map UInt8.toNat = pending) (hsmall : st.wordBuf.size ≤ 38)
     (hwp : st.wordPos.toNat ≤ st.wordBuf.size) (hp : pos.toNat ≤ stop.toNat) (hrunN : st.wordPos.toNat + run.toNat ≤ st.wordBuf.size)
-    (hrun0 : run.toNat ≠ 0) (hrunR : st.pend.toNat + run.toNat ≤ 2 ^ k.toNat) (hplen : pending.length = st.wordBuf.size - st.wordPos.toNat)
+    (hrun0 : run.toNat ≠ 0) (hrunR : st.pend.toNat + run.toNat + 16 ≤ 2 ^ k.toNat)
+    (hplen : pending.length = st.wordBuf.size - st.wordPos.toNat)
     (h1 : RingOk r.ring k.toNat r.wpos.toNat ((pending.take run.toNat).reverse ++ s.output))
     (h2 : contextBytes ((pending.take run.toNat).reverse ++ s.output) = (r.p1.toNat, r.p2.toNat))
     (h3 : ∀ b ∈ (pending.take run.toNat).reverse ++ s.output, b < 256) :
@@ -414,19 +418,20 @@ private theorem word_after {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeade
   have hlen : ((pending.take run.toNat).reverse ++ s.output).length = s.output.length + run.toNat := by
     simp only [List.length_append, List.length_reverse, List.length_take]
     omega
+  have hrun' : st.pend.toNat + run.toNat ≤ 2 ^ k.toNat := by omega
   have hpe : (finishWord (clearRing st) r run (ringSize k) pos).pend.toNat = st.pend.toNat + (pending.take run.toNat).reverse.length := by
     rw [List.length_reverse, List.length_take, Nat.min_eq_left (by omega)]
-    exact pend_after hk hrunR
+    exact pend_after hk hrun'
   refine StepOk.ofNext (p' := .word { s with output := (pending.take run.toNat).reverse ++ s.output } (pending.drop run.toNat))
     (hd := Or.inr (Or.inr ⟨rfl, show (pending.drop run.toNat).length < pending.length by rw [List.length_drop]; omega⟩))
     (hout := ⟨_, rfl, hpe⟩) rfl
     ⟨?_, htag, ?_, ?_, hsmall, ?_⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => (cReach_word w m _ run.toNat s pending))
   · refine { hC with ring := h1, bytes := h3, ctx := h2, pendLe := ?_, pendOut := ?_, written := ?_ }
-    · show (st.pend + run).toNat ≤ _
-      rw [pend_after hk hrunR]
+    · show (st.pend + run).toNat + 16 ≤ _
+      rw [pend_after hk hrun']
       omega
     · show (st.pend + run).toNat ≤ ((pending.take run.toNat).reverse ++ s.output).length
-      rw [pend_after hk hrunR, hlen]
+      rw [pend_after hk hrun', hlen]
       omega
     · show (usmin (ringSize k - USize.ofNat 16) (st.written + run)).toNat = min w ((pending.take run.toNat).reverse ++ s.output).length
       rw [written_after hk hwin (by omega) (by omega) rfl, hlen, hwri]
@@ -486,10 +491,10 @@ theorem stepWord_ok {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeader} {K :
     have hnzN := usize_ne hnz
     split
     · rename_i hfull
-      exact StepOk.ofFull hrel0 hp (full_ne hk hfull)
+      exact StepOk.ofFull hrel0 hp (full_ne hk hC.k10 hfull)
     · rename_i hroom
       have hplt := room_lt hroom
-      have hRl := room_le (cap := st.cap) hk
+      have hRl := room_le16 (cap := st.cap) hk (by have := hC.win; omega)
       have hroomU : (room k st.cap - st.pend).toNat = (room k st.cap).toNat - st.pend.toNat := room_sub' (by omega)
       have hrunU : (usmin (st.wordBuf.usize - st.wordPos) (room k st.cap - st.pend)).toNat =
           min (st.wordBuf.size - st.wordPos.toNat) ((room k st.cap).toNat - st.pend.toNat) := by

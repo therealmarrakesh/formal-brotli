@@ -357,7 +357,7 @@ theorem Rel.withPend {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {p : Phase} (h
     intro out rem ds ic lit dist hC
     have h1 := hC.pendLe
     have h2 := hC.pendOut
-    exact { hC with pendLe := Nat.le_trans hx h1, pendOut := Nat.le_trans hx h2 }
+    exact { hC with pendLe := Nat.le_trans (Nat.add_le_add_right hx 16) h1, pendOut := Nat.le_trans hx h2 }
   cases p with
   | literalSymbol => exact h.elim
   | command =>
@@ -419,7 +419,7 @@ theorem Rel.withCap {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {p : Phase} (h 
 
 /-- A state's window and waiting bytes, for the bytes its place has produced. -/
 theorem Rel.window {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {p : Phase} (h : Rel w k m st p) :
-    RingOk st.ring k st.wpos.toNat p.out ∧ st.pend.toNat ≤ 2 ^ k ∧ st.pend.toNat ≤ p.out.length ∧ k ≤ 24 := by
+    RingOk st.ring k st.wpos.toNat p.out ∧ st.pend.toNat + 16 ≤ 2 ^ k ∧ st.pend.toNat ≤ p.out.length ∧ k ≤ 24 := by
   cases p with
   | literalSymbol => exact h.elim
   | command => exact ⟨h.1.ring, h.1.pendLe, h.1.pendOut, h.1.k24⟩
@@ -448,7 +448,7 @@ theorem Rel.arrays {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {p : Phase} (h :
 /-- Flushing keeps the state's place, adds the next bytes waiting to the buffer, oldest first, and takes them off those
 waiting. It adds at least one byte when one is waiting and there is space. -/
 theorem flushCmd_spec {k : USize} {st : Cmd} {out : List Nat} {buf : ByteArray} {space : USize}
-    (hring : RingOk st.ring k.toNat st.wpos.toNat out) (hle : st.pend.toNat ≤ 2 ^ k.toNat) (hout : st.pend.toNat ≤ out.length) (hk : k.toNat ≤ 24) :
+    (hring : RingOk st.ring k.toNat st.wpos.toNat out) (hle : st.pend.toNat + 16 ≤ 2 ^ k.toNat) (hout : st.pend.toNat ≤ out.length) (hk : k.toNat ≤ 24) :
     let r := flushCmd k st buf space
     ∃ len, len ≤ space.toNat ∧ len ≤ st.pend.toNat ∧ (st.pend.toNat ≠ 0 → space.toNat ≠ 0 → 1 ≤ len) ∧
       r.st.pend.toNat = st.pend.toNat - len ∧ r.st = { st with pend := r.st.pend } ∧
@@ -474,7 +474,7 @@ theorem flushCmd_spec {k : USize} {st : Cmd} {out : List Nat} {buf : ByteArray} 
     have hsN := usize_ne hs0
     have hplt := hring.pos_lt
     have hback : (ringBack st.wpos st.pend (ringMask k) (ringSize k)).toNat = ringStart (2 ^ k.toNat) st.wpos.toNat st.pend.toNat :=
-      ringBack_toNat hk (ringMask_toNat hk) (ringSize_toNat hk) hplt (by omega) hle
+      ringBack_toNat hk (ringMask_toNat hk) (ringSize_toNat hk) hplt (by omega) (by omega)
     have hstart : ringStart (2 ^ k.toNat) st.wpos.toNat st.pend.toNat < 2 ^ k.toNat := by
       unfold ringStart
       exact ringIdx_lt hplt (by omega)

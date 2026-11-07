@@ -221,7 +221,7 @@ private theorem literals_after {α : Type} {w : Nat} {k : USize} {m : MetaBlockH
     (hprod : s.produced = s.output.length) (hcode : st.code.toNat = c) (hilen : st.ilen.toNat = ilen)
     (hclen : st.clen.toNat = clen) (hleft : st.left.toNat = n) (hnle : n ≤ ilen) (hirem : ilen ≤ s.remaining)
     (hlen : out.length + n = s.output.length + ilen) (hp : pos.toNat ≤ stop.toNat) (r : LitRun) {run : USize}
-    (hrun0 : run.toNat ≠ 0) (hrunL : run.toNat ≤ n) (hrunC : run.toNat ≤ st.lCount.toNat) (hrunR : run.toNat + st.pend.toNat ≤ 2 ^ k.toNat)
+    (hrun0 : run.toNat ≠ 0) (hrunL : run.toNat ≤ n) (hrunC : run.toNat ≤ st.lCount.toNat) (hrunR : run.toNat + st.pend.toNat + 16 ≤ 2 ^ k.toNat)
     (hspec : ∃ (lit' : BlockState) (out' : List Nat),
       r.left.toNat ≤ run.toNat ∧ lit'.types = lit.types ∧ lit'.seen = lit.seen ∧ lit'.count = lit.count - (run.toNat - r.left.toNat) ∧
       out'.length = out.length + (run.toNat - r.left.toNat) ∧ (∃ l, out' = l ++ out) ∧ RingOk r.ring k.toNat r.wpos.toNat out' ∧
@@ -255,7 +255,7 @@ private theorem literals_after {α : Type} {w : Nat} {k : USize} {m : MetaBlockH
     · refine { hC with
         wf := h8, ring := h6, bytes := h11, ctx := h7, pendLe := ?_, pendOut := ?_, written := ?_, rem := ?_
         lRel := hC.lRel.run h2 h3 ?_ }
-      · show (st.pend + (run - r.left)).toNat ≤ _
+      · show (st.pend + (run - r.left)).toNat + 16 ≤ _
         rw [pend_after hk (by rw [huN]; omega), huN]
         omega
       · show (st.pend + (run - r.left)).toNat ≤ _
@@ -313,7 +313,7 @@ theorem literalsRun_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBloc
     StepOk w k.toNat m K a stop (.literals s ic c ilen clen n lit out) st pos (literalsRun H k a stop hs st pos) := by
   obtain ⟨hC, htag, hprod, hcode, hilen, hclen, hleft, hnle, hirem, hlen⟩ := hrel
   have hk := hC.k24
-  have hRl := room_le (cap := st.cap) hk
+  have hRl := room_le16 (cap := st.cap) hk (by have := hC.win; omega)
   have hRmax : 2 ^ k.toNat ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
   have h24 : (2 : Nat) ^ 24 = 16777216 := by decide
   have hple := hC.pendLe
@@ -452,7 +452,7 @@ theorem stepLiterals_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlo
     · rename_i hcnt
       split
       · rename_i hroom
-        exact StepOk.ofFull hrel0 hp (full_ne hC.k24 hroom)
+        exact StepOk.ofFull hrel0 hp (full_ne hC.k24 hC.k10 hroom)
       · rename_i hroom
         exact literalsRun_ok hH hrel0 hp hnzN (u64_ne hcnt) (room_lt hroom)
 
