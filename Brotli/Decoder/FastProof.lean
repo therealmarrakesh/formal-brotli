@@ -119,13 +119,10 @@ theorem refill_self {word count : UInt64} {a : ByteArray} {pos : USize} (hs : po
       omega
     rw [dite_eq_right h0, BitBuffer.fillSlow, dite_eq_right (fun h => absurd h.2 (USize.lt_irrefl _))]
 
-/-! ### The masked byte loop is the step machine's copy -/
+/-! ### The loop's positions against the record's -/
 
-theorem uset_congr {t : ByteArray} {i j : USize} {v v' : UInt8} {hi : i.toNat < t.size} {hj : j.toNat < t.size}
-    (h : i = j) (hv : v = v') : t.uset i v hi = t.uset j v' hj := by
-  subst h
-  subst hv
-  rfl
+theorem usize_add_one_comm (x b : USize) : x + b + USize.ofNat 1 = x + USize.ofNat 1 + b := by
+  rw [USize.add_assoc, USize.add_comm b, ← USize.add_assoc]
 
 /-- A position plus one, reduced modulo the window. -/
 theorem usize_succ_mod {x : USize} {k : Nat} (hk : k ≤ 24) :
@@ -133,6 +130,77 @@ theorem usize_succ_mod {x : USize} {k : Nat} (hk : k ≤ 24) :
   have hb : 32 ≤ System.Platform.numBits := by rcases System.Platform.numBits_eq with h | h <;> omega
   have hd : 2 ^ k ∣ 2 ^ System.Platform.numBits := Nat.pow_dvd_pow 2 (by omega)
   rw [USize.toNat_add, fastLit (by decide), Nat.mod_mod_of_dvd _ hd]
+
+/-- The next window position from the loop's unmasked one is `ringNext` of the masked one. -/
+theorem mask_succ {x mask : USize} {k : Nat} (hk : k ≤ 24) (hm : mask.toNat = 2 ^ k - 1) :
+    ringNext (x &&& mask) mask = (x + USize.ofNat 1) &&& mask := by
+  apply USize.toNat_inj.mp
+  unfold ringNext
+  have h1 : (x &&& mask).toNat = x.toNat % 2 ^ k := by
+    rw [USize.toNat_and, hm, Nat.and_two_pow_sub_one_eq_mod]
+  rw [USize.toNat_and, hm, Nat.and_two_pow_sub_one_eq_mod, usize_succ_mod hk, h1, USize.toNat_and, hm,
+    Nat.and_two_pow_sub_one_eq_mod, usize_succ_mod hk, Nat.add_mod x.toNat 1, Nat.add_mod (x.toNat % 2 ^ k) 1,
+    Nat.mod_mod]
+
+/-- The bytes written, capped, after one more: the cap of the uncapped count plus one. -/
+theorem usmin_succ {c x : USize} (hx : x.toNat + 1 < 2 ^ 32) (hc : c.toNat < 2 ^ 32) :
+    usmin c (usmin c x + USize.ofNat 1) = usmin c (x + USize.ofNat 1) := by
+  apply USize.toNat_inj.mp
+  have hm : (usmin c x).toNat + 1 < 2 ^ 32 := by rw [usmin_toNat]; omega
+  rw [usmin_toNat, usmin_toNat, fastIdx_add hm, fastIdx_add hx, usmin_toNat]
+  omega
+
+/-- What remains from one more byte on. -/
+theorem rem_succ {r : UInt64} {x : USize} (hx : x.toNat + 1 < 2 ^ 32) (hr : x.toNat + 1 ≤ r.toNat) :
+    r - (x + USize.ofNat 1).toUInt64 = r - x.toUInt64 - 1 := by
+  apply UInt64.toNat_inj.mp
+  have e1 : (x + USize.ofNat 1).toUInt64.toNat = x.toNat + 1 := by rw [USize.toNat_toUInt64, fastIdx_add hx]
+  have e2 : x.toUInt64.toNat = x.toNat := USize.toNat_toUInt64 x
+  have e3 : (r - x.toUInt64).toNat = r.toNat - x.toNat := by rw [u64_sub_le (by rw [e2]; omega), e2]
+  have h1 : (1 : UInt64).toNat = 1 := rfl
+  rw [u64_sub_le (by rw [e1]; exact hr), e1, u64_sub_le (by rw [e3, h1]; omega), e3, h1]
+  omega
+
+/-! ### One literal -/
+
+/-- The literal loop for one literal, with the chunk ending where it starts and the bits at hand enough: the literal
+read at the context's tree, written to the window. -/
+theorem literalRun_one {nTrees : Nat} {arena litBase lMap : ByteArray} (C : LitChecked arena litBase lMap nTrees)
+    {a : ByteArray} {pos : USize} (hs : pos.toNat ≤ a.size) (mapBase modeOff mask : USize) (k : Nat)
+    (hmb : mapBase.toNat + 64 ≤ lMap.size) (hm : modeOff.toNat + 512 ≤ 2048) (hd : modeOff.toNat % 512 = 0)
+    (hmask : mask.toNat = 2 ^ k - 1) (hk : k ≤ 24) {n : USize} (hn : n.toNat = 1) (word count : UInt64) (wpos : USize)
+    (ring : ByteArray) (p1 p2 : UInt8) (hp : pos.toNat ≤ pos.toNat) (hw : (BitBuffer.mk word count).Wf)
+    (hsize : ring.size = 2 ^ k) (hwp : wpos.toNat < 2 ^ k) {base : USize} (hfit : TableFits arena base.toNat)
+    (hbase : u32At litBase (lMap.data[mapBase.toNat + (cidFast modeOff p1 p2 hm).toNat]?.getD 0).toNat = base.toNat)
+    (hl : lookup arena base word hfit C.arena32 &&& 15 ≤ count) :
+    literalRun C a pos hs mapBase modeOff mask k hmb hm hd hmask hk n word count pos wpos ring p1 p2 hp hw hsize hwp =
+      ⟨word >>> (lookup arena base word hfit C.arena32 &&& 15), count - (lookup arena base word hfit C.arena32 &&& 15),
+        pos, ringNext wpos mask,
+        ringWrite ring wpos (lookup arena base word hfit C.arena32 >>> 4).toUInt8 (by omega),
+        (lookup arena base word hfit C.arena32 >>> 4).toUInt8, p1, 0⟩ := by
+  have hn0 : n ≠ 0 := fun e => by rw [e, show (0 : USize).toNat = 0 from rfl] at hn; exact absurd hn (by decide)
+  have hn1 : n - USize.ofNat 1 = 0 := usize_zero (by rw [usize_pred hn0]; omega)
+  have hcid := cid_lt (p1 := p1) (p2 := p2) hm hd
+  have hidx : (mapIndex mapBase (cidFast modeOff p1 p2 hm)).toNat = mapBase.toNat + (cidFast modeOff p1 p2 hm).toNat :=
+    mapIndex_toNat (by have := C.map32; omega)
+  have hi : (mapIndex mapBase (cidFast modeOff p1 p2 hm)).toNat < lMap.size := by
+    rw [hidx]
+    omega
+  have e : u32At litBase (lMap.uget (mapIndex mapBase (cidFast modeOff p1 p2 hm)) hi).toNat = base.toNat := by
+    rw [uget_lit, hidx]
+    exact hbase
+  rw [literalRun, dite_eq_right hn0]
+  simp only [refill_self, lookup_treeBase hfit e]
+  rw [dite_eq_left hl, literalRun, dite_eq_left hn1]
+  rfl
+
+/-! ### The masked byte loop is the step machine's copy -/
+
+theorem uset_congr {t : ByteArray} {i j : USize} {v v' : UInt8} {hi : i.toNat < t.size} {hj : j.toNat < t.size}
+    (h : i = j) (hv : v = v') : t.uset i v hi = t.uset j v' hj := by
+  subst h
+  subst hv
+  rfl
 
 theorem ringBack_mod {k : Nat} {pos d mask size : USize} (hk : k ≤ 24) (hm : mask.toNat = 2 ^ k - 1)
     (hs : size.toNat = 2 ^ k) (hp : pos.toNat < 2 ^ k) (hd1 : 1 ≤ d.toNat) (hd2 : d.toNat ≤ 2 ^ k) :
