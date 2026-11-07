@@ -145,6 +145,8 @@ theorem Upto.lmapDone {d : Done} {g : Gh} (h : Upto d g 5) {b : ByteArray} {n : 
     (hn : n.toNat = ntrees) (h1 : 1 ≤ ntrees) (h2 : ntrees ≤ 256) (hm : MapOk b cmap (literalContextMapSize g.m.literal.n) ntrees) :
     Upto { d with lMap := b, treesL := n } (g.setMap true ntrees cmap) 6 where
   four := h.four
+  pre := h.pre
+  masks := h.masks
   le := h.le
   max := h.max
   capLe := h.capLe
@@ -165,6 +167,8 @@ theorem Upto.dmapRes {d : Done} {g : Gh} (h : Upto d g 6) {b : ByteArray} {n : U
     {cap : UInt64} (hc1 : d.arena.size ≤ cap.toNat) (hc2 : cap.toNat ≤ smallMax + d.arenaMax.toNat) :
     Upto { d with dMap := b, treesD := n, arenaCap := cap } (g.setMap false ntrees cmap) 7 where
   four := h.four
+  pre := h.pre
+  masks := h.masks
   le := hc1
   max := by
     have := h.room
@@ -445,6 +449,8 @@ def stepHCodes (st : Hd) (pos : USize) : Hd :=
 theorem Upto.codesDoneL {d : Done} {g : Gh} (h : Upto d g 7) {b : ByteArray} {cs : List PrefixCode} (hl : cs.length = g.treesL)
     (hp : CodesPart d.arena b cs g.treesL literalAlphabetSize) : Upto { d with litBase := b } (g.setCodes .L cs) 8 where
   four := h.four
+  pre := h.pre
+  masks := h.masks
   le := h.le
   max := h.max
   capLe := h.capLe
@@ -466,6 +472,8 @@ theorem Upto.codesDoneL {d : Done} {g : Gh} (h : Upto d g 7) {b : ByteArray} {cs
 theorem Upto.codesDoneI {d : Done} {g : Gh} (h : Upto d g 8) {b : ByteArray} {cs : List PrefixCode} (hl : cs.length = g.m.insertCopy.n)
     (hp : CodesPart d.arena b cs g.m.insertCopy.n insertCopyAlphabetSize) : Upto { d with icBase := b } (g.setCodes .I cs) 9 where
   four := h.four
+  pre := h.pre
+  masks := h.masks
   le := h.le
   max := h.max
   capLe := h.capLe
@@ -488,6 +496,8 @@ theorem Upto.codesDoneD {d : Done} {g : Gh} (h : Upto d g 9) {b : ByteArray} {cs
     (hp : CodesPart d.arena b cs g.treesD (distanceAlphabetSize g.m.npostfix g.m.ndirect)) :
     Upto { d with dBase := b } (g.setCodes .D cs) 10 where
   four := h.four
+  pre := h.pre
+  masks := h.masks
   le := h.le
   max := h.max
   capLe := h.capLe

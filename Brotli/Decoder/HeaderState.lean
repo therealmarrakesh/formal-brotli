@@ -2,6 +2,7 @@ module
 
 public import Brotli.Decoder.HeaderOrder
 public import Brotli.Decoder.Builder
+public import Brotli.Decoder.FastTab
 public import Brotli.Decoder.TableSize
 public import Brotli.Decoder.State
 public import Brotli.Decoder.Step
@@ -300,10 +301,9 @@ def treeMax (size : Nat) : Nat := 2 * (size + 376)
 /-- The bytes a category's block type and block count codes' tables can take. -/
 def catMax : Nat := treeMax 258 + treeMax 26
 
-/-- The prefix a header's arena starts with, before any table: the fast command loop's fixed tables (the masks and the
-shared distance table, written at the header's end), so that every table's base is past it and the arena itself is the
-loop's one table array. -/
-def arenaPre : Nat := 4608
+/-- The prefix a header's arena starts with, before any table: the fast command loop's masks `2 ^ n - 1` for `n < 32`,
+8 bytes each (`writeMasks`), so that the arena itself is the loop's one table array. -/
+def arenaPre : Nat := 256
 
 /-- What the arena reserves at a header's start: the prefix and the three categories' codes. -/
 def smallMax : Nat := 3 * catMax + arenaPre
@@ -312,6 +312,8 @@ def smallMax : Nat := 3 * catMax + arenaPre
 after, also for the groups'. -/
 structure Upto (d : Done) (g : Gh) (n : Nat) : Prop where
   four : d.arena.size % 2 = 0
+  pre : arenaPre ≤ d.arena.size
+  masks : ∀ n, n < 32 → leAt d.arena (8 * n) 8 = 2 ^ n - 1
   le : d.arena.size ≤ d.arenaCap.toNat
   max : d.arenaCap.toNat + 2672 < 2 ^ 32
   capLe : d.arenaCap.toNat ≤ smallMax + d.arenaMax.toNat
@@ -333,6 +335,25 @@ structure Keep (t t' : ByteArray) : Prop where
   le : t.size ≤ t'.size
   frame : ∀ q, q < t.size / 2 → slotAt t' q = slotAt t q
 
+/-- A longer arena keeps every byte there was. -/
+theorem Keep.byteN {t t' : ByteArray} (hk : Keep t t') {q : Nat} (hq : q < t.size) :
+    _root_.Brotli.Decoder.byteN t' q = _root_.Brotli.Decoder.byteN t q := by
+  have hs := hk.frame (q / 2) (by have := hk.four; omega)
+  simp only [slotAt, slotNum, Prod.mk.injEq] at hs
+  have e : ∀ a b : Nat, a = 16 * (a / 16) + a % 16 ∧ b = 16 * (b / 16) + b % 16 → a % 16 = b % 16 → a / 16 = b / 16 →
+      a = b := fun a b h h1 h2 => by omega
+  have hv := e _ _ ⟨(Nat.div_add_mod _ 16).symm, (Nat.div_add_mod _ 16).symm⟩ hs.1 hs.2
+  have a0 := Brotli.Decoder.byteN_lt t' (2 * (q / 2))
+  have a1 := Brotli.Decoder.byteN_lt t' (2 * (q / 2) + 1)
+  have b0 := Brotli.Decoder.byteN_lt t (2 * (q / 2))
+  have b1 := Brotli.Decoder.byteN_lt t (2 * (q / 2) + 1)
+  unfold Brotli.Decoder.byteN at a0 a1 b0 b1 ⊢
+  rcases Nat.mod_two_eq_zero_or_one q with h | h
+  · rw [show q = 2 * (q / 2) by omega]
+    omega
+  · rw [show q = 2 * (q / 2) + 1 by omega]
+    omega
+
 theorem CatRel.frame {t t' : ByteArray} {a b : USize} {c : BlockCategory} (h : CatRel t a b c) (hk : Keep t t') : CatRel t' a b c where
   type hn := by
     obtain ⟨h1, h2⟩ := h.type hn
@@ -353,6 +374,11 @@ theorem CodesPart.frame {t t' bases : ByteArray} {cs : List PrefixCode} {total s
 theorem Upto.frame {d : Done} {g : Gh} {n : Nat} (h : Upto d g n) {a : ByteArray} (hk : Keep d.arena a) (h4 : a.size % 2 = 0)
     (hle : a.size ≤ d.arenaCap.toNat) : Upto { d with arena := a } g n where
   four := h4
+  pre := Nat.le_trans h.pre hk.le
+  masks n hn := by
+    have hp := h.pre
+    unfold arenaPre at hp
+    exact (leAt_congrB fun q _ h2 => hk.byteN (by omega)).trans (h.masks n hn)
   le := hle
   max := h.max
   capLe := h.capLe

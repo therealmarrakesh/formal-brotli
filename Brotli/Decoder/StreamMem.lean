@@ -25,7 +25,7 @@ more, for an array a step still holds while it builds the array that replaces it
 groups' reservation copies (`arena_reserve_le`), a context map's table, or the code length code's table and its lists
 (`HSize.replaced_le`), or a dictionary word. The decoder's constant arrays, 202558 bytes (`constArrays_size`), are the
 program's and are not counted. -/
-def fixedCost : Nat := 80524
+def fixedCost : Nat := 71820
 
 /-- At a place of stage at most 6, which a context map's place is, the categories' arena is at most `smallMax`. -/
 theorem arena_reserve_le {d : Done} {g : Gh} {n : Nat} (hu : Upto d g n) (hn : n ≤ 6) : d.arena.size ≤ smallMax :=
@@ -35,7 +35,7 @@ theorem arena_reserve_le {d : Done} {g : Gh} {n : Nat} (hu : Upto d g n) (hn : n
 theorem HSize.replaced_le {st : Hd} (h : HSize st) : st.mapT.t.size ≤ smallMax ∧ st.clt.t.size + 68 ≤ smallMax := by
   have h1 := h.mapT
   have h2 := h.clt
-  have hs : smallMax = 10824 := rfl
+  have hs : smallMax = 6472 := rfl
   omega
 
 /-- The decoder's constant arrays: the dictionary, the zero block, the lookup tables, and the arrays an empty state holds. -/
@@ -421,7 +421,7 @@ theorem triv_le {H : Hdr} (h : H.lMap.size ≤ 16384) : H.lTriv.size ≤ 1024 :=
   omega
 
 /-- Why a stream's memory limit was reached: `L` is below what it needs, and not because it was clipped. -/
-def MemWhy (Ws : Option Nat) (X L : Nat) : Prop := L < Ws.elim 0 (· + 16) + X ∧ L < 4294953799
+def MemWhy (Ws : Option Nat) (X L : Nat) : Prop := L < Ws.elim 0 (· + 16) + X ∧ L < 4294958151
 
 /-- What a state holds, for a stream whose window's worth is `Ws`, whose tables' worth is `X`, and with `L` left for the window and
 the tables. `B` is the bits still to be read. In a header, the arena's reservation and what the rest of the header reserves
@@ -577,7 +577,7 @@ theorem MemD.holds_le {Ws : Option Nat} {X L : Nat} {D : Dec} {B : List Bool} (M
   have b5 := M.H.dMap
   have b6 := M.H.modes
   have b7 := M.H.lTriv
-  have hsm : smallMax = 10824 := rfl
+  have hsm : smallMax = 6472 := rfl
   have hhd : D.hd.holds ≤ D.hd.d.arenaCap.toNat + 57814 := by unfold Hd.holds Done.holds; omega
   have hHH : D.H.holds ≤ D.H.arenaCap.toNat + 21760 := by unfold Hdr.holds; omega
   have h0 : Hd.none.d.arenaCap.toNat = 0 := rfl
@@ -1055,7 +1055,7 @@ theorem stepDMeta_facts {w : Nat} {st : StreamState} {a : ByteArray} {stop : USi
   obtain ⟨ht, hw, hall⟩ := hrel
   have ht' : tag = .mblock := ht
   subst ht'
-  have hlim : limit.toNat + 13496 < 2 ^ 32 := hall.limit
+  have hlim : limit.toNat + 9144 < 2 ^ 32 := hall.limit
   have hdec : (DTag.mblock ≠ DTag.wbits) ∧ (DTag.mblock ≠ DTag.cmds) := by decide
   have hnh : DTag.mblock ≠ DTag.hdr := by decide
   have hku : k.toUInt64.toNat = k.toNat := USize.toNat_toUInt64 k
@@ -1225,7 +1225,7 @@ theorem stepDMeta_facts {w : Nat} {st : StreamState} {a : ByteArray} {stop : USi
         · rw [ite_eq_left hc]
           have hle := UInt64.le_iff_toNat_le.mp hc
           rw [hneed] at hle
-          have hlim' : (limit - (1 : UInt64) <<< kb).toNat + 13496 < 2 ^ 32 := by
+          have hlim' : (limit - (1 : UInt64) <<< kb).toNat + 9144 < 2 ^ 32 := by
             rw [UInt64.toNat_sub_of_le _ _ hc, hneed]
             omega
           refine ⟨rfl, fun e => absurd rfl e, fun e => absurd rfl e, ⟨fun e => DTag.noConfusion e, fun e => DTag.noConfusion e⟩,

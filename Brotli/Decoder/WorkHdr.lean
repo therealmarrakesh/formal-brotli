@@ -2328,21 +2328,21 @@ theorem stepHW_short {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size}
 /-! ### The most a header's place holds
 
 With at most 256 block types in a category, 256 trees in a context map and 16384 values in it, a header's place holds at
-most 79084: a literal context map's code's lengths, with the table's work for the map and what the map holds. -/
+most 74732: a literal context map's code's lengths, with the table's work for the map and what the map holds. -/
 
-theorem beforeMaps_le {nL nI nD : Nat} (h1 : nL ≤ 256) (h2 : nI ≤ 256) (h3 : nD ≤ 256) : beforeMaps nL nI nD ≤ 56708 := by
+theorem beforeMaps_le {nL nI nD : Nat} (h1 : nL ≤ 256) (h2 : nI ≤ 256) (h3 : nD ≤ 256) : beforeMaps nL nI nD ≤ 52356 := by
   unfold beforeMaps afterL afterD mapPre zb smallMax catMax treeMax arenaPre
   omega
 
 theorem catPot_most {g : Gh} {i : Cat} {n : Nat} (h0 : g.m.literal.n ≤ 256) (hI : i = .D → g.m.insertCopy.n ≤ 256) (hn : n ≤ 256) :
-    catPot g i n ≤ 56708 := by
+    catPot g i n ≤ 52356 := by
   cases i with
   | L => exact beforeMaps_le hn (by omega) (by omega)
   | I => exact beforeMaps_le h0 hn (by omega)
   | D => exact beforeMaps_le h0 (hI rfl) hn
 
 theorem mapTail_le {g : Gh} {isL : Bool} {t : Nat} (ht : t ≤ 256) (hI : g.m.insertCopy.n ≤ 256) (hD : g.m.distance.n ≤ 256)
-    (hL : isL = false → g.treesL ≤ 256) : mapFin g isL + mapAfter g isL t ≤ 21101 := by
+    (hL : isL = false → g.treesL ≤ 256) : mapFin g isL + mapAfter g isL t ≤ 16749 := by
   unfold mapFin mapAfter afterL afterD mapPre zb smallMax catMax treeMax arenaPre
   cases isL with
   | false =>
@@ -2354,13 +2354,13 @@ theorem mapTail_le {g : Gh} {isL : Bool} {t : Nat} (ht : t ≤ 256) (hI : g.m.in
     omega
 
 theorem imtfTail_le {g : Gh} {isL : Bool} {t : Nat} (ht : t ≤ 256) (hI : g.m.insertCopy.n ≤ 256)
-    (hD : g.m.distance.n ≤ 256) (hL : isL = false → g.treesL ≤ 256) : imtfTail g isL t ≤ 21361 := by
+    (hD : g.m.distance.n ≤ 256) (hL : isL = false → g.treesL ≤ 256) : imtfTail g isL t ≤ 17009 := by
   have := mapTail_le ht hI hD hL
   unfold imtfTail
   omega
 
 theorem mapOwner_le {g : Gh} {isL : Bool} {t : Nat} (hS : mapSize g isL ≤ 16384) (ht : t ≤ 256) (hI : g.m.insertCopy.n ≤ 256)
-    (hD : g.m.distance.n ≤ 256) (hL : isL = false → g.treesL ≤ 256) : mapOwner g isL t ≤ 40597 := by
+    (hD : g.m.distance.n ≤ 256) (hL : isL = false → g.treesL ≤ 256) : mapOwner g isL t ≤ 36245 := by
   have := imtfTail_le ht hI hD hL
   unfold mapOwner hdrRate
   omega
@@ -2380,7 +2380,7 @@ theorem ownerX_le {g : Gh} (hg : GOk g) (o : Owner) : ownerX g o ≤ 33540 := by
 /-- What a code's owner settled: a category's block types before a category's code, the categories before a context map,
 and the maps before the groups of codes. -/
 theorem ownerPot_le {st : Hd} {g : Gh} {n : Nat} {o : Owner} (ho : OwnerRel st g n o) (hu : Upto st.d g (ownerStage o)) (hg : GOk g) :
-    ownerPot g o ≤ 56708 := by
+    ownerPot g o ≤ 52356 := by
   have hI : 1 < ownerStage o → g.m.insertCopy.n ≤ 256 := fun h => (hu.cat .I h).wf.2.1
   cases o with
   | type i k =>
@@ -2416,7 +2416,7 @@ theorem ownerPot_le {st : Hd} {g : Gh} {n : Nat} {o : Owner} (ho : OwnerRel st g
 
 /-- What a code's owner holds, with the most the code's lengths carry. -/
 theorem codeOwner_le {st : Hd} {g : Gh} {n : Nat} {o : Owner} (ho : OwnerRel st g n o) (hu : Upto st.d g (ownerStage o))
-    (hg : GOk g) (hn : n ≤ 704) : ownerX g o + ownerPot g o + clDone + symsTable n + 3 * n ≤ 79084 := by
+    (hg : GOk g) (hn : n ≤ 704) : ownerX g o + ownerPot g o + clDone + symsTable n + 3 * n ≤ 74732 := by
   have hP := ownerPot_le ho hu hg
   have hI : 1 < ownerStage o → g.m.insertCopy.n ≤ 256 := fun h => (hu.cat .I h).wf.2.1
   unfold clDone symsTable
@@ -2452,7 +2452,7 @@ theorem codeOwner_le {st : Hd} {g : Gh} {n : Nat} {o : Owner} (ho : OwnerRel st 
     omega
 
 /-- The most a header's place holds. -/
-theorem hpot_le {st : Hd} {g : Gh} {p : HPhase} (hrel : HRel st g p) (hg : GOk g) (hp : HOk p) : hpot g p ≤ 79084 := by
+theorem hpot_le {st : Hd} {g : Gh} {p : HPhase} (hrel : HRel st g p) (hg : GOk g) (hp : HOk p) : hpot g p ≤ 74732 := by
   obtain ⟨_, hu, hm⟩ := hrel
   have hS := mapSize_le hg
   have hI : 1 < stageOf p → g.m.insertCopy.n ≤ 256 := fun h => (hu.cat .I h).wf.2.1

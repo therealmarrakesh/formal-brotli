@@ -194,7 +194,7 @@ theorem work_inv {limit : Nat} {x : List UInt8} {R : Run DState} {W n : Nat} (h 
       exact run_stop hW hc hpn hwq
 
 /-- The most a state's place holds: a header's place, with what its end costs. -/
-theorem dpot_le {D : Dec} {p : SPhase} (hrel : DRel D p) (hsi : SInv p) : dpot p D ≤ 80306 := by
+theorem dpot_le {D : Dec} {p : SPhase} (hrel : DRel D p) (hsi : SInv p) : dpot p D ≤ 75954 := by
   cases p with
   | hdr w st last mlen g q =>
     obtain ⟨_, _, _, _, _, _, hh, _⟩ := hrel
@@ -216,7 +216,7 @@ theorem dpot_le {D : Dec} {p : SPhase} (hrel : DRel D p) (hsi : SInv p) : dpot p
   | ended => simp [dpot, spot]
 
 /-- The most a call can leave for the next to use: the potential of where it pauses, and 2980 for each bit it holds. -/
-def psiMax : Nat := 271026
+def psiMax : Nat := 266674
 
 theorem Reaches.withWork {limit : Nat} {x : List UInt8} {R : Run DState} (h : Reaches decoder limit x R) :
     ∃ W n, ReachesW limit x R W n := by
