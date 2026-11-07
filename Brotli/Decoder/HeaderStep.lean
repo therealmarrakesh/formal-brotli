@@ -65,6 +65,7 @@ theorem CatOk.same {d d' : Done} {i : Cat} {c : BlockCategory} (h : CatOk d i c)
 theorem Upto.low {d d0 : Done} {g g0 : Gh} {n n0 : Nat} (hn : n ≤ 3) (h0 : Upto d0 g0 n0) (hn0 : n0 ≤ 3) (h1 : d.arena = d0.arena)
     (hm : d.arenaMax = d0.arenaMax) (hcp : d.arenaCap = d0.arenaCap) (hc : ∀ i, catIdx i < n → CatOk d i (g.catOf i)) : Upto d g n where
   four := by rw [h1]; exact h0.four
+  fin h := absurd h (by omega)
   pre := by rw [h1]; exact h0.pre
   masks := by rw [h1]; exact h0.masks
   le := by rw [h1, hcp]; exact h0.le

@@ -315,6 +315,7 @@ theorem Upto.start {d : Done} {g : Gh} (h0 : d.arena.size = arenaPre)
     (hm : ∀ n, n < 32 → leAt d.arena (8 * n) 8 = 2 ^ n - 1) (hc : d.arenaCap.toNat = smallMax)
     (hl : d.arenaMax.toNat + 9144 < 2 ^ 32) : Upto d g 0 where
   four := by rw [h0]; decide
+  fin h := absurd h (by decide)
   pre := Nat.le_of_eq h0.symm
   masks := hm
   le := by rw [h0, hc]; decide

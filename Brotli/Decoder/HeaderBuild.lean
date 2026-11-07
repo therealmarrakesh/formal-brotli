@@ -452,7 +452,7 @@ theorem install_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {c : PrefixCode} 
     {hi : InstallOk st.role st.idx st.fill} :
     ∃ g' p', HRel (installTable { st with d := { st.d with arena := A1 } } base hi) g' p' ∧ (∀ bs, ownerK K g o c bs = hrest K g' p' bs) ∧
       LexLt (rankH p').1 (rankO o) ∧ budH g' p' + treeMax size ≤ budO g o ∧ (g', p') = (g, ownerPlace g o c) := by
-  have hup := hu.frame hk h4 hle
+  have hup := hu.frame hk h4 hle (ownerStage_lt o)
   have hsmall : st.d.arena.size < 2 ^ 32 := by
     have := hu.le
     have := hu.max

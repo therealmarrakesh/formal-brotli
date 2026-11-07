@@ -308,6 +308,10 @@ def arenaPre : Nat := 256
 /-- What the arena reserves at a header's start: the prefix and the three categories' codes. -/
 def smallMax : Nat := 3 * catMax + arenaPre
 
+/-- The bytes the fast command loop's derived tables can take at the header's end (`tabMax`), for at most 256 block types
+in each category. -/
+def tabMaxOf (g : Gh) : Nat := tabMax (min g.m.literal.n 256) (min g.m.insertCopy.n 256) (min g.m.distance.n 256)
+
 /-- What's settled at stage `n`. Until both context maps are read, the arena has reserved room for the categories' codes;
 after, also for the groups'. -/
 structure Upto (d : Done) (g : Gh) (n : Nat) : Prop where
@@ -328,6 +332,8 @@ structure Upto (d : Done) (g : Gh) (n : Nat) : Prop where
     MapOk d.dMap g.m.distanceMap (distanceContextMapSize g.m.distance.n) g.treesD
   codes : ∀ k, ckIdx k + 7 < n → g.ckCount k = (g.codesOf k).length ∧
     CodesPart d.arena (d.basesOf k) (g.codesOf k) (g.ckCount k) (ckSize k g)
+  /-- Once every code is read, the arena has room for the derived tables. -/
+  fin : n = 10 → d.arena.size + tabMaxOf g ≤ d.arenaCap.toNat
 
 /-- The array grew at its end only. -/
 structure Keep (t t' : ByteArray) : Prop where
@@ -372,7 +378,8 @@ theorem CodesPart.frame {t t' bases : ByteArray} {cs : List PrefixCode} {total s
 
 /-- A longer arena keeps everything settled. -/
 theorem Upto.frame {d : Done} {g : Gh} {n : Nat} (h : Upto d g n) {a : ByteArray} (hk : Keep d.arena a) (h4 : a.size % 2 = 0)
-    (hle : a.size ≤ d.arenaCap.toNat) : Upto { d with arena := a } g n where
+    (hle : a.size ≤ d.arenaCap.toNat) (hn : n < 10) : Upto { d with arena := a } g n where
+  fin h := absurd h (by omega)
   four := h4
   pre := Nat.le_trans h.pre hk.le
   masks n hn := by
@@ -403,6 +410,14 @@ def ownerStage : Owner → Nat
   | .count i _ _ => catIdx i
   | .map isL _ _ => mapIdx isL
   | .codes k _ _ => ckIdx k + 7
+
+/-- An owner's code is read before the header's last stage. -/
+theorem ownerStage_lt (o : Owner) : ownerStage o < 10 := by
+  cases o with
+  | type i _ => cases i <;> simp [ownerStage, catIdx]
+  | count i _ _ => cases i <;> simp [ownerStage, catIdx]
+  | map isL _ _ => cases isL <;> simp [ownerStage, mapIdx]
+  | codes k _ _ => cases k <;> simp [ownerStage, ckIdx]
 
 /-- Which stage a place is at. -/
 def stageOf : HPhase → Nat
@@ -703,11 +718,13 @@ structure HSize (st : Hd) : Prop where
   /-- A context map's transformed values, the transform's list and the values' flags. -/
   work : st.xf.size ≤ 16384 ∧ st.mtf.size ≤ 256 ∧ st.seenR.size ≤ 256 ∧ st.seenX.size ≤ 256
 
-/-- The bytes the groups' tables can take from a group on, with `left` of its codes to go. -/
+/-- The bytes the groups' tables can take from a group on, with `left` of its codes to go, and then the derived
+tables. -/
 def groupsFrom (g : Gh) : CK → Nat → Nat
-  | .L, left => left * treeMax (ckSize .L g) + g.m.insertCopy.n * treeMax (ckSize .I g) + g.treesD * treeMax (ckSize .D g)
-  | .I, left => left * treeMax (ckSize .I g) + g.treesD * treeMax (ckSize .D g)
-  | .D, left => left * treeMax (ckSize .D g)
+  | .L, left => left * treeMax (ckSize .L g) + g.m.insertCopy.n * treeMax (ckSize .I g) + g.treesD * treeMax (ckSize .D g) +
+      tabMaxOf g
+  | .I, left => left * treeMax (ckSize .I g) + g.treesD * treeMax (ckSize .D g) + tabMaxOf g
+  | .D, left => left * treeMax (ckSize .D g) + tabMaxOf g
 
 /-- What the decoder reserves for the groups' tables once both context maps are read. -/
 def resBytes (g : Gh) : Nat := groupsFrom g .L g.treesL
@@ -729,8 +746,13 @@ def budH (g : Gh) : HPhase → Nat
   | .codes k _ left => groupsFrom g k left
   | _ => 0
 
-/-- The most the groups' tables can take: 256 codes in each group, over at most 520 distance symbols. -/
-def resMax : Nat := 256 * (treeMax 256 + treeMax 704 + treeMax 520)
+/-- The most the groups' tables can take, 256 codes in each group over at most 520 distance symbols, with the derived
+tables. -/
+def resMax : Nat := 256 * (treeMax 256 + treeMax 704 + treeMax 520) + tabMax 256 256 256
+
+theorem tabMaxOf_le (g : Gh) : tabMaxOf g ≤ tabMax 256 256 256 := by
+  unfold tabMaxOf tabMax
+  omega
 
 /-- What the groups' tables can take, with each group's number of codes at most 256 and NPOSTFIX and NDIRECT in range. -/
 theorem resBytes_bound {g : Gh} (hT : g.treesL ≤ 256) (hI : g.m.insertCopy.n ≤ 256) (hD : g.treesD ≤ 256)
@@ -743,8 +765,9 @@ theorem resBytes_bound {g : Gh} (hT : g.treesL ≤ 256) (hI : g.m.insertCopy.n �
   have a1 := Nat.mul_le_mul_right (treeMax 256) hT
   have a2 := Nat.mul_le_mul_right (treeMax 704) hI
   have a3 : g.treesD * treeMax (ckSize .D g) ≤ 256 * treeMax 520 := Nat.mul_le_mul hD (by unfold treeMax; omega)
-  show g.treesL * treeMax 256 + g.m.insertCopy.n * treeMax 704 + g.treesD * treeMax (ckSize .D g) ≤
-    256 * (treeMax 256 + treeMax 704 + treeMax 520)
+  have a4 := tabMaxOf_le g
+  show g.treesL * treeMax 256 + g.m.insertCopy.n * treeMax 704 + g.treesD * treeMax (ckSize .D g) + tabMaxOf g ≤
+    256 * (treeMax 256 + treeMax 704 + treeMax 520) + tabMax 256 256 256
   rw [Nat.mul_add, Nat.mul_add]
   omega
 

@@ -1011,7 +1011,7 @@ private theorem limit_hdr {limit lim K A R H B F kv : Nat} (hlim : fixedCost ≤
     (hbind : lim < R) (hT : H = A + R) (hht : H ≤ B) (hdr : B ≤ F) (hmax : H ≤ resMax) (hK : 2 ^ kv = K)
     (hpw : 2 ^ kv ≤ 2 ^ 24) : limit < fixedCost + 2 ^ kv + F := by
   have h224 : (2 : Nat) ^ 24 = 16777216 := rfl
-  have hcap : resMax = 1335296 := rfl
+  have hcap : resMax = 2197583 := rfl
   omega
 
 /-- Memory usage correctness, for the input used: when the decoder reports the limit, the bytes it reports as used already

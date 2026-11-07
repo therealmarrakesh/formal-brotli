@@ -174,6 +174,7 @@ def stepHNp (st : Hd) (pos : USize) : Hd :=
 theorem Upto.npDone {d : Done} {g : Gh} (h : Upto d g 3) {x y : UInt64} {u v : Nat} (hx : x.toNat = u) (hy : y.toNat = v) (hu : u ≤ 3)
     (hv : v ≤ 120) : Upto { d with npostfix := x, ndirect := y } { g with m := { g.m with npostfix := u, ndirect := v } } 4 where
   four := h.four
+  fin h := absurd h (by decide)
   pre := h.pre
   masks := h.masks
   le := h.le
@@ -314,6 +315,7 @@ def stepHModes (st : Hd) (pos : USize) (h : ∃ g p, HRel st g p) (ht : st.tag =
 theorem Upto.modesDone {d : Done} {g : Gh} (h : Upto d g 4) {b : ByteArray} {l : List Nat} (hm : MapOk b l g.m.literal.n 4) :
     Upto { d with modes := b } { g with m := { g.m with contextModes := l } } 5 where
   four := h.four
+  fin h := absurd h (by decide)
   pre := h.pre
   masks := h.masks
   le := h.le

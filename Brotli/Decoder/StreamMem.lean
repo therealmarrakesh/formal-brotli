@@ -1589,7 +1589,7 @@ theorem hdr_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs
       rw [hx] at h1
       have h1' : D.hd.d.arenaCap.toNat + (resBytes g' + x.getD 0) ≤ smallMax + X := h1
       rw [h2] at m1
-      have hrm : resMax = 1335296 := rfl
+      have hrm : resMax = 2197583 := rfl
       have hpw : 2 ^ D.k.toNat ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk24
       have h224 : (2 : Nat) ^ 24 = 16777216 := rfl
       have he : (some w0 : Option Nat).elim 0 (· + 16) = w0 + 16 := rfl

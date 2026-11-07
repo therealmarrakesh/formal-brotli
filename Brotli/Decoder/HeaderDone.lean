@@ -144,7 +144,7 @@ theorem stepAtH_ok {g : Gh} {p : HPhase} {st : Hd} {pos : USize} (hrel : HRel st
     exact stepHImtf_ok hrel hp hfull
   | codes k done left =>
     rw [stepAtH_codes hrel.2.2.1]
-    exact stepHCodes_ok hrel hp
+    exact stepHCodes_ok hrel hp hb
 
 /-- What a step of the header machine does in the spec's terms, for every future. -/
 theorem stepH_ok {g : Gh} {p : HPhase} {st : Hd} {pos : USize} {hs : stop.toNat ≤ a.size} (hrel : HRel st g p) (hp : pos.toNat ≤ stop.toNat)
