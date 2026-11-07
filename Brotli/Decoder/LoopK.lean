@@ -3,6 +3,7 @@ module
 public import Brotli.Decoder.CopyRing
 public import Brotli.Decoder.StepDistance
 public import Brotli.Decoder.Loop
+public import Brotli.Decoder.FastLoop
 
 /-!
 # The compiled command loop
@@ -665,6 +666,74 @@ public def runCmdE (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : st
     runCmdK H k a stop hs n ⟨word, count, pos, wpos, ByteArray.empty, p1, p2, 0, 0⟩ word count ring wpos pend cap written
       p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits
       copyBase dist wordBuf wordPos tag left pos h
+
+/-! ### The command loop with the fast loop -/
+
+/-- The command loop with the fast loop (`FastLoop.lean`): at a command's literals or its distance, with 40 bytes of the
+chunk left and room for the rest of the command, the fast loop; otherwise, and always after the fast loop has left, one
+step of the step machine. -/
+def runCmdKF (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (n : USize) (fresh : Bool) :
+    (cell : RunOut) → (word count : UInt64) → (ring : ByteArray) → (wpos pend cap written : USize) → (p1 p2 : UInt8) →
+    (remaining iCount lCount dCount : UInt64) → (flags : Flags) →
+    (iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist : UInt64) →
+    (wordBuf : ByteArray) → (wordPos : USize) → (tag : Tag) → (left : UInt64) → (pos : USize) →
+    KInv H k stop word count ring wpos written iCur iPrev lCur lPrev dCur dPrev copyBits dist wordBuf wordPos tag pos →
+    Cmd :=
+  if _hn : n = 0 then
+    fun _ word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur
+        dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos _ =>
+    mkCmd word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev
+      d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos .next
+  else
+    fun cell word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur
+        dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos hinv =>
+    let lits : UInt64 := if tag = .literals then left else 0
+    let rm := room k cap
+    let roomLeft : UInt64 := if rm ≤ pend then 0 else (rm - pend).toUInt64
+    let bEnd := wpos.toUInt64 + umin remaining roomLeft
+    if hf : fresh = true ∧ (tag = .literals ∨ tag = .distance) ∧ USize.ofNat 40 ≤ stop - pos ∧
+        ¬ bEnd < wpos.toUInt64 + lits + clen then
+      have hm : pos.toNat + 40 ≤ stop.toNat := by
+        have h1 := USize.le_iff_toNat_le.mp hf.2.2.1
+        rw [fastLit (by decide), USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr hinv.pos)] at h1
+        have := hinv.pos
+        omega
+      match fastEnter H k a stop hs cap n word count ring wpos pend written p1 p2 remaining iCount lCount dCount flags
+          ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf,
+            wordPos⟩ tag lits bEnd pos hinv hm with
+      | ⟨⟨word, count, ring, wpos, pend, cap, written, p1, p2, remaining, iCount, lCount, dCount, flags,
+          ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf,
+            wordPos⟩, tag, left, pos, _⟩, h⟩ =>
+        runCmdKF H k a stop hs (n - USize.ofNat 1) false cell word count ring wpos pend cap written p1 p2 remaining iCount
+          lCount dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf
+          wordPos tag left pos h
+    else
+    kstep H k a stop hs
+      (fun cell word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur
+          dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos h =>
+        runCmdKF H k a stop hs (n - USize.ofNat 1) true cell word count ring wpos pend cap written p1 p2 remaining iCount
+          lCount dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf
+          wordPos tag left pos h)
+      (fun c => c)
+      word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev
+      d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos cell hinv
+termination_by n.toNat
+decreasing_by
+  all_goals
+    have := usize_pred _hn
+    have := usize_ne _hn
+    omega
+
+/-- The command loop with the fast loop, from a state the compiled loop may run from. -/
+public def runCmdF (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (n : USize) (st : Cmd)
+    (pos : USize) (h : CmdInv H k stop st pos) : Cmd :=
+  match st, h with
+  | ⟨word, count, ring, wpos, pend, cap, written, p1, p2, remaining, iCount, lCount, dCount, flags,
+      ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf, wordPos⟩,
+      tag, left, _, _⟩, h =>
+    runCmdKF H k a stop hs n true ⟨word, count, pos, wpos, ByteArray.empty, p1, p2, 0, 0⟩ word count ring wpos pend cap
+      written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen
+      copyBits copyBase dist wordBuf wordPos tag left pos h
 
 /-! ### The compiled loop is `runCmd` -/
 
