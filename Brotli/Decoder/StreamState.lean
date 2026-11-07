@@ -206,7 +206,7 @@ theorem Core.toWin {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {out : List Nat}
 structure WinAll (D : Dec) (w : Nat) (st : StreamState) : Prop where
   win : WinRel w D.k.toNat D.cmd st.output st.distances
   produced : st.produced = st.output.length
-  limit : D.limit.toNat + 8888 < 2 ^ 32
+  limit : D.limit.toNat + 13496 < 2 ^ 32
 
 /-- No window yet: from WBITS to the stream's first meta-block with data, the ring is empty, nothing is produced or
 waiting, and `k` is the log size of the window the stream declares. -/
@@ -217,7 +217,7 @@ structure NoRing (D : Dec) (w : Nat) (st : StreamState) : Prop where
   ring : D.cmd.ring.size = 0
   pend : D.cmd.pend = 0
   st : st = ⟨[], 0, initialDistances⟩
-  limit : D.limit.toNat + 8888 < 2 ^ 32
+  limit : D.limit.toNat + 13496 < 2 ^ 32
 
 /-- What a place outside a meta-block's data has: a window, once a meta-block with data has produced bytes, or none
 before the first. -/
@@ -241,14 +241,14 @@ theorem WinAt.words {D D' : Dec} {w : Nat} {st : StreamState} (h : WinAt D w st)
   · exact Or.inr ⟨by rw [ek]; exact hn.win, by rw [ek]; exact hn.k10, by rw [ek]; exact hn.k24, by rw [ec]; exact hn.ring,
       by rw [ec]; exact hn.pend, hn.st, by rw [el]; exact hn.limit⟩
 
-theorem WinAt.limit {D : Dec} {w : Nat} {st : StreamState} (h : WinAt D w st) : D.limit.toNat + 8888 < 2 ^ 32 := by
+theorem WinAt.limit {D : Dec} {w : Nat} {st : StreamState} (h : WinAt D w st) : D.limit.toNat + 13496 < 2 ^ 32 := by
   rcases h with ⟨h1, _⟩ | h1
   · exact h1.limit
   · exact h1.limit
 
 /-- A state stands for a place in a stream. -/
 def DRel (D : Dec) : SPhase → Prop
-  | .wbits => D.tag = .wbits ∧ (BitBuffer.mk D.cmd.word D.cmd.count).Wf ∧ D.limit.toNat + 8888 < 2 ^ 32 ∧ D.cmd.pend = 0 ∧
+  | .wbits => D.tag = .wbits ∧ (BitBuffer.mk D.cmd.word D.cmd.count).Wf ∧ D.limit.toNat + 13496 < 2 ^ 32 ∧ D.cmd.pend = 0 ∧
     D.cmd.ring.size = 0
   | .mblock w st => D.tag = .mblock ∧ (BitBuffer.mk D.cmd.word D.cmd.count).Wf ∧ WinAt D w st
   | .skip w st last n => D.tag = .skip ∧ (BitBuffer.mk D.cmd.word D.cmd.count).Wf ∧ WinAt D w st ∧ D.last = last ∧ D.left.toNat = n ∧
@@ -257,7 +257,7 @@ def DRel (D : Dec) : SPhase → Prop
     n < 2 ^ 32 ∧ 1 ≤ st.produced + n
   | .hdr w st last mlen g p => D.tag = .hdr ∧ WinAll D w st ∧ D.last = last ∧ D.left.toNat = mlen ∧ 1 ≤ mlen ∧ mlen ≤ 16777216 ∧ HRel D.hd g p ∧
     D.cmd.pend = 0 ∧ D.hd.d.arena.size + budH g p ≤ D.hd.d.arenaCap.toNat
-  | .cmds w last m p => D.tag = .cmds ∧ D.last = last ∧ D.limit.toNat + 8888 < 2 ^ 32 ∧ HdrRel D.H m ∧ Rel w D.k.toNat m D.cmd p ∧
+  | .cmds w last m p => D.tag = .cmds ∧ D.last = last ∧ D.limit.toNat + 13496 < 2 ^ 32 ∧ HdrRel D.H m ∧ Rel w D.k.toNat m D.cmd p ∧
     CLive p
   | .ended st => D.tag = .ended ∧ (BitBuffer.mk D.cmd.word D.cmd.count).Wf ∧ ∃ w, WinAt D w st
 

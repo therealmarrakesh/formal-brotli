@@ -528,7 +528,7 @@ theorem stepDMeta_x {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize}
         exact hf _
       · rw [List.nil_append, Nat.zero_add]
       · rw [s4, s4']
-        show 0 + catMax * (2 + 1) ≤ 3 * catMax
+        show arenaPre + catMax * (2 + 1) ≤ 3 * catMax + arenaPre
         omega
       · exact s5
     have hlimS : r.status ≠ .memory → r.status ≠ .bad → D.tag ≠ .wbits → r.limit = D.limit ∨ (D.tag = .mblock ∧ D.cmd.ring.size = 0) := by
@@ -1001,13 +1001,13 @@ theorem hd_top {limit : Nat} {x : List UInt8} {R : Run DState} (h : Reaches deco
 /-! ### The limit, truthfully -/
 
 /-- The limit, when the window the stream's first meta-block with data allocates doesn't fit. -/
-private theorem limit_win {limit W X : Nat} (hlim : fixedCost ≤ limit) (h : min (limit - fixedCost) 4294958407 < W + 16)
+private theorem limit_win {limit W X : Nat} (hlim : fixedCost ≤ limit) (h : min (limit - fixedCost) 4294953799 < W + 16)
     (hpw : W ≤ 2 ^ 24) : limit < fixedCost + (W + 16) + X := by
   have h224 : (2 : Nat) ^ 24 = 16777216 := rfl
   omega
 
 /-- The limit, when a header's groups' tables don't fit with the window. -/
-private theorem limit_hdr {limit lim K A R H B F kv : Nat} (hlim : fixedCost ≤ limit) (hroom : lim + K = min (limit - fixedCost) 4294958407)
+private theorem limit_hdr {limit lim K A R H B F kv : Nat} (hlim : fixedCost ≤ limit) (hroom : lim + K = min (limit - fixedCost) 4294953799)
     (hbind : lim < R) (hT : H = A + R) (hht : H ≤ B) (hdr : B ≤ F) (hmax : H ≤ resMax) (hK : 2 ^ kv = K)
     (hpw : 2 ^ kv ≤ 2 ^ 24) : limit < fixedCost + 2 ^ kv + F := by
   have h224 : (2 : Nat) ^ 24 = 16777216 := rfl
@@ -1080,7 +1080,7 @@ theorem decoder_limitAt {limit : Nat} {x : List UInt8} {R : Run DState} (h : Rea
         rw [← bits_append, List.take_append_drop]
       exact reach_restrict nfaith_sStep hz _ _ _ hxs1 rfl (by rw [bits_length]; omega)
     refine ⟨?_, R0.read + k1, p1, D1.held, by omega, htight, by omega⟩
-    have hroom : roomOf limit = min (limit - fixedCost) 4294958407 := rfl
+    have hroom : roomOf limit = min (limit - fixedCost) 4294953799 := rfl
     rcases hB with ⟨htw, hr0, _, hbw⟩ | ⟨hth, w, g1, g2, g3, g4⟩
     · -- At the stream's first meta-block with data: the window it allocates doesn't fit.
       obtain ⟨w1, st1, rfl⟩ : ∃ w1 st1, p1 = .mblock w1 st1 := by
@@ -1179,7 +1179,7 @@ theorem decoder_limitAt {limit : Nat} {x : List UInt8} {R : Run DState} (h : Rea
       exact limit_hdr hlim g3 hbind hT hht hdr hmax rfl hpw
 
 /-- The demand of bytes before where the limit binds, within the limit. -/
-private theorem limit_tight_arith {limit lim K W T : Nat} (hlim : fixedCost ≤ limit) (hroom : lim + K = min (limit - fixedCost) 4294958407)
+private theorem limit_tight_arith {limit lim K W T : Nat} (hlim : fixedCost ≤ limit) (hroom : lim + K = min (limit - fixedCost) 4294953799)
     (hW : W ≤ K) (hT : T ≤ lim) : fixedCost + W + T ≤ limit := by
   omega
 
@@ -1271,7 +1271,7 @@ theorem decoder_limitTight {limit : Nat} {x : List UInt8} {R : Run DState} (h : 
         unfold windowBytes
         rw [show winSem.first (bits (x.take n)) = srest winSem s' c' from win_reach r1 trivial hs', win_stuck hs' r2]
         exact Nat.le_refl _
-      have hroom' : D1.limit.toNat + 0 = min (limit - fixedCost) 4294958407 := by
+      have hroom' : D1.limit.toNat + 0 = min (limit - fixedCost) 4294953799 := by
         rw [Nat.add_zero, hL0]
         unfold roomOf
         rfl

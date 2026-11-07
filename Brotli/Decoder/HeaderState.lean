@@ -300,8 +300,13 @@ def treeMax (size : Nat) : Nat := 2 * (size + 376)
 /-- The bytes a category's block type and block count codes' tables can take. -/
 def catMax : Nat := treeMax 258 + treeMax 26
 
-/-- What the arena reserves at a header's start, for the three categories' codes. -/
-def smallMax : Nat := 3 * catMax
+/-- The prefix a header's arena starts with, before any table: the fast command loop's fixed tables (the masks and the
+shared distance table, written at the header's end), so that every table's base is past it and the arena itself is the
+loop's one table array. -/
+def arenaPre : Nat := 4608
+
+/-- What the arena reserves at a header's start: the prefix and the three categories' codes. -/
+def smallMax : Nat := 3 * catMax + arenaPre
 
 /-- What's settled at stage `n`. Until both context maps are read, the arena has reserved room for the categories' codes;
 after, also for the groups'. -/

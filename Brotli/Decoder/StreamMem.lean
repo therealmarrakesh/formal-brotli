@@ -25,7 +25,7 @@ more, for an array a step still holds while it builds the array that replaces it
 groups' reservation copies (`arena_reserve_le`), a context map's table, or the code length code's table and its lists
 (`HSize.replaced_le`), or a dictionary word. The decoder's constant arrays, 202558 bytes (`constArrays_size`), are the
 program's and are not counted. -/
-def fixedCost : Nat := 71308
+def fixedCost : Nat := 80524
 
 /-- At a place of stage at most 6, which a context map's place is, the categories' arena is at most `smallMax`. -/
 theorem arena_reserve_le {d : Done} {g : Gh} {n : Nat} (hu : Upto d g n) (hn : n ≤ 6) : d.arena.size ≤ smallMax :=
@@ -35,7 +35,7 @@ theorem arena_reserve_le {d : Done} {g : Gh} {n : Nat} (hu : Upto d g n) (hn : n
 theorem HSize.replaced_le {st : Hd} (h : HSize st) : st.mapT.t.size ≤ smallMax ∧ st.clt.t.size + 68 ≤ smallMax := by
   have h1 := h.mapT
   have h2 := h.clt
-  have hs : smallMax = 6216 := rfl
+  have hs : smallMax = 10824 := rfl
   omega
 
 /-- The decoder's constant arrays: the dictionary, the zero block, the lookup tables, and the arrays an empty state holds. -/
@@ -421,7 +421,7 @@ theorem triv_le {H : Hdr} (h : H.lMap.size ≤ 16384) : H.lTriv.size ≤ 1024 :=
   omega
 
 /-- Why a stream's memory limit was reached: `L` is below what it needs, and not because it was clipped. -/
-def MemWhy (Ws : Option Nat) (X L : Nat) : Prop := L < Ws.elim 0 (· + 16) + X ∧ L < 4294958407
+def MemWhy (Ws : Option Nat) (X L : Nat) : Prop := L < Ws.elim 0 (· + 16) + X ∧ L < 4294953799
 
 /-- What a state holds, for a stream whose window's worth is `Ws`, whose tables' worth is `X`, and with `L` left for the window and
 the tables. `B` is the bits still to be read. In a header, the arena's reservation and what the rest of the header reserves
@@ -577,7 +577,7 @@ theorem MemD.holds_le {Ws : Option Nat} {X L : Nat} {D : Dec} {B : List Bool} (M
   have b5 := M.H.dMap
   have b6 := M.H.modes
   have b7 := M.H.lTriv
-  have hsm : smallMax = 6216 := rfl
+  have hsm : smallMax = 10824 := rfl
   have hhd : D.hd.holds ≤ D.hd.d.arenaCap.toNat + 57814 := by unfold Hd.holds Done.holds; omega
   have hHH : D.H.holds ≤ D.H.arenaCap.toNat + 21760 := by unfold Hdr.holds; omega
   have h0 : Hd.none.d.arenaCap.toNat = 0 := rfl
@@ -1017,7 +1017,7 @@ structure MetaFacts (a : ByteArray) (stop : USize) (D : Dec) (pos : USize) (r : 
   other : r.tag ≠ .hdr → r.hd = D.hd
   tag : r.tag ≠ .wbits ∧ r.tag ≠ .cmds
   start : r.tag = .hdr → r.status = .next ∧ (∀ t : List UInt8, ∃ last mlen, metaStart (D.bits a pos stop (bits t)) = some (.data last mlen false, r.bits a r.pos stop (bits t))) ∧
-    HRel r.hd Gh.start (.cat .L) ∧ r.hd.d.arena.size = 0 ∧ r.hd.d.arenaCap.toNat = smallMax ∧ r.hd.d.arenaMax = r.limit ∧
+    HRel r.hd Gh.start (.cat .L) ∧ r.hd.d.arena.size = arenaPre ∧ r.hd.d.arenaCap.toNat = smallMax ∧ r.hd.d.arenaMax = r.limit ∧
     HSize r.hd
   plain : r.status = .next → r.tag ≠ .hdr → ∀ t : List UInt8, ∃ v rest, metaStart (D.bits a pos stop (bits t)) = some (v, rest) ∧
     ∀ l ml, v ≠ .data l ml false
@@ -1055,7 +1055,7 @@ theorem stepDMeta_facts {w : Nat} {st : StreamState} {a : ByteArray} {stop : USi
   obtain ⟨ht, hw, hall⟩ := hrel
   have ht' : tag = .mblock := ht
   subst ht'
-  have hlim : limit.toNat + 8888 < 2 ^ 32 := hall.limit
+  have hlim : limit.toNat + 13496 < 2 ^ 32 := hall.limit
   have hdec : (DTag.mblock ≠ DTag.wbits) ∧ (DTag.mblock ≠ DTag.cmds) := by decide
   have hnh : DTag.mblock ≠ DTag.hdr := by decide
   have hku : k.toUInt64.toNat = k.toNat := USize.toNat_toUInt64 k
@@ -1225,11 +1225,11 @@ theorem stepDMeta_facts {w : Nat} {st : StreamState} {a : ByteArray} {stop : USi
         · rw [ite_eq_left hc]
           have hle := UInt64.le_iff_toNat_le.mp hc
           rw [hneed] at hle
-          have hlim' : (limit - (1 : UInt64) <<< kb).toNat + 8888 < 2 ^ 32 := by
+          have hlim' : (limit - (1 : UInt64) <<< kb).toNat + 13496 < 2 ^ 32 := by
             rw [UInt64.toNat_sub_of_le _ _ hc, hneed]
             omega
           refine ⟨rfl, fun e => absurd rfl e, fun e => absurd rfl e, ⟨fun e => DTag.noConfusion e, fun e => DTag.noConfusion e⟩,
-            fun _ => ⟨rfl, fun t => ⟨r.b != 0, r.c.toNat, hstart t⟩, hdStart_rel hw2 hlim', rfl, u64_lit (by decide), rfl, hsize_start _ _ _⟩,
+            fun _ => ⟨rfl, fun t => ⟨r.b != 0, r.c.toNat, hstart t⟩, hdStart_rel hw2 hlim', hdStart_arena_size _ _ _, u64_lit (by decide), rfl, hsize_start _ _ _⟩,
             fun _ e => absurd rfl e, fun _ h => ?_, (fun _ h => by rcases h with e | e <;> cases e),
             fun _ _ _ => ⟨?_, ?_, rfl, fun t => ⟨_, hwF t, by rw [hbw]; show _ = 2 ^ kb.toUSize.toNat; rw [hus]⟩⟩,
             fun e => DStatus.noConfusion e⟩
@@ -1249,7 +1249,7 @@ theorem stepDMeta_facts {w : Nat} {st : StreamState} {a : ByteArray} {stop : USi
               fun t => ⟨_, hwF t, show limit.toNat < _ + 16 by rw [hbw]; exact hlt⟩⟩⟩
       · rw [ite_eq_right hr0]
         exact ⟨rfl, fun e => absurd rfl e, fun e => absurd rfl e, ⟨fun e => DTag.noConfusion e, fun e => DTag.noConfusion e⟩,
-          fun _ => ⟨rfl, fun t => ⟨r.b != 0, r.c.toNat, hstart t⟩, hdStart_rel hw2 hlim, rfl, u64_lit (by decide), rfl, hsize_start _ _ _⟩,
+          fun _ => ⟨rfl, fun t => ⟨r.b != 0, r.c.toNat, hstart t⟩, hdStart_rel hw2 hlim, hdStart_arena_size _ _ _, u64_lit (by decide), rfl, hsize_start _ _ _⟩,
           fun _ e => absurd rfl e, fun _ _ => ⟨rfl, rfl, rfl, rfl⟩, (fun _ h => by rcases h with e | e <;> cases e), fun h => absurd h hr0,
           fun e => DStatus.noConfusion e⟩
 
@@ -1358,7 +1358,7 @@ theorem mblock_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} 
         refine ⟨hA, hB, fun _ => ⟨Gh.start, .cat .L, s3, by rw [s4']; omega, s5, ?_⟩, fun e => absurd (hth.symm.trans e) (by decide), fun e => absurd hth e,
           fun _ => by rw [hF.H]; exact hHO, s6, by rw [hF.H]; exact M.H, hwin⟩
         rw [s4, s4']
-        show 0 + catMax * (2 + 1) ≤ 3 * catMax
+        show arenaPre + catMax * (2 + 1) ≤ 3 * catMax + arenaPre
         omega
       · exact M.keep (by rw [ht]; decide) (hF.other hth) hth (by rw [hF.H]; exact M.H) (fun e => absurd e hF.tag.2)
           (fun _ => by rw [hF.H]; exact hHO) hA hB hwin
