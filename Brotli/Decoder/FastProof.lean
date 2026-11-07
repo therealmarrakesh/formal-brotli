@@ -758,6 +758,115 @@ theorem copyMasked_fwd {mask : USize} {k : Nat} (hk : k ≤ 24) (hm : mask.toNat
     rw [uset_eq, hix, show wget ring s mask hm hs = ring.data[s.toNat]?.getD 0 from UInt8.toNat_inj.mp hget]
     rfl
 
+/-- One byte copied, its store masked (`wix`), is one step of the forward copy. -/
+theorem cp1_fwd {n : Nat} (w : Win n) (d s : USize) (hd : d.toNat < n) (hs : s.toNat < n) (h24 : n ≤ 2 ^ 24) :
+    (cp1 w d s hd hs h24).1 = fwdCopy w.1 d.toNat s.toNat 1 := by
+  unfold cp1 wst wld
+  dsimp only
+  rw [uset_eq, wix_toNat (by omega), show w.1.uget s _ = w.1.data[s.toNat]?.getD 0 from
+    UInt8.toNat_inj.mp (by rw [uget_toNat])]
+  rfl
+
+theorem cp1_size {n : Nat} (w : Win n) (d s : USize) (hd : d.toNat < n) (hs : s.toNat < n) (h24 : n ≤ 2 ^ 24) :
+    (cp1 w d s hd hs h24).1.size = n := (cp1 w d s hd hs h24).2
+
+/-- Eight bytes copied one at a time are eight steps of the forward copy. -/
+theorem cp8_fwd {n : Nat} (w : Win n) (d s : USize) (hd : d.toNat + 8 ≤ n) (hs : s.toNat + 8 ≤ n) (h24 : n ≤ 2 ^ 24) :
+    (cp8 w d s hd hs h24).1 = fwdCopy w.1 d.toNat s.toNat 8 := by
+  have h32 : n < 2 ^ 32 := by omega
+  have e : ∀ j, j < 8 → (d + USize.ofNat j).toNat = d.toNat + j ∧ (s + USize.ofNat j).toNat = s.toNat + j :=
+    fun j _ => ⟨fastIdx_add (by omega), fastIdx_add (by omega)⟩
+  unfold cp8
+  dsimp only
+  simp only [cp1_fwd]
+  rw [(e 1 (by decide)).1, (e 1 (by decide)).2, (e 2 (by decide)).1, (e 2 (by decide)).2, (e 3 (by decide)).1,
+    (e 3 (by decide)).2, (e 4 (by decide)).1, (e 4 (by decide)).2, (e 5 (by decide)).1, (e 5 (by decide)).2,
+    (e 6 (by decide)).1, (e 6 (by decide)).2, (e 7 (by decide)).1, (e 7 (by decide)).2]
+  simp only [← fwdCopy_add, Nat.add_assoc]
+
+/-- Byte `j` of the little-endian number of `n` bytes from `i`. -/
+theorem leAt_byte (t : ByteArray) : ∀ (n i j : Nat), j < n → (leAt t i n / 256 ^ j) % 256 = byteN t (i + j)
+  | 0, _, _, h => absurd h (by omega)
+  | n + 1, i, 0, _ => by
+    rw [leAt, Nat.pow_zero, Nat.div_one]
+    show _ = byteN t i
+    have := byteN_lt t i
+    omega
+  | n + 1, i, j + 1, h => by
+    rw [leAt, Nat.pow_succ, Nat.mul_comm (256 ^ j) 256, ← Nat.div_div_eq_div_mul]
+    have hb := byteN_lt t i
+    have : (byteN t i + 256 * leAt t (i + 1) n) / 256 = leAt t (i + 1) n := by omega
+    rw [this, leAt_byte t n (i + 1) j (by omega)]
+    congr 1
+    omega
+
+/-- A store at a window position: the byte there now, the rest unchanged. -/
+theorem wst_get {n : Nat} (w : Win n) (i : USize) (v : UInt8) (h : i.toNat < n) (j : Nat) :
+    (wst w i v h).1.data[j]? = if i.toNat = j then some v else w.1.data[j]? := by
+  unfold wst
+  dsimp only
+  rw [uset_eq]
+  show (w.1.data.setIfInBounds i.toNat v)[j]? = _
+  rw [Array.getElem?_setIfInBounds]
+  split
+  · rename_i he
+    have h1 : w.1.size = w.1.data.size := rfl
+    have h2 := w.2
+    rw [ite_eq_left (by omega)]
+  · rfl
+
+/-- Byte `k` of an 8-byte load is the array's byte `k` from the load's position. -/
+theorem load64_byte (t : ByteArray) (i : USize) (h : i.toNat + 8 ≤ t.size) (h32 : t.size < 2 ^ 32) (k : Nat) (hk : k < 8)
+    (sh : UInt64) (hs : sh.toNat = 8 * k) :
+    (load64 t i h h32 >>> sh).toUInt8 = t.data[i.toNat + k]?.getD 0 := by
+  apply UInt8.toNat_inj.mp
+  rw [UInt64.toNat_toUInt8, UInt64.toNat_shiftRight, hs, Nat.mod_eq_of_lt (show 8 * k < 64 by omega),
+    Nat.shiftRight_eq_div_pow,
+    load64_toNat, show 2 ^ (8 * k) = 256 ^ k by rw [Nat.pow_mul], leAt_byte t 8 i.toNat k hk]
+  rfl
+
+/-- The 8 stores of an 8-byte load are the snapshot copy of those 8 bytes. -/
+theorem put8At_snap {n : Nat} (w : Win n) (d s : USize) (hd : d.toNat + 8 ≤ n) (hs : s.toNat + 8 ≤ w.1.size)
+    (h32 : n < 2 ^ 32) :
+    (put8At w d (load64 w.1 s hs (by rw [w.2]; exact h32)) hd h32).1 = w.1.copySlice s.toNat w.1 d.toNat 8 := by
+  have hsz := w.2
+  have e : ∀ j, j < 8 → (d + USize.ofNat j).toNat = d.toNat + j := fun j _ => fastIdx_add (by omega)
+  have b : ∀ k, k < 8 → ∀ sh : UInt64, sh.toNat = 8 * k →
+      (load64 w.1 s hs (by rw [w.2]; exact h32) >>> sh).toUInt8 = w.1.data[s.toNat + k]?.getD 0 :=
+    fun k hk sh hsh => load64_byte w.1 s hs _ k hk sh hsh
+  have b0 : (load64 w.1 s hs (by rw [w.2]; exact h32)).toUInt8 = w.1.data[s.toNat + 0]?.getD 0 := by
+    rw [← b 0 (by decide) 0 rfl]
+    congr 1
+  apply ByteArray.ext
+  apply Array.ext_getElem?
+  intro j
+  rw [copySlice_self_get w.1 d.toNat s.toNat 8 j (by omega) hs]
+  unfold put8At
+  simp only [wst_get, e 1 (by decide), e 2 (by decide), e 3 (by decide), e 4 (by decide), e 5 (by decide),
+    e 6 (by decide), e 7 (by decide), b0, b 1 (by decide) 8 rfl, b 2 (by decide) 16 rfl, b 3 (by decide) 24 rfl,
+    b 4 (by decide) 32 rfl, b 5 (by decide) 40 rfl, b 6 (by decide) 48 rfl, b 7 (by decide) 56 rfl]
+  have hget : ∀ q, q < w.1.data.size → w.1.data[q]? = some (w.1.data[q]?.getD 0) := fun q hq => by
+    rw [Array.getElem?_eq_getElem hq]
+    rfl
+  have h1 : w.1.size = w.1.data.size := rfl
+  by_cases hin : d.toNat ≤ j ∧ j < d.toNat + 8
+  · rw [ite_eq_left hin]
+    obtain ⟨k, hk, rfl⟩ : ∃ k, k < 8 ∧ j = d.toNat + k := ⟨j - d.toNat, by omega, by omega⟩
+    rw [show d.toNat + k - d.toNat = k by omega]
+    conv => rhs; rw [hget (s.toNat + k) (by omega)]
+    match k, hk with
+    | 0, _ => simp
+    | 1, _ => simp
+    | 2, _ => simp
+    | 3, _ => simp
+    | 4, _ => simp
+    | 5, _ => simp
+    | 6, _ => simp
+    | 7, _ => simp
+  · rw [ite_eq_right hin]
+    rw [ite_eq_right (by omega), ite_eq_right (by omega), ite_eq_right (by omega), ite_eq_right (by omega),
+      ite_eq_right (by omega), ite_eq_right (by omega), ite_eq_right (by omega), ite_eq_right (by omega)]
+
 /-! ### A literal round -/
 
 theorem ringWrite_wput {ring : ByteArray} {opos mask : USize} {k : Nat} (hk : k ≤ 24) (hm : mask.toNat = 2 ^ k - 1)
