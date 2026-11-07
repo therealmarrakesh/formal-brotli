@@ -1021,6 +1021,40 @@ theorem copyF_cases (ring : ByteArray) (wpos d n mask size : USize) {k : Nat} (h
       · right
         rfl
 
+/-- The fast copy leaves the window as the step machine's byte-by-byte copy does, but for bytes in the 16 of slack past
+the copy's end. -/
+theorem copyF_run (ring : ByteArray) (wpos d n mask size : USize) {k : Nat} (hk : k ≤ 24)
+    (hm : mask.toNat = 2 ^ k - 1) (hsz : size.toNat = 2 ^ k) (hs : ring.size = 2 ^ k) (hw : wpos.toNat < 2 ^ k)
+    (hd : d.toNat + 16 ≤ 2 ^ k) (hn1 : 1 ≤ n.toNat) (hd1 : 1 ≤ d.toNat) (hd2 : d.toNat ≤ 2 ^ k) (p1 p2 : UInt8)
+    {out : List Nat}
+    (h : RingOk (copyRun d mask size k hk hm hsz hd1 hd2 n ring wpos p1 p2 hs hw).ring k
+      (copyRun d mask size k hk hm hsz hd1 hd2 n ring wpos p1 p2 hs hw).wpos.toNat out) :
+    RingOk (copyF ring wpos d n mask size hk hm hsz hs hw hd) k
+      (copyRun d mask size k hk hm hsz hd1 hd2 n ring wpos p1 p2 hs hw).wpos.toNat out := by
+  have hR : 2 ^ k ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
+  have hSl : ((wpos - d) &&& mask).toNat < 2 ^ k := mask_lt hm
+  have hsp : ((wpos - d) &&& mask).toNat % 2 ^ k = (wpos.toNat + 2 ^ k - d.toNat) % 2 ^ k := by
+    rcases src_cases hk hm hw hd with e | e
+    · rw [show wpos.toNat + 2 ^ k - d.toNat = ((wpos - d) &&& mask).toNat + 2 ^ k by omega, Nat.add_mod_right]
+    · rw [← e]
+  have hrun := copyMasked_run hk hm hsz hd1 hd2 n.toNat n ring wpos wpos ((wpos - d) &&& mask) p1 p2 hs hw rfl
+    (Nat.mod_eq_of_lt hw) hsp
+  rcases copyF_cases ring wpos d n mask size hk hm hsz hs hw hd hn1 with ⟨N, hN1, hN2, hwN, hsN, e⟩ | e
+  · rw [e]
+    have hfn : fwdCopy ring wpos.toNat ((wpos - d) &&& mask).toNat n.toNat =
+        (copyRun d mask size k hk hm hsz hd1 hd2 n ring wpos p1 p2 hs hw).ring := by
+      rw [← hrun, copyMasked_fwd hk hm n.toNat ring wpos _ n hs rfl (by omega) (by omega)]
+    rw [show N = n.toNat + (N - n.toNat) by omega, fwdCopy_add, hfn]
+    refine h.slack (fwdCopy_size _ _ _ _) fun i _ hi _ => fwdCopy_out _ _ _ _ i fun hin => hi ?_
+    have hp : (copyRun d mask size k hk hm hsz hd1 hd2 n ring wpos p1 p2 hs hw).wpos.toNat =
+        wpos.toNat + n.toNat := by
+      rw [copyRun_wpos hk hm hsz hd1 hd2 _ n ring wpos p1 p2 hs hw rfl, USize.toNat_and, hm,
+        Nat.and_two_pow_sub_one_eq_mod, fastAdd (by omega), Nat.mod_eq_of_lt (by omega)]
+    rw [hp]
+    omega
+  · rw [e, hrun]
+    exact h
+
 /-! ### A literal round -/
 
 theorem ringWrite_wput {ring : ByteArray} {opos mask : USize} {k : Nat} (hk : k ≤ 24) (hm : mask.toNat = 2 ^ k - 1)
