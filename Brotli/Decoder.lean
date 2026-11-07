@@ -14,6 +14,7 @@ public import Brotli.Decoder.TableSize
 public import Brotli.Decoder.Builder
 public import Brotli.Decoder.Lookup
 public import Brotli.Decoder.Window
+public import Brotli.Decoder.WinCopy
 public import Brotli.Decoder.ContextLut
 public import Brotli.Decoder.Fixed
 public import Brotli.Decoder.Literals
