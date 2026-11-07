@@ -275,6 +275,91 @@ theorem lit_move {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeade
   rw [hrec] at hstep
   exact hstep.widen rfl rfl hp
 
+/-- The fast loop's literal read is the lookup at the context's tree: through the resolved literal map, or at the block
+type's shared base. -/
+theorem FCtx.litT_lookup {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow s0 : USize}
+    (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) (p1 p2 : UInt8) (w : UInt64) :
+    ∃ (base : USize) (hfit : TableFits H.arena base.toNat),
+      u32At H.litBase (byteN H.lMap (64 * lCur.toNat + (cidFast modeOff p1 p2 C.hm).toNat)) = base.toNat ∧
+      litT C p1 p2 w = lookup H.arena base w hfit H.lit.arena32 := by
+  have hT := C.arena
+  subst hT
+  have hc := cid_lt (p1 := p1) (p2 := p2) C.hm C.hm512
+  unfold litT
+  split
+  · rename_i h
+    refine ⟨_, (C.rowIn p1 p2).fits (by have := C.lim; omega), ?_, lookupT_eq _ _ _⟩
+    unfold litRowBase
+    rw [word_toUSize (by rw [load32_toNat]; exact Nat.lt_of_lt_of_le (leAt_lt _ _ 4) (by decide)), load32_toNat,
+      (C.litIdx _ hc).1, (C.litIn hc).1]
+  · rename_i h
+    refine ⟨_, (C.tbIn h).fits (by have := C.lim; omega), ?_, lookupT_eq _ _ _⟩
+    have hv : tb.toNat = u32At H.lTriv lCur.toNat := by rw [C.tbEq, trivBase_toNat]
+    have hne : u32At H.lTriv lCur.toNat ≠ 4294967295 := fun e => h (UInt64.toNat_inj.mp (by rw [hv, e]; rfl))
+    rw [word_toUSize (by rw [hv]; exact u32At_lt _ _), hv]
+    exact H.trivOk _ C.hl hne _ hc
+
+/-! ### The loop's numbers -/
+
+/-- What keeps the loop's unmasked positions from wrapping: the bytes the current command still writes (`ahead`) fit
+before `bEnd`, which is within the meta-block; the bytes waiting and written, as the loop computes them from `opos`, stay
+within the window up to `bEnd`. -/
+structure FNum (opos pB wB : USize) (rEnd bEnd : UInt64) (k ahead : Nat) : Prop where
+  ahead : opos.toNat + ahead ≤ bEnd.toNat
+  bEndLe : bEnd.toNat ≤ rEnd.toNat
+  small : bEnd.toNat < 2 ^ 30
+  pend : (opos + pB).toNat + (bEnd.toNat - opos.toNat) + 16 ≤ 2 ^ k
+  wr : (opos + wB).toNat + (bEnd.toNat - opos.toNat) < 2 ^ 30
+
+theorem u64_add_sub_one {a b : UInt64} (h : 1 ≤ b.toNat) (h' : a.toNat + b.toNat < 2 ^ 64) :
+    a + b - 1 = a + (b - 1) := by
+  apply UInt64.toNat_inj.mp
+  have h1 : (1 : UInt64).toNat = 1 := rfl
+  have e : (b - 1).toNat = b.toNat - 1 := by rw [u64_sub_le (by rw [h1]; exact h), h1]
+  rw [u64_sub_le (by rw [u64_add_small h', h1]; omega), u64_add_small h', h1,
+    u64_add_small (by rw [e]; omega), e]
+  omega
+
+/-- The record a fast state stands for, after the step machine's literal, is the fast state's one byte on: the window
+position, the bytes waiting and written and what remains, from `opos + 1`. -/
+theorem fexit_succ {word count word' count' : UInt64} {ring ring' : ByteArray} {opos mask pB cap cap16 wB : USize}
+    {rEnd bEnd : UInt64} {iCount lc dCount : UInt64} {flags : Flags} {x : CmdExt} {d01 d23 code ilen clen : UInt64}
+    {p1 p2 q1 q2 : UInt8} {tag : Tag} {lf : UInt64} {pos pos' : USize} {k : USize} (hk : k.toNat ≤ 24)
+    (h16 : 16 ≤ 2 ^ k.toNat) (hmk : mask = ringMask k) (hcap : cap16 = ringSize k - USize.ofNat 16)
+    {ahead : Nat} (N : FNum opos pB wB rEnd bEnd k.toNat ahead) (ha : 1 ≤ ahead) :
+    { fexit word count ring opos mask pB cap cap16 wB rEnd iCount lc dCount flags x d01 d23 code ilen clen p1 p2 tag lf
+        pos with
+      word := word', count := count', ring := ring', wpos := ringNext (opos &&& mask) (ringMask k), p1 := q1, p2 := q2,
+      left := lf - 1, lCount := lc - 1, remaining := rEnd - opos.toUInt64 - 1, pend := opos + pB + USize.ofNat 1,
+      written := usmin (ringSize k - USize.ofNat 16) (usmin cap16 (opos + wB) + USize.ofNat 1), pos := pos',
+      status := .next } =
+      fexit word' count' ring' (opos + USize.ofNat 1) mask pB cap cap16 wB rEnd iCount (lc - 1) dCount flags x d01 d23 code
+        ilen clen q1 q2 tag (lf - 1) pos' := by
+  subst hmk
+  subst hcap
+  have hR : 2 ^ k.toNat ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
+  have hc : (ringSize k - USize.ofNat 16).toNat < 2 ^ 32 := by
+    rw [USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr (by rw [fastLit (by decide), ringSize_toNat hk]; exact h16)),
+      fastLit (by decide), ringSize_toNat hk]
+    omega
+  have hpos := N.ahead
+  have hsm := N.small
+  have hwr := N.wr
+  have hbe := N.bEndLe
+  have e1 : ringNext (opos &&& ringMask k) (ringMask k) = (opos + USize.ofNat 1) &&& ringMask k :=
+    mask_succ hk (ringMask_toNat hk)
+  have e2 : opos + pB + USize.ofNat 1 = opos + USize.ofNat 1 + pB := usize_add_one_comm _ _
+  have e3 : usmin (ringSize k - USize.ofNat 16) (usmin (ringSize k - USize.ofNat 16) (opos + wB) + USize.ofNat 1) =
+      usmin (ringSize k - USize.ofNat 16) (opos + USize.ofNat 1 + wB) := by
+    rw [← usize_add_one_comm]
+    exact usmin_succ (by omega) hc
+  have e4 : rEnd - opos.toUInt64 - 1 = rEnd - (opos + USize.ofNat 1).toUInt64 :=
+    (rem_succ (by omega) (by omega)).symm
+  unfold fexit
+  rw [e1, e2, e3, e4]
+
+/-! ### The masked byte loop is the step machine's copy -/
+
 /-! ### The masked byte loop is the step machine's copy -/
 
 theorem uset_congr {t : ByteArray} {i j : USize} {v v' : UInt8} {hi : i.toNat < t.size} {hj : j.toNat < t.size}
