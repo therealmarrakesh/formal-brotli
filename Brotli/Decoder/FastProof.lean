@@ -663,6 +663,57 @@ theorem shortFast_eq {d0 d1 d2 d3 dc : UInt64} (h0 : d0.toNat < 2 ^ 32) (h1 : d1
     exact short_add_case (x := 3) (by decide) h1
   | _ + 16, h => exact absurd h (by omega)
 
+/-! ### Forward copies -/
+
+/-- A forward copy of `a + b` bytes is one of `a` bytes and then one of `b` from where it ended. -/
+theorem fwdCopy_add (w : ByteArray) (d s a : Nat) :
+    ∀ b, fwdCopy w d s (a + b) = fwdCopy (fwdCopy w d s a) (d + a) (s + a) b
+  | 0 => rfl
+  | b + 1 => by
+    show (⟨(fwdCopy w d s (a + b)).data.setIfInBounds (d + (a + b))
+        ((fwdCopy w d s (a + b)).data[s + (a + b)]?.getD 0)⟩ : ByteArray) =
+      ⟨(fwdCopy (fwdCopy w d s a) (d + a) (s + a) b).data.setIfInBounds (d + a + b)
+        ((fwdCopy (fwdCopy w d s a) (d + a) (s + a) b).data[s + a + b]?.getD 0)⟩
+    rw [fwdCopy_add w d s a b, Nat.add_assoc, Nat.add_assoc]
+
+/-- A forward copy writes only its destination. -/
+theorem fwdCopy_out (w : ByteArray) (d s : Nat) : ∀ k i, ¬ (d ≤ i ∧ i < d + k) →
+    (fwdCopy w d s k).data[i]? = w.data[i]?
+  | 0, _, _ => rfl
+  | k + 1, i, h => by
+    show ((fwdCopy w d s k).data.setIfInBounds (d + k) _)[i]? = _
+    rw [Array.getElem?_setIfInBounds, ite_eq_right (by omega), fwdCopy_out w d s k i (by omega)]
+
+/-- With the source never in the part of the destination already written (it starts at or after the destination, or ends
+before it), a forward copy reads only bytes it hasn't written. -/
+theorem fwdCopy_get' (w : ByteArray) (d s : Nat) :
+    ∀ k, (d ≤ s ∨ s + k ≤ d) → d + k ≤ w.size → s + k ≤ w.size → ∀ i,
+      (fwdCopy w d s k).data[i]? = if d ≤ i ∧ i < d + k then w.data[s + (i - d)]? else w.data[i]?
+  | 0, _, _, _, i => by
+    rw [ite_eq_right (by omega)]
+    rfl
+  | k + 1, hs, hd, hs', i => by
+    have ih := fwdCopy_get' w d s k (by omega) (by omega) (by omega)
+    have hsz := fwdCopy_size w d s k
+    have hsz' : (fwdCopy w d s k).data.size = w.data.size := hsz
+    have hwsz : w.size = w.data.size := rfl
+    have hread : (fwdCopy w d s k).data[s + k]? = w.data[s + k]? := by
+      rw [ih (s + k), ite_eq_right (by omega)]
+    show ((fwdCopy w d s k).data.setIfInBounds (d + k) ((fwdCopy w d s k).data[s + k]?.getD 0))[i]? = _
+    rw [hread, Array.getElem?_setIfInBounds]
+    by_cases hi : d + k = i
+    · subst hi
+      have hlt : d + k < (fwdCopy w d s k).data.size := by omega
+      rw [ite_eq_left rfl, ite_eq_left hlt, ite_eq_left (by omega)]
+      have : s + (d + k - d) = s + k := by omega
+      rw [this]
+      rw [Array.getElem?_eq_getElem (by omega : s + k < w.data.size)]
+      rfl
+    · rw [ite_eq_right hi, ih i]
+      by_cases hr : d ≤ i ∧ i < d + k
+      · rw [ite_eq_left hr, ite_eq_left (by omega)]
+      · rw [ite_eq_right hr, ite_eq_right (by omega)]
+
 /-! ### A literal round -/
 
 theorem ringWrite_wput {ring : ByteArray} {opos mask : USize} {k : Nat} (hk : k ≤ 24) (hm : mask.toNat = 2 ^ k - 1)
