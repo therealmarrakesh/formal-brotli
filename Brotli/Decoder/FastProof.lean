@@ -426,6 +426,112 @@ theorem copyMasked_run {d mask size : USize} {k : Nat} (hk : k ≤ 24) (hm : mas
         rw [this, Nat.mod_self, show wpos.toNat + 2 ^ k - d.toNat + 1 = (0 + 2 ^ k - d.toNat) + 2 ^ k by omega,
           Nat.add_mod_right]
 
+/-! ### Distances -/
+
+theorem shl_add_distrib (a b s : UInt64) : (a + b) <<< s = (a <<< s) + (b <<< s) := by
+  apply UInt64.toNat_inj.mp
+  rw [UInt64.toNat_shiftLeft, UInt64.toNat_add, UInt64.toNat_add, UInt64.toNat_shiftLeft, UInt64.toNat_shiftLeft]
+  simp only [Nat.shiftLeft_eq]
+  rw [Nat.mod_mul_mod, Nat.add_mul, Nat.add_mod]
+
+/-- A distance symbol from 16 on: its distance is the one with no extra bits, plus the extra bits shifted by NPOSTFIX
+(direct codes take none). -/
+theorem distFast_split {np nd d0 d1 d2 d3 dc extra : UInt64} (h16 : ¬ dc < 16) :
+    distFast np nd d0 d1 d2 d3 dc extra =
+      distFast np nd 0 0 0 0 dc 0 + (if dc < 16 + nd then 0 else extra <<< np) := by
+  unfold distFast
+  rw [ite_eq_right h16, ite_eq_right h16]
+  split
+  · rw [UInt64.add_zero]
+  · dsimp only
+    rw [UInt64.add_zero, shl_add_distrib]
+    rw [UInt64.add_assoc, UInt64.add_assoc, UInt64.add_assoc, UInt64.add_assoc, UInt64.add_assoc, UInt64.add_assoc]
+    congr 1
+    rw [UInt64.add_comm (extra <<< np), UInt64.add_assoc, UInt64.add_assoc]
+
+/-- A distance symbol from 16 on, within the alphabet, gives a distance below `2 ^ 30` with its extra bits. -/
+theorem distFast_lt {np nd d0 d1 d2 d3 dc extra : UInt64} (hnp : np.toNat ≤ 3) (hnd : nd.toNat ≤ 120)
+    (hd : dc.toNat < 2 ^ 16) (h16 : ¬ dc < 16) (hbits : (extraBitsFast np nd dc).toNat ≤ 24)
+    (hx : extra.toNat < 2 ^ (extraBitsFast np nd dc).toNat) :
+    (distFast np nd d0 d1 d2 d3 dc extra).toNat < 2 ^ 30 := by
+  have h16' : (16 : UInt64).toNat = 16 := rfl
+  have hadd : (16 + nd).toNat = 16 + nd.toNat := u64_add_small (by rw [h16']; omega)
+  have h16N : 16 ≤ dc.toNat :=
+    Nat.le_of_not_lt fun h => h16 (UInt64.lt_iff_toNat_lt.mpr (by rw [h16']; exact h))
+  unfold distFast
+  rw [ite_eq_right h16]
+  split
+  · rename_i hlt
+    have := UInt64.lt_iff_toNat_lt.mp hlt
+    rw [hadd] at this
+    rw [u64_sub_le (by show 15 ≤ _; omega)]
+    show dc.toNat - 15 < _
+    omega
+  · rename_i hge
+    have hge' : 16 + nd.toNat ≤ dc.toNat :=
+      Nat.le_of_not_lt fun h => hge (UInt64.lt_iff_toNat_lt.mpr (by rw [hadd]; exact h))
+    dsimp only
+    rw [far_toNat hnp hnd hd hge' hbits hx]
+    have hb := (extraBitsFast_toNat hnp hnd hd).symm
+    rw [← hb] at hbits hx
+    generalize distanceExtraBits np.toNat nd.toNat dc.toNat = nb at hbits hx ⊢
+    generalize dc.toNat - nd.toNat - 16 = X
+    have hbit : (X >>> np.toNat) &&& 1 ≤ 1 := Nat.and_le_right
+    have hpow : 2 ^ nb ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hbits
+    have hpow8 : 2 ^ np.toNat ≤ 2 ^ 3 := Nat.pow_le_pow_right (by decide) hnp
+    have hA : (2 + ((X >>> np.toNat) &&& 1)) <<< nb ≤ 3 * 2 ^ 24 := by
+      rw [Nat.shiftLeft_eq]
+      exact Nat.mul_le_mul (by omega) hpow
+    have hB : ((2 + ((X >>> np.toNat) &&& 1)) <<< nb) - 4 + extra.toNat < 2 ^ 26 := by
+      have : (2 : Nat) ^ 26 = 67108864 := by decide
+      have : (2 : Nat) ^ 24 = 16777216 := by decide
+      omega
+    have hC : (((2 + ((X >>> np.toNat) &&& 1)) <<< nb) - 4 + extra.toNat) <<< np.toNat < 2 ^ 29 := by
+      rw [Nat.shiftLeft_eq]
+      have := Nat.lt_of_lt_of_le (Nat.mul_lt_mul_of_pos_right hB (Nat.two_pow_pos np.toNat))
+        (Nat.mul_le_mul_left (2 ^ 26) hpow8)
+      have : (2 : Nat) ^ 26 * 2 ^ 3 = 2 ^ 29 := by decide
+      omega
+    have hm : X &&& postfixMask np.toNat ≤ 7 := by
+      refine Nat.le_trans Nat.and_le_right ?_
+      unfold postfixMask
+      rw [Nat.shiftLeft_eq, Nat.one_mul]
+      have : (2 : Nat) ^ 3 = 8 := by decide
+      omega
+    have : (2 : Nat) ^ 29 = 536870912 := by decide
+    have : (2 : Nat) ^ 30 = 1073741824 := by decide
+    omega
+
+/-- A shared distance table's entry, for a symbol from 16 on within the alphabet: its extra bits in the low bits, and its
+distance with no extra bits from bit 32. -/
+theorem dEntry_split {np nd dc : UInt64} (hnp : np.toNat ≤ 3) (hnd : nd.toNat ≤ 120) (hd : dc.toNat < 2 ^ 16)
+    (h16 : ¬ dc < 16) (hbits : (extraBitsFast np nd dc).toNat ≤ 24) :
+    dEntry np nd dc &&& 31 = extraBitsFast np nd dc ∧ dEntry np nd dc >>> 32 = distFast np nd 0 0 0 0 dc 0 := by
+  have hD := distFast_lt (d0 := 0) (d1 := 0) (d2 := 0) (d3 := 0) (extra := 0) hnp hnd hd h16 hbits
+    (by show 0 < _; exact Nat.two_pow_pos _)
+  unfold dEntry
+  rw [ite_eq_right h16]
+  generalize distFast np nd 0 0 0 0 dc 0 = D at hD ⊢
+  generalize extraBitsFast np nd dc = e at hbits ⊢
+  have hsh : (D <<< 32).toNat = 2 ^ 32 * D.toNat := by
+    rw [UInt64.toNat_shiftLeft, show (32 : UInt64).toNat % 64 = 32 from rfl, Nat.shiftLeft_eq, Nat.mul_comm]
+    exact Nat.mod_eq_of_lt (by have : (2 : Nat) ^ 30 * 2 ^ 32 < 2 ^ 64 := by decide
+                               have : 2 ^ 32 * D.toNat < 2 ^ 32 * 2 ^ 30 := Nat.mul_lt_mul_of_pos_left hD (by decide)
+                               omega)
+  have hor : (e ||| (D <<< 32)).toNat = 2 ^ 32 * D.toNat + e.toNat := by
+    rw [UInt64.toNat_or, hsh, Nat.or_comm, ← Nat.two_pow_add_eq_or_of_lt (by
+      have : (2 : Nat) ^ 24 < 2 ^ 32 := by decide
+      omega)]
+  constructor
+  · apply UInt64.toNat_inj.mp
+    rw [UInt64.toNat_and, hor, show (31 : UInt64).toNat = 2 ^ 5 - 1 from rfl, Nat.and_two_pow_sub_one_eq_mod,
+      show 2 ^ 32 * D.toNat + e.toNat = e.toNat + 2 ^ 5 * (2 ^ 27 * D.toNat) by omega, Nat.add_mul_mod_self_left,
+      Nat.mod_eq_of_lt (by omega)]
+  · apply UInt64.toNat_inj.mp
+    rw [UInt64.toNat_shiftRight, hor, show (32 : UInt64).toNat % 64 = 32 from rfl, Nat.shiftRight_eq_div_pow,
+      Nat.mul_add_div (by decide), Nat.div_eq_of_lt (by have : (2 : Nat) ^ 24 < 2 ^ 32 := by decide
+                                                        omega), Nat.add_zero]
+
 /-! ### A literal round -/
 
 theorem ringWrite_wput {ring : ByteArray} {opos mask : USize} {k : Nat} (hk : k ≤ 24) (hm : mask.toNat = 2 ^ k - 1)

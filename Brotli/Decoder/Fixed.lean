@@ -181,7 +181,7 @@ theorem shortDist_toNat {d0 d1 d2 d3 dcode : UInt64} (h0 : d0.toNat < 2 ^ 32) (h
     let offset := ((2 + ((x >>> np) &&& 1)) <<< extraBitsFast np nd dcode) - 4
     ((offset + extra) <<< np) + (x &&& (((1 : UInt64) <<< np) - 1)) + nd + 1
 
-private theorem far_toNat {np nd dcode extra : UInt64} (hnp : np.toNat ≤ 3) (hnd : nd.toNat ≤ 120) (hd : dcode.toNat < 2 ^ 16)
+theorem far_toNat {np nd dcode extra : UInt64} (hnp : np.toNat ≤ 3) (hnd : nd.toNat ≤ 120) (hd : dcode.toNat < 2 ^ 16)
     (hge : 16 + nd.toNat ≤ dcode.toNat) (hbits : (extraBitsFast np nd dcode).toNat ≤ 24)
     (hx : extra.toNat < 2 ^ (extraBitsFast np nd dcode).toNat) :
     ((((2 + (((dcode - nd - 16) >>> np) &&& 1)) <<< extraBitsFast np nd dcode) - 4 + extra) <<< np +
