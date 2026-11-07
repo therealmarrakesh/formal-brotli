@@ -251,39 +251,148 @@ theorem hdr_facts {d : Done} {g : Gh} (hu : Upto d g 10) : HdrSizes d ∧ HdrPro
     by rw [hIn]; exact tablesFrom ci ci1.symm, by rw [td1]; exact mapOk_lt md, by rw [td1]; exact tablesFrom cd cd1.symm,
     catOf hL, catOf hI, catOf hD⟩⟩
 
-/-- Makes the command loop's header from a header that was read. -/
-def mkHdr (d : Done) (h : ∃ g, Upto d g 10) : Hdr :=
-  have hf : HdrSizes d ∧ HdrProps d := by
+/-! ### The fast command loop's tables -/
+
+/-- What the derived tables' builder needs, from a header that was read: its arena `A`, the rest of its record `d`, and
+its literal types' shared tables `lTriv`. -/
+theorem tabArgs_of {A : ByteArray} {d : Done} {g : Gh} (hu : Upto { d with arena := A } g 10) {lTriv : ByteArray}
+    (ht : lTriv.size = 4 * d.nL.toNat) (hok : TrivInv d.lMap d.litBase lTriv d.nL.toNat) :
+    TabArgs A d.litBase d.lMap d.icBase d.dBase d.dMap lTriv d.nL.toNat d.nI.toNat d.nD.toNat d.treesL.toNat
+      d.treesD.toNat := by
+  obtain ⟨hs, hp⟩ := hdr_facts hu
+  unfold HdrSizes at hs
+  dsimp only at hs
+  obtain ⟨_, _, h3, h4, _, _, h7, _, h9, _, h11, _, h13, _, h15, h16, h17⟩ := hs
+  have hL := hu.cat .L (by decide)
+  have hD := hu.cat .D (by decide)
+  have hLn : d.nL.toNat = g.m.literal.n := hL.n
+  have hDn : d.nD.toNat = g.m.distance.n := hD.n
+  have hIn : d.nI.toNat = g.m.insertCopy.n := (hu.cat .I (by decide)).n
+  have hL2 : g.m.literal.n ≤ 256 := hL.wf.2.1
+  have hD2 : g.m.distance.n ≤ 256 := hD.wf.2.1
+  have hfin := hu.fin rfl
+  have hmax := hu.max
+  have hpre := hu.pre
+  dsimp only at hfin hmax hpre
+  unfold arenaPre at hpre
+  have htm : tabMaxOf g = tabMax d.nL.toNat d.nI.toNat d.nD.toNat := by
+    unfold tabMaxOf
+    rw [hLn, hIn, hDn, Nat.min_eq_left hL2, Nat.min_eq_left (by omega), Nat.min_eq_left hD2]
+  refine ⟨⟨by omega, h17, by omega, h4, h15, h7, hp.treeLt, h9, h11, h16, h13, hp.dMapLt, ht⟩, ?_, hpre, hu.masks,
+    hp.fits, hp.icFits, hp.dFits, fun t hti hne => ?_⟩
+  · have : A.size + tabMaxOf g ≤ d.arenaCap.toNat := hfin
+    rw [htm] at this
+    omega
+  · have e0 := hok t hti hne 0 (by decide)
+    rw [Nat.add_zero] at e0
+    have hp64 : (USize.ofNat (64 * t)).toNat = 64 * t := fastLit (by omega)
+    have hlt := hp.treeLt (USize.ofNat (64 * t)) (by rw [hp64, h7]; omega)
+    rw [uget_toNat, hp64] at hlt
+    rw [← e0]
+    exact hp.fits _ hlt
+
+/-- The arena with the fast command loop's derived tables appended, the literal types chosen for two-literal tables
+by the policy. -/
+def buildArena (A : ByteArray) (d : Done) (lTriv : ByteArray) (mlen : UInt64)
+    (h : TabArgs A d.litBase d.lMap d.icBase d.dBase d.dMap lTriv d.nL.toNat d.nI.toNat d.nD.toNat d.treesL.toNat
+      d.treesD.toNat) :
+    { T : ByteArray // Extends A T ∧ TabOk T d.litBase d.lMap d.icBase d.dBase d.dMap lTriv d.nL.toNat d.nI.toNat
+      d.nD.toNat d.treesL.toNat d.treesD.toNat d.npostfix d.ndirect (A.size + padOf A.size) ∧
+      T.size ≤ A.size + tabMax d.nL.toNat d.nI.toNat d.nD.toNat } :=
+  match tabPolicy A (by have := h.size; omega) d.icBase d.nI.toNat h.arrs.icSize
+      (by have := h.arrs.icSize; have := h.arrs.nI256; omega) (fun ti hti => (h.icFits ti hti).root) lTriv d.nL.toNat
+      h.arrs.trivSize h.arrs.nL256 h.trivFits mlen with
+  | ⟨(fl, A1), hA⟩ =>
+    ⟨buildTab A1 d.litBase d.lMap d.icBase d.dBase d.dMap lTriv d.nL.toNat d.nI.toNat d.nD.toNat d.treesL.toNat
+        d.treesD.toNat (by rw [show A1 = A from hA]; exact h) d.npostfix d.ndirect fl.1 fl.2.1 fl.2.2.1 fl.2.2.2,
+      by
+        have e : A1 = A := hA
+        subst e
+        exact ⟨buildTab_extends _ _ _ _ _ _ _, buildTab_ok _ _ _ _ _ _ _, buildTab_size _ _ _ _ _ _ _⟩⟩
+
+/-- A table keeps what it decodes in an arena that begins with the one it was built in. -/
+theorem TableOk.extend {A T : ByteArray} {b : Nat} {c : PrefixCode} (h : TableOk A b c) (he : Extends A T)
+    (h4 : A.size % 2 = 0) : TableOk T b c :=
+  h.frame h4 he.1 (fun q hq => he.slotAt (by omega))
+
+/-- An arena that begins with another keeps it, as the header's growth does. -/
+theorem Extends.keep {A T : ByteArray} (he : Extends A T) (h4 : A.size % 2 = 0) : Keep A T :=
+  ⟨h4, he.1, fun q hq => he.slotAt (by omega)⟩
+
+/-- Takes a settled record's arena out of it, so that the arena is held once while the derived tables are appended. -/
+@[noinline] def takeArena (d : Done) : ByteArray × Done := (d.arena, clearArena d)
+
+theorem takeArena_back {d d0 : Done} {A : ByteArray} (h : takeArena d = (A, d0)) : { d0 with arena := A } = d := by
+  unfold takeArena clearArena at h
+  obtain ⟨rfl, rfl⟩ := Prod.mk.inj h
+  rfl
+
+/-- The command loop's header, from a header that was read with its arena `A` taken out of the rest of its record `d`, and
+its arena with the derived tables `R`. -/
+def hdrOfArena (A : ByteArray) (d : Done) (hf : HdrSizes { d with arena := A } ∧ HdrProps { d with arena := A })
+    (lTriv : ByteArray) (ht : lTriv.size = 4 * d.nL.toNat) (hok : TrivInv d.lMap d.litBase lTriv d.nL.toNat)
+    (R : { T : ByteArray // Extends A T ∧ TabOk T d.litBase d.lMap d.icBase d.dBase d.dMap lTriv d.nL.toNat d.nI.toNat
+      d.nD.toNat d.treesL.toNat d.treesD.toNat d.npostfix d.ndirect (A.size + padOf A.size) ∧
+      T.size ≤ A.size + tabMax d.nL.toNat d.nI.toNat d.nD.toNat }) : Hdr :=
+  match R with
+  | ⟨T, hT⟩ =>
+    { arena := T, arenaCap := d.arenaCap, litBase := d.litBase, lMap := d.lMap, icBase := d.icBase, dBase := d.dBase
+      dMap := d.dMap, modes := d.modes
+      nL := d.nL, nI := d.nI, nD := d.nD, treesL := d.treesL, treesD := d.treesD
+      baseTL := d.baseTL, baseCL := d.baseCL, baseTI := d.baseTI, baseCI := d.baseCI, baseTD := d.baseTD, baseCD := d.baseCD
+      npostfix := d.npostfix, ndirect := d.ndirect
+      npLe := hf.1.2.2.2.2.1, ndLe := hf.1.2.2.2.2.2.1
+      lit := ⟨hT.2.1.size32, hf.1.2.1, hf.1.2.2.1, hf.1.2.2.2.1, hf.2.treeLt,
+        fun tree htr => (hT.2.1.lFit tree htr).fits (by have := hT.2.1.sizeOk; omega)⟩
+      lMapSize := hf.1.2.2.2.2.2.2.1
+      modesSize := hf.1.2.2.2.2.2.2.2.1
+      modesLt := hf.2.modesLt
+      icSize := hf.1.2.2.2.2.2.2.2.2.1
+      ic32 := hf.1.2.2.2.2.2.2.2.2.2.1
+      icFits := fun t hti => (hT.2.1.iFit t hti).fits (by have := hT.2.1.sizeOk; omega)
+      dSize := hf.1.2.2.2.2.2.2.2.2.2.2.1
+      d32 := hf.1.2.2.2.2.2.2.2.2.2.2.2.1
+      dMapSize := hf.1.2.2.2.2.2.2.2.2.2.2.2.2.1
+      dMap32 := hf.1.2.2.2.2.2.2.2.2.2.2.2.2.2.1
+      dMapLt := hf.2.dMapLt
+      dFits := fun tree htr => (hT.2.1.dFit tree htr).fits (by have := hT.2.1.sizeOk; omega)
+      swL := fun h2 => ⟨(hf.2.swL h2).1.extend hT.1, (hf.2.swL h2).2.extend hT.1⟩
+      swI := fun h2 => ⟨(hf.2.swI h2).1.extend hT.1, (hf.2.swI h2).2.extend hT.1⟩
+      swD := fun h2 => ⟨(hf.2.swD h2).1.extend hT.1, (hf.2.swD h2).2.extend hT.1⟩
+      lTriv := lTriv
+      trivSize := ht
+      trivOk := hok
+      tabF0 := USize.ofNat (A.size + padOf A.size) }
+
+/-- Makes the command loop's header from a header that was read, with its arena `A` taken out of the rest of its record
+`d`: the literal types' shared tables, then the derived tables appended to the arena in place. -/
+def mkHdrOf (A : ByteArray) (d : Done) (mlen : UInt64) (h : ∃ g, Upto { d with arena := A } g 10) : Hdr :=
+  have hf : HdrSizes { d with arena := A } ∧ HdrProps { d with arena := A } := by
     obtain ⟨g, hu⟩ := h
     exact hdr_facts hu
-  { arena := d.arena, arenaCap := d.arenaCap, litBase := d.litBase, lMap := d.lMap, icBase := d.icBase, dBase := d.dBase
-    dMap := d.dMap, modes := d.modes
-    nL := d.nL, nI := d.nI, nD := d.nD, treesL := d.treesL, treesD := d.treesD
-    baseTL := d.baseTL, baseCL := d.baseCL, baseTI := d.baseTI, baseCI := d.baseCI, baseTD := d.baseTD, baseCD := d.baseCD
-    npostfix := d.npostfix, ndirect := d.ndirect
-    npLe := hf.1.2.2.2.2.1, ndLe := hf.1.2.2.2.2.2.1
-    lit := ⟨hf.1.1, hf.1.2.1, hf.1.2.2.1, hf.1.2.2.2.1, hf.2.treeLt, hf.2.fits⟩
-    lMapSize := hf.1.2.2.2.2.2.2.1
-    modesSize := hf.1.2.2.2.2.2.2.2.1
-    modesLt := hf.2.modesLt
-    icSize := hf.1.2.2.2.2.2.2.2.2.1
-    ic32 := hf.1.2.2.2.2.2.2.2.2.2.1
-    icFits := hf.2.icFits
-    dSize := hf.1.2.2.2.2.2.2.2.2.2.2.1
-    d32 := hf.1.2.2.2.2.2.2.2.2.2.2.2.1
-    dMapSize := hf.1.2.2.2.2.2.2.2.2.2.2.2.2.1
-    dMap32 := hf.1.2.2.2.2.2.2.2.2.2.2.2.2.2.1
-    dMapLt := hf.2.dMapLt
-    dFits := hf.2.dFits
-    swL := hf.2.swL
-    swI := hf.2.swI
-    swD := hf.2.swD
-    lTriv := trivBuild d.lMap d.litBase d.treesL.toNat d.nL hf.1.2.2.2.2.2.2.1 hf.1.2.2.1 hf.1.2.2.2.1 hf.1.2.1 hf.2.treeLt
-    trivSize := trivBuild_spec.1
-    trivOk := trivBuild_spec.2 }
+  hdrOfArena A d hf
+    (trivBuild d.lMap d.litBase d.treesL.toNat d.nL hf.1.2.2.2.2.2.2.1 hf.1.2.2.1 hf.1.2.2.2.1 hf.1.2.1 hf.2.treeLt)
+    trivBuild_spec.1 trivBuild_spec.2
+    (buildArena A d
+      (trivBuild d.lMap d.litBase d.treesL.toNat d.nL hf.1.2.2.2.2.2.2.1 hf.1.2.2.1 hf.1.2.2.2.1 hf.1.2.1 hf.2.treeLt) mlen
+      (by obtain ⟨g, hu⟩ := h; exact tabArgs_of hu trivBuild_spec.1 trivBuild_spec.2))
+
+/-- Makes the command loop's header from a header that was read. The arena is taken out of the record first, so that it
+is held once while the derived tables are appended. -/
+def mkHdr (d : Done) (mlen : UInt64) (h : ∃ g, Upto d g 10) : Hdr :=
+  match hT : takeArena d with
+  | (A, d0) => mkHdrOf A d0 mlen (by rw [takeArena_back hT]; exact h)
 
 /-- The header made from a header that was read matches the spec's. -/
-theorem mkHdr_ok {d : Done} {g : Gh} (hu : Upto d g 10) (h : ∃ g, Upto d g 10) : HdrRel (mkHdr d h) g.m := by
+theorem hdrOfArena_ok {A : ByteArray} {d : Done} {g : Gh} (hu : Upto { d with arena := A } g 10)
+    {hf : HdrSizes { d with arena := A } ∧ HdrProps { d with arena := A }} {lTriv : ByteArray}
+    {ht : lTriv.size = 4 * d.nL.toNat} {hok : TrivInv d.lMap d.litBase lTriv d.nL.toNat}
+    (R : { T : ByteArray // Extends A T ∧ TabOk T d.litBase d.lMap d.icBase d.dBase d.dMap lTriv d.nL.toNat d.nI.toNat
+      d.nD.toNat d.treesL.toNat d.treesD.toNat d.npostfix d.ndirect (A.size + padOf A.size) ∧
+      T.size ≤ A.size + tabMax d.nL.toNat d.nI.toNat d.nD.toNat }) :
+    HdrRel (hdrOfArena A d hf lTriv ht hok R) g.m := by
+  obtain ⟨T, hE, hTab, _⟩ := R
+  have h4' : A.size % 2 = 0 := hu.four
   have hL := hu.cat .L (by decide)
   have hI := hu.cat .I (by decide)
   have hD := hu.cat .D (by decide)
@@ -297,7 +406,7 @@ theorem mkHdr_ok {d : Done} {g : Gh} (hu : Upto d g 10) (h : ∃ g, Upto d g 10)
   obtain ⟨cl1, cl⟩ := hu.codes .L (by decide)
   obtain ⟨ci1, ci⟩ := hu.codes .I (by decide)
   obtain ⟨cd1, cd⟩ := hu.codes .D (by decide)
-  have codesMem : ∀ {cs : List PrefixCode} {bases : ByteArray} {total size : Nat}, CodesPart d.arena bases cs total size →
+  have codesMem : ∀ {cs : List PrefixCode} {bases : ByteArray} {total size : Nat}, CodesPart A bases cs total size →
       ∀ c ∈ cs, c.Symbols size ∧ Complete c := by
     intro cs bases total size hp c hc
     obtain ⟨i, hi, e⟩ := List.mem_iff_getElem.mp hc
@@ -306,7 +415,9 @@ theorem mkHdr_ok {d : Done} {g : Gh} (hu : Upto d g 10) (h : ∃ g, Upto d g 10)
     have := Option.some.inj h1
     subst this
     exact ⟨h4, h3⟩
-  unfold mkHdr
+  have hf0 : (USize.ofNat (A.size + padOf A.size)).toNat = A.size + padOf A.size :=
+    fastLit (by have := hTab.sizeOk; have := hTab.size32; omega)
+  unfold hdrOfArena
   exact {
     ok := {
       literal := hL.wf
@@ -344,21 +455,74 @@ theorem mkHdr_ok {d : Done} {g : Gh} (hu : Upto d g 10) (h : ∃ g, Upto d g 10)
         exact ml.at_ _ (by rw [← ml.sz]; exact h)
       code := fun t ht => by
         obtain ⟨c, h1, h2, h3, h4⟩ := cl.code t (by rw [← cl1]; rw [tl1] at ht; exact ht)
-        exact ⟨c, h1, h2, h3, h4⟩ }
+        exact ⟨c, h1, h2.extend hE h4', h3, h4⟩ }
     modes := fun p h => by
       rw [uget_toNat]
       exact hm.at_ _ (by rw [← hm.sz]; exact h)
     ic := fun t ht => by
       obtain ⟨c, h1, h2, h3, h4⟩ := ci.code t (by rw [← ci1]; rw [hIn] at ht; exact ht)
-      exact ⟨c, h1, h2, h3, h4⟩
+      exact ⟨c, h1, h2.extend hE h4', h3, h4⟩
     dMap := fun p h => by
       rw [uget_toNat]
       exact md.at_ _ (by rw [← md.sz]; exact h)
     d := fun t ht => by
       obtain ⟨c, h1, h2, h3, h4⟩ := cd.code t (by rw [← cd1]; rw [td1] at ht; exact ht)
-      exact ⟨c, h1, h2, h3, h4⟩
-    catL := hL.rel
-    catI := hI.rel
-    catD := hD.rel }
+      exact ⟨c, h1, h2.extend hE h4', h3, h4⟩
+    catL := hL.rel.frame (hE.keep h4')
+    catI := hI.rel.frame (hE.keep h4')
+    catD := hD.rel.frame (hE.keep h4')
+    tab := by
+      show TabOk T _ _ _ _ _ _ _ _ _ _ _ _ _ (USize.ofNat (A.size + padOf A.size)).toNat
+      rw [hf0]
+      exact hTab }
+
+/-- The header made from a header that was read matches the spec's. -/
+theorem mkHdr_ok {d : Done} {g : Gh} {mlen : UInt64} (hu : Upto d g 10) (h : ∃ g, Upto d g 10) :
+    HdrRel (mkHdr d mlen h) g.m := by
+  unfold mkHdr
+  split
+  rename_i A d0 hT
+  have hb := takeArena_back hT
+  subst hb
+  unfold mkHdrOf
+  exact hdrOfArena_ok hu _
+
+theorem hdrOfArena_size {A : ByteArray} {d : Done} {hf : HdrSizes { d with arena := A } ∧ HdrProps { d with arena := A }}
+    {lTriv : ByteArray} {ht : lTriv.size = 4 * d.nL.toNat} {hok : TrivInv d.lMap d.litBase lTriv d.nL.toNat}
+    (R : { T : ByteArray // Extends A T ∧ TabOk T d.litBase d.lMap d.icBase d.dBase d.dMap lTriv d.nL.toNat d.nI.toNat
+      d.nD.toNat d.treesL.toNat d.treesD.toNat d.npostfix d.ndirect (A.size + padOf A.size) ∧
+      T.size ≤ A.size + tabMax d.nL.toNat d.nI.toNat d.nD.toNat }) :
+    (hdrOfArena A d hf lTriv ht hok R).arena.size ≤ A.size + tabMax d.nL.toNat d.nI.toNat d.nD.toNat ∧
+      (hdrOfArena A d hf lTriv ht hok R).arenaCap = d.arenaCap := by
+  obtain ⟨T, _, _, hsz⟩ := R
+  exact ⟨hsz, rfl⟩
+
+/-- The header made from a header that was read keeps its arena within its reservation. -/
+theorem mkHdr_size {d : Done} {g : Gh} {mlen : UInt64} (hu : Upto d g 10) (h : ∃ g, Upto d g 10) :
+    (mkHdr d mlen h).arena.size ≤ (mkHdr d mlen h).arenaCap.toNat := by
+  unfold mkHdr
+  split
+  rename_i A d0 hT
+  have hb := takeArena_back hT
+  subst hb
+  unfold mkHdrOf
+  dsimp only
+  refine Nat.le_trans (hdrOfArena_size _).1 ?_
+  rw [(hdrOfArena_size _).2]
+  have hL := hu.cat .L (by decide)
+  have hD := hu.cat .D (by decide)
+  have hI := hu.cat .I (by decide)
+  have hLn : d0.nL.toNat = g.m.literal.n := hL.n
+  have hDn : d0.nD.toNat = g.m.distance.n := hD.n
+  have hIn : d0.nI.toNat = g.m.insertCopy.n := hI.n
+  have hfin := hu.fin rfl
+  dsimp only at hfin
+  have htm : tabMaxOf g = tabMax d0.nL.toNat d0.nI.toNat d0.nD.toNat := by
+    unfold tabMaxOf
+    rw [hLn, hIn, hDn, Nat.min_eq_left (show g.m.literal.n ≤ 256 from hL.wf.2.1),
+      Nat.min_eq_left (show g.m.insertCopy.n ≤ 256 from hI.wf.2.1),
+      Nat.min_eq_left (show g.m.distance.n ≤ 256 from hD.wf.2.1)]
+  rw [htm] at hfin
+  omega
 
 end Brotli.Decoder

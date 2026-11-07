@@ -1478,4 +1478,76 @@ theorem buildTab_ok {A litBase lMap icBase dBase dMap lTriv : ByteArray} {nL nI 
     · rw [ite_eq_right hon] at hne
       exact absurd rfl hne
 
+/-- The built arena begins with the arena it was built from. -/
+theorem buildTab_extends {A litBase lMap icBase dBase dMap lTriv : ByteArray} {nL nI nD treesL treesD : Nat}
+    (h : TabArgs A litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD) (np nd w0 w1 w2 w3 : UInt64) :
+    Extends A (buildTab A litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD h np nd w0 w1 w2 w3) := by
+  have hp := padOf_spec A.size
+  have hsz := h.size
+  unfold tabMax at hsz
+  unfold buildTab
+  exact (Extends.pushLE A 0 (padOf A.size)).trans (tabFrom_spec (ha := h.arrs) (np := np) (nd := nd) (w0 := w0)
+    (w1 := w1) (w2 := w2) (w3 := w3) (T := pushLE A 0 (padOf A.size))
+    (hI := fun ti hti => Nat.le_trans (h.icFits ti hti).root (by rw [size_pushLE]; omega))
+    (hP := PairReady.extend (fun ti hti hne => h.trivFits ti hti hne) (Extends.pushLE A 0 _))
+    (hs := by rw [size_pushLE]; omega)).1
+
+/-- The built arena takes at most `tabMax` more than the arena it was built from. -/
+theorem buildTab_size {A litBase lMap icBase dBase dMap lTriv : ByteArray} {nL nI nD treesL treesD : Nat}
+    (h : TabArgs A litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD) (np nd w0 w1 w2 w3 : UInt64) :
+    (buildTab A litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD h np nd w0 w1 w2 w3).size ≤
+      A.size + tabMax nL nI nD := by
+  have hp := padOf_spec A.size
+  have hsz := h.size
+  unfold tabMax at hsz ⊢
+  have hT1 := size_pushLE (padOf A.size) A 0
+  obtain ⟨T, hT⟩ : ∃ T, buildTab A litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD h np nd w0 w1 w2 w3 = T :=
+    ⟨_, rfl⟩
+  rw [hT]
+  unfold buildTab at hT
+  obtain ⟨_, _, _, _, _, _, e7⟩ := tabFrom_spec (ha := h.arrs) (np := np) (nd := nd) (w0 := w0) (w1 := w1)
+    (w2 := w2) (w3 := w3) (T := pushLE A 0 (padOf A.size))
+    (hI := fun ti hti => Nat.le_trans (h.icFits ti hti).root (by rw [size_pushLE]; omega))
+    (hP := PairReady.extend (fun ti hti hne => h.trivFits ti hti hne) (Extends.pushLE A 0 _))
+    (hs := by rw [size_pushLE]; omega)
+  replace e7 := e7.at (by rw [hT1])
+  rw [hT] at e7
+  have hcl := cntOn_le (pairOnN w0 w1 w2 w3 lTriv) 0 nL
+  rw [e7.1]
+  omega
+
+/-! ### The policy's entry -/
+
+theorem bigLits_idx {icBase : ByteArray} {nI : Nat} (hic : icBase.size = 4 * nI) (hn : 0 < nI) :
+    4 * (0 : USize).toNat + 4 ≤ icBase.size := by
+  rw [hic]
+  show 0 + 4 ≤ 4 * nI
+  omega
+
+theorem bigLits_root {A icBase : ByteArray} {nI : Nat} (hic : icBase.size = 4 * nI) (hi32 : icBase.size < 2 ^ 32)
+    (hI : ICReady icBase nI A) (hn : 0 < nI) :
+    2 * ((slotWord icBase 0 (bigLits_idx hic hn) hi32).toUSize.toNat + 256) ≤ A.size := by
+  have hv := slotWord_toNat (bigLits_idx hic hn) hi32
+  rw [word_toUSize (by rw [hv]; exact u32At_lt _ _), hv]
+  exact hI 0 hn
+
+/-- Whether the meta-block is expected to hold at least 32 KiB of literals, from the first insert-and-copy tree's root
+slots (P46's gate on the two-literal tables). -/
+def bigLits (A : ByteArray) (s : A.size < 2 ^ 32) (icBase : ByteArray) (nI : Nat) (hic : icBase.size = 4 * nI)
+    (hi32 : icBase.size < 2 ^ 32) (hI : ICReady icBase nI A) (mlen : UInt64) : Bool :=
+  if hn : 0 < nI then
+    match expLits A s (slotWord icBase 0 (bigLits_idx hic hn) hi32).toUSize (bigLits_root hic hi32 hI hn) 0 0 0 with
+    | (ins, cpy) => ins + cpy != 0 && 32768 ≤ mlen * ins / (ins + cpy)
+  else false
+
+/-- The flags of the literal types that get two-literal tables, with the arena handed back unchanged, so that it is
+read before it grows. Which types are chosen is a policy and changes no claim. -/
+@[noinline] def tabPolicy (A : ByteArray) (s : A.size < 2 ^ 32) (icBase : ByteArray) (nI : Nat) (hic : icBase.size = 4 * nI)
+    (hi32 : icBase.size < 2 ^ 32) (hI : ICReady icBase nI A) (lTriv : ByteArray) (nL : Nat) (ht : lTriv.size = 4 * nL)
+    (hn : nL ≤ 256) (hP : PairReady lTriv nL A) (mlen : UInt64) :
+    { p : (UInt64 × UInt64 × UInt64 × UInt64) × ByteArray // p.2 = A } :=
+  ⟨(if bigLits A s icBase nI hic hi32 hI mlen then
+      pairFlags A s lTriv nL ht (by omega) hP (USize.ofNat nL) (fastLit (by omega)) 0 0 0 0 0
+    else (0, 0, 0, 0), A), rfl⟩
+
 end Brotli.Decoder

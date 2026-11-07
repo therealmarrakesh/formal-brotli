@@ -707,7 +707,7 @@ theorem pay_hdr {w : Nat} {st : StreamState} {last : Bool} {mlen : Nat} {g : Gh}
     | cmds w' l' m' cp =>
       have := cpot_command hR''.2.2.2.2.1 rfl
       simp only [Dec.bits, Dec.word, Dec.count, dpot, spot] at hb ⊢
-      dsimp only at h1' h2' ⊢
+      simp only [takeReady] at h1' h2' hb ⊢
       unfold hdrEnd
       rw [hdrRate_eq]
       omega
@@ -1363,7 +1363,7 @@ theorem stepDMeta_memPend {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.
 theorem stepDHdr_memPend {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize}
     {hH : HIn D.hd} {hp : pos.toNat ≤ stop.toNat} :
     (stepDHdr a stop hs D pos hH hp).status = .memory → (stepDHdr a stop hs D pos hH hp).cmd.pend = D.cmd.pend := by
-  unfold stepDHdr takeHd clearHd hdrNext cmdStart
+  unfold stepDHdr takeHd clearHd hdrNext takeReady cmdStart
   dsimp only
   repeat' (first | split_all | (intro _; rfl) | (intro _; trivial) | (intro h; exact absurd h (fun e => DStatus.noConfusion e)))
 

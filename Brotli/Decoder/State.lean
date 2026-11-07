@@ -1,6 +1,7 @@
 module
 
 public import Brotli.Decoder.Literals
+public import Brotli.Decoder.FastTab
 
 @[expose] public section
 
@@ -186,6 +187,8 @@ structure Hdr where
   trivSize : lTriv.size = 4 * nL.toNat
   trivOk : ∀ t, t < nL.toNat → u32At lTriv t ≠ 4294967295 →
     ∀ c, c < 64 → u32At litBase (lMap.data[64 * t + c]?.getD 0).toNat = u32At lTriv t
+  /-- Where the fast command loop's derived tables start in the arena (`TabOk`). -/
+  tabF0 : USize
 
 /-- What a meta-block header gives the lookups that follow it. -/
 structure HeaderOk (m : MetaBlockHeader) : Prop where
@@ -234,6 +237,9 @@ structure HdrRel (H : Hdr) (m : MetaBlockHeader) : Prop where
   catL : CatRel H.arena H.baseTL H.baseCL m.literal
   catI : CatRel H.arena H.baseTI H.baseCI m.insertCopy
   catD : CatRel H.arena H.baseTD H.baseCD m.distance
+  /-- The arena holds the fast command loop's tables. -/
+  tab : TabOk H.arena H.litBase H.lMap H.icBase H.dBase H.dMap H.lTriv H.nL.toNat H.nI.toNat H.nD.toNat H.treesL.toNat
+    H.treesD.toNat H.npostfix H.ndirect H.tabF0.toNat
 
 /-! ### Block type flags -/
 

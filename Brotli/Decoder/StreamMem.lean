@@ -1613,8 +1613,7 @@ theorem hdr_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs
       · show r.d.arenaCap.toNat ≤ smallMax + D.limit.toNat
         rw [← h2, ← hmax]
         exact hle
-      · show r.d.arena.size ≤ r.d.arenaCap.toNat
-        exact hu.le
+      · exact mkHdr_size hu ⟨g', hu⟩
 
 /-! ### The loop and a call -/
 

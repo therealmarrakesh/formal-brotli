@@ -341,7 +341,7 @@ theorem stepDRaw_pendLe (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.si
 
 theorem stepDHdr_pendLe (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize)
     (hH : HIn D.hd) (hp : pos.toNat ≤ stop.toNat) : PendLeD D (stepDHdr a stop hs D pos hH hp) := by
-  unfold PendLeD stepDHdr takeHd clearHd hdrNext cmdStart
+  unfold PendLeD stepDHdr takeHd clearHd hdrNext takeReady cmdStart
   keepD_tac
 
 theorem stepDCmds_pendLe (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize) :

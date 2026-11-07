@@ -151,6 +151,7 @@ def Hdr.none : Hdr where
   lTriv := ByteArray.empty
   trivSize := rfl
   trivOk := fun _ h => (Nat.not_lt_zero _ h).elim
+  tabF0 := 0
 
 /-- The whole decoder's state between steps. -/
 structure Dec where

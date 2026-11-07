@@ -19,6 +19,11 @@ open Brotli.Spec
 
 /-! ### Through the header machine -/
 
+/-- Takes a header that was read out of the header machine's state: its settled record, then held once so that its arena
+grows in place, the commands' first state, read from the record before it is handed over, and the position. -/
+@[noinline] def takeReady (st : Hd) (c : Cmd) (left : UInt64) : Done × Cmd × USize :=
+  (st.d, cmdStart c st.d st.word st.count left, st.pos)
+
 /-- What follows a header step: a header left ready was read, so the command loop's header is made from it. -/
 @[inline] def hdrNext (c : Cmd) (left : UInt64) (D0 : Dec) (r : { r : Hd // r.status = .ready → ∃ g, Upto r.d g 10 }) : Dec :=
   let r1 := r.1
@@ -28,7 +33,12 @@ open Brotli.Spec
   | .needsInput => { D0 with hd := r1, pos := rp, status := .needsInput }
   | .bad => { D0 with hd := r1, pos := rp, status := .bad }
   | .memory => { D0 with hd := r1, pos := rp, status := .memory }
-  | .ready => { D0 with tag := .cmds, H := mkHdr r1.d (r.2 hst), cmd := cmdStart c r1.d r1.word r1.count left, pos := rp, status := .next }
+  | .ready =>
+    match hT : takeReady r1 c left with
+    | (d, cmd, p) =>
+      { D0 with
+        tag := .cmds, H := mkHdr d left (by rw [show d = r1.d from (congrArg Prod.fst hT).symm]; exact r.2 hst), cmd := cmd
+        pos := p, status := .next }
 
 /-- The place in a header. -/
 def stepDHdr (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize) (hH : HIn D.hd)
@@ -78,7 +88,9 @@ theorem stepDHdr_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {last 
       fun _ => ⟨g1, g2, rfl, hp0, Or.inr ⟨_, _, _, _, _, _, rfl⟩⟩, fun e => DStatus.noConfusion e⟩
   next hst =>
     obtain ⟨g', hu, hw, h1, h2, h3, _, _, _, _, h4⟩ := hstep.ready hst
-    have hrelH := mkHdr_ok hu (hr hst)
+    unfold takeReady
+    dsimp only
+    have hrelH := mkHdr_ok (mlen := left) hu (hr hst)
     have hRel := cmdStart_rel (c := cmd) (word := r.word) (count := r.count) (mlen := left) hw hu
       (w := w) hall.win hall.produced
     rw [show left.toNat = mlen from hleft] at hRel
