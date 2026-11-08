@@ -1611,6 +1611,161 @@ theorem ic_move {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {K : Com
   obtain ⟨p2, m2⟩ := h2.widen rfl rfl hp
   exact ⟨p2, m1.trans m2⟩
 
+/-! ### The fused insert-and-copy entry is the tree's read -/
+
+theorem or_shl_toNat {a b s : UInt64} {k P : Nat} (hs : s.toNat = k) (hk : k < 64) (hP : 2 ^ k = P)
+    (ha : a.toNat < P) (hb : P * b.toNat < 18446744073709551616) : (a ||| (b <<< s)).toNat = a.toNat + P * b.toNat := by
+  subst hP
+  have h64 : (2 : Nat) ^ 64 = 18446744073709551616 := rfl
+  have hsh : (b <<< s).toNat = 2 ^ k * b.toNat := by
+    rw [UInt64.toNat_shiftLeft, hs, Nat.mod_eq_of_lt hk, Nat.shiftLeft_eq, Nat.mul_comm]
+    exact Nat.mod_eq_of_lt (by omega)
+  rw [UInt64.toNat_or, hsh, Nat.or_comm, ← Nat.two_pow_add_eq_or_of_lt ha, Nat.add_comm]
+
+/-- Bits `l` to `l + b` of the low byte are those of the whole number, for `l + b ≤ 8`. -/
+theorem low_bits {w l b : Nat} (h : l + b ≤ 8) : w % 256 / 2 ^ l % 2 ^ b = w / 2 ^ l % 2 ^ b := by
+  have e : 256 = 2 ^ l * 2 ^ (8 - l) := by rw [← Nat.pow_add, Nat.add_sub_cancel' (by omega)]
+  rw [e, Nat.mod_mul_right_div_self, Nat.mod_mod_of_dvd _ (Nat.pow_dvd_pow 2 (by omega))]
+
+theorem u64_shr_shr (x a b : UInt64) (h : a.toNat + b.toNat < 64) : (x >>> a) >>> b = x >>> (a + b) := by
+  apply UInt64.toNat_inj.mp
+  have hab : (a + b).toNat = a.toNat + b.toNat := u64_add_small (by omega)
+  rw [UInt64.toNat_shiftRight, UInt64.toNat_shiftRight, UInt64.toNat_shiftRight, hab,
+    Nat.mod_eq_of_lt (by omega : b.toNat < 64), Nat.mod_eq_of_lt (by omega : a.toNat < 64), Nat.mod_eq_of_lt h,
+    Nat.shiftRight_eq_div_pow, Nat.shiftRight_eq_div_pow, Nat.shiftRight_eq_div_pow, Nat.div_div_eq_div_mul,
+    ← Nat.pow_add]
+
+theorem u64_sub3 (x a b c : UInt64) : x - (a + b + c) = x - a - b - c := by
+  have hy : x - a - b - c + c + b + a = x := by
+    rw [UInt64.sub_add_cancel, UInt64.sub_add_cancel, UInt64.sub_add_cancel]
+  have hr : x - a - b - c + c + b + a = x - a - b - c + (a + b + c) := by
+    rw [UInt64.add_assoc, UInt64.add_assoc, UInt64.add_comm c (b + a), UInt64.add_comm b a]
+  conv => lhs; rw [← hy, hr, UInt64.add_sub_cancel]
+
+theorem shr_mask_toNat (x a b : UInt64) (ha : a.toNat < 64) (hb : b.toNat < 64) :
+    ((x >>> a) &&& (((1 : UInt64) <<< b) - 1)).toNat = x.toNat / 2 ^ a.toNat % 2 ^ b.toNat := by
+  have := BitBuffer.peek_toNat (BitBuffer.mk (x >>> a) 0) hb
+  simp only [BitBuffer.peek] at this
+  rw [this, UInt64.toNat_shiftRight, Nat.mod_eq_of_lt ha, Nat.shiftRight_eq_div_pow]
+
+/-- An entry that isn't 255 in its low byte is the fused entry of a root slot holding a code word of at most 8 bits and
+a symbol below 704. -/
+theorem icEntryU_fused {v j : UInt64} (h : icEntryU v j &&& 255 ≠ 255) :
+    ∃ (_ : v &&& 15 ≤ 8) (hs : ((v >>> 4) &&& 4095).toNat < 704),
+      icEntryU v j = icEntryOf (v &&& 15) ((v >>> 4) &&& 4095) j hs := by
+  unfold icEntryU at h ⊢
+  split
+  · rename_i hc
+    exact ⟨hc.1, lt704 hc.2, rfl⟩
+  · rename_i hc
+    rw [dite_eq_right hc] at h
+    exact absurd (by decide) h
+
+/-- The fields of a fused entry: the symbol, and either the bits taken with both lengths, or the code word's bits, both
+extra bits and both lengths' lowest values. -/
+theorem icEntryOf_split {l sym j : UInt64} (hs : sym.toNat < 704) (hl : l.toNat ≤ 8) (hj : j.toNat < 256) :
+    (icEntryOf l sym j hs >>> 8) &&& 1023 = sym ∧
+    (l + rowBits (insertRow sym hs) + rowBits (copyRow sym hs) ≤ 8 →
+      icEntryOf l sym j hs &&& 15 = l + rowBits (insertRow sym hs) + rowBits (copyRow sym hs) ∧
+      (icEntryOf l sym j hs >>> 18) &&& 63 = 0 ∧ (icEntryOf l sym j hs >>> 24) &&& 63 = 0 ∧
+      (icEntryOf l sym j hs >>> 32) &&& 0xFFFF =
+        rowBase (insertRow sym hs) + ((j >>> l) &&& (((1 : UInt64) <<< rowBits (insertRow sym hs)) - 1)) ∧
+      icEntryOf l sym j hs >>> 48 = rowBase (copyRow sym hs) +
+        ((j >>> (l + rowBits (insertRow sym hs))) &&& (((1 : UInt64) <<< rowBits (copyRow sym hs)) - 1))) ∧
+    (¬ l + rowBits (insertRow sym hs) + rowBits (copyRow sym hs) ≤ 8 →
+      icEntryOf l sym j hs &&& 15 = l ∧ (icEntryOf l sym j hs >>> 18) &&& 63 = rowBits (insertRow sym hs) ∧
+      (icEntryOf l sym j hs >>> 24) &&& 63 = rowBits (copyRow sym hs) ∧
+      (icEntryOf l sym j hs >>> 32) &&& 0xFFFF = rowBase (insertRow sym hs) ∧
+      icEntryOf l sym j hs >>> 48 = rowBase (copyRow sym hs)) := by
+  have hib : (rowBits (insertRow sym hs)).toNat ≤ 24 := insertRow_bits24 hs
+  have hcb : (rowBits (copyRow sym hs)).toNat ≤ 24 := copyRow_bits hs
+  have hibase : (rowBase (insertRow sym hs)).toNat ≤ 22594 := by
+    rw [(insertRow_fields hs).2]; exact (cmdRow_small hs).2.1
+  have hcbase : (rowBase (copyRow sym hs)).toNat ≤ 2118 := by
+    rw [(copyRow_fields hs).2]; exact (cmdRow_small hs).2.2.2
+  unfold icEntryOf
+  dsimp only
+  generalize rowBits (insertRow sym hs) = ib at *
+  generalize rowBits (copyRow sym hs) = cb at *
+  generalize rowBase (insertRow sym hs) = ibase at *
+  generalize rowBase (copyRow sym hs) = cbase at *
+  have f8 : ∀ e : UInt64, ((e >>> 8) &&& 1023).toNat = e.toNat / 256 % 1024 := fun e => by
+    rw [UInt64.toNat_and, UInt64.toNat_shiftRight]
+    show e.toNat >>> 8 &&& (2 ^ 10 - 1) = _
+    rw [Nat.and_two_pow_sub_one_eq_mod, Nat.shiftRight_eq_div_pow]
+  have f18 : ∀ e : UInt64, ((e >>> 18) &&& 63).toNat = e.toNat / 262144 % 64 := fun e => by
+    rw [UInt64.toNat_and, UInt64.toNat_shiftRight]
+    show e.toNat >>> 18 &&& (2 ^ 6 - 1) = _
+    rw [Nat.and_two_pow_sub_one_eq_mod, Nat.shiftRight_eq_div_pow]
+  have f24 : ∀ e : UInt64, ((e >>> 24) &&& 63).toNat = e.toNat / 16777216 % 64 := fun e => by
+    rw [UInt64.toNat_and, UInt64.toNat_shiftRight]
+    show e.toNat >>> 24 &&& (2 ^ 6 - 1) = _
+    rw [Nat.and_two_pow_sub_one_eq_mod, Nat.shiftRight_eq_div_pow]
+  have f32 : ∀ e : UInt64, ((e >>> 32) &&& 0xFFFF).toNat = e.toNat / 4294967296 % 65536 := fun e => by
+    rw [UInt64.toNat_and, UInt64.toNat_shiftRight]
+    show e.toNat >>> 32 &&& (2 ^ 16 - 1) = _
+    rw [Nat.and_two_pow_sub_one_eq_mod, Nat.shiftRight_eq_div_pow]
+  have f48 : ∀ e : UInt64, (e >>> 48).toNat = e.toNat / 281474976710656 := fun e => by
+    rw [UInt64.toNat_shiftRight]
+    show e.toNat >>> 48 = _
+    rw [Nat.shiftRight_eq_div_pow]
+  have f15 : ∀ e : UInt64, (e &&& 15).toNat = e.toNat % 16 := fun e => by
+    rw [UInt64.toNat_and]
+    show e.toNat &&& (2 ^ 4 - 1) = _
+    rw [Nat.and_two_pow_sub_one_eq_mod]
+  have h0 : (0 : UInt64).toNat = 0 := rfl
+  by_cases hr : l + ib + cb ≤ 8
+  · rw [ite_eq_left hr]
+    have hA : (l + ib + cb).toNat = l.toNat + ib.toNat + cb.toNat := by
+      rw [u64_add_small (by rw [u64_add_small (by omega)]; omega), u64_add_small (by omega)]
+    have hr' : (l + ib + cb).toNat ≤ 8 := UInt64.le_iff_toNat_le.mp hr
+    rw [hA] at hr'
+    have hb1 : ((j >>> l) &&& (((1 : UInt64) <<< ib) - 1)).toNat < 256 := by
+      rw [UInt64.toNat_and]
+      refine Nat.lt_of_le_of_lt Nat.and_le_left ?_
+      rw [UInt64.toNat_shiftRight, Nat.shiftRight_eq_div_pow]
+      exact Nat.lt_of_le_of_lt (Nat.div_le_self _ _) hj
+    have hb2 : ((j >>> (l + ib)) &&& (((1 : UInt64) <<< cb) - 1)).toNat < 256 := by
+      rw [UInt64.toNat_and]
+      refine Nat.lt_of_le_of_lt Nat.and_le_left ?_
+      rw [UInt64.toNat_shiftRight, Nat.shiftRight_eq_div_pow]
+      exact Nat.lt_of_le_of_lt (Nat.div_le_self _ _) hj
+    generalize (j >>> l) &&& (((1 : UInt64) <<< ib) - 1) = M1 at *
+    generalize (j >>> (l + ib)) &&& (((1 : UInt64) <<< cb) - 1) = M2 at *
+    have hX : (ibase + M1).toNat = ibase.toNat + M1.toNat := u64_add_small (by omega)
+    have hY : (cbase + M2).toNat = cbase.toNat + M2.toNat := u64_add_small (by omega)
+    have e1 := or_shl_toNat (a := l + ib + cb) (b := sym) (s := 8) (P := 256) rfl (by decide) rfl (by omega)
+      (by omega)
+    have e2 := or_shl_toNat (a := (l + ib + cb) ||| (sym <<< 8)) (b := ibase + M1) (s := 32) (P := 4294967296) rfl
+      (by decide) rfl (by rw [e1]; omega) (by omega)
+    have e3 := or_shl_toNat (a := (l + ib + cb) ||| (sym <<< 8) ||| ((ibase + M1) <<< 32)) (b := cbase + M2) (s := 48)
+      (P := 281474976710656) rfl (by decide) rfl (by rw [e2, e1]; omega) (by omega)
+    rw [e2, e1, hA, hX, hY] at e3
+    refine ⟨UInt64.toNat_inj.mp (by rw [f8, e3]; omega), fun _ => ⟨?_, ?_, ?_, ?_, ?_⟩,
+      fun h => absurd hr h⟩
+    · exact UInt64.toNat_inj.mp (by rw [f15, e3]; omega)
+    · exact UInt64.toNat_inj.mp (by rw [f18, e3, h0]; omega)
+    · exact UInt64.toNat_inj.mp (by rw [f24, e3, h0]; omega)
+    · exact UInt64.toNat_inj.mp (by rw [f32, e3]; omega)
+    · exact UInt64.toNat_inj.mp (by rw [f48, e3]; omega)
+  · rw [ite_eq_right hr]
+    have e1 := or_shl_toNat (a := l) (b := sym) (s := 8) (P := 256) rfl (by decide) rfl (by omega) (by omega)
+    have e2 := or_shl_toNat (a := l ||| (sym <<< 8)) (b := ib) (s := 18) (P := 262144) rfl (by decide) rfl
+      (by rw [e1]; omega) (by omega)
+    have e3 := or_shl_toNat (a := l ||| (sym <<< 8) ||| (ib <<< 18)) (b := cb) (s := 24) (P := 16777216) rfl
+      (by decide) rfl (by rw [e2, e1]; omega) (by omega)
+    have e4 := or_shl_toNat (a := l ||| (sym <<< 8) ||| (ib <<< 18) ||| (cb <<< 24)) (b := ibase) (s := 32)
+      (P := 4294967296) rfl (by decide) rfl (by rw [e3, e2, e1]; omega) (by omega)
+    have e5 := or_shl_toNat (a := l ||| (sym <<< 8) ||| (ib <<< 18) ||| (cb <<< 24) ||| (ibase <<< 32)) (b := cbase)
+      (s := 48) (P := 281474976710656) rfl (by decide) rfl (by rw [e4, e3, e2, e1]; omega) (by omega)
+    rw [e4, e3, e2, e1] at e5
+    refine ⟨UInt64.toNat_inj.mp (by rw [f8, e5]; omega), fun h => absurd h hr, fun _ => ⟨?_, ?_, ?_, ?_, ?_⟩⟩
+    · exact UInt64.toNat_inj.mp (by rw [f15, e5]; omega)
+    · exact UInt64.toNat_inj.mp (by rw [f18, e5]; omega)
+    · exact UInt64.toNat_inj.mp (by rw [f24, e5]; omega)
+    · exact UInt64.toNat_inj.mp (by rw [f32, e5]; omega)
+    · exact UInt64.toNat_inj.mp (by rw [f48, e5]; omega)
+
 /-! ### A literal round -/
 
 theorem ringWrite_wput {ring : ByteArray} {opos mask : USize} {k : Nat} (hk : k ≤ 24) (hm : mask.toNat = 2 ^ k - 1)
