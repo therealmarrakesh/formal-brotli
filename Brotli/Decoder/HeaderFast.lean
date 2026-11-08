@@ -113,25 +113,49 @@ theorem ln_succ_le {ln size : UInt64} (hsz : size.toNat ≤ 704) (hln : ln.toNat
 theorem ln_run_le {ln size x : UInt64} (he : ¬ size < ln + x) : (ln + x).toNat ≤ size.toNat :=
   Nat.le_of_not_lt fun e => he (UInt64.lt_iff_toNat_lt.mpr e)
 
-/-- A repeat code `r` read, which makes the repeat count `new` from `old`, applied to the fields: `symsRep`'s plain case
-(a run of zeros that fits), `none` for every other case. -/
-@[inline] def symsRepPlain (size : UInt64) (pos : USize) (s : SymsS) (r : Rd) (new old : UInt64) :
+theorem and15_lt16 (x : UInt64) : (x &&& 15).toNat < 16 := by
+  rw [UInt64.toNat_and, show (15 : UInt64).toNat = 2 ^ 4 - 1 from rfl, Nat.and_two_pow_sub_one_eq_mod]
+  omega
+
+theorem and15_self {x : UInt64} (h : x.toNat < 16) : x &&& 15 = x := by
+  apply UInt64.toNat_inj.mp
+  rw [UInt64.toNat_and, show (15 : UInt64).toNat = 2 ^ 4 - 1 from rfl, Nat.and_two_pow_sub_one_eq_mod]
+  omega
+
+/-- A repeat code `r` read, which makes the repeat count `new` from `old`, applied to the fields: `symsRep`'s plain cases
+(a run that fits and doesn't overflow the code space, of zeros or of the last nonzero length), `none` for every other
+case. The run's length is below 16 by the step's relation; it is masked so that the bound needs no proof here. -/
+@[inline] def symsRepPlain (size : UInt64) (hsz : size.toNat ≤ 704) (pos : USize) (s : SymsS)
+    (hln : s.ln.toNat ≤ size.toNat) (hl1 : ¬ s.ln = size) (r : Rd) (new old : UInt64) :
     Option { s' : SymsS // s'.ln.toNat ≤ size.toNat } :=
   if he : size < s.ln + (new - old) then none
   else
     let len := if r.a = 16 then s.prevLen else 0
-    if 32768 < s.symSum then none
+    let sum := if len = 0 then s.symSum else s.symSum + (new - old) * ((32768 : UInt64) >>> len)
+    if 32768 < sum then none
     else if len = 0 then
       some ⟨
         { s with
           word := r.word, count := r.count, pos := pos, ln := s.ln + (new - old), repSym := r.a, repCount := new },
         ln_run_le he⟩
-    else none
+    else
+      let lm := len &&& 15
+      let e := s.ln + (new - old)
+      have he' : e.toNat ≤ 704 := Nat.le_trans (ln_run_le he) hsz
+      let o := getHead s.head s.headSz lm (and15_lt16 len)
+      some ⟨
+        { s with
+          word := r.word, count := r.count, pos := pos
+          head := setHead s.head s.headSz lm e (and15_lt16 len)
+          next := linkRun (setNext s.next s.nextSz s.ln o (ln_lt704 hsz hln hl1)) setNext_size (s.ln + 1) e he'
+          headSz := setHead_size, nextSz := linkRun_size, ln := e, repSym := r.a, repCount := new, symSum := sum },
+        ln_run_le he⟩
 
-/-- `symsRep`'s plain case is `symsRepPlain`'s, written back. -/
+/-- `symsRep`'s plain cases are `symsRepPlain`'s, written back. -/
 theorem symsRep_plain {st : Hd} {pos : USize} {h : ∃ g p, HRel st g p} {ht : st.tag = .syms} {h1 : ¬ st.ln = st.size}
-    {r : Rd} {new old : UInt64} {s' : { s' : SymsS // s'.ln.toNat ≤ st.size.toNat }}
-    (hs' : symsRepPlain st.size pos (SymsS.of st) r new old = some s') :
+    {r : Rd} {new old : UInt64} (hsz : st.size.toNat ≤ 704) (hln : st.ln.toNat ≤ st.size.toNat)
+    {s' : { s' : SymsS // s'.ln.toNat ≤ st.size.toNat }}
+    (hs' : symsRepPlain st.size hsz pos (SymsS.of st) hln h1 r new old = some s') :
     symsRep st pos h ht h1 r new old = SymsS.put st s'.1 := by
   unfold symsRepPlain at hs'
   unfold symsRep
@@ -140,12 +164,20 @@ theorem symsRep_plain {st : Hd} {pos : USize} {h : ∃ g p, HRel st g p} {ht : s
   · simp [he] at hs'
   · simp only [he, ↓reduceDIte] at hs' ⊢
     by_cases hlen : (if r.a = 16 then st.prevLen else 0) = 0
-    · by_cases hov : 32768 < st.symSum
+    · simp only [hlen, ↓reduceIte] at hs' ⊢
+      by_cases hov : 32768 < st.symSum
       · simp [hov] at hs'
-      · simp only [hov, hlen, ↓reduceIte] at hs' ⊢
+      · simp only [hov, ↓reduceIte] at hs' ⊢
         cases hs'
         rfl
-    · simp [hlen] at hs'
+    · simp only [hlen, ↓reduceIte] at hs' ⊢
+      by_cases hov : 32768 < st.symSum + (new - old) * ((32768 : UInt64) >>> (if r.a = 16 then st.prevLen else 0))
+      · simp [hov] at hs'
+      · simp only [hov, ↓reduceIte] at hs' ⊢
+        cases hs'
+        have hm := and15_self (syms_lenLt h ht r.a)
+        unfold pushRun pushRunAt SymsS.put
+        simp only [hm]
 
 /-- A code length symbol `r` read at a code's lengths, applied to the fields: `symsOk`'s plain cases (a zero, a nonzero
 length, a run of zeros), `none` for every other case. -/
@@ -171,7 +203,7 @@ length, a run of zeros), `none` for every other case. -/
         let mult : UInt64 := if r.a = 16 then 4 else 8
         let old := if s.repCount ≠ 0 ∧ s.repSym = r.a then s.repCount else 0
         let new := if old = 0 then 3 + r.b else mult * (old - 2) + (3 + r.b)
-        symsRepPlain size pos s r new old
+        symsRepPlain size hsz pos s hln hl1 r new old
 
 /-- One step at a code's lengths on its fields, the buffer `word`/`count` refilled and the position `pos`: the new
 fields for `stepHSyms`'s plain cases (a zero, a nonzero length, a run of zeros), `none` for every other case. -/
@@ -210,7 +242,7 @@ theorem symsOk_plain {st : Hd} {pos : USize} {h : ∃ g p, HRel st g p} {ht : st
         cases hs'
         rfl
   · simp only [hlow, ↓reduceDIte] at hs' ⊢
-    exact symsRep_plain hs'
+    exact symsRep_plain hsz hln hs'
 
 /-- A plain step at a code's lengths is `stepH`: the same refill and read, and the fields it writes are those `stepH`'s
 step writes into the state. -/
