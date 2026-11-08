@@ -391,46 +391,6 @@ theorem stepCmd_bad (hK : ∀ s bs, s.remaining ≠ 0 → K s bs = readCommand w
   rw [stateBits_eq, ← List.append_assoc, ← l1]
   exact hbad
 
-/-- A run of the command loop that rejects decides at the last of its steps: from a place the reading in order reaches,
-on the bits that step held and the bytes its refill took, whatever follows them. -/
-theorem runCmd_bad (hK : ∀ s bs, s.remaining ≠ 0 → K s bs = readCommand w m s bs >>= fun (s1, b) => K s1 b) (hH : HdrRel H m) :
-    ∀ (N : Nat) (n : USize) (p : Phase) (st : Cmd) (pos : USize), n.toNat = N → Rel w k.toNat m st p → pos.toNat ≤ stop.toNat →
-      (runCmd H k a stop hs n st pos).status = .bad →
-      ∃ (p1 : Phase) (st1 : Cmd) (pos1 : USize), pos.toNat ≤ pos1.toNat ∧ pos1.toNat ≤ (runCmd H k a stop hs n st pos).pos.toNat ∧
-        (runCmd H k a stop hs n st pos).pos.toNat ≤ stop.toNat ∧
-        8 * (runCmd H k a stop hs n st pos).pos.toNat + st1.count.toNat ≤ 8 * pos1.toNat + 64 ∧
-        (∀ F, Reach (cStep w m) p (stateBits st a pos stop F) p1 (stateBits st1 a pos1 stop F)) ∧
-        ∀ F, rest w m K p1 (stateBits st1 a pos1 (runCmd H k a stop hs n st pos).pos F) = none := by
-  intro N
-  induction N with
-  | zero =>
-    intro n p st pos hN _ _ hb
-    rw [runCmd, dite_eq_left (usize_zero hN)] at hb
-    exact absurd hb (fun e => StepStatus.noConfusion e)
-  | succ N ih =>
-    intro n p st pos hN hrel hp hb
-    have hn : n ≠ 0 := fun e => by rw [e] at hN; exact Nat.succ_ne_zero _ hN.symm
-    have hpred := usize_pred hn
-    have hstep := stepCmd_ok (hs := hs) (K := K) (a := a) hK hH hrel hp
-    have hbad := stepCmd_bad (hs := hs) (K := K) hK hH hrel hp
-    rw [runCmd, dite_eq_right hn] at hb ⊢
-    dsimp only at hb ⊢
-    generalize stepCmd H k a stop hs st pos = r at hstep hbad hb ⊢
-    cases hst : r.status with
-    | next =>
-      rw [hst] at hb
-      dsimp only at hb ⊢
-      obtain ⟨p', hR, h1, h2, _, _, _, h5⟩ := hstep.next hst
-      obtain ⟨p1, st1, pos1, g1, g2, g3, g4, g5, g6⟩ := ih _ p' r r.pos (by omega) hR h2 hb
-      exact ⟨p1, st1, pos1, Nat.le_trans h1 g1, g2, g3, g4, fun F => (h5 F).trans (g5 F), g6⟩
-    | bad =>
-      dsimp only
-      obtain ⟨g1, g2, g3, g4⟩ := hbad hst
-      exact ⟨p, st, pos, Nat.le_refl _, g1, g2, g3, fun _ => .refl _ _, g4⟩
-    | needsInput => rw [hst] at hb; exact absurd (hst.symm.trans hb) (fun e => StepStatus.noConfusion e)
-    | needsOutput => rw [hst] at hb; exact absurd (hst.symm.trans hb) (fun e => StepStatus.noConfusion e)
-    | done => rw [hst] at hb; exact absurd (hst.symm.trans hb) (fun e => StepStatus.noConfusion e)
-
 /-- The window and the bytes waiting of a command loop state. -/
 def Cmd.WinSame (r st : Cmd) : Prop := r.ring = st.ring ∧ r.wpos = st.wpos ∧ r.pend = st.pend
 
@@ -474,40 +434,6 @@ theorem stepCmd_badWin {st : Cmd} {pos : USize} (h : (stepCmd H k a stop hs st p
     exact stepAt_badWin h
   · rw [dite_eq_right hp]
     exact ⟨rfl, rfl, rfl⟩
-
-/-- A run of the command loop that rejects leaves the window and the bytes waiting of a state at a place the reading in
-order reaches. -/
-theorem runCmd_badWin (hK : ∀ s bs, s.remaining ≠ 0 → K s bs = readCommand w m s bs >>= fun (s1, b) => K s1 b) (hH : HdrRel H m) :
-    ∀ (N : Nat) (n : USize) (p : Phase) (st : Cmd) (pos : USize), n.toNat = N → Rel w k.toNat m st p → pos.toNat ≤ stop.toNat →
-      (runCmd H k a stop hs n st pos).status = .bad →
-      ∃ (p1 : Phase) (st1 : Cmd), Rel w k.toNat m st1 p1 ∧ (runCmd H k a stop hs n st pos).WinSame st1 := by
-  intro N
-  induction N with
-  | zero =>
-    intro n p st pos hN _ _ hb
-    rw [runCmd, dite_eq_left (usize_zero hN)] at hb
-    exact absurd hb (fun e => StepStatus.noConfusion e)
-  | succ N ih =>
-    intro n p st pos hN hrel hp hb
-    have hn : n ≠ 0 := fun e => by rw [e] at hN; exact Nat.succ_ne_zero _ hN.symm
-    have hpred := usize_pred hn
-    have hstep := stepCmd_ok (hs := hs) (K := K) (a := a) hK hH hrel hp
-    have hbad := stepCmd_badWin (H := H) (k := k) (a := a) (hs := hs) (st := st) (pos := pos)
-    rw [runCmd, dite_eq_right hn] at hb ⊢
-    dsimp only at hb ⊢
-    generalize stepCmd H k a stop hs st pos = r at hstep hbad hb ⊢
-    cases hst : r.status with
-    | next =>
-      rw [hst] at hb
-      dsimp only at hb ⊢
-      obtain ⟨p', hR, _, h2, _, _, _, _⟩ := hstep.next hst
-      exact ih _ p' r r.pos (by omega) hR h2 hb
-    | bad =>
-      dsimp only
-      exact ⟨p, st, hrel, hbad hst⟩
-    | needsInput => rw [hst] at hb; exact absurd (hst.symm.trans hb) (fun e => StepStatus.noConfusion e)
-    | needsOutput => rw [hst] at hb; exact absurd (hst.symm.trans hb) (fun e => StepStatus.noConfusion e)
-    | done => rw [hst] at hb; exact absurd (hst.symm.trans hb) (fun e => StepStatus.noConfusion e)
 
 end
 

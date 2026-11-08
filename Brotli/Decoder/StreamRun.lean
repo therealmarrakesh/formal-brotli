@@ -488,81 +488,6 @@ theorem MoveOk.down {α : Type} {w k : Nat} {last : Bool} {m : MetaBlockHeader} 
       exact List.append_cancel_right e2
     · exact (meas_of_R hp hq).1 (lex4Eq_lt (reach_measR hr) (cStep_measR hs))
 
-/-- Any number of steps of the commands leaves the measure no higher. -/
-theorem runCmd_le {w : Nat} {k : USize} {last : Bool} {H : Hdr} {m : MetaBlockHeader} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size}
-    (hH : HdrRel H m) : ∀ (N : Nat) (n : USize) (p : Phase) (st : Cmd) (pos : USize), n.toNat = N → Rel w k.toNat m st p → pos.toNat ≤ stop.toNat →
-      CDown Lex4Eq w k.toNat last m a stop p st pos (runCmd H k a stop hs n st pos) := by
-  intro N
-  induction N with
-  | zero =>
-    intro n p st pos hN hrel hp
-    rw [runCmd, dite_eq_left (usize_zero hN)]
-    exact ⟨fun _ => ⟨p, ⟨hrel.mark _ _, id⟩, Nat.le_refl _, hp, fun _ => Or.inr rfl⟩, fun e => StepStatus.noConfusion e,
-      fun e => StepStatus.noConfusion e, fun e => StepStatus.noConfusion e⟩
-  | succ N ih =>
-    intro n p st pos hN hrel hp
-    have hn : n ≠ 0 := fun e => by rw [e] at hN; exact Nat.succ_ne_zero _ hN.symm
-    have hpred := usize_pred hn
-    have hstep := stepCmd_down (last := last) (a := a) (stop := stop) (hs := hs) hH hrel hp
-    rw [runCmd, dite_eq_right hn]
-    dsimp only
-    generalize stepCmd H k a stop hs st pos = r at hstep
-    cases hst : r.status with
-    | next =>
-      obtain ⟨p', ⟨hR, hL⟩, h1, h2, h3⟩ := hstep.next hst
-      have hin := ih (n - USize.ofNat 1) p' r r.pos (by omega) hR h2
-      generalize runCmd H k a stop hs (n - USize.ofNat 1) r r.pos = r2 at hin
-      refine ⟨fun e => ?_, fun e => ?_, fun e => ?_, fun e => ?_⟩
-      · obtain ⟨p2, ⟨b1, bL⟩, b2, b3, b4⟩ := hin.next e
-        exact ⟨p2, ⟨b1, fun h => bL (hL h)⟩, Nat.le_trans h1 b2, b3, fun F => (b4 F).trans (Or.inl (h3 F))⟩
-      · obtain ⟨p2, ⟨b1, bL⟩, b2⟩ := hin.needsInput e
-        refine ⟨p2, ⟨b1, fun h => bL (hL h)⟩, Or.inl (pause_after (R := Lex4) (x := r2.pend) (y := r.pend) (fun a b => a.trans b) h3 ?_)⟩
-        exact b2
-      · obtain ⟨p2, ⟨b1, bL⟩, b2⟩ := hin.needsOutput e
-        refine ⟨p2, ⟨b1, fun h => bL (hL h)⟩, Or.inl (pause_after (R := Lex4) (x := r2.pend) (y := r.pend) (fun a b => a.trans b) h3 ?_)⟩
-        exact b2
-      · obtain ⟨s, ⟨b1, bL⟩, b2, b3⟩ := hin.done e
-        exact ⟨s, ⟨b1, fun h => bL (hL h)⟩, b2, fun F => (b3 F).trans (Or.inl (h3 F))⟩
-    | needsInput =>
-      exact ⟨fun e => absurd (hst.symm.trans e) (by decide), hstep.needsInput, fun e => absurd (hst.symm.trans e) (by decide), fun e => absurd (hst.symm.trans e) (by decide)⟩
-    | needsOutput =>
-      exact ⟨fun e => absurd (hst.symm.trans e) (by decide), fun e => absurd (hst.symm.trans e) (by decide), hstep.needsOutput, fun e => absurd (hst.symm.trans e) (by decide)⟩
-    | done =>
-      exact ⟨fun e => absurd (hst.symm.trans e) (by decide), fun e => absurd (hst.symm.trans e) (by decide), fun e => absurd (hst.symm.trans e) (by decide), hstep.done⟩
-    | bad =>
-      exact ⟨fun e => absurd (hst.symm.trans e) (by decide), fun e => absurd (hst.symm.trans e) (by decide), fun e => absurd (hst.symm.trans e) (by decide),
-        fun e => absurd (hst.symm.trans e) (by decide)⟩
-
-/-- At least one step of the commands lowers the measure. -/
-theorem runCmd_down {w : Nat} {k : USize} {last : Bool} {H : Hdr} {m : MetaBlockHeader} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size}
-    {n : USize} {p : Phase} {st : Cmd} {pos : USize} (hn : n ≠ 0) (hH : HdrRel H m) (hrel : Rel w k.toNat m st p) (hp : pos.toNat ≤ stop.toNat) :
-    CDown Lex4 w k.toNat last m a stop p st pos (runCmd H k a stop hs n st pos) := by
-  have hpred := usize_pred hn
-  have hstep := stepCmd_down (last := last) (a := a) (stop := stop) (hs := hs) hH hrel hp
-  rw [runCmd, dite_eq_right hn]
-  dsimp only
-  generalize stepCmd H k a stop hs st pos = r at hstep
-  cases hst : r.status with
-  | next =>
-    obtain ⟨p', ⟨hR, hL⟩, h1, h2, h3⟩ := hstep.next hst
-    have hin := runCmd_le (last := last) (a := a) (stop := stop) (hs := hs) hH _ (n - USize.ofNat 1) p' r r.pos rfl hR h2
-    generalize runCmd H k a stop hs (n - USize.ofNat 1) r r.pos = r2 at hin
-    refine ⟨fun e => ?_, fun e => ?_, fun e => ?_, fun e => ?_⟩
-    · obtain ⟨p2, ⟨b1, bL⟩, b2, b3, b4⟩ := hin.next e
-      exact ⟨p2, ⟨b1, fun h => bL (hL h)⟩, Nat.le_trans h1 b2, b3, fun F => (b4 F).trans_lt (h3 F)⟩
-    · obtain ⟨p2, ⟨b1, bL⟩, b2⟩ := hin.needsInput e
-      refine ⟨p2, ⟨b1, fun h => bL (hL h)⟩, Or.inl (pause_after (R := Lex4) (x := r2.pend) (y := r.pend) (fun a b => a.trans b) h3 ?_)⟩
-      exact b2
-    · obtain ⟨p2, ⟨b1, bL⟩, b2⟩ := hin.needsOutput e
-      refine ⟨p2, ⟨b1, fun h => bL (hL h)⟩, Or.inl (pause_after (R := Lex4) (x := r2.pend) (y := r.pend) (fun a b => a.trans b) h3 ?_)⟩
-      exact b2
-    · obtain ⟨s, ⟨b1, bL⟩, b2, b3⟩ := hin.done e
-      exact ⟨s, ⟨b1, fun h => bL (hL h)⟩, b2, fun F => (b3 F).trans (Or.inl (h3 F))⟩
-  | needsInput => exact hstep
-  | needsOutput => exact hstep
-  | done => exact hstep
-  | bad => exact hstep
-
 /-! ### The measure over the command loop with the fast loop -/
 
 private theorem lex4_lt_eq {u v x : (Nat × Nat) × (Nat × Nat)} (h1 : Lex4 u v) (h2 : Lex4Eq v x) : Lex4 u x := by
@@ -873,12 +798,6 @@ private theorem meq_of_eq {w : Nat} {l : Bool} {m : MetaBlockHeader} {p p' : Pha
   show ((cVal w l m p' bs').1, 2, (((cVal w l m p' bs').2, (rankC p').1), ((rankC p').2, 0))) =
     ((cVal w l m p bs).1, 2, (((cVal w l m p bs).2, (rankC p).1), ((rankC p).2, 0)))
   rw [h1, h2]
-
-private theorem cmdBudget_ne : cmdBudget ≠ 0 := by
-  intro e
-  have h : cmdBudget.toNat = 65536 := usize_ofNat' (by decide)
-  rw [e] at h
-  cases h
 
 /-- The commands' step lowers the measure. -/
 theorem stepDCmds_down {w : Nat} {last : Bool} {m : MetaBlockHeader} {p : Phase} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec}

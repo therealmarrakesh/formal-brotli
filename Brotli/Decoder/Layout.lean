@@ -201,33 +201,6 @@ theorem stepCmd_same (H : Hdr) (k : USize) {a1 a2 : ByteArray} {e1 e2 : USize} (
   show { s with word := _, count := _, pos := 0 } = { t with word := _, count := _, pos := 0 }
   rw [ew, ec, cmd_er he]
 
-theorem runCmd_same (H : Hdr) (k : USize) {a1 a2 : ByteArray} {e1 e2 : USize} (hs1 : e1.toNat ≤ a1.size)
-    (hs2 : e2.toNat ≤ a2.size) : ∀ (N : Nat) (n : USize) {s t : Cmd} {p1 p2 : USize}, n.toNat = N →
-    { s with pos := 0 } = { t with pos := 0 } → Same a1 e1 a2 e2 p1 p2 →
-    CmdSame a1 e1 a2 e2 (runCmd H k a1 e1 hs1 n s p1) (runCmd H k a2 e2 hs2 n t p2) := by
-  intro N
-  induction N using Nat.strongRecOn with
-  | ind N ih =>
-    intro n s t p1 p2 hN he h
-    rw [runCmd, runCmd]
-    by_cases hn : n = 0
-    · rw [dite_eq_left hn, dite_eq_left hn]
-      refine ⟨?_, h⟩
-      show { s with pos := 0, status := .next } = { t with pos := 0, status := .next }
-      rw [cmd_er he]
-    · rw [dite_eq_right hn, dite_eq_right hn]
-      dsimp only
-      have hlt : (n - USize.ofNat 1).toNat < N := by
-        have := usize_pred hn
-        have := usize_ne hn
-        omega
-      obtain ⟨e, hS⟩ := stepCmd_same H k hs1 hs2 he h
-      have hst : (stepCmd H k a2 e2 hs2 t p2).status = (stepCmd H k a1 e1 hs1 s p1).status := by rw [cmd_er e]
-      rw [hst]
-      split
-      · exact ih _ hlt _ rfl e hS
-      · exact ⟨e, hS⟩
-
 /-- What the compiled loop knows of its fields holds at any chunk's end its position is within. -/
 theorem KInv.restop {H : Hdr} {k stop stop' : USize} {word count : UInt64} {ring : ByteArray} {wpos written : USize}
     {iCur iPrev lCur lPrev dCur dPrev copyBits dist : UInt64} {wordBuf : ByteArray} {wordPos : USize} {tag : Tag}

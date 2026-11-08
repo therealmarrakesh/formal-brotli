@@ -318,22 +318,6 @@ def stepCmdW (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toN
     refillW st.word st.count a pos stop hs + stepAtW H k a stop hs { st with word := r.word, count := r.count } r.pos
   else 1
 
-/-- The work of the command loop: its rounds, and each one's step. -/
-def runCmdW (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (n : USize) (st : Cmd) (pos : USize) :
-    Nat :=
-  if _hn : n = 0 then 1
-  else
-    let r := stepCmd H k a stop hs st pos
-    stepCmdW H k a stop hs st pos + 1 +
-      match r.status with
-      | .next => runCmdW H k a stop hs (n - USize.ofNat 1) r r.pos
-      | _ => 0
-termination_by n.toNat
-decreasing_by
-  have := usize_pred _hn
-  have := usize_ne _hn
-  omega
-
 /-! ### A step's work -/
 
 /-- A distance's copy: a dictionary word is built only when the step goes on to its bytes or stops. -/
@@ -840,38 +824,6 @@ theorem stepCmd_full {H : Hdr} {k : USize} {a : ByteArray} {stop : USize} {hs : 
     exact stepAt_full h
   · rw [dite_eq_right hp] at h
     exact absurd h (fun e => StepStatus.noConfusion e)
-
-/-- The command loop pauses for output only with no room left. -/
-theorem runCmd_full {H : Hdr} {k : USize} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} :
-    ∀ (N : Nat) (n : USize) (st : Cmd) (pos : USize), n.toNat = N → (runCmd H k a stop hs n st pos).status = .needsOutput →
-      room k (runCmd H k a stop hs n st pos).cap ≤ (runCmd H k a stop hs n st pos).pend := by
-  intro N
-  induction N with
-  | zero =>
-    intro n st pos hN h
-    have hz : n = 0 := usize_zero hN
-    rw [runCmd, dite_eq_left hz] at h
-    exact absurd h (fun e => StepStatus.noConfusion e)
-  | succ N ih =>
-    intro n st pos hN h
-    have hn : n ≠ 0 := fun e => by rw [e] at hN; exact Nat.succ_ne_zero _ hN.symm
-    have hpred := usize_pred hn
-    have e : runCmd H k a stop hs n st pos = match (stepCmd H k a stop hs st pos).status with
-        | .next => runCmd H k a stop hs (n - USize.ofNat 1) (stepCmd H k a stop hs st pos) (stepCmd H k a stop hs st pos).pos
-        | _ => stepCmd H k a stop hs st pos := by
-      rw [runCmd, dite_eq_right hn]
-      rfl
-    rw [e] at h ⊢
-    cases hst : (stepCmd H k a stop hs st pos).status
-    case next =>
-      rw [hst] at h
-      exact ih _ _ _ (by omega) h
-    case needsOutput => exact stepCmd_full hst
-    all_goals
-      rw [hst] at h
-      have h' : (stepCmd H k a stop hs st pos).status = .needsOutput := h
-      rw [hst] at h'
-      exact absurd h' (fun e => StepStatus.noConfusion e)
 
 /-- The command loop with the fast loop pauses for output only with no room left. -/
 theorem runCmdF_full {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a : ByteArray} {stop : USize}
@@ -1799,124 +1751,5 @@ theorem badRound_pay {H : Hdr} {k : USize} {a : ByteArray} {stop : USize} {hs : 
 /-- The end of the command loop's work: one when its budget runs out, 92 for a round that rejects, and 84 for one that
 stops otherwise. -/
 def cmdEnd (r : Cmd) : Nat := if r.status = .next then 1 else if r.status = .bad then 92 else 84
-
-/-- The command loop's work, against the potential: what it does is paid for by the potential, 200 for each bit it
-reads, 30 for each byte it adds, a round for each byte its refills take, and its end. -/
-theorem runCmdW_count {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size}
-    (hm : m.ndirect ≤ 120) (hH : HdrRel H m) : ∀ (N : Nat) (n : USize) (st : Cmd) (p : Phase) (pos : USize), n.toNat = N →
-      Rel w k.toNat m st p → CInv w p → pos.toNat ≤ stop.toNat → ∀ F, ∃ c q st' pos', Rel w k.toNat m st' q ∧ CInv w q ∧
-        OutStep p q st st' ∧ PendLe st st' ∧ pos.toNat ≤ pos'.toNat ∧ pos'.toNat ≤ stop.toNat ∧
-        ReachN (cStep w m) c p (stateBits st a pos stop F) q (stateBits st' a pos' stop F) ∧
-        runCmdW H k a stop hs n st pos + cpot q + 200 * (stateBits st' a pos' stop F).length + (stop.toNat - pos'.toNat) ≤
-          cpot p + 200 * (stateBits st a pos stop F).length + (stop.toNat - pos.toNat) + 30 * (q.out.length - p.out.length) +
-            cmdEnd (runCmd H k a stop hs n st pos) ∧
-        ((runCmd H k a stop hs n st pos).status ≠ .bad → st' = runCmd H k a stop hs n st pos ∧ pos' = (runCmd H k a stop hs n st pos).pos) ∧
-        ((runCmd H k a stop hs n st pos).status = .bad → (runCmd H k a stop hs n st pos).WinSame st' ∧
-          pos'.toNat ≤ (runCmd H k a stop hs n st pos).pos.toNat) ∧
-        ((runCmd H k a stop hs n st pos).status = .done → ∃ s, q = .command s ∧ s.remaining = 0) ∧
-        ((runCmd H k a stop hs n st pos).status = .next → n.toNat ≤ c) := by
-  intro N
-  induction N with
-  | zero =>
-    intro n st p pos hN hrel hci hp F
-    have hz : n = 0 := usize_zero hN
-    have e : runCmd H k a stop hs n st pos = markStep st pos .next := by rw [runCmd, dite_eq_left hz]
-    rw [e]
-    refine ⟨0, p, markStep st pos .next, pos, hrel.mark _ _, hci, ⟨[], rfl, rfl⟩, PendLe.keep rfl rfl, Nat.le_refl _, hp, .refl _ _, ?_,
-      fun _ => ⟨rfl, rfl⟩, fun h => StepStatus.noConfusion h, fun h => StepStatus.noConfusion h, fun _ => by omega⟩
-    rw [runCmdW, dite_eq_left hz]
-    show 1 + cpot p + 200 * (stateBits st a pos stop F).length + (stop.toNat - pos.toNat) ≤ _ + cmdEnd (markStep st pos .next)
-    have : cmdEnd (markStep st pos .next) = 1 := rfl
-    omega
-  | succ N ih =>
-    intro n st p pos hN hrel hci hp F
-    have hn : n ≠ 0 := fun e => by rw [e] at hN; exact Nat.succ_ne_zero _ hN.symm
-    have hpred := usize_pred hn
-    have hk := hrel.k24
-    have hok := stepCmd_ok (K := commandsFrom w m) (fun s bs h0 => commandsFrom_step bs h0) (hs := hs) hH hrel hp
-    have hsteps : runCmdW H k a stop hs n st pos = stepCmdW H k a stop hs st pos + 1 + match (stepCmd H k a stop hs st pos).status with
-        | .next => runCmdW H k a stop hs (n - USize.ofNat 1) (stepCmd H k a stop hs st pos) (stepCmd H k a stop hs st pos).pos
-        | _ => 0 := by
-      rw [runCmdW, dite_eq_right hn]
-      -- in a module this `match` is a matcher of its own, not `runCmdW`'s, so `rw`'s closing `rfl` doesn't see it
-      rfl
-    have hrun : runCmd H k a stop hs n st pos = match (stepCmd H k a stop hs st pos).status with
-        | .next => runCmd H k a stop hs (n - USize.ofNat 1) (stepCmd H k a stop hs st pos) (stepCmd H k a stop hs st pos).pos
-        | _ => stepCmd H k a stop hs st pos := by
-      rw [runCmd, dite_eq_right hn]
-      rfl
-    rw [hsteps, hrun]
-    cases hst : (stepCmd H k a stop hs st pos).status
-    case next =>
-      obtain ⟨p1, hR1, o1, hci1, h2, h1, hj1⟩ := stepCmd_pot (hs := hs) hm hH hrel hci hp hst
-      obtain ⟨n1, hn1, hr1, hw1⟩ := hj1 F
-      obtain ⟨c2, q, st', pos', hq, hciq, o2, l2, g1, g2, hr2, g3, g4, gb, g5, g6⟩ :=
-        ih (n - USize.ofNat 1) _ p1 _ (by omega) hR1 hci1 h2 F
-      have ho1 : p.out.length ≤ p1.out.length := by
-        obtain ⟨l, e1, -⟩ := o1
-        rw [e1, List.length_append]
-        omega
-      have ho2 : p1.out.length ≤ q.out.length := by
-        obtain ⟨l, e1, -⟩ := o2
-        rw [e1, List.length_append]
-        omega
-      refine ⟨n1 + c2, q, st', pos', hq, hciq, o1.trans o2, (stepCmd_pendLe H k a stop hs st pos).trans l2, by omega, g2,
-        hr1.trans hr2, ?_, g4, gb, g5, fun h => by have := g6 h; omega⟩
-      show stepCmdW H k a stop hs st pos + 1 + runCmdW H k a stop hs (n - USize.ofNat 1) (stepCmd H k a stop hs st pos)
-        (stepCmd H k a stop hs st pos).pos + cpot q + 200 * (stateBits st' a pos' stop F).length + (stop.toNat - pos'.toNat) ≤
-        _ + cmdEnd (runCmd H k a stop hs (n - USize.ofNat 1) (stepCmd H k a stop hs st pos) (stepCmd H k a stop hs st pos).pos)
-      omega
-    case needsInput =>
-      obtain ⟨b1, _, p', hR', _, _, _, hout, hj, _⟩ := hok.needsInput hst
-      obtain ⟨c0, hc0⟩ := (hj F).count
-      obtain ⟨hci', c1, -, -, -⟩ := creach hm hc0 hci
-      obtain ⟨l, hl1, hl2⟩ := hout
-      have hlo : p'.out.length = l.length + p.out.length := by rw [hl1, List.length_append]
-      have hw := stopRound_pay (H := H) (k := k) (a := a) (hs := hs) (st := st) (pos := pos) hm hp hrel hR'
-        (by rw [hst]; decide) (by rw [hst]; decide) (by rw [b1]; exact hp) (by rw [b1]; exact Nat.le_refl _) hl2 hci hc0 hlo
-      have he : cmdEnd (stepCmd H k a stop hs st pos) = 84 := by unfold cmdEnd; rw [hst]; rfl
-      refine ⟨c0, p', _, _, hR', hci', ⟨l, hl1, hl2⟩, stepCmd_pendLe H k a stop hs st pos, by rw [b1]; exact hp,
-        by rw [b1]; exact Nat.le_refl _, hc0, ?_,
-        fun _ => ⟨rfl, rfl⟩, (fun h => absurd (hst.symm.trans h) (by decide)), (fun h => absurd (hst.symm.trans h) (by decide)),
-        (fun h => absurd (hst.symm.trans h) (by decide))⟩
-      show stepCmdW H k a stop hs st pos + 1 + 0 + cpot p' + _ + _ ≤ _ + cmdEnd (stepCmd H k a stop hs st pos)
-      omega
-    case needsOutput =>
-      obtain ⟨p', hR', b1, b2, _, _, _, hout, hj⟩ := hok.needsOutput hst
-      obtain ⟨c0, hc0⟩ := (hj F).count
-      obtain ⟨hci', c1, -, -, -⟩ := creach hm hc0 hci
-      obtain ⟨l, hl1, hl2⟩ := hout
-      have hlo : p'.out.length = l.length + p.out.length := by rw [hl1, List.length_append]
-      have hw := stopRound_pay (H := H) (k := k) (a := a) (hs := hs) (st := st) (pos := pos) hm hp hrel hR'
-        (by rw [hst]; decide) (by rw [hst]; decide) b1 b2 hl2 hci hc0 hlo
-      have he : cmdEnd (stepCmd H k a stop hs st pos) = 84 := by unfold cmdEnd; rw [hst]; rfl
-      refine ⟨c0, p', _, _, hR', hci', ⟨l, hl1, hl2⟩, stepCmd_pendLe H k a stop hs st pos, b1, b2, hc0, ?_, fun _ => ⟨rfl, rfl⟩,
-        (fun h => absurd (hst.symm.trans h) (by decide)), (fun h => absurd (hst.symm.trans h) (by decide)),
-        (fun h => absurd (hst.symm.trans h) (by decide))⟩
-      show stepCmdW H k a stop hs st pos + 1 + 0 + cpot p' + _ + _ ≤ _ + cmdEnd (stepCmd H k a stop hs st pos)
-      omega
-    case done =>
-      obtain ⟨s, hR', b1, b2, _, h0, hout, hj⟩ := hok.done hst
-      obtain ⟨c0, hc0⟩ := (hj F).count
-      obtain ⟨hci', c1, -, -, -⟩ := creach hm hc0 hci
-      obtain ⟨l, hl1, hl2⟩ := hout
-      have hlo : (Phase.command s).out.length = l.length + p.out.length := by rw [hl1, List.length_append]
-      have hw := stopRound_pay (H := H) (k := k) (a := a) (hs := hs) (st := st) (pos := pos) hm hp hrel hR'
-        (by rw [hst]; decide) (by rw [hst]; decide) b1 b2 hl2 hci hc0 hlo
-      have he : cmdEnd (stepCmd H k a stop hs st pos) = 84 := by unfold cmdEnd; rw [hst]; rfl
-      exact ⟨c0, .command s, _, _, hR', hci', ⟨l, hl1, hl2⟩, stepCmd_pendLe H k a stop hs st pos, b1, b2, hc0, by
-          show stepCmdW H k a stop hs st pos + 1 + 0 + cpot (.command s) + _ + _ ≤ _ + cmdEnd (stepCmd H k a stop hs st pos)
-          omega,
-        fun _ => ⟨rfl, rfl⟩, (fun h => absurd (hst.symm.trans h) (by decide)), fun _ => ⟨s, rfl, h0⟩,
-        (fun h => absurd (hst.symm.trans h) (by decide))⟩
-    case bad =>
-      have hw := badRound_pay (H := H) (k := k) (a := a) (hs := hs) (st := st) (pos := pos) hk hp hrel.wf hst
-      have he : cmdEnd (stepCmd H k a stop hs st pos) = 92 := by unfold cmdEnd; rw [hst]; rfl
-      exact ⟨0, p, st, pos, hrel, hci, ⟨[], rfl, rfl⟩, PendLe.rfl' _, Nat.le_refl _, hp, .refl _ _, by
-          show stepCmdW H k a stop hs st pos + 1 + 0 + cpot p + _ + _ ≤ _ + cmdEnd (stepCmd H k a stop hs st pos)
-          omega,
-        fun e => absurd hst e,
-        fun _ => ⟨stepCmd_badWin hst, (stepCmd_bad (K := commandsFrom w m) (fun s bs h0 => commandsFrom_step bs h0) hH hrel hp hst).1⟩,
-        (fun h => absurd (hst.symm.trans h) (by decide)), (fun h => absurd (hst.symm.trans h) (by decide))⟩
 
 end Brotli.Decoder

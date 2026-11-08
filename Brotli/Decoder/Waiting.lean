@@ -264,25 +264,6 @@ theorem stepCmd_pendLe (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs 
   · exact (PendLe.keep (r := { st with word := _, count := _ }) rfl rfl).trans (stepAt_pendLe H k a stop hs _ _)
   · exact PendLe.keep rfl rfl
 
-theorem runCmd_pendLe (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) :
-    ∀ (N : Nat) (n : USize) (st : Cmd) (p : USize), n.toNat = N → PendLe st (runCmd H k a stop hs n st p) := by
-  intro N
-  induction N using Nat.strongRecOn with
-  | ind N ih =>
-    intro n st p hN
-    rw [runCmd]
-    by_cases hn : n = 0
-    · rw [dite_eq_left hn]
-      exact PendLe.keep rfl rfl
-    · rw [dite_eq_right hn]
-      dsimp only
-      have hpred := usize_pred hn
-      have hne := usize_ne hn
-      have h1 := stepCmd_pendLe H k a stop hs st p
-      split
-      · exact h1.trans (ih _ (by omega) _ _ _ rfl)
-      · exact h1
-
 /-- The command loop with the fast loop keeps the cap, and leaves no more bytes waiting than were waiting or the cap
 allows. -/
 theorem runCmdF_pendLe {w : Nat} {k : USize} {H : Hdr} {m : Brotli.Spec.MetaBlockHeader} {a : ByteArray} {stop : USize}

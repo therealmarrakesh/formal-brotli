@@ -8,14 +8,13 @@ public import Brotli.Decoder.FastLoop
 /-!
 # The compiled command loop
 
-`runCmdE` is `runCmd` as the compiler runs it: one loop with the whole command state in local variables, so that no
-step rebuilds a record. It does exactly what `runCmd` does, step for step: the same refills, reads and writes, in the
-same order (AGENTS.md, design rule 1). It takes what the stream's relation gives of the state (`KInv`, `LoopInv.lean`)
-and carries it through every step as a proof, so that it tests none of it at run time. `runCmdP` is `runCmd` taking
-that proof, `runCmdP_csimp` proves `runCmdE` equal to it, and every proof is about `runCmd`.
+`runCmdF` is the command loop as it runs: one loop with the whole command state in local variables, so that no step
+rebuilds a record, which enters the fast loop (`FastLoop.lean`) where it can and otherwise takes a step of the step
+machine (`stepCmd`). It takes what the stream's relation gives of the state (`KInv`, `LoopInv.lean`) and carries it
+through every step as a proof, so that it tests none of it at run time.
 
 `kstep` is one step, ending in a continuation: `contC` takes the record the next literal run builds its result in and
-the state's fields, and goes on; `exit` takes the state as a record and stops. It is inlined into `runCmdK`, whose
+the state's fields, and goes on; `exit` takes the state as a record and stops. It is inlined into `runCmdKF`, whose
 `contC` is its own recursive call, so every step ends in a jump. `kstep_eq` proves a step equal to `stepCmd` on the
 record built from the fields (`mkCmd`), for a continuation that doesn't depend on the record it is handed.
 -/
@@ -614,58 +613,10 @@ public abbrev KContC (H : Hdr) (k stop : USize) (α : Type) : Type := RunOut →
           copyBase dist wordBuf (wordPos + run) .word left p
           (hr.wrote hri.1 hri.2 (written_usmin hr.k24 hr.k16 _) (word_next hr.tagged (room k cap - pend)))
 
-/-- `runCmd` on the fields: up to `n` steps, each ending in a jump to the next. -/
-def runCmdK (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (n : USize) :
-    (cell : RunOut) → (word count : UInt64) → (ring : ByteArray) → (wpos pend cap written : USize) → (p1 p2 : UInt8) →
-    (remaining iCount lCount dCount : UInt64) → (flags : Flags) →
-    (iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist : UInt64) →
-    (wordBuf : ByteArray) → (wordPos : USize) → (tag : Tag) → (left : UInt64) → (pos : USize) →
-    KInv H k stop word count ring wpos written iCur iPrev lCur lPrev dCur dPrev copyBits dist wordBuf wordPos tag pos →
-    Cmd :=
-  if _hn : n = 0 then
-    fun _ word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur
-        dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos _ =>
-    mkCmd word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev
-      d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos .next
-  else
-    fun cell word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur
-        dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos hinv =>
-    kstep H k a stop hs
-      (fun cell word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur
-          dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos h =>
-        runCmdK H k a stop hs (n - USize.ofNat 1) cell word count ring wpos pend cap written p1 p2 remaining iCount lCount
-          dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos
-          tag left pos h)
-      (fun c => c)
-      word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev
-      d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos cell hinv
-termination_by n.toNat
-decreasing_by
-  have := usize_pred _hn
-  have := usize_ne _hn
-  omega
-
 /-- What the compiled loop needs to know of a state. -/
 public abbrev CmdInv (H : Hdr) (k stop : USize) (st : Cmd) (pos : USize) : Prop :=
   KInv H k stop st.word st.count st.ring st.wpos st.written st.iCur st.iPrev st.lCur st.lPrev st.dCur st.dPrev
     st.copyBits st.dist st.wordBuf st.wordPos st.tag pos
-
-/-- `runCmd`, for a state the compiled loop may run from. The compiler runs `runCmdE` in its place. -/
-@[expose] public def runCmdP (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (n : USize) (st : Cmd)
-    (pos : USize) (_h : CmdInv H k stop st pos) : Cmd :=
-  runCmd H k a stop hs n st pos
-
-/-- `runCmdP` as the compiler runs it: the state taken apart once, then the loop on its fields. -/
-public def runCmdE (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (n : USize) (st : Cmd)
-    (pos : USize) (h : CmdInv H k stop st pos) : Cmd :=
-  match st, h with
-  | ⟨word, count, ring, wpos, pend, cap, written, p1, p2, remaining, iCount, lCount, dCount, flags,
-      ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf, wordPos⟩,
-      tag, left, _, _⟩, h =>
-    -- the first record, built from values so that it is allocated here and held once
-    runCmdK H k a stop hs n ⟨word, count, pos, wpos, ByteArray.empty, p1, p2, 0, 0⟩ word count ring wpos pend cap written
-      p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits
-      copyBase dist wordBuf wordPos tag left pos h
 
 /-! ### The command loop with the fast loop -/
 
@@ -739,7 +690,7 @@ nothing (`cpot`). -/
       written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen
       copyBits copyBase dist wordBuf wordPos tag left pos h
 
-/-! ### The compiled loop is `runCmd` -/
+/-! ### A step on the fields is `stepCmd` -/
 
 /-- Takes both sides of an equation through the same tests: `split` reduces one side's test, and the hypothesis it
 gives reduces the other side's copy. -/
@@ -956,70 +907,5 @@ public theorem kstep_eq (hcont : Drops H k stop contC g) (tag : Tag)
         left pos sp ss cell hcont hinv
 
 end
-
-/-- The loop on the fields is `runCmd` on the record they make. -/
-theorem runCmdK_eq (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) :
-    ∀ (N : Nat) (n : USize) (cell : RunOut) (word count : UInt64) (ring : ByteArray) (wpos pend cap written : USize)
-      (p1 p2 : UInt8) (remaining iCount lCount dCount : UInt64) (flags : Flags)
-      (iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist : UInt64)
-      (wordBuf : ByteArray) (wordPos : USize) (tag : Tag) (left : UInt64) (pos sp : USize) (ss : StepStatus)
-      (hinv : KInv H k stop word count ring wpos written iCur iPrev lCur lPrev dCur dPrev copyBits dist wordBuf wordPos tag pos),
-      n.toNat = N →
-      runCmdK H k a stop hs n cell word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur
-          iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos hinv =
-        runCmd H k a stop hs n (mkCmd word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags
-          iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left sp ss)
-          pos := by
-  intro N
-  induction N with
-  | zero =>
-    intro n cell word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
-      dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos sp ss hinv hN
-    have hn : n = 0 := usize_zero hN
-    rw [runCmdK, runCmd, dite_eq_left hn, dite_eq_left hn]
-    rfl
-  | succ N ih =>
-    intro n cell word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
-      dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos sp ss hinv hN
-    have hn : n ≠ 0 := fun e => by rw [e] at hN; exact Nat.succ_ne_zero _ hN.symm
-    have hpred : (n - USize.ofNat 1).toNat = N := by
-      rw [usize_pred hn]
-      omega
-    -- the rest of the loop depends neither on the record it is handed nor on the proof: it is `runCmd`
-    have hc : Drops H k stop
-        (fun c word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur
-            dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos h =>
-          runCmdK H k a stop hs (n - USize.ofNat 1) c word count ring wpos pend cap written p1 p2 remaining iCount lCount
-            dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos
-            tag left pos h)
-        (fun word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur
-            dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos =>
-          runCmd H k a stop hs (n - USize.ofNat 1) (mkCmd word count ring wpos pend cap written p1 p2 remaining iCount
-            lCount dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf
-            wordPos tag left pos .next) pos) :=
-      fun c word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur
-          dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos h =>
-        ih _ c word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
-          dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos pos .next h hpred
-    rw [runCmdK, runCmd, dite_eq_right hn, dite_eq_right hn, kstep_eq (sp := sp) (ss := ss) (hcont := hc)]
-    dsimp only
-    generalize stepCmd H k a stop hs (mkCmd word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount
-      flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left sp
-      ss) pos = r
-    obtain ⟨w, c, rg, wp, pe, cp, wr, q1, q2, rm, ic, lc, dc, fl,
-      ⟨e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, e11, e12, e13, e14, e15, e16, e17, e18⟩, tg, lf, ps, st⟩ := r
-    unfold kcase
-    cases st
-    all_goals rfl
-
-/-- The compiler runs the loop on the fields in place of `runCmdP`. -/
-@[csimp] public theorem runCmdP_csimp : @runCmdP = @runCmdE := by
-  funext H k a stop hs n st pos h
-  obtain ⟨word, count, ring, wpos, pend, cap, written, p1, p2, remaining, iCount, lCount, dCount, flags,
-    ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf, wordPos⟩,
-    tag, left, sp, ss⟩ := st
-  exact (runCmdK_eq H k a stop hs _ n ⟨word, count, pos, wpos, ByteArray.empty, p1, p2, 0, 0⟩ word count ring wpos pend
-    cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen
-    copyBits copyBase dist wordBuf wordPos tag left pos sp ss h rfl).symm
 
 end Brotli.Decoder

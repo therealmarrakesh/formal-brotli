@@ -9,8 +9,8 @@ public import Brotli.Decoder.StepLiterals
 # The command loop
 
 `stepCmd` refills the bit buffer and takes the step for the place the state is at. `stepCmd_ok` is the bridge for the
-command loop: under `Rel`, every step keeps the state tied to `rest`, for every future. `runCmd` repeats steps until one
-pauses or finishes, and `flushCmd` hands bytes waiting in the window to the caller.
+command loop: under `Rel`, every step keeps the state tied to `rest`, for every future. `RunOk` is what steps together
+must do, and `flushCmd` hands bytes waiting in the window to the caller.
 -/
 
 namespace Brotli.Decoder
@@ -217,20 +217,6 @@ theorem stepCmd_start {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a :
     rw [e1]
     exact ⟨hrel1.mark _ _, e2, hb⟩
 
-/-- Steps until one pauses or finishes, or `n` have been taken. -/
-def runCmd (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (n : USize) (st : Cmd) (pos : USize) : Cmd :=
-  if _hn : n = 0 then markStep st pos .next
-  else
-    let r := stepCmd H k a stop hs st pos
-    match r.status with
-    | .next => runCmd H k a stop hs (n - USize.ofNat 1) r r.pos
-    | _ => r
-termination_by n.toNat
-decreasing_by
-  have := usize_pred _hn
-  have := usize_ne _hn
-  omega
-
 /-- What steps together must do: what `StepOk` asks of one, apart from how far down the places go. -/
 structure RunOk {α : Type} (w k : Nat) (m : MetaBlockHeader) (K : CommandState → List Bool → Option α) (a : ByteArray)
     (stop : USize) (p : Phase) (st : Cmd) (pos : USize) (r : Cmd) : Prop where
@@ -295,37 +281,6 @@ theorem RunOk.trans {r1 : Cmd} {p1 : Phase} (hle : pos.toNat ≤ r1.pos.toNat)
   bad e := fun F => by rw [h]; exact h2.bad e F
 
 end
-
-/-- Any number of steps together does what one step must. -/
-theorem runCmd_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
-    {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size}
-    (hK : ∀ s bs, s.remaining ≠ 0 → K s bs = readCommand w m s bs >>= fun (s1, b) => K s1 b) (hH : HdrRel H m) :
-    ∀ (N : Nat) (n : USize) (p : Phase) (st : Cmd) (pos : USize), n.toNat = N → Rel w k.toNat m st p → pos.toNat ≤ stop.toNat →
-      RunOk w k.toNat m K a stop p st pos (runCmd H k a stop hs n st pos) := by
-  intro N
-  induction N with
-  | zero =>
-    intro n p st pos hN hrel hp
-    rw [runCmd, dite_eq_left (usize_zero hN)]
-    exact ⟨fun _ => ⟨p, hrel.mark _ _, Nat.le_refl _, hp, (fun _ => rfl), ⟨[], rfl, rfl⟩, fun _ => Reach.refl _ _⟩,
-      fun e => StepStatus.noConfusion e, fun e => StepStatus.noConfusion e, fun e => StepStatus.noConfusion e,
-      fun e => StepStatus.noConfusion e⟩
-  | succ N ih =>
-    intro n p st pos hN hrel hp
-    have hn : n ≠ 0 := fun e => by rw [e] at hN; exact Nat.succ_ne_zero _ hN.symm
-    have hpred := usize_pred hn
-    have hstep := stepCmd_ok (hs := hs) (K := K) (a := a) hK hH hrel hp
-    rw [runCmd, dite_eq_right hn]
-    dsimp only
-    generalize stepCmd H k a stop hs st pos = r at hstep
-    cases hst : r.status with
-    | next =>
-      obtain ⟨p', hR, h1, h2, h3, _, h4, h5⟩ := hstep.next hst
-      exact RunOk.trans h1 h3 h4 h5 (ih _ p' r r.pos (by omega) hR h2)
-    | needsInput => exact hstep.toRun
-    | needsOutput => exact hstep.toRun
-    | done => exact hstep.toRun
-    | bad => exact hstep.toRun
 
 /-- `stepCmd_ok` for the spec's own commands. -/
 theorem stepCmd_commands {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a : ByteArray} {stop : USize}

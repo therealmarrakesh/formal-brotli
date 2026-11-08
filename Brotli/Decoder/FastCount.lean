@@ -10,7 +10,7 @@ public import Brotli.Decoder.FastPay
 `runCmdKFW` against `runCmdKF`, by induction on the fuel, the two taken apart together: an entry into the fast loop is a
 move whose work is four for each byte it writes and two (`fastEnter_work`), paid for by the bytes and, when it writes
 nothing, by what the place holds for it (`alw`, which the step before it left, `round_pay`); a step is paid for as the
-step machine's are. The account is `CW`: the step machine's (`runCmdW_count`) with what a fresh state holds.
+step machine's are (`round_pay`). The account is `CW`: the step machine's with what a fresh state holds.
 -/
 
 namespace Brotli.Decoder

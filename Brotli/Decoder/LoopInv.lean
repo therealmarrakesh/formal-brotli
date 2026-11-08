@@ -19,7 +19,7 @@ public import Brotli.Decoder.DictBytes
 time: the window's size and the write position in it, how much of the window is written, the bit buffer well formed,
 the position within the chunk, the block types within their counts, what the next step needs of the element's fields
 (`TagInv`: the copy length's extra bits, the copy's distance, the word's position in its buffer), and that the header's
-tables match some spec header. `runCmd` is called only from a state the stream's relation holds of, which gives all of it
+tables match some spec header. `runCmdF` is called only from a state the stream's relation holds of, which gives all of it
 (`KInv.of_rel`), and every step keeps it from the fields alone: the lemmas below are what the steps need.
 -/
 
