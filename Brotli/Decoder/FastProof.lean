@@ -2135,6 +2135,127 @@ theorem applyDistance_fcopy {word1 count1 w' c' dcode d n01 n23 : UInt64} {pos1 
     simp only [fcopy, e1, e2, e3, e4]
     rfl
 
+/-- A distance the copy reads is below `2 ^ 32`: it is at most the bytes written. -/
+theorem dist_small {st : Cmd} {out : List Nat} {rem : Nat} {ds : Distances} {ic lit dist : BlockState} {d : UInt64}
+    (hC : Core w k.toNat m st out rem ds ic lit dist) (hw : ¬ st.written.toUInt64 < d) : d.toNat < 2 ^ 32 := by
+  have h1 := UInt64.le_iff_toNat_le.mp (UInt64.not_lt.mp hw)
+  rw [USize.toNat_toUInt64] at h1
+  have h2 := hC.written
+  have h3 := hC.win
+  have h4 : 2 ^ k.toNat ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hC.k24
+  have : min w out.length ≤ w := Nat.min_le_left _ _
+  omega
+
+/-- A distance's short code (one of the last distances, adjusted): from the distance, a refill to 40 bits, the block
+count, the symbol, then the copy. -/
+theorem dShort_move {T : ByteArray} {tb : UInt64} {modeOff lRow iRow iFb dRow s0 : USize}
+    (C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow s0) (hH : HdrRel H m)
+    (hrel : Rel w k.toNat m (fexit word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code
+      ilen clen p1 p2 .distance 0 pos) (.distance s c cl))
+    {word1 count1 : UInt64} {pos1 : USize} (hf : FillOk a stop word count pos 40 word1 count1 pos1)
+    (hrem : opos.toNat + clen.toNat ≤ rEnd.toNat) (hc : ¬ code < 128) (hdc : dCount ≠ 0) {v n01 n23 : UInt64}
+    (hv : v = lookupT T (dRowBase C clen) word1 (C.dIn clen) C.lim C.size32) (hl : wordBits v ≤ count1)
+    (h16 : wordSym v < 16)
+    (hd0 : shortFast (d01 &&& 0xFFFFFFFF) (d01 >>> 32) (d23 &&& 0xFFFFFFFF) (d23 >>> 32) (wordSym v) ≠ 0)
+    (hw : ¬ (usmin cap16 (opos + wB)).toUInt64 <
+      shortFast (d01 &&& 0xFFFFFFFF) (d01 >>> 32) (d23 &&& 0xFFFFFFFF) (d23 >>> 32) (wordSym v))
+    (hn : (wordSym v = 0 ∧ n01 = d01 ∧ n23 = d23) ∨ (wordSym v ≠ 0 ∧
+      n01 = shortFast (d01 &&& 0xFFFFFFFF) (d01 >>> 32) (d23 &&& 0xFFFFFFFF) (d23 >>> 32) (wordSym v) ||| (d01 <<< 32) ∧
+      n23 = (d01 >>> 32) ||| (d23 <<< 32))) :
+    ∃ p', MoveOk w k.toNat m K a stop (.distance s c cl)
+      (fexit word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code ilen clen p1 p2
+        .distance 0 pos) pos p'
+      (fcopy (word1 >>> wordBits v) (count1 - wordBits v) ring opos mask pB cap cap16 wB rEnd iCount LC (dCount - 1)
+        flags x n01 n23 code ilen clen p1 p2
+        (shortFast (d01 &&& 0xFFFFFFFF) (d01 >>> 32) (d23 &&& 0xFFFFFFFF) (d23 >>> 32) (wordSym v)) pos1) := by
+  have m1 := fill_move (K := K) hrel hf
+  have hC := hrel.1
+  obtain ⟨hr0, hrc⟩ := rem_facts hrem hC.clen1
+  obtain ⟨p2, m2⟩ := distCount_move (K := K) (a := a) (stop := stop) (pos := pos1) hH m1.rel hr0 hc hdc hf.posStop
+  obtain ⟨_, _, _, rfl⟩ := m2.rel.distanceSymbol_of rfl
+  obtain ⟨p3, m3⟩ := distShort_move C hH m2.rel hf.posStop hv hl h16 hd0 hw hrc
+  exact ⟨p3, (applyDistance_fcopy hw hrc (dist_small hC hw) hn) ▸ (m1.trans m2).trans m3⟩
+
+/-- A distance's code from 16 on: from the distance, a refill to 40 bits, the block count, the symbol and its extra
+bits, then the copy. -/
+theorem dLong_move {T : ByteArray} {tb : UInt64} {modeOff lRow iRow iFb dRow s0 : USize}
+    (C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow s0) (hH : HdrRel H m)
+    (hrel : Rel w k.toNat m (fexit word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code
+      ilen clen p1 p2 .distance 0 pos) (.distance s c cl))
+    {word1 count1 : UInt64} {pos1 : USize} (hf : FillOk a stop word count pos 40 word1 count1 pos1)
+    (hrem : opos.toNat + clen.toNat ≤ rEnd.toNat) (hc : ¬ code < 128) (hdc : dCount ≠ 0) {v E D n01 n23 : UInt64}
+    (hv : v = lookupT T (dRowBase C clen) word1 (C.dIn clen) C.lim C.size32) (h16 : ¬ wordSym v < 16)
+    (hE : E = dEntry H.npostfix H.ndirect (wordSym v))
+    (hD : D = (E >>> 32) + (((word1 >>> wordBits v) &&& maskT T C.big C.size32 (E &&& 31)) <<< H.npostfix))
+    (hok : wordBits v + (E &&& 31) ≤ count1) (hd0 : D ≠ 0) (hw : ¬ (usmin cap16 (opos + wB)).toUInt64 < D)
+    (hn : (wordSym v = 0 ∧ n01 = d01 ∧ n23 = d23) ∨
+      (wordSym v ≠ 0 ∧ n01 = D ||| (d01 <<< 32) ∧ n23 = (d01 >>> 32) ||| (d23 <<< 32))) :
+    ∃ p', MoveOk w k.toNat m K a stop (.distance s c cl)
+      (fexit word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code ilen clen p1 p2
+        .distance 0 pos) pos p'
+      (fcopy ((word1 >>> wordBits v) >>> (E &&& 31)) (count1 - wordBits v - (E &&& 31)) ring opos mask pB cap cap16 wB
+        rEnd iCount LC (dCount - 1) flags x n01 n23 code ilen clen p1 p2 D pos1) := by
+  have m1 := fill_move (K := K) hrel hf
+  have hC := hrel.1
+  obtain ⟨hr0, hrc⟩ := rem_facts hrem hC.clen1
+  obtain ⟨p2, m2⟩ := distCount_move (K := K) (a := a) (stop := stop) (pos := pos1) hH m1.rel hr0 hc hdc hf.posStop
+  obtain ⟨_, _, _, rfl⟩ := m2.rel.distanceSymbol_of rfl
+  obtain ⟨p3, m3⟩ := distLong_move C hH m2.rel hf.posStop hv h16 hE hD hok hd0 hw hrc
+  exact ⟨p3, (applyDistance_fcopy hw hrc (dist_small hC hw) hn) ▸ (m1.trans m2).trans m3⟩
+
+/-- The copy at a command, then the next command: the fast copy's window, the context bytes read back from it, all at
+the loop's unmasked position. -/
+theorem fcopy_move {s : CommandState} {dd nn : Nat} {d : UInt64}
+    (hrel : Rel w k.toNat m (fcopy word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code
+      ilen clen p1 p2 d pos) (.copy s dd nn))
+    (hk : k.toNat ≤ 24) (hmk : mask = ringMask k) (hmN : mask.toNat = 2 ^ k.toNat - 1) {size : USize}
+    (hsize : size.toNat = 2 ^ k.toNat) (hcap : cap16 = ringSize k - USize.ofNat 16) {bEnd : UInt64}
+    (N : FNum opos pB wB rEnd bEnd k.toNat clen.toNat) (hsz : ring.size = 2 ^ k.toNat)
+    (hd : d.toUSize.toNat + 16 ≤ 2 ^ k.toNat) (hp : pos.toNat ≤ stop.toNat) :
+    ∃ p', MoveOk w k.toNat m K a stop (.copy s dd nn)
+      (fcopy word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code ilen clen p1 p2 d pos)
+      pos p'
+      (fexit word count (copyF ring (opos &&& mask) d.toUSize clen.toUSize mask size hk hmN hsize hsz (mask_lt hmN) hd)
+        (opos + clen.toUSize) mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code ilen clen
+        (wget (copyF ring (opos &&& mask) d.toUSize clen.toUSize mask size hk hmN hsize hsz (mask_lt hmN) hd)
+          (opos + clen.toUSize - USize.ofNat 1) mask hmN (copyF_size _ _ _ _ _ _ hk hmN hsize hsz _ hd))
+        (wget (copyF ring (opos &&& mask) d.toUSize clen.toUSize mask size hk hmN hsize hsz (mask_lt hmN) hd)
+          (opos + clen.toUSize - USize.ofNat 2) mask hmN (copyF_size _ _ _ _ _ _ hk hmN hsize hsz _ hd))
+        .command 0 pos) := by
+  have hC := hrel.1
+  have hcl : 1 ≤ clen.toNat := hC.clen1
+  have hcb : 1 ≤ x.copyBase.toNat := hC.cbase1
+  have hleft : clen.toNat = nn := hrel.2.2.2.2.1
+  subst hmk
+  have hsk : size = ringSize k := USize.toNat_inj.mp (by rw [hsize, ringSize_toNat hk])
+  subst hsk
+  have hah := N.ahead
+  have hpend := N.pend
+  have hsm := N.small
+  have hwr := N.wr
+  have hbe := N.bEndLe
+  have hcU : clen.toUSize.toNat = clen.toNat := word_toUSize (by omega)
+  obtain ⟨p1', m1⟩ := copy_move (K := K) (a := a) (stop := stop) (pos := pos) (x := opos) hrel (by omega)
+    (by show (opos + pB).toNat + nn + 16 ≤ _; omega) hp hk hsz (mask_lt hmN) hd
+    (ring' := copyF ring (opos &&& ringMask k) d.toUSize clen.toUSize (ringMask k) (ringSize k) hk hmN hsize hsz
+      (mask_lt hmN) hd) rfl (copyF_size _ _ _ _ _ _ hk hmN hsize hsz _ hd) rfl
+  obtain ⟨_, _, _, rfl⟩ := m1.rel.copy_of rfl
+  obtain ⟨p2', m2⟩ := copyEnd_move (K := K) (a := a) m1.rel rfl hp
+  obtain ⟨_, rfl⟩ := m2.rel.command_of rfl
+  have m3 := (m1.trans m2).congr (m2.rel.command_ext (cbits := x.copyBits) (cb := x.copyBase) (d := x.dist) hcb) rfl
+    rfl rfl rfl
+  have ep : opos + clen.toUSize + pB = opos + pB + clen.toUSize := by
+    rw [USize.add_assoc, USize.add_comm clen.toUSize pB, ← USize.add_assoc]
+  have ew : usmin cap16 (opos + clen.toUSize + wB) =
+      usmin (ringSize k - USize.ofNat 16) (usmin cap16 (opos + wB) + clen.toUSize) := by
+    rw [← hcap, usmin_add (by omega), USize.add_assoc opos clen.toUSize wB, USize.add_comm clen.toUSize wB,
+      ← USize.add_assoc]
+  have er : rEnd - (opos + clen.toUSize).toUInt64 = rEnd - opos.toUInt64 - clen := by
+    rw [rem_add (by omega) (by omega)]
+    congr 1
+    exact UInt64.toNat_inj.mp (by rw [USize.toNat_toUInt64, hcU])
+  exact ⟨_, by unfold fexit; rw [ep, ew, er]; exact m3⟩
+
 end
 
 end Brotli.Decoder
