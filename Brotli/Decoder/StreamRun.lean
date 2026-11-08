@@ -1,6 +1,8 @@
 module
 
 public import Brotli.Decoder.StreamSteps
+public import Brotli.Decoder.CAgree
+public import Brotli.Decoder.FastRun
 
 @[expose] public section
 
@@ -244,6 +246,247 @@ theorem stepCmd_down {w : Nat} {k : USize} {last : Bool} {H : Hdr} {m : MetaBloc
       show (rest w m (cK w last m) (.command s) _).getD (0, 0) = (rest w m (cK w last m) p _).getD (0, 0)
       rw [r2]
 
+/-! ### Moves and the measure
+
+A move (`MoveOk`, the fast loop's) is a run of the reading in order of any length. The rank the measure uses doesn't go
+down at every step of the reading in order (a literal's symbol has the lowest rank among its literals), so a finer rank,
+`rankR`, which every step lowers, orders a move; on the places a state stands for it orders as `rankC` does. A move
+that keeps its place and the bits ahead of the future is no move at all; any other takes a step for every future. -/
+
+/-- A finer rank on the commands' places, which every step of the reading in order inside a command lowers. -/
+def rankR : Phase → Nat × Nat
+  | .literals _ _ _ _ _ n lit _ => (4, 4 * n + if lit.count = 0 then 2 else 0)
+  | .literalSymbol _ _ _ _ _ n _ _ => (4, 4 * n + 3)
+  | p => rankC p
+
+private theorem copyPhase_rankR {w : Nat} {s : CommandState} {clen dcode d : Nat} {q : Phase}
+    (h : copyPhase w s clen dcode d = some q) : (rankR q).1 = 1 := by
+  unfold copyPhase at h
+  dsimp only at h
+  by_cases hd : isDictionaryReference d (maxBackwardDistance w s.produced) = true
+  · rw [ite_eq_left hd] at h
+    cases hw : dictionaryWord clen d (maxBackwardDistance w s.produced) with
+    | none => rw [hw] at h; cases h
+    | some word =>
+      rw [hw] at h
+      dsimp only [Option.bind] at h
+      split at h
+      · cases h
+      · cases h
+        rfl
+  · rw [ite_eq_right hd] at h
+    split at h
+    · cases h
+    · cases h
+      rfl
+
+/-- Each step of the reading in order inside a command goes lower in `rankR`. -/
+private theorem cStep_rankR {w : Nat} {m : MetaBlockHeader} : ∀ (p : Phase) (bs : List Bool) (q : Phase) (c : List Bool),
+    (∀ s, p ≠ .command s) → cStep w m p bs = .next q c → LexLt (rankR q) (rankR p)
+  | .command s, _, _, _, hp, _ => absurd rfl (hp s)
+  | .insertCopy s ic, bs, q, c, _, h => by
+    obtain ⟨code, _, h2⟩ := lookIn_next' h
+    obtain ⟨v, b, _, e2⟩ := readIn_next' h2
+    cases e2
+    exact Or.inl (show 5 < 6 by decide)
+  | .copyLength s ic c0 ilen copyBits copyBase, bs, q, c, _, h => by
+    have h' : (if s.remaining < ilen then ORes.bad else readIn 24 (readInt copyBits) bs fun e b =>
+        .next (.literals s ic c0 ilen (copyBase + e) ilen s.literal s.output) b) = .next q c := h
+    split at h'
+    · cases h'
+    · obtain ⟨e, b, _, e2⟩ := readIn_next' h'
+      cases e2
+      exact Or.inl (show 4 < 5 by decide)
+  | .literals s ic c0 ilen clen 0 lit out, bs, q, c, _, h => by
+    cases h
+    exact Or.inl (show 3 < 4 by decide)
+  | .literals s ic c0 ilen clen (n + 1) lit out, bs, q, c, _, h => by
+    have h' : (if lit.count = 0 then nextIn m.literal lit bs fun lit b =>
+          .next (.literals s ic c0 ilen clen (n + 1) { lit with count := lit.count + 1 } out) b
+        else .next (.literalSymbol s ic c0 ilen clen n { lit with count := lit.count - 1 } out) bs) = .next q c := h
+    split at h'
+    · rename_i h0
+      obtain ⟨lit', b, _, e2⟩ := nextIn_next' h'
+      cases e2
+      refine Or.inr ⟨rfl, ?_⟩
+      show 4 * (n + 1) + (if lit'.count + 1 = 0 then 2 else 0) < 4 * (n + 1) + (if lit.count = 0 then 2 else 0)
+      rw [ite_eq_right (Nat.add_one_ne_zero _), ite_eq_left h0]
+      omega
+    · rename_i h0
+      cases h'
+      refine Or.inr ⟨rfl, ?_⟩
+      show 4 * n + 3 < 4 * (n + 1) + (if lit.count = 0 then 2 else 0)
+      rw [ite_eq_right h0]
+      omega
+  | .literalSymbol s ic c0 ilen clen n lit out, bs, q, c, _, h => by
+    obtain ⟨_, _, h2⟩ := lookIn_next' h
+    obtain ⟨_, _, h3⟩ := lookIn_next' h2
+    obtain ⟨_, _, h4⟩ := lookIn_next' h3
+    obtain ⟨byte, b, _, e2⟩ := readIn_next' h4
+    cases e2
+    refine Or.inr ⟨rfl, ?_⟩
+    show 4 * n + (if lit.count = 0 then 2 else 0) < 4 * n + 3
+    split <;> omega
+  | .distance s c0 clen, bs, q, c, _, h => by
+    have h' : (if s.remaining = 0 then ORes.next (Phase.command s) bs
+        else if implicitZeroDistance c0 then
+          lookIn (distanceOf m.npostfix m.ndirect s.distances 0 0) fun d => lookIn (copyPhase w s clen 0 d) fun q => .next q bs
+        else nextIn m.distance s.distance bs fun dist b => .next (.distanceSymbol s clen dist) b) = .next q c := h
+    split at h'
+    · cases h'
+      exact Or.inl (show 0 < 3 by decide)
+    · split at h'
+      · obtain ⟨d, _, h2⟩ := lookIn_next' h'
+        obtain ⟨q', hq, e2⟩ := lookIn_next' h2
+        cases e2
+        refine Or.inl ?_
+        rw [copyPhase_rankR hq]
+        exact (show 1 < 3 by decide)
+      · obtain ⟨dist, b, _, e2⟩ := nextIn_next' h'
+        cases e2
+        exact Or.inl (show 2 < 3 by decide)
+  | .distanceSymbol s clen dist, bs, q, c, _, h => by
+    obtain ⟨_, _, h2⟩ := lookIn_next' h
+    obtain ⟨_, _, h3⟩ := lookIn_next' h2
+    obtain ⟨_, b, _, h4⟩ := readIn_next' h3
+    obtain ⟨d, _, h5⟩ := lookIn_next' h4
+    obtain ⟨q', hq, e2⟩ := lookIn_next' h5
+    cases e2
+    refine Or.inl ?_
+    rw [copyPhase_rankR hq]
+    exact (show 1 < 2 by decide)
+  | .copy s d 0, bs, q, c, _, h => by
+    cases h
+    exact Or.inl (show 0 < 1 by decide)
+  | .copy s d (n + 1), bs, q, c, _, h => by
+    cases h
+    exact Or.inr ⟨rfl, show n < n + 1 by omega⟩
+  | .word s [], bs, q, c, _, h => by
+    cases h
+    exact Or.inl (show 0 < 1 by decide)
+  | .word s (b :: pending), bs, q, c, _, h => by
+    cases h
+    exact Or.inr ⟨rfl, show pending.length < pending.length + 1 by omega⟩
+
+/-- `cMeas` with the finer rank. -/
+def cMeasR (w : Nat) (last : Bool) (m : MetaBlockHeader) (p : Phase) (bs : List Bool) : (Nat × Nat) × (Nat × Nat) :=
+  (cVal w last m p bs, rankR p)
+
+/-- Each step of the reading in order lowers `cMeasR`. -/
+private theorem cStep_measR {w : Nat} {last : Bool} {m : MetaBlockHeader} {p q : Phase} {bs c : List Bool}
+    (h : cStep w m p bs = .next q c) : Lex4 (cMeasR w last m q c) (cMeasR w last m p bs) := by
+  by_cases hc : ∃ s, p = .command s
+  · obtain ⟨s, rfl⟩ := hc
+    have h' : (if s.remaining = 0 then ORes.exit s bs else nextIn m.insertCopy s.insertCopy bs fun ic b =>
+        .next (.insertCopy s ic) b) = .next q c := h
+    split at h'
+    · cases h'
+    · rename_i h0
+      obtain ⟨ic, b, e1, e2⟩ := nextIn_next' h'
+      cases e2
+      refine Or.inl ?_
+      have hl := readCommand_cK (w := w) (last := last) (m := m) (s := s) (bs := bs) h0
+      rw [readCommand_rest, e1] at hl
+      exact hl
+  · have hne : ∀ s, p ≠ .command s := fun s e => hc ⟨s, e⟩
+    refine Or.inr ⟨?_, cStep_rankR p bs q c hne h⟩
+    show (rest w m (cK w last m) q c).getD (0, 0) = (rest w m (cK w last m) p bs).getD (0, 0)
+    rw [cStep_rest (cK w last m) hne h]
+
+private theorem lex4Eq_lt {a b c : (Nat × Nat) × (Nat × Nat)} (h1 : Lex4Eq a b) (h2 : Lex4 b c) : Lex4 a c := by
+  rcases h1 with h1 | rfl
+  · exact h1.trans h2
+  · exact h2
+
+/-- The reading in order never raises `cMeasR`. -/
+private theorem reach_measR {w : Nat} {last : Bool} {m : MetaBlockHeader} {p q : Phase} {bs c : List Bool}
+    (h : Reach (cStep w m) p bs q c) : Lex4Eq (cMeasR w last m q c) (cMeasR w last m p bs) := by
+  induction h with
+  | refl => exact Or.inr rfl
+  | next hs _ ih => exact ih.trans (Or.inl (cStep_measR hs))
+
+private theorem reach_cases {P E : Type} {step : P → List Bool → ORes P E} {p q : P} {bs c : List Bool}
+    (h : Reach step p bs q c) : (q = p ∧ c = bs) ∨ ∃ p1 b1, step p bs = .next p1 b1 ∧ Reach step p1 b1 q c := by
+  cases h with
+  | refl => exact Or.inl ⟨rfl, rfl⟩
+  | next hs h' => exact Or.inr ⟨_, _, hs, h'⟩
+
+/-- A place a state can stand for: not a literal's symbol. -/
+def NotLS : Phase → Prop
+  | .literalSymbol .. => False
+  | _ => True
+
+theorem Rel.notLS {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {p : Phase} (h : Rel w k m st p) : NotLS p := by
+  cases p with
+  | literalSymbol => exact h.elim
+  | _ => trivial
+
+private theorem rankR_eq {p : Phase} (h : NotLS p) :
+    rankR p = ((rankC p).1, if (rankC p).1 = 4 then 2 * (rankC p).2 else (rankC p).2) := by
+  cases p with
+  | literalSymbol => exact h.elim
+  | literals s ic c ilen clen n lit out =>
+    refine Prod.ext rfl ?_
+    show 4 * n + (if lit.count = 0 then 2 else 0) =
+      (if (4 : Nat) = 4 then 2 * (2 * n + if lit.count = 0 then 1 else 0) else 2 * n + if lit.count = 0 then 1 else 0)
+    rw [ite_eq_left rfl]
+    by_cases hc : lit.count = 0
+    · rw [ite_eq_left hc, ite_eq_left hc]
+      omega
+    · rw [ite_eq_right hc, ite_eq_right hc]
+      omega
+  | _ => rfl
+
+private theorem meas_of_R {w : Nat} {last : Bool} {m : MetaBlockHeader} {p q : Phase} {bs c : List Bool} (hp : NotLS p)
+    (hq : NotLS q) : (Lex4 (cMeasR w last m q c) (cMeasR w last m p bs) → Lex4 (cMeas w last m q c) (cMeas w last m p bs)) ∧
+      (cMeasR w last m q c = cMeasR w last m p bs → cMeas w last m q c = cMeas w last m p bs) := by
+  unfold cMeasR cMeas
+  rw [rankR_eq hp, rankR_eq hq]
+  generalize cVal w last m q c = v1
+  generalize cVal w last m p bs = v2
+  generalize rankC q = r1
+  generalize rankC p = r2
+  obtain ⟨a1, a2⟩ := v1
+  obtain ⟨b1, b2⟩ := v2
+  obtain ⟨c1, c2⟩ := r1
+  obtain ⟨d1, d2⟩ := r2
+  simp only [Lex4, LexLt, Prod.mk.injEq]
+  constructor
+  · intro h
+    by_cases e1 : c1 = 4 <;> by_cases e2 : d1 = 4 <;>
+      simp only [e1, e2, ↓reduceIte, true_and, false_and, or_false, false_or, Nat.lt_irrefl] at h <;> omega
+  · intro h
+    by_cases e1 : c1 = 4 <;> by_cases e2 : d1 = 4 <;>
+      simp only [e1, e2, ↓reduceIte, true_and, false_and, and_false] at h ⊢ <;> omega
+
+/-- A move keeps its place, its bits ahead of the future and its bytes waiting, or lowers the measure, for every future. -/
+theorem MoveOk.down {α : Type} {w k : Nat} {last : Bool} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
+    {a : ByteArray} {stop : USize} {p p' : Phase} {st r : Cmd} {pos : USize} (hrel : Rel w k m st p)
+    (h : MoveOk w k m K a stop p st pos p' r) :
+    (∀ F, Lex4 (cMeas w last m p' (stateBits r a r.pos stop F)) (cMeas w last m p (stateBits st a pos stop F))) ∨
+      (r.pend = st.pend ∧
+        ∀ F, cMeas w last m p' (stateBits r a r.pos stop F) = cMeas w last m p (stateBits st a pos stop F)) := by
+  have hp := hrel.notLS
+  have hq := h.rel.notLS
+  by_cases ht : p' = p ∧ (BitBuffer.mk r.word r.count).held ++ chunkBits a r.pos.toNat stop.toNat =
+      (BitBuffer.mk st.word st.count).held ++ chunkBits a pos.toNat stop.toNat
+  · obtain ⟨e1, e2⟩ := ht
+    subst e1
+    refine Or.inr ⟨?_, fun F => ?_⟩
+    · obtain ⟨l, h1, h2⟩ := h.out
+      have hl : l.length = 0 := by
+        have := congrArg List.length h1
+        rw [List.length_append] at this
+        omega
+      exact USize.toNat_inj.mp (by rw [h2, hl, Nat.add_zero])
+    · rw [stateBits_eq, stateBits_eq, ← List.append_assoc, ← List.append_assoc, e2]
+  · refine Or.inl fun F => ?_
+    rcases reach_cases (h.reach F) with ⟨e1, e2⟩ | ⟨p1, b1, hs, hr⟩
+    · refine absurd ⟨e1, ?_⟩ ht
+      rw [stateBits_eq, stateBits_eq, ← List.append_assoc, ← List.append_assoc] at e2
+      exact List.append_cancel_right e2
+    · exact (meas_of_R hp hq).1 (lex4Eq_lt (reach_measR hr) (cStep_measR hs))
+
 /-- Any number of steps of the commands leaves the measure no higher. -/
 theorem runCmd_le {w : Nat} {k : USize} {last : Bool} {H : Hdr} {m : MetaBlockHeader} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size}
     (hH : HdrRel H m) : ∀ (N : Nat) (n : USize) (p : Phase) (st : Cmd) (pos : USize), n.toNat = N → Rel w k.toNat m st p → pos.toNat ≤ stop.toNat →
@@ -318,6 +561,101 @@ theorem runCmd_down {w : Nat} {k : USize} {last : Bool} {H : Hdr} {m : MetaBlock
   | needsOutput => exact hstep
   | done => exact hstep
   | bad => exact hstep
+
+/-! ### The measure over the command loop with the fast loop -/
+
+private theorem lex4_lt_eq {u v x : (Nat × Nat) × (Nat × Nat)} (h1 : Lex4 u v) (h2 : Lex4Eq v x) : Lex4 u x := by
+  rcases h2 with h2 | rfl
+  · exact h1.trans h2
+  · exact h1
+
+/-- A strict account of the measure is a weak one. -/
+theorem CDown.weak {w k : Nat} {last : Bool} {m : MetaBlockHeader} {a : ByteArray} {stop : USize} {p : Phase}
+    {st : Cmd} {pos : USize} {r : Cmd} (h : CDown Lex4 w k last m a stop p st pos r) :
+    CDown Lex4Eq w k last m a stop p st pos r :=
+  ⟨fun e => let ⟨p', h1, h2, h3, h4⟩ := h.next e; ⟨p', h1, h2, h3, fun F => Or.inl (h4 F)⟩, h.needsInput, h.needsOutput,
+    h.done⟩
+
+/-- A move, then a run: the run's account of the measure, from where the move started. -/
+theorem CDown.move {R : (Nat × Nat) × (Nat × Nat) → (Nat × Nat) × (Nat × Nat) → Prop}
+    (hR : ∀ {u v x}, R u v → Lex4Eq v x → R u x) {α : Type} {w k : Nat} {last : Bool} {m : MetaBlockHeader}
+    {K : CommandState → List Bool → Option α} {a : ByteArray} {stop : USize} {p p' : Phase} {st r R' : Cmd} {pos : USize}
+    (hrel : Rel w k m st p) (mv : MoveOk w k m K a stop p st pos p' r) (h : CDown R w k last m a stop p' r r.pos R') :
+    CDown R w k last m a stop p st pos R' := by
+  have hL : CLive p → CLive p' := reach_live (mv.reach [])
+  have md := mv.down (last := last) hrel
+  have hle : ∀ F, Lex4Eq (cMeas w last m p' (stateBits r a r.pos stop F))
+      (cMeas w last m p (stateBits st a pos stop F)) := by
+    intro F
+    rcases md with h1 | ⟨_, h1⟩
+    · exact Or.inl (h1 F)
+    · exact Or.inr (h1 F)
+  have hpause : ∀ {x : USize} {A : List Bool → (Nat × Nat) × (Nat × Nat)},
+      ((∀ F, Lex4 (A F) (cMeas w last m p' (stateBits r a r.pos stop F))) ∨
+        (x = r.pend ∧ ∀ F, A F = cMeas w last m p' (stateBits r a r.pos stop F))) →
+      ((∀ F, Lex4 (A F) (cMeas w last m p (stateBits st a pos stop F))) ∨
+        (x = st.pend ∧ ∀ F, A F = cMeas w last m p (stateBits st a pos stop F))) := by
+    intro x A h2
+    rcases md with h1 | ⟨e1, h1⟩
+    · exact Or.inl (pause_after (R := Lex4) (x := x) (y := r.pend) (fun a b => a.trans b) h1 h2)
+    · rcases h2 with h2 | ⟨e2, h2⟩
+      · exact Or.inl fun F => by rw [← h1 F]; exact h2 F
+      · exact Or.inr ⟨e2.trans e1, fun F => (h2 F).trans (h1 F)⟩
+  refine ⟨fun e => ?_, fun e => ?_, fun e => ?_, fun e => ?_⟩
+  · obtain ⟨p2, ⟨b1, bL⟩, b2, b3, b4⟩ := h.next e
+    exact ⟨p2, ⟨b1, fun hh => bL (hL hh)⟩, Nat.le_trans mv.posLe b2, b3, fun F => hR (b4 F) (hle F)⟩
+  · obtain ⟨p2, ⟨b1, bL⟩, b2⟩ := h.needsInput e
+    exact ⟨p2, ⟨b1, fun hh => bL (hL hh)⟩, hpause b2⟩
+  · obtain ⟨p2, ⟨b1, bL⟩, b2⟩ := h.needsOutput e
+    exact ⟨p2, ⟨b1, fun hh => bL (hL hh)⟩, hpause b2⟩
+  · obtain ⟨s, ⟨b1, bL⟩, b2, b3⟩ := h.done e
+    exact ⟨s, ⟨b1, fun hh => bL (hL hh)⟩, b2, fun F => (b3 F).trans (hle F)⟩
+
+/-- A step that lowers the measure, then a run: lower. -/
+theorem CDown.step {w k : Nat} {last : Bool} {m : MetaBlockHeader} {a : ByteArray} {stop : USize} {p p' : Phase}
+    {st r R' : Cmd} {pos : USize} (hL : CLive p → CLive p') (h1 : pos.toNat ≤ r.pos.toNat)
+    (h3 : ∀ F, Lex4 (cMeas w last m p' (stateBits r a r.pos stop F)) (cMeas w last m p (stateBits st a pos stop F)))
+    (hin : CDown Lex4Eq w k last m a stop p' r r.pos R') : CDown Lex4 w k last m a stop p st pos R' := by
+  refine ⟨fun e => ?_, fun e => ?_, fun e => ?_, fun e => ?_⟩
+  · obtain ⟨p2, ⟨b1, bL⟩, b2, b3, b4⟩ := hin.next e
+    exact ⟨p2, ⟨b1, fun h => bL (hL h)⟩, Nat.le_trans h1 b2, b3, fun F => (b4 F).trans_lt (h3 F)⟩
+  · obtain ⟨p2, ⟨b1, bL⟩, b2⟩ := hin.needsInput e
+    exact ⟨p2, ⟨b1, fun h => bL (hL h)⟩, Or.inl (pause_after (R := Lex4) (x := R'.pend) (y := r.pend)
+      (fun a b => a.trans b) h3 b2)⟩
+  · obtain ⟨p2, ⟨b1, bL⟩, b2⟩ := hin.needsOutput e
+    exact ⟨p2, ⟨b1, fun h => bL (hL h)⟩, Or.inl (pause_after (R := Lex4) (x := R'.pend) (y := r.pend)
+      (fun a b => a.trans b) h3 b2)⟩
+  · obtain ⟨s, ⟨b1, bL⟩, b2, b3⟩ := hin.done e
+    exact ⟨s, ⟨b1, fun h => bL (hL h)⟩, b2, fun F => (b3 F).trans (Or.inl (h3 F))⟩
+
+/-- The command loop with the fast loop, from a record: no higher in the measure, and lower when it has fuel for two
+rounds (a move of the fast loop is always followed by a step, which goes lower). -/
+theorem runCmdF_meas {w : Nat} {k : USize} {last : Bool} {H : Hdr} {m : MetaBlockHeader} {a : ByteArray} {stop : USize}
+    {hs : stop.toNat ≤ a.size} (hH : HdrRel H m) (n : USize) {p : Phase} {st : Cmd} {pos : USize}
+    (hrel : Rel w k.toNat m st p) (h : CmdInv H k stop st pos) :
+    CDown Lex4Eq w k.toNat last m a stop p st pos (runCmdF H k a stop hs n st pos h) ∧
+      (2 ≤ n.toNat → CDown Lex4 w k.toNat last m a stop p st pos (runCmdF H k a stop hs n st pos h)) := by
+  have e1 : ∀ {u v x : (Nat × Nat) × (Nat × Nat)}, Lex4Eq u v → Lex4Eq v x → Lex4Eq u x := fun a b => a.trans b
+  have e2 : ∀ {u v x : (Nat × Nat) × (Nat × Nat)}, Lex4 u v → Lex4Eq v x → Lex4 u x := fun a b => lex4_lt_eq a b
+  have := runCmdF_rec (K := commandsFrom w m) (fun _ bs h0 => commandsFrom_step bs h0) hH
+    (fun N fresh p st pos R => CDown Lex4Eq w k.toNat last m a stop p st pos R ∧
+      ((2 ≤ N ∨ (1 ≤ N ∧ fresh = false)) → CDown Lex4 w k.toNat last m a stop p st pos R))
+    (fun _ p st hrel hs hp => ⟨⟨fun _ => ⟨p, ⟨hrel, id⟩, Nat.le_refl _, hp, fun _ => Or.inr rfl⟩,
+      fun e => absurd (hs.symm.trans e) (by decide), fun e => absurd (hs.symm.trans e) (by decide),
+      fun e => absurd (hs.symm.trans e) (by decide)⟩, fun hc => absurd hc (fun h => by rcases h with h | ⟨h, _⟩ <;> omega)⟩)
+    (fun N _ _ _ _ _ _ hrel _ _ mv ih => ⟨CDown.move (R := Lex4Eq) e1 hrel mv ih.1, fun hc =>
+      CDown.move (R := Lex4) e2 hrel mv (ih.2 (Or.inr ⟨(by rcases hc with h | ⟨_, h⟩ <;> first | omega | cases h), rfl⟩))⟩)
+    (fun _ _ _ _ _ hrel hp _ =>
+      let d := stepCmd_down (last := last) (a := a) (stop := stop) (hs := hs) hH hrel hp
+      ⟨d.weak, fun _ => d⟩)
+    (fun _ _ _ _ _ _ hrel hp hst ih => by
+      obtain ⟨p', ⟨hR, hL⟩, h1, _, h3⟩ := (stepCmd_down (last := last) (a := a) (stop := stop) (hs := hs) hH hrel hp).next hst
+      have d := CDown.step hL h1 h3 (ih p' hR).1
+      exact ⟨d.weak, fun _ => d⟩)
+    (fun _ _ _ _ _ _ hrel mv _ _ _ ih => ⟨CDown.move (R := Lex4Eq) e1 hrel mv ih.1, fun hc =>
+      CDown.move (R := Lex4) e2 hrel mv (ih.2 hc)⟩)
+    n hrel h
+  exact ⟨this.1, fun h2 => this.2 (Or.inl h2)⟩
 
 /-! ### The measure on the stream -/
 

@@ -46,6 +46,7 @@ public import Brotli.Decoder.HeaderSyms
 public import Brotli.Decoder.HeaderMap
 public import Brotli.Decoder.HeaderDone
 public import Brotli.Decoder.StreamRest
+public import Brotli.Decoder.CAgree
 public import Brotli.Decoder.StreamOrder
 public import Brotli.Decoder.Restrict
 public import Brotli.Decoder.StreamStart

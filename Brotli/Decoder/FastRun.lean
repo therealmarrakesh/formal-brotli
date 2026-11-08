@@ -1,6 +1,7 @@
 module
 
 public import Brotli.Decoder.FastProof
+public import Brotli.Decoder.Positions
 
 @[expose] public section
 
@@ -9,9 +10,10 @@ public import Brotli.Decoder.FastProof
 
 `runCmdKF` runs the fast loop (`FastLoop.lean`) where a command's literals or its distance are next and the chunk and
 the room allow it, and the step machine's steps otherwise. Entering the fast loop is a move (`fastEnter_ok`, from
-`fastLoop_ok`), a step is a step (`stepCmd_ok`, through `kstep_eq`), and the loop as a whole is a run (`runCmdKF_ok`),
-from a record too (`runCmdF_ok`). The scratch record a literal run builds its result in changes nothing
-(`runCmdKF_cell`), which lets a step's continuation be taken as one on the fields alone.
+`fastLoop_ok`), and a step is `stepCmd` (through `kstep_eq`), so a property of runs holds of the loop if it goes back
+over moves and over steps (`runCmdKF_rec`, from a record `runCmdF_rec`); the loop is a run (`runCmdF_ok`). The scratch
+record a literal run builds its result in changes nothing (`runCmdKF_cell`), which lets a step's continuation be taken
+as one on the fields alone.
 -/
 
 namespace Brotli.Decoder
@@ -35,6 +37,12 @@ theorem exists_move_trans {p0 : Phase} {st0 : Cmd} (m0 : MoveOk w k m K a stop p
     (h : ∃ p', MoveOk w k m K a stop p0 st0 st0.pos p' r) : ∃ p', MoveOk w k m K a stop p st pos p' r :=
   let ⟨p', m1⟩ := h
   ⟨p', m0.trans m1⟩
+
+theorem exists_move_trans' {p0 : Phase} {st0 : Cmd} {Q R : Cmd → Prop} (m0 : MoveOk w k m K a stop p st pos p0 st0)
+    (hq : Q r → R r) (h : ∃ p', MoveOk w k m K a stop p0 st0 st0.pos p' r ∧ Q r) :
+    ∃ p', MoveOk w k m K a stop p st pos p' r ∧ R r :=
+  let ⟨p', m1, q⟩ := h
+  ⟨p', m0.trans m1, hq q⟩
 
 end
 
@@ -65,7 +73,11 @@ theorem fastEnter_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSt
     ∃ p', MoveOk w kk.toNat mH K a stop p ⟨word, count, ring, wpos, pend, cap, written, p1, p2, remaining, iCount,
       lCount, dCount, flags, x, tag, left, pos, .next⟩ pos p'
       (fastEnter H kk a stop hs cap n word count ring wpos pend written p1 p2 remaining iCount lCount dCount flags x tag
-        lits bEnd pos hinv hm).val := by
+        lits bEnd pos hinv hm).val ∧
+      (fastEnter H kk a stop hs cap n word count ring wpos pend written p1 p2 remaining iCount lCount dCount flags x tag
+        lits bEnd pos hinv hm).val.cap = cap ∧
+      (fastEnter H kk a stop hs cap n word count ring wpos pend written p1 p2 remaining iCount lCount dCount flags x tag
+        lits bEnd pos hinv hm).val.pend.toNat ≤ max pend.toNat (room kk cap).toNat := by
   generalize hA : umin remaining (if room kk cap ≤ pend then 0 else (room kk cap - pend).toUInt64) = A at hbE hl hcl
   have hk := hinv.k24
   have h16 := hinv.k16
@@ -90,6 +102,15 @@ theorem fastEnter_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSt
   have hAN : A.toNat ≤ remaining.toNat ∧ pend.toNat + A.toNat + 16 ≤ 2 ^ kk.toNat := by
     rw [← hA, umin_toNat]
     have hrl := room_le16 (cap := cap) hk h16
+    split
+    · rw [h0]
+      omega
+    · rename_i h
+      have h' : pend.toNat < (room kk cap).toNat := Nat.lt_of_not_le fun e => h (USize.le_iff_toNat_le.mpr e)
+      rw [USize.toNat_toUInt64, USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr (by omega))]
+      omega
+  have hAm : pend.toNat + A.toNat ≤ max pend.toNat (room kk cap).toNat := by
+    rw [← hA, umin_toNat]
     split
     · rw [h0]
       omega
@@ -152,7 +173,18 @@ theorem fastEnter_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSt
   obtain ⟨p0, m0⟩ := key
   unfold fastEnter
   dsimp only
-  refine exists_move_trans m0 ?_
+  refine exists_move_trans' (Q := FFrame cap (pend - wpos) bEnd wpos)
+    (R := fun r => r.cap = cap ∧ r.pend.toNat ≤ max pend.toNat (room kk cap).toNat) m0 ?_ ?_
+  · intro ⟨fc, o, g1, g2, g3⟩
+    refine ⟨fc, ?_⟩
+    rw [g3]
+    have e : o + (pend - wpos) = (o - wpos) + pend := by
+      conv => rhs; rw [← USize.sub_add_cancel pend wpos]
+      rw [← USize.add_assoc, USize.add_comm (o - wpos) (pend - wpos), USize.add_assoc, USize.sub_add_cancel,
+        USize.add_comm]
+    have hd : (o - wpos).toNat = o.toNat - wpos.toNat := USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr g1)
+    rw [e, fastAdd (by omega), hd]
+    omega
   refine fastLoop_ok hK hH rfl rfl ?_ n.toNat n rfl word count pos ring wpos iCount lCount dCount _ _ _ _ _ lits 0 p1 p2
     _ N0 (by have := lCount.toNat_lt; omega) (by omega) p0 m0.rel
   intro hne
@@ -245,11 +277,28 @@ theorem runCmdKF_cell (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs :
           apply ih _ hnN
       rw [kstep_eq (sp := pos) (ss := .next) (hcont := hc), kstep_eq (sp := pos) (ss := .next) (hcont := hc)]
 
+/-! ### Induction over the command loop with the fast loop
+
+A property of a run, with the fuel left and whether the fast loop may be entered, from a place, a record and a position
+to a result, holds of `runCmdKF` if it holds where the fuel ends, goes back over a move of the fast loop (which leaves the
+loop not fresh), holds of a step that stops, and goes back over a step that goes on. -/
+
 open Classical in
-/-- The command loop with the fast loop does what steps together must. -/
-theorem runCmdKF_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader}
+theorem runCmdKF_rec {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader}
     {K : CommandState → List Bool → Option α} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size}
-    (hK : ∀ s bs, s.remaining ≠ 0 → K s bs = readCommand w m s bs >>= fun (s1, b) => K s1 b) (hH : HdrRel H m) :
+    (hK : ∀ s bs, s.remaining ≠ 0 → K s bs = readCommand w m s bs >>= fun (s1, b) => K s1 b) (hH : HdrRel H m)
+    (Q : Nat → Bool → Phase → Cmd → USize → Cmd → Prop)
+    (hzero : ∀ fresh p st, Rel w k.toNat m st p → st.status = .next → st.pos.toNat ≤ stop.toNat →
+      Q 0 fresh p st st.pos st)
+    (hmove : ∀ N p st pos p' r R, Rel w k.toNat m st p → r.cap = st.cap →
+      r.pend.toNat ≤ max st.pend.toNat (room k st.cap).toNat → MoveOk w k.toNat m K a stop p st pos p' r →
+      Q N false p' r r.pos R → Q (N + 1) true p st pos R)
+    (hstop : ∀ N fresh p st pos, Rel w k.toNat m st p → pos.toNat ≤ stop.toNat →
+      (stepCmd H k a stop hs st pos).status ≠ .next → Q (N + 1) fresh p st pos (stepCmd H k a stop hs st pos))
+    (hnext : ∀ N fresh p st pos R, Rel w k.toNat m st p → pos.toNat ≤ stop.toNat →
+      (stepCmd H k a stop hs st pos).status = .next →
+      (∀ p', Rel w k.toNat m (stepCmd H k a stop hs st pos) p' →
+        Q N true p' (stepCmd H k a stop hs st pos) (stepCmd H k a stop hs st pos).pos R) → Q (N + 1) fresh p st pos R) :
     ∀ (N : Nat) (n : USize), n.toNat = N → ∀ (fresh : Bool) (cell : RunOut) (word count : UInt64) (ring : ByteArray)
       (wpos pend cap written : USize) (p1 p2 : UInt8) (remaining iCount lCount dCount : UInt64) (flags : Flags)
       (iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist : UInt64)
@@ -258,9 +307,8 @@ theorem runCmdKF_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHe
         tag pos) (p : Phase),
       Rel w k.toNat m (mkCmd word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev
         lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos .next) p →
-      RunOk w k.toNat m K a stop p (mkCmd word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags
-          iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos
-          .next) pos
+      Q N fresh p (mkCmd word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur
+          lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos .next) pos
         (runCmdKF H k a stop hs n fresh cell word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount
           flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left
           pos hinv) := by
@@ -270,7 +318,7 @@ theorem runCmdKF_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHe
     intro n hn fresh cell word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev
       lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos hinv p hrel
     rw [runCmdKF, dite_eq_left (usize_zero hn)]
-    exact (MoveOk.refl hrel rfl hinv.pos).toRun rfl
+    exact hzero fresh p _ hrel rfl hinv.pos
   | succ N ih =>
     intro n hn fresh cell word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev
       lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos hinv p hrel
@@ -291,7 +339,7 @@ theorem runCmdKF_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHe
         rw [fastLit (by decide), USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr hinv.pos)] at h1
         have := hinv.pos
         omega
-      obtain ⟨p', mv⟩ := fastEnter_ok (n := n) (hs := hs) (cap := cap) (pend := pend) (p1 := p1) (p2 := p2)
+      obtain ⟨p', mv, fc, fp⟩ := fastEnter_ok (n := n) (hs := hs) (cap := cap) (pend := pend) (p1 := p1) (p2 := p2)
         (remaining := remaining) (iCount := iCount) (lCount := lCount) (dCount := dCount) (flags := flags)
         (x := ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf,
           wordPos⟩) (left := left) hK hinv hm hH hrel hf.2.1 rfl rfl hf.2.2.2.1 hf.2.2.2.2
@@ -299,17 +347,21 @@ theorem runCmdKF_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHe
         flags ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf,
           wordPos⟩ tag (if tag = .literals then left else 0)
         (wpos.toUInt64 + umin remaining (if room k cap ≤ pend then 0 else (room k cap - pend).toUInt64)) pos hinv hm = r
-        at mv
+        at mv fc fp
       obtain ⟨⟨word', count', ring', wpos', pend', cap', written', q1, q2, remaining', iCount', lCount', dCount', flags',
         ⟨iCur', iPrev', lCur', lPrev', dCur', dPrev', e0, e1, e2, e3, code', ilen', clen', copyBits', copyBase', dist',
           wordBuf', wordPos'⟩, tag', left', pos', ss'⟩, h'⟩ := r
       have hR := mv.rel.mark pos' .next
-      exact mv.then ((MoveOk.same (st := mkCmd word' count' ring' wpos' pend' cap' written' q1 q2 remaining' iCount'
-          lCount' dCount' flags' iCur' iPrev' lCur' lPrev' dCur' dPrev' e0 e1 e2 e3 code' ilen' clen' copyBits'
-          copyBase' dist' wordBuf' wordPos' tag' left' pos' ss') hR rfl rfl rfl rfl mv.posStop).then
+      have hfr : fresh = true := hf.1
+      subst hfr
+      exact hmove N p _ pos p' (mkCmd word' count' ring' wpos' pend' cap' written' q1 q2 remaining' iCount' lCount'
+          dCount' flags' iCur' iPrev' lCur' lPrev' dCur' dPrev' e0 e1 e2 e3 code' ilen' clen' copyBits' copyBase' dist'
+          wordBuf' wordPos' tag' left' pos' .next) _ hrel fc fp (mv.trans (MoveOk.same (st := mkCmd word' count' ring' wpos' pend' cap' written' q1 q2
+          remaining' iCount' lCount' dCount' flags' iCur' iPrev' lCur' lPrev' dCur' dPrev' e0 e1 e2 e3 code' ilen' clen'
+          copyBits' copyBase' dist' wordBuf' wordPos' tag' left' pos' ss') hR rfl rfl rfl rfl mv.posStop))
         (ih _ hnN false cell word' count' ring' wpos' pend' cap' written' q1 q2 remaining' iCount' lCount' dCount' flags'
           iCur' iPrev' lCur' lPrev' dCur' dPrev' e0 e1 e2 e3 code' ilen' clen' copyBits' copyBase' dist' wordBuf'
-          wordPos' tag' left' pos' h' p' hR))
+          wordPos' tag' left' pos' h' p' hR)
     · rw [dite_eq_right hf]
       have hc : Drops H k stop
           (fun c word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
@@ -332,43 +384,138 @@ theorem runCmdKF_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHe
           rw [dite_eq_left h]
           apply runCmdKF_cell H k a stop hs _ _ rfl
       rw [kstep_eq (sp := pos) (ss := .next) (hcont := hc)]
-      have hstep := stepCmd_ok (hs := hs) (K := K) (a := a) hK hH hrel hinv.pos
-      generalize stepCmd H k a stop hs (mkCmd word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount
-        flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left
-        pos .next) pos = r at hstep
-      obtain ⟨word', count', ring', wpos', pend', cap', written', q1, q2, remaining', iCount', lCount', dCount', flags',
-        ⟨iCur', iPrev', lCur', lPrev', dCur', dPrev', e0, e1, e2, e3, code', ilen', clen', copyBits', copyBase', dist',
-          wordBuf', wordPos'⟩, tag', left', pos', ss'⟩ := r
-      unfold kcase
-      cases ss'
-      · obtain ⟨p', hR, h1, h2, h3, _, h4, h5⟩ := hstep.next rfl
+      by_cases hst : (stepCmd H k a stop hs (mkCmd word count ring wpos pend cap written p1 p2 remaining iCount lCount
+          dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos
+          tag left pos .next) pos).status = .next
+      · have hstep := stepCmd_ok (hs := hs) (K := commandsFrom w m) (a := a) (fun _ bs h0 => commandsFrom_step bs h0) hH
+          hrel hinv.pos
+        obtain ⟨_, _, _, h2, -⟩ := hstep.next hst
+        refine hnext N fresh p _ pos _ hrel hinv.pos hst fun p' hR => ?_
+        generalize stepCmd H k a stop hs (mkCmd word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount
+          flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag
+          left pos .next) pos = r at hst h2 hR
+        obtain ⟨word', count', ring', wpos', pend', cap', written', q1, q2, remaining', iCount', lCount', dCount', flags',
+          ⟨iCur', iPrev', lCur', lPrev', dCur', dPrev', e0, e1, e2, e3, code', ilen', clen', copyBits', copyBase', dist',
+            wordBuf', wordPos'⟩, tag', left', pos', ss'⟩ := r
+        have hs' : ss' = .next := hst
+        subst hs'
         have hI := KInv.of_rel hH hR h2
+        unfold kcase
         dsimp only
         rw [ite_eq_left rfl, dite_eq_left hI]
-        exact RunOk.trans h1 h3 h4 h5
-          (ih _ hnN true cell word' count' ring' wpos' pend' cap' written' q1 q2 remaining' iCount' lCount' dCount' flags'
-            iCur' iPrev' lCur' lPrev' dCur' dPrev' e0 e1 e2 e3 code' ilen' clen' copyBits' copyBase' dist' wordBuf'
-            wordPos' tag' left' pos' hI p' hR)
-      all_goals
-        dsimp only
-        rw [ite_eq_right (by decide)]
-        exact hstep.toRun
+        exact ih _ hnN true cell word' count' ring' wpos' pend' cap' written' q1 q2 remaining' iCount' lCount' dCount'
+          flags' iCur' iPrev' lCur' lPrev' dCur' dPrev' e0 e1 e2 e3 code' ilen' clen' copyBits' copyBase' dist' wordBuf'
+          wordPos' tag' left' pos' hI p' hR
+      · unfold kcase
+        rw [ite_eq_right hst]
+        exact hstop N fresh p _ pos hrel hinv.pos hst
+
+/-- Induction over the command loop with the fast loop, from a record: as `runCmdKF_rec`, with the record taken to the
+loop's fields first, the same place, bits and bytes waiting. -/
+theorem runCmdF_rec {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader}
+    {K : CommandState → List Bool → Option α} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size}
+    (hK : ∀ s bs, s.remaining ≠ 0 → K s bs = readCommand w m s bs >>= fun (s1, b) => K s1 b) (hH : HdrRel H m)
+    (Q : Nat → Bool → Phase → Cmd → USize → Cmd → Prop)
+    (hzero : ∀ fresh p st, Rel w k.toNat m st p → st.status = .next → st.pos.toNat ≤ stop.toNat →
+      Q 0 fresh p st st.pos st)
+    (hmove : ∀ N p st pos p' r R, Rel w k.toNat m st p → r.cap = st.cap →
+      r.pend.toNat ≤ max st.pend.toNat (room k st.cap).toNat → MoveOk w k.toNat m K a stop p st pos p' r →
+      Q N false p' r r.pos R → Q (N + 1) true p st pos R)
+    (hstop : ∀ N fresh p st pos, Rel w k.toNat m st p → pos.toNat ≤ stop.toNat →
+      (stepCmd H k a stop hs st pos).status ≠ .next → Q (N + 1) fresh p st pos (stepCmd H k a stop hs st pos))
+    (hnext : ∀ N fresh p st pos R, Rel w k.toNat m st p → pos.toNat ≤ stop.toNat →
+      (stepCmd H k a stop hs st pos).status = .next →
+      (∀ p', Rel w k.toNat m (stepCmd H k a stop hs st pos) p' →
+        Q N true p' (stepCmd H k a stop hs st pos) (stepCmd H k a stop hs st pos).pos R) → Q (N + 1) fresh p st pos R)
+    (hentry : ∀ N p st pos r R, Rel w k.toNat m st p → MoveOk w k.toNat m K a stop p st pos p r → r.pend = st.pend →
+      (∀ F, stateBits r a r.pos stop F = stateBits st a pos stop F) → r.cap = st.cap → Q N true p r r.pos R →
+      Q N true p st pos R)
+    (n : USize) {p : Phase} {st : Cmd} {pos : USize} (hrel : Rel w k.toNat m st p) (h : CmdInv H k stop st pos) :
+    Q n.toNat true p st pos (runCmdF H k a stop hs n st pos h) := by
+  obtain ⟨word, count, ring, wpos, pend, cap, written, p1, p2, remaining, iCount, lCount, dCount, flags,
+    ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf, wordPos⟩,
+    tag, left, sp, ss⟩ := st
+  have hR := hrel.mark pos .next
+  exact hentry _ p _ pos _ _ hrel (MoveOk.same (st := ⟨word, count, ring, wpos, pend, cap, written, p1, p2, remaining,
+      iCount, lCount, dCount, flags, ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits,
+        copyBase, dist, wordBuf, wordPos⟩, tag, left, sp, ss⟩) hR rfl rfl rfl rfl h.pos) rfl (fun _ => rfl) rfl
+    (runCmdKF_rec hK hH Q hzero hmove hstop hnext _ n rfl true _ word count ring wpos pend cap written p1 p2 remaining
+      iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist
+      wordBuf wordPos tag left pos h p hR)
 
 /-- The command loop with the fast loop, from a record, does what steps together must. -/
 theorem runCmdF_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader}
     {K : CommandState → List Bool → Option α} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size}
     (hK : ∀ s bs, s.remaining ≠ 0 → K s bs = readCommand w m s bs >>= fun (s1, b) => K s1 b) (hH : HdrRel H m)
     (n : USize) {p : Phase} {st : Cmd} {pos : USize} (hrel : Rel w k.toNat m st p) (h : CmdInv H k stop st pos) :
-    RunOk w k.toNat m K a stop p st pos (runCmdF H k a stop hs n st pos h) := by
-  obtain ⟨word, count, ring, wpos, pend, cap, written, p1, p2, remaining, iCount, lCount, dCount, flags,
-    ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf, wordPos⟩,
-    tag, left, sp, ss⟩ := st
-  have hR := hrel.mark pos .next
-  exact (MoveOk.same (st := ⟨word, count, ring, wpos, pend, cap, written, p1, p2, remaining, iCount, lCount, dCount,
-      flags, ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf,
-        wordPos⟩, tag, left, sp, ss⟩) hR rfl rfl rfl rfl h.pos).then
-    (runCmdKF_ok hK hH _ n rfl true _ word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags
-      iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos h
-      p hR)
+    RunOk w k.toNat m K a stop p st pos (runCmdF H k a stop hs n st pos h) :=
+  runCmdF_rec hK hH (fun _ _ p st pos R => RunOk w k.toNat m K a stop p st pos R)
+    (fun _ _ _ hrel hs hp => (MoveOk.refl hrel rfl hp).toRun hs)
+    (fun _ _ _ _ _ _ _ _ _ _ mv h2 => mv.then h2)
+    (fun _ _ _ _ _ hrel hp _ => (stepCmd_ok hK hH hrel hp).toRun)
+    (fun _ _ _ _ _ _ hrel hp hst ih => by
+      obtain ⟨p', hR, h1, h2, h3, _, h4, h5⟩ := (stepCmd_ok (hs := hs) hK hH hrel hp).next hst
+      exact RunOk.trans h1 h3 h4 h5 (ih p' hR))
+    (fun _ _ _ _ _ _ _ mv _ _ _ h2 => mv.then h2)
+    n hrel h
+
+/-- The command loop with the fast loop, when it rejects, decides at the last of its steps: from a place the reading in
+order reaches, on the bits that step held and the bytes its refill took, whatever follows them. -/
+theorem runCmdF_bad {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader}
+    {K : CommandState → List Bool → Option α} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size}
+    (hK : ∀ s bs, s.remaining ≠ 0 → K s bs = readCommand w m s bs >>= fun (s1, b) => K s1 b) (hH : HdrRel H m)
+    (n : USize) {p : Phase} {st : Cmd} {pos : USize} (hrel : Rel w k.toNat m st p) (h : CmdInv H k stop st pos) :
+    (runCmdF H k a stop hs n st pos h).status = .bad →
+      ∃ (p1 : Phase) (st1 : Cmd) (pos1 : USize), pos.toNat ≤ pos1.toNat ∧
+        pos1.toNat ≤ (runCmdF H k a stop hs n st pos h).pos.toNat ∧
+        (runCmdF H k a stop hs n st pos h).pos.toNat ≤ stop.toNat ∧
+        8 * (runCmdF H k a stop hs n st pos h).pos.toNat + st1.count.toNat ≤ 8 * pos1.toNat + 64 ∧
+        (∀ F, Reach (cStep w m) p (stateBits st a pos stop F) p1 (stateBits st1 a pos1 stop F)) ∧
+        ∀ F, rest w m K p1 (stateBits st1 a pos1 (runCmdF H k a stop hs n st pos h).pos F) = none :=
+  have back : ∀ (p : Phase) (st : Cmd) (pos : USize) (p' : Phase) (r R : Cmd), MoveOk w k.toNat m K a stop p st pos p' r →
+      (R.status = .bad → ∃ (p1 : Phase) (st1 : Cmd) (pos1 : USize), r.pos.toNat ≤ pos1.toNat ∧ pos1.toNat ≤ R.pos.toNat ∧
+        R.pos.toNat ≤ stop.toNat ∧ 8 * R.pos.toNat + st1.count.toNat ≤ 8 * pos1.toNat + 64 ∧
+        (∀ F, Reach (cStep w m) p' (stateBits r a r.pos stop F) p1 (stateBits st1 a pos1 stop F)) ∧
+        ∀ F, rest w m K p1 (stateBits st1 a pos1 R.pos F) = none) →
+      (R.status = .bad → ∃ (p1 : Phase) (st1 : Cmd) (pos1 : USize), pos.toNat ≤ pos1.toNat ∧ pos1.toNat ≤ R.pos.toNat ∧
+        R.pos.toNat ≤ stop.toNat ∧ 8 * R.pos.toNat + st1.count.toNat ≤ 8 * pos1.toNat + 64 ∧
+        (∀ F, Reach (cStep w m) p (stateBits st a pos stop F) p1 (stateBits st1 a pos1 stop F)) ∧
+        ∀ F, rest w m K p1 (stateBits st1 a pos1 R.pos F) = none) := fun _ _ _ _ _ _ mv ih hb => by
+    obtain ⟨p1, st1, pos1, g1, g2, g3, g4, g5, g6⟩ := ih hb
+    exact ⟨p1, st1, pos1, Nat.le_trans mv.posLe g1, g2, g3, g4, fun F => (mv.reach F).trans (g5 F), g6⟩
+  runCmdF_rec hK hH (fun _ _ p st pos R => R.status = .bad →
+      ∃ (p1 : Phase) (st1 : Cmd) (pos1 : USize), pos.toNat ≤ pos1.toNat ∧ pos1.toNat ≤ R.pos.toNat ∧
+        R.pos.toNat ≤ stop.toNat ∧ 8 * R.pos.toNat + st1.count.toNat ≤ 8 * pos1.toNat + 64 ∧
+        (∀ F, Reach (cStep w m) p (stateBits st a pos stop F) p1 (stateBits st1 a pos1 stop F)) ∧
+        ∀ F, rest w m K p1 (stateBits st1 a pos1 R.pos F) = none)
+    (fun _ _ _ _ hs _ hb => absurd (hs.symm.trans hb) (fun e => StepStatus.noConfusion e))
+    (fun _ p st pos p' r R _ _ _ mv ih => back p st pos p' r R mv ih)
+    (fun _ _ p st pos hrel hp _ hb => by
+      obtain ⟨g1, g2, g3, g4⟩ := stepCmd_bad (hs := hs) hK hH hrel hp hb
+      exact ⟨p, st, pos, Nat.le_refl _, g1, g2, g3, fun _ => .refl _ _, g4⟩)
+    (fun _ _ _ _ _ _ hrel hp hst ih hb => by
+      obtain ⟨p', hR, h1, _, _, _, _, h5⟩ := (stepCmd_ok (hs := hs) hK hH hrel hp).next hst
+      obtain ⟨p1, st1, pos1, g1, g2, g3, g4, g5, g6⟩ := ih p' hR hb
+      exact ⟨p1, st1, pos1, Nat.le_trans h1 g1, g2, g3, g4, fun F => (h5 F).trans (g5 F), g6⟩)
+    (fun _ p st pos r R _ mv _ _ _ ih => back p st pos p r R mv ih)
+    n hrel h
+
+/-- The command loop with the fast loop, when it rejects, leaves the window and the bytes waiting of a state at a place. -/
+theorem runCmdF_badWin {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader}
+    {K : CommandState → List Bool → Option α} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size}
+    (hK : ∀ s bs, s.remaining ≠ 0 → K s bs = readCommand w m s bs >>= fun (s1, b) => K s1 b) (hH : HdrRel H m)
+    (n : USize) {p : Phase} {st : Cmd} {pos : USize} (hrel : Rel w k.toNat m st p) (h : CmdInv H k stop st pos) :
+    (runCmdF H k a stop hs n st pos h).status = .bad →
+      ∃ (p1 : Phase) (st1 : Cmd), Rel w k.toNat m st1 p1 ∧ (runCmdF H k a stop hs n st pos h).WinSame st1 :=
+  runCmdF_rec hK hH
+    (fun _ _ _ _ _ R => R.status = .bad → ∃ (p1 : Phase) (st1 : Cmd), Rel w k.toNat m st1 p1 ∧ R.WinSame st1)
+    (fun _ _ _ _ hs _ hb => absurd (hs.symm.trans hb) (fun e => StepStatus.noConfusion e))
+    (fun _ _ _ _ _ _ _ _ _ _ _ ih hb => ih hb)
+    (fun _ _ p st _ hrel _ _ hb => ⟨p, st, hrel, stepCmd_badWin hb⟩)
+    (fun _ _ _ _ _ _ hrel hp hst ih hb => by
+      obtain ⟨p', hR, -⟩ := (stepCmd_ok (hs := hs) hK hH hrel hp).next hst
+      exact ih p' hR hb)
+    (fun _ _ _ _ _ _ _ _ _ _ _ ih hb => ih hb)
+    n hrel h
 
 end Brotli.Decoder

@@ -873,6 +873,24 @@ theorem runCmd_full {H : Hdr} {k : USize} {a : ByteArray} {stop : USize} {hs : s
       rw [hst] at h'
       exact absurd h' (fun e => StepStatus.noConfusion e)
 
+/-- The command loop with the fast loop pauses for output only with no room left. -/
+theorem runCmdF_full {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a : ByteArray} {stop : USize}
+    {hs : stop.toNat ≤ a.size} (hH : HdrRel H m) (n : USize) {p : Phase} {st : Cmd} {pos : USize}
+    (hrel : Rel w k.toNat m st p) (h : CmdInv H k stop st pos) :
+    (runCmdF H k a stop hs n st pos h).status = .needsOutput →
+      room k (runCmdF H k a stop hs n st pos h).cap ≤ (runCmdF H k a stop hs n st pos h).pend :=
+  runCmdF_rec (K := commandsFrom w m) (fun _ bs h0 => commandsFrom_step bs h0) hH
+    (fun _ _ _ _ _ R => R.status = .needsOutput → room k R.cap ≤ R.pend)
+    (fun _ _ _ _ hs _ e => absurd (hs.symm.trans e) (fun e => StepStatus.noConfusion e))
+    (fun _ _ _ _ _ _ _ _ _ _ _ ih => ih)
+    (fun _ _ _ _ _ _ _ _ e => stepCmd_full e)
+    (fun _ _ _ _ _ _ hrel hp hst ih => by
+      obtain ⟨p', hR, -⟩ := (stepCmd_ok (hs := hs) (K := commandsFrom w m) (fun _ bs h0 => commandsFrom_step bs h0) hH
+        hrel hp).next hst
+      exact ih p' hR)
+    (fun _ _ _ _ _ _ _ _ _ _ _ ih => ih)
+    n hrel h
+
 /-! ### The potential on the commands' places
 
 A step of the commands read in order reads bits, produces bytes, or goes lower in `crank`, which ranks the places in the

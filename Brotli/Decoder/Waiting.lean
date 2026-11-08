@@ -283,6 +283,23 @@ theorem runCmd_pendLe (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs :
       · exact h1.trans (ih _ (by omega) _ _ _ rfl)
       · exact h1
 
+/-- The command loop with the fast loop keeps the cap, and leaves no more bytes waiting than were waiting or the cap
+allows. -/
+theorem runCmdF_pendLe {w : Nat} {k : USize} {H : Hdr} {m : Brotli.Spec.MetaBlockHeader} {a : ByteArray} {stop : USize}
+    {hs : stop.toNat ≤ a.size} (hH : HdrRel H m) (n : USize) {p : Phase} {st : Cmd} {pos : USize}
+    (hrel : Rel w k.toNat m st p) (h : CmdInv H k stop st pos) : PendLe st (runCmdF H k a stop hs n st pos h) :=
+  runCmdF_rec (K := commandsFrom w m) (fun _ bs h0 => commandsFrom_step bs h0) hH (fun _ _ _ st _ R => PendLe st R)
+    (fun _ _ st _ _ _ => PendLe.rfl' st)
+    (fun _ _ st _ _ _ _ _ fc fp _ ih =>
+      (show PendLe st _ from ⟨fc, by have := room_capE k st.cap; omega⟩).trans ih)
+    (fun _ _ _ st pos _ _ _ => stepCmd_pendLe H k a stop hs st pos)
+    (fun _ _ _ st pos _ hrel hp hst ih => by
+      obtain ⟨p', hR, -⟩ := (stepCmd_ok (hs := hs) (K := commandsFrom w m) (fun _ bs h0 => commandsFrom_step bs h0) hH
+        hrel hp).next hst
+      exact (stepCmd_pendLe H k a stop hs st pos).trans (ih p' hR))
+    (fun _ _ _ _ _ _ _ _ hpe _ hc ih => (PendLe.keep hpe hc).trans ih)
+    n hrel h
+
 /-- A command's start writes nothing. -/
 theorem stepCommand_pend (H : Hdr) (st : Cmd) (p : USize) : (stepCommand H st p).pend = st.pend := by
   unfold stepCommand markStep
