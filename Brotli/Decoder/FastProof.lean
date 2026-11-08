@@ -214,16 +214,17 @@ theorem usmin_succ {c x : USize} (hx : x.toNat + 1 < 2 ^ 32) (hc : c.toNat < 2 ^
   rw [usmin_toNat, usmin_toNat, fastIdx_add hm, fastIdx_add hx, usmin_toNat]
   omega
 
-/-- What remains from one more byte on. -/
-theorem rem_succ {r : UInt64} {x : USize} (hx : x.toNat + 1 < 2 ^ 32) (hr : x.toNat + 1 ≤ r.toNat) :
+/-- What remains from one more byte on, in 64-bit arithmetic (which may wrap). -/
+theorem rem_succ {r : UInt64} {x : USize} (hx : x.toNat + 1 < 2 ^ 32) :
     r - (x + USize.ofNat 1).toUInt64 = r - x.toUInt64 - 1 := by
-  apply UInt64.toNat_inj.mp
-  have e1 : (x + USize.ofNat 1).toUInt64.toNat = x.toNat + 1 := by rw [USize.toNat_toUInt64, fastIdx_add hx]
-  have e2 : x.toUInt64.toNat = x.toNat := USize.toNat_toUInt64 x
-  have e3 : (r - x.toUInt64).toNat = r.toNat - x.toNat := by rw [u64_sub_le (by rw [e2]; omega), e2]
-  have h1 : (1 : UInt64).toNat = 1 := rfl
-  rw [u64_sub_le (by rw [e1]; exact hr), e1, u64_sub_le (by rw [e3, h1]; omega), e3, h1]
-  omega
+  have e1 : (x + USize.ofNat 1).toUInt64 = x.toUInt64 + 1 := UInt64.toNat_inj.mp (by
+    rw [USize.toNat_toUInt64, fastIdx_add hx, UInt64.toNat_add, USize.toNat_toUInt64,
+      show (1 : UInt64).toNat = 1 from rfl, Nat.mod_eq_of_lt (by omega)])
+  rw [e1]
+  have hy : r - x.toUInt64 - 1 + 1 + x.toUInt64 = r := by rw [UInt64.sub_add_cancel, UInt64.sub_add_cancel]
+  have hr : r - x.toUInt64 - 1 + 1 + x.toUInt64 = r - x.toUInt64 - 1 + (x.toUInt64 + 1) := by
+    rw [UInt64.add_assoc, UInt64.add_comm 1 x.toUInt64]
+  conv => lhs; rw [← hy, hr, UInt64.add_sub_cancel]
 
 /-! ### One literal -/
 
@@ -366,11 +367,12 @@ theorem FCtx.litT_lookup {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} 
 /-! ### The loop's numbers -/
 
 /-- What keeps the loop's unmasked positions from wrapping: the bytes the current command still writes (`ahead`) fit
-before `bEnd`, which is within the meta-block; the bytes waiting and written, as the loop computes them from `opos`, stay
+before `bEnd`, which is within the meta-block (what remains from `opos`, `rEnd - opos`, which may wrap in 64 bits but
+stands for the record's remaining count); the bytes waiting and written, as the loop computes them from `opos`, stay
 within the window up to `bEnd`. -/
 structure FNum (opos pB wB : USize) (rEnd bEnd : UInt64) (k ahead : Nat) : Prop where
   ahead : opos.toNat + ahead ≤ bEnd.toNat
-  bEndLe : bEnd.toNat ≤ rEnd.toNat
+  rem : bEnd.toNat - opos.toNat ≤ (rEnd - opos.toUInt64).toNat
   small : bEnd.toNat < 2 ^ 30
   pend : (opos + pB).toNat + (bEnd.toNat - opos.toNat) + 16 ≤ 2 ^ k
   wr : (opos + wB).toNat + (bEnd.toNat - opos.toNat) < 2 ^ 30
@@ -409,7 +411,6 @@ theorem fexit_succ {word count word' count' : UInt64} {ring ring' : ByteArray} {
   have hpos := N.ahead
   have hsm := N.small
   have hwr := N.wr
-  have hbe := N.bEndLe
   have e1 : ringNext (opos &&& ringMask k) (ringMask k) = (opos + USize.ofNat 1) &&& ringMask k :=
     mask_succ hk (ringMask_toNat hk)
   have e2 : opos + pB + USize.ofNat 1 = opos + USize.ofNat 1 + pB := usize_add_one_comm _ _
@@ -418,7 +419,7 @@ theorem fexit_succ {word count word' count' : UInt64} {ring ring' : ByteArray} {
     rw [← usize_add_one_comm]
     exact usmin_succ (by omega) hc
   have e4 : rEnd - opos.toUInt64 - 1 = rEnd - (opos + USize.ofNat 1).toUInt64 :=
-    (rem_succ (by omega) (by omega)).symm
+    (rem_succ (by omega)).symm
   unfold fexit
   rw [e1, e2, e3, e4]
 
@@ -1952,15 +1953,18 @@ theorem usmin_add {c x n : USize} (hx : x.toNat + n.toNat < 2 ^ 32) :
   omega
 
 /-- What remains from `n` more bytes on. -/
-theorem rem_add {r : UInt64} {x n : USize} (hx : x.toNat + n.toNat < 2 ^ 32) (hr : x.toNat + n.toNat ≤ r.toNat) :
+theorem rem_add {r : UInt64} {x n : USize} (hx : x.toNat + n.toNat < 2 ^ 32) :
     r - (x + n).toUInt64 = r - x.toUInt64 - n.toUInt64 := by
-  apply UInt64.toNat_inj.mp
-  have e1 : (x + n).toUInt64.toNat = x.toNat + n.toNat := by rw [USize.toNat_toUInt64, fastAdd hx]
-  have e2 : x.toUInt64.toNat = x.toNat := USize.toNat_toUInt64 x
-  have e3 : n.toUInt64.toNat = n.toNat := USize.toNat_toUInt64 n
-  have e4 : (r - x.toUInt64).toNat = r.toNat - x.toNat := by rw [u64_sub_le (by rw [e2]; omega), e2]
-  rw [u64_sub_le (by rw [e1]; exact hr), e1, u64_sub_le (by rw [e4, e3]; omega), e4, e3]
-  omega
+  have e1 : (x + n).toUInt64 = x.toUInt64 + n.toUInt64 := UInt64.toNat_inj.mp (by
+    rw [USize.toNat_toUInt64, fastAdd hx, UInt64.toNat_add, USize.toNat_toUInt64, USize.toNat_toUInt64,
+      Nat.mod_eq_of_lt (by omega)])
+  rw [e1]
+  have hy : r - x.toUInt64 - n.toUInt64 + n.toUInt64 + x.toUInt64 = r := by
+    rw [UInt64.sub_add_cancel, UInt64.sub_add_cancel]
+  have hr : r - x.toUInt64 - n.toUInt64 + n.toUInt64 + x.toUInt64 =
+      r - x.toUInt64 - n.toUInt64 + (x.toUInt64 + n.toUInt64) := by
+    rw [UInt64.add_assoc, UInt64.add_comm n.toUInt64 x.toUInt64]
+  conv => lhs; rw [← hy, hr, UInt64.add_sub_cancel]
 
 /-- Two 32-bit halves packed in one word: the low half `a`, the high half the low 32 bits of `b`. -/
 theorem or_shl32 {a b : UInt64} (ha : a.toNat < 2 ^ 32) :
@@ -2089,7 +2093,11 @@ theorem FNum.succ {opos pB wB : USize} {rEnd bEnd : UInt64} {k ahead : Nat} (N :
     rw [← usize_add_one_comm, fastIdx_add (by omega)]
   have e3 : (opos + USize.ofNat 1 + wB).toNat = (opos + wB).toNat + 1 := by
     rw [← usize_add_one_comm, fastIdx_add (by omega)]
-  exact ⟨by rw [e1]; omega, N.bEndLe, h2, by rw [e2, e1]; omega, by rw [e3, e1]; omega⟩
+  have h5 := N.rem
+  have e4 : (rEnd - (opos + USize.ofNat 1).toUInt64).toNat = (rEnd - opos.toUInt64).toNat - 1 := by
+    rw [rem_succ (by omega), u64_sub_le (by show 1 ≤ _; omega)]
+    rfl
+  exact ⟨by rw [e1]; omega, by rw [e1, e4]; omega, h2, by rw [e2, e1]; omega, by rw [e3, e1]; omega⟩
 
 /-- The loop's numbers `n` bytes on, for what is then ahead. -/
 theorem FNum.adv {opos pB wB : USize} {rEnd bEnd : UInt64} {k ahead : Nat} (N : FNum opos pB wB rEnd bEnd k ahead)
@@ -2105,7 +2113,10 @@ theorem FNum.adv {opos pB wB : USize} {rEnd bEnd : UInt64} {k ahead : Nat} (N : 
     rw [USize.add_assoc, USize.add_comm n pB, ← USize.add_assoc, fastAdd (by omega)]
   have e3 : (opos + n + wB).toNat = (opos + wB).toNat + n.toNat := by
     rw [USize.add_assoc, USize.add_comm n wB, ← USize.add_assoc, fastAdd (by omega)]
-  exact ⟨by rw [e1]; omega, N.bEndLe, h2, by rw [e2, e1]; omega, by rw [e3, e1]; omega⟩
+  have h5 := N.rem
+  have e4 : (rEnd - (opos + n).toUInt64).toNat = (rEnd - opos.toUInt64).toNat - n.toNat := by
+    rw [rem_add (by omega), u64_sub_le (by rw [USize.toNat_toUInt64]; omega), USize.toNat_toUInt64]
+  exact ⟨by rw [e1]; omega, by rw [e1, e4]; omega, h2, by rw [e2, e1]; omega, by rw [e3, e1]; omega⟩
 
 theorem u64_sub2 (x a b : UInt64) : x - (a + b) = x - a - b := by
   have hy : x - a - b + b + a = x := by rw [UInt64.sub_add_cancel, UInt64.sub_add_cancel]
@@ -2456,17 +2467,13 @@ theorem fillK_spec {α : Type} {P : α → Prop} {a : ByteArray} {stop : USize} 
     .copy, clen, pos, .next⟩
 
 /-- With the copy within the meta-block, something remains, and at least the copy. -/
-theorem rem_facts {rEnd clen : UInt64} {opos : USize} (h : opos.toNat + clen.toNat ≤ rEnd.toNat)
+theorem rem_facts {rEnd clen : UInt64} {opos : USize} (h : clen.toNat ≤ (rEnd - opos.toUInt64).toNat)
     (h1 : 1 ≤ clen.toNat) : rEnd - opos.toUInt64 ≠ 0 ∧ ¬ rEnd - opos.toUInt64 < clen := by
-  have e : (rEnd - opos.toUInt64).toNat = rEnd.toNat - opos.toNat := by
-    rw [u64_sub_le (by rw [USize.toNat_toUInt64]; omega), USize.toNat_toUInt64]
   refine ⟨fun h0 => ?_, fun hl => ?_⟩
   · have h0' := congrArg UInt64.toNat h0
-    rw [e] at h0'
     have : (0 : UInt64).toNat = 0 := rfl
     omega
   · have := UInt64.lt_iff_toNat_lt.mp hl
-    rw [e] at this
     omega
 
 section
@@ -2480,7 +2487,7 @@ theorem dImpl_move (hH : HdrRel H m)
     (hrel : Rel w k.toNat m (fexit word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code
       ilen clen p1 p2 .distance 0 pos) (.distance s c cl))
     {word1 count1 : UInt64} {pos1 : USize} (hf : FillOk a stop word count pos 40 word1 count1 pos1)
-    (hrem : opos.toNat + clen.toNat ≤ rEnd.toNat) (hc : code < 128) (hd0 : d01 &&& 0xFFFFFFFF ≠ 0)
+    (hrem : clen.toNat ≤ (rEnd - opos.toUInt64).toNat) (hc : code < 128) (hd0 : d01 &&& 0xFFFFFFFF ≠ 0)
     (hw : ¬ (usmin cap16 (opos + wB)).toUInt64 < d01 &&& 0xFFFFFFFF) :
     ∃ p', MoveOk w k.toNat m K a stop (.distance s c cl)
       (fexit word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code ilen clen p1 p2
@@ -2532,7 +2539,7 @@ theorem dShort_move {T : ByteArray} {tb : UInt64} {modeOff lRow iRow iFb dRow s0
     (hrel : Rel w k.toNat m (fexit word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code
       ilen clen p1 p2 .distance 0 pos) (.distance s c cl))
     {word1 count1 : UInt64} {pos1 : USize} (hf : FillOk a stop word count pos 40 word1 count1 pos1)
-    (hrem : opos.toNat + clen.toNat ≤ rEnd.toNat) (hc : ¬ code < 128) (hdc : dCount ≠ 0) {v n01 n23 : UInt64}
+    (hrem : clen.toNat ≤ (rEnd - opos.toUInt64).toNat) (hc : ¬ code < 128) (hdc : dCount ≠ 0) {v n01 n23 : UInt64}
     (hv : v = lookupT T (dRowBase C clen) word1 (C.dIn clen) C.lim C.size32) (hl : wordBits v ≤ count1)
     (h16 : wordSym v < 16)
     (hd0 : shortFast (d01 &&& 0xFFFFFFFF) (d01 >>> 32) (d23 &&& 0xFFFFFFFF) (d23 >>> 32) (wordSym v) ≠ 0)
@@ -2562,7 +2569,7 @@ theorem dLong_move {T : ByteArray} {tb : UInt64} {modeOff lRow iRow iFb dRow s0 
     (hrel : Rel w k.toNat m (fexit word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code
       ilen clen p1 p2 .distance 0 pos) (.distance s c cl))
     {word1 count1 : UInt64} {pos1 : USize} (hf : FillOk a stop word count pos 40 word1 count1 pos1)
-    (hrem : opos.toNat + clen.toNat ≤ rEnd.toNat) (hc : ¬ code < 128) (hdc : dCount ≠ 0) {v E D n01 n23 : UInt64}
+    (hrem : clen.toNat ≤ (rEnd - opos.toUInt64).toNat) (hc : ¬ code < 128) (hdc : dCount ≠ 0) {v E D n01 n23 : UInt64}
     (hv : v = lookupT T (dRowBase C clen) word1 (C.dIn clen) C.lim C.size32) (h16 : ¬ wordSym v < 16)
     (hE : E = dEntry H.npostfix H.ndirect (wordSym v))
     (hD : D = (E >>> 32) + (((word1 >>> wordBits v) &&& maskT T C.big C.size32 (E &&& 31)) <<< H.npostfix))
@@ -2612,7 +2619,6 @@ theorem fcopy_move {s : CommandState} {dd nn : Nat} {d : UInt64}
   have hpend := N.pend
   have hsm := N.small
   have hwr := N.wr
-  have hbe := N.bEndLe
   have hcU : clen.toUSize.toNat = clen.toNat := word_toUSize (by omega)
   obtain ⟨p1', m1⟩ := copy_move (K := K) (a := a) (stop := stop) (pos := pos) (x := opos) hrel (by omega)
     (by show (opos + pB).toNat + nn + 16 ≤ _; omega) hp hk hsz (mask_lt hmN) hd
@@ -2630,7 +2636,7 @@ theorem fcopy_move {s : CommandState} {dd nn : Nat} {d : UInt64}
     rw [← hcap, usmin_add (by omega), USize.add_assoc opos clen.toUSize wB, USize.add_comm clen.toUSize wB,
       ← USize.add_assoc]
   have er : rEnd - (opos + clen.toUSize).toUInt64 = rEnd - opos.toUInt64 - clen := by
-    rw [rem_add (by omega) (by omega)]
+    rw [rem_add (by omega)]
     congr 1
     exact UInt64.toNat_inj.mp (by rw [USize.toNat_toUInt64, hcU])
   exact ⟨_, by unfold fexit; rw [ep, ew, er]; exact m3⟩
@@ -2647,10 +2653,10 @@ theorem ic_round {T : ByteArray} {tb : UInt64} {modeOff lRow iRow iFb dRow s0 : 
     (hi : iCount ≠ 0) {v : UInt64} (hv : v = lookupT T (icFbBase C) word3 C.icIn C.lim C.size32)
     (hc : (wordSym v).toNat < 704)
     (hok : wordBits v + rowBits (insertRow (wordSym v) hc) + rowBits (copyRow (wordSym v) hc) ≤ count3)
-    (hrem : opos.toNat + (rowBase (insertRow (wordSym v) hc) +
+    (hrem : (rowBase (insertRow (wordSym v) hc) +
         ((word3 >>> wordBits v) &&& maskT T C.big C.size32 (rowBits (insertRow (wordSym v) hc)))).toNat +
       (rowBase (copyRow (wordSym v) hc) + (((word3 >>> wordBits v) >>> rowBits (insertRow (wordSym v) hc)) &&&
-        maskT T C.big C.size32 (rowBits (copyRow (wordSym v) hc)))).toNat ≤ rEnd.toNat) :
+        maskT T C.big C.size32 (rowBits (copyRow (wordSym v) hc)))).toNat ≤ (rEnd - opos.toUInt64).toNat) :
     ∃ p', MoveOk w k.toNat m K a stop (.command s)
       (fexit word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code ilen clen p1 p2
         .command 0 pos) pos p'
@@ -2680,17 +2686,13 @@ theorem ic_round {T : ByteArray} {tb : UInt64} {modeOff lRow iRow iFb dRow s0 : 
       exact Nat.lt_of_lt_of_le (Nat.mod_lt _ (Nat.two_pow_pos _)) (Nat.pow_le_pow_right (by decide) hcb24)
     rw [u64_add_small (by omega)]
     omega
-  have e : (rEnd - opos.toUInt64).toNat = rEnd.toNat - opos.toNat := by
-    rw [u64_sub_le (by rw [USize.toNat_toUInt64]; omega), USize.toNat_toUInt64]
   have hr0 : rEnd - opos.toUInt64 ≠ 0 := fun h0 => by
     have h0' := congrArg UInt64.toNat h0
-    rw [e] at h0'
     have : (0 : UInt64).toNat = 0 := rfl
     omega
   have hrc : ¬ rEnd - opos.toUInt64 < rowBase (insertRow (wordSym v) hc) +
       ((word3 >>> wordBits v) &&& maskT T C.big C.size32 (rowBits (insertRow (wordSym v) hc))) := fun hl => by
     have := UInt64.lt_iff_toNat_lt.mp hl
-    rw [e] at this
     omega
   obtain ⟨p2, m2⟩ := cmd_move (a := a) (stop := stop) (pos := pos3) hK hH m1.rel hr0 hi hf.posStop
   obtain ⟨_, _, rfl⟩ := m2.rel.insertCopy_of rfl
@@ -2953,7 +2955,7 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
             have hd0 : d01 &&& 4294967295 ≠ 0 := fun h => hbad (Or.inr (Or.inl h))
             have hw : ¬ (usmin cap16 (opos + wB)).toUInt64 < d01 &&& 4294967295 := fun h => hbad (Or.inr (Or.inr h))
             have hah := N0.ahead
-            have hbe := N0.bEndLe
+            have hbe := N0.rem
             have hsm := N0.small
             have h0 : (0 : UInt64).toNat = 0 := rfl
             have N1 : FNum opos pB wB rEnd bEnd kk.toNat clen.toNat := by
@@ -2995,6 +2997,8 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
                 rw [fastAdd (by omega), hcU]
               have hoU : (opos + clen.toUSize).toUInt64.toNat = opos.toNat + clen.toNat := by
                 rw [USize.toNat_toUInt64, hoN]
+              have hrm : (rEnd - (opos + clen.toUSize).toUInt64).toNat = (rEnd - opos.toUInt64).toNat - clen.toNat := by
+                rw [rem_add (by omega), u64_sub_le (by rw [USize.toNat_toUInt64, hcU]; omega), USize.toNat_toUInt64, hcU]
               by_cases h1 : decide (wordBits v + rowBits (insertRow (wordSym v) hcv) + rowBits (copyRow (wordSym v) hcv) ≤
                   count3) = false ∨ bEnd < (opos + clen.toUSize).toUInt64 +
                   (rowBase (insertRow (wordSym v) hcv) +
@@ -3062,7 +3066,7 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
                 · right
                   simp [hz]
               have hah := N0.ahead
-              have hbe := N0.bEndLe
+              have hbe := N0.rem
               have hsm := N0.small
               have h0 : (0 : UInt64).toNat = 0 := rfl
               have N1 : FNum opos pB wB rEnd bEnd kk.toNat clen.toNat := by
@@ -3107,6 +3111,10 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
                   rw [fastAdd (by omega), hcU]
                 have hoU : (opos + clen.toUSize).toUInt64.toNat = opos.toNat + clen.toNat := by
                   rw [USize.toNat_toUInt64, hoN]
+                have hrm : (rEnd - (opos + clen.toUSize).toUInt64).toNat =
+                    (rEnd - opos.toUInt64).toNat - clen.toNat := by
+                  rw [rem_add (by omega), u64_sub_le (by rw [USize.toNat_toUInt64, hcU]; omega), USize.toNat_toUInt64,
+                    hcU]
                 by_cases h1 : decide (wordBits vi + rowBits (insertRow (wordSym vi) hcv) +
                     rowBits (copyRow (wordSym vi) hcv) ≤ count3) = false ∨ bEnd < (opos + clen.toUSize).toUInt64 +
                     (rowBase (insertRow (wordSym vi) hcv) +
@@ -3174,7 +3182,7 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
                 · right
                   simp [hz]
               have hah := N0.ahead
-              have hbe := N0.bEndLe
+              have hbe := N0.rem
               have hsm := N0.small
               have h0 : (0 : UInt64).toNat = 0 := rfl
               have N1 : FNum opos pB wB rEnd bEnd kk.toNat clen.toNat := by
@@ -3220,6 +3228,10 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
                   rw [fastAdd (by omega), hcU]
                 have hoU : (opos + clen.toUSize).toUInt64.toNat = opos.toNat + clen.toNat := by
                   rw [USize.toNat_toUInt64, hoN]
+                have hrm : (rEnd - (opos + clen.toUSize).toUInt64).toNat =
+                    (rEnd - opos.toUInt64).toNat - clen.toNat := by
+                  rw [rem_add (by omega), u64_sub_le (by rw [USize.toNat_toUInt64, hcU]; omega), USize.toNat_toUInt64,
+                    hcU]
                 by_cases h1 : decide (wordBits vi + rowBits (insertRow (wordSym vi) hcv) +
                     rowBits (copyRow (wordSym vi) hcv) ≤ count3) = false ∨ bEnd < (opos + clen.toUSize).toUInt64 +
                     (rowBase (insertRow (wordSym vi) hcv) +

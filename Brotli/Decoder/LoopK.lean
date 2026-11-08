@@ -690,9 +690,11 @@ def runCmdKF (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toN
     let lits : UInt64 := if tag = .literals then left else 0
     let rm := room k cap
     let roomLeft : UInt64 := if rm ≤ pend then 0 else (rm - pend).toUInt64
-    let bEnd := wpos.toUInt64 + umin remaining roomLeft
+    let ahead := umin remaining roomLeft
+    let bEnd := wpos.toUInt64 + ahead
+    -- the command's literals and copy fit what is ahead, compared so that nothing wraps
     if hf : fresh = true ∧ (tag = .literals ∨ tag = .distance) ∧ USize.ofNat 40 ≤ stop - pos ∧
-        ¬ bEnd < wpos.toUInt64 + lits + clen then
+        lits ≤ ahead ∧ clen ≤ ahead - lits then
       have hm : pos.toNat + 40 ≤ stop.toNat := by
         have h1 := USize.le_iff_toNat_le.mp hf.2.2.1
         rw [fastLit (by decide), USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr hinv.pos)] at h1
