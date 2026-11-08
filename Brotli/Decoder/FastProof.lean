@@ -82,6 +82,53 @@ theorem MoveOk.congr {r' : Cmd} (h : MoveOk w k m K a stop p st pos p' r) (hrel 
   refine ⟨hrel, by rw [hp]; exact h.posLe, by rw [hp]; exact h.posStop, fun F => by rw [e F]; exact h.restEq F,
     ⟨l, h1, by rw [hpe]; exact h2⟩, fun F => by rw [e F]; exact h.reach F⟩
 
+/-! The place a state stands for has the form its tag names. -/
+
+theorem Rel.copyLength_of (h : Rel w k m r p) (ht : r.tag = .copyLength) :
+    ∃ s ic c ilen cb cbase, p = .copyLength s ic c ilen cb cbase := by
+  cases p with
+  | copyLength s ic c ilen cb cbase => exact ⟨s, ic, c, ilen, cb, cbase, rfl⟩
+  | literalSymbol => exact h.elim
+  | _ => exact Tag.noConfusion (h.2.1.symm.trans ht)
+
+theorem Rel.copy_of (h : Rel w k m r p) (ht : r.tag = .copy) : ∃ s d n, p = .copy s d n := by
+  cases p with
+  | copy s d n => exact ⟨s, d, n, rfl⟩
+  | literalSymbol => exact h.elim
+  | _ => exact Tag.noConfusion (h.2.1.symm.trans ht)
+
+theorem Rel.distanceSymbol_of (h : Rel w k m r p) (ht : r.tag = .distanceSymbol) :
+    ∃ s clen dist, p = .distanceSymbol s clen dist := by
+  cases p with
+  | distanceSymbol s clen dist => exact ⟨s, clen, dist, rfl⟩
+  | literalSymbol => exact h.elim
+  | _ => exact Tag.noConfusion (h.2.1.symm.trans ht)
+
+theorem Rel.literals_of (h : Rel w k m r p) (ht : r.tag = .literals) :
+    ∃ s ic c ilen clen n lit out, p = .literals s ic c ilen clen n lit out := by
+  cases p with
+  | literals s ic c ilen clen n lit out => exact ⟨s, ic, c, ilen, clen, n, lit, out, rfl⟩
+  | literalSymbol => exact h.elim
+  | _ => exact Tag.noConfusion (h.2.1.symm.trans ht)
+
+theorem Rel.distance_of (h : Rel w k m r p) (ht : r.tag = .distance) : ∃ s c clen, p = .distance s c clen := by
+  cases p with
+  | distance s c clen => exact ⟨s, c, clen, rfl⟩
+  | literalSymbol => exact h.elim
+  | _ => exact Tag.noConfusion (h.2.1.symm.trans ht)
+
+theorem Rel.command_of (h : Rel w k m r p) (ht : r.tag = .command) : ∃ s, p = .command s := by
+  cases p with
+  | command s => exact ⟨s, rfl⟩
+  | literalSymbol => exact h.elim
+  | _ => exact Tag.noConfusion (h.2.1.symm.trans ht)
+
+theorem Rel.insertCopy_of (h : Rel w k m r p) (ht : r.tag = .insertCopy) : ∃ s ic, p = .insertCopy s ic := by
+  cases p with
+  | insertCopy s ic => exact ⟨s, ic, rfl⟩
+  | literalSymbol => exact h.elim
+  | _ => exact Tag.noConfusion (h.2.1.symm.trans ht)
+
 /-- A refill under the margin keeps the state's place and future: the bits are the same, held differently. -/
 theorem fill_move {w' c' : UInt64} {pos' : USize} {thr : Nat} (hrel : Rel w k m st p)
     (hf : FillOk a stop st.word st.count pos thr w' c' pos') :
@@ -1468,6 +1515,101 @@ theorem distLong_move {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {K
       extraBitsFast H.npostfix H.ndirect (wordSym v)) (st.count - wordBits v - extraBitsFast H.npostfix H.ndirect
       (wordSym v))) (pos := pos) (dcode := wordSym v) hw hrc
   exact h.widen hs1 hs2 hp
+
+/-! ### The insert-and-copy element -/
+
+/-- The step machine's insert-and-copy symbol reads at the fast loop's tree base. -/
+theorem stepInsertCopy_fast {H : Hdr} {T : ByteArray} {lCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow s0 : USize}
+    {st : Cmd} (C : FCtx H T lCur st.iCur dCur tb modeOff lRow iRow iFb dRow s0) (pos : USize) :
+    stepInsertCopy H st pos = insertStep st pos (lookupT T (icFbBase C) st.word C.icIn C.lim C.size32) := by
+  have hi := C.hi
+  unfold stepInsertCopy
+  rw [dite_eq_left (UInt64.lt_iff_toNat_lt.mpr hi)]
+  dsimp only
+  congr 1
+  rw [lookupT_eq]
+  have hT := C.arena
+  subst hT
+  apply lookup_base_congr
+  apply USize.toNat_inj.mp
+  rw [tableBase_toNat, C.icFbBase_toNat]
+
+theorem insertRow_bits24 {c : UInt64} (hc : c.toNat < 704) : (rowBits (insertRow c hc)).toNat ≤ 24 := by
+  have h1 := (insertRow_fields hc).1
+  have h2 := (cmdRow_small hc).1
+  omega
+
+/-- The insert-and-copy element read through its tree, with the bits for its code word and both lengths' extra bits at
+hand and its insert length within the meta-block: as a move, the step machine's element and copy length, to the
+command's literals. -/
+theorem ic_move {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
+    {a : ByteArray} {stop : USize} {s : CommandState} {ic : BlockState} {st : Cmd} {pos : USize}
+    {T : ByteArray} {lCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow s0 : USize}
+    (C : FCtx H T lCur st.iCur dCur tb modeOff lRow iRow iFb dRow s0) (hH : HdrRel H m)
+    (hrel : Rel w k m st (.insertCopy s ic)) (hp : pos.toNat ≤ stop.toNat) {v ib cb ibase cbase IL : UInt64}
+    (hv : v = lookupT T (icFbBase C) st.word C.icIn C.lim C.size32) (hc : (wordSym v).toNat < 704)
+    (hib : ib = rowBits (insertRow (wordSym v) hc)) (hcb : cb = rowBits (copyRow (wordSym v) hc))
+    (hibase : ibase = rowBase (insertRow (wordSym v) hc)) (hcbase : cbase = rowBase (copyRow (wordSym v) hc))
+    (hIL : IL = ibase + ((st.word >>> wordBits v) &&& maskT T C.big C.size32 ib))
+    (hok : wordBits v + ib + cb ≤ st.count) (hrem : ¬ st.remaining < IL) :
+    ∃ p', MoveOk w k m K a stop (.insertCopy s ic) st pos p'
+      { st with
+        word := ((st.word >>> wordBits v) >>> ib) >>> cb, count := st.count - wordBits v - ib - cb, left := IL
+        ext := { st.ext with
+          code := wordSym v, ilen := IL, copyBits := cb, copyBase := cbase
+          clen := cbase + (((st.word >>> wordBits v) >>> ib) &&& maskT T C.big C.size32 cb) }
+        tag := .literals, pos := pos, status := .next } := by
+  have hrel0 := hrel
+  have hl16 : (wordBits v).toNat < 16 := and15_lt v
+  have hib24 : ib.toNat ≤ 24 := by rw [hib]; exact insertRow_bits24 hc
+  have hcb24 : cb.toNat ≤ 24 := by rw [hcb]; exact copyRow_bits hc
+  have hok' := UInt64.le_iff_toNat_le.mp hok
+  rw [u64_add_small (by rw [u64_add_small (by omega)]; omega), u64_add_small (by omega)] at hok'
+  have hc704 : wordSym v < 704 :=
+    UInt64.lt_iff_toNat_lt.mpr (by rw [show (704 : UInt64).toNat = 704 from rfl]; exact hc)
+  have h1 := stepInsertCopy_ok (K := K) (a := a) (stop := pos) hH hrel0 (Nat.le_refl _) (Or.inr rfl)
+  rw [stepInsertCopy_fast C pos, ← hv] at h1
+  have hl : wordBits v ≤ st.count := UInt64.le_iff_toNat_le.mpr (by omega)
+  have hibc : rowBits (insertRow (wordSym v) (lt704 hc704)) ≤ ((BitBuffer.mk st.word st.count).drop (wordBits v)).count :=
+    UInt64.le_iff_toNat_le.mpr (by
+      rw [drop_count (UInt64.le_iff_toNat_le.mp hl)]
+      show (rowBits (insertRow (wordSym v) _)).toNat ≤ st.count.toNat - (wordBits v).toNat
+      rw [← hib]
+      omega)
+  have e1 : insertStep st pos v =
+      { st with
+        word := (st.word >>> wordBits v) >>> ib, count := st.count - wordBits v - ib
+        ext := { st.ext with code := wordSym v, ilen := IL, copyBits := cb, copyBase := cbase }
+        tag := .copyLength, pos := pos, status := .next } := by
+    unfold insertStep
+    rw [ite_eq_left hl, dite_eq_left hc704]
+    dsimp only
+    rw [ite_eq_left hibc, hIL, hib, hcb, hibase, hcbase, C.maskT_eq (by rw [← hib]; omega)]
+    rfl
+  rw [e1] at h1
+  obtain ⟨p1, m1⟩ := h1.widen rfl rfl hp
+  obtain ⟨_, _, _, _, _, _, rfl⟩ := m1.rel.copyLength_of rfl
+  have h2 := stepCopyLength_ok (K := K) (a := a) (stop := pos) m1.rel (Nat.le_refl _) (Or.inr rfl)
+  have hcbc : cb ≤ st.count - wordBits v - ib := UInt64.le_iff_toNat_le.mpr (by
+    rw [u64_sub_le (by rw [u64_sub_le (by omega)]; omega), u64_sub_le (by omega)]
+    omega)
+  have e2 : stepCopyLength
+      { st with
+        word := (st.word >>> wordBits v) >>> ib, count := st.count - wordBits v - ib
+        ext := { st.ext with code := wordSym v, ilen := IL, copyBits := cb, copyBase := cbase }
+        tag := .copyLength, pos := pos, status := .next } pos =
+      { st with
+        word := ((st.word >>> wordBits v) >>> ib) >>> cb, count := st.count - wordBits v - ib - cb, left := IL
+        ext := { st.ext with
+          code := wordSym v, ilen := IL, copyBits := cb, copyBase := cbase
+          clen := cbase + (((st.word >>> wordBits v) >>> ib) &&& maskT T C.big C.size32 cb) }
+        tag := .literals, pos := pos, status := .next } := by
+    unfold stepCopyLength
+    rw [ite_eq_right hrem, ite_eq_left hcbc, C.maskT_eq (by omega)]
+    rfl
+  rw [e2] at h2
+  obtain ⟨p2, m2⟩ := h2.widen rfl rfl hp
+  exact ⟨p2, m1.trans m2⟩
 
 /-! ### A literal round -/
 
