@@ -280,6 +280,11 @@ def Gh.ckCount (g : Gh) : CK → Nat
 
 /-! ### What's settled -/
 
+/-- The prefix a header's arena starts with, before any table: the fast command loop's masks `2 ^ n - 1` for `n < 32`,
+8 bytes each (`writeMasks`), then room for the shared distance table (4160 bytes), written at the header's end, so that
+the arena itself is the loop's one table array and that table is at a fixed place. -/
+def arenaPre : Nat := 4416
+
 /-- A category is settled. -/
 structure CatOk (d : Done) (i : Cat) (c : BlockCategory) : Prop where
   n : (d.nOf i).toNat = c.n
@@ -294,6 +299,8 @@ structure CodesPart (t bases : ByteArray) (cs : List PrefixCode) (total size : N
   basesSize : bases.size = 4 * total
   le : cs.length ≤ total
   code : ∀ i, i < cs.length → ∃ c, cs[i]? = some c ∧ TableOk t (u32At bases i) c ∧ Complete c ∧ c.Symbols size
+  /-- Every table is after the arena's prefix. -/
+  lo : ∀ i, i < cs.length → arenaPre ≤ 2 * u32At bases i
 
 /-- A context map, with its bytes. -/
 structure MapOk (b : ByteArray) (l : List Nat) (size ntrees : Nat) : Prop where
@@ -308,10 +315,6 @@ def treeMax (size : Nat) : Nat := 2 * (size + 376)
 /-- The bytes a category's block type and block count codes' tables can take. -/
 def catMax : Nat := treeMax 258 + treeMax 26
 
-/-- The prefix a header's arena starts with, before any table: the fast command loop's masks `2 ^ n - 1` for `n < 32`,
-8 bytes each (`writeMasks`), so that the arena itself is the loop's one table array. -/
-def arenaPre : Nat := 256
-
 /-- What the arena reserves at a header's start: the prefix and the three categories' codes. -/
 def smallMax : Nat := 3 * catMax + arenaPre
 
@@ -325,6 +328,9 @@ structure Upto (d : Done) (g : Gh) (n : Nat) : Prop where
   four : d.arena.size % 2 = 0
   pre : arenaPre ≤ d.arena.size
   masks : ∀ n, n < 32 → leAt d.arena (8 * n) 8 = 2 ^ n - 1
+  /-- The categories' switch tables are after the arena's prefix (or not yet built, and their bases still the first
+  past it). -/
+  lo : ∀ i, arenaPre ≤ 2 * (d.baseTOf i).toNat ∧ arenaPre ≤ 2 * (d.baseCOf i).toNat
   le : d.arena.size ≤ d.arenaCap.toNat
   max : d.arenaCap.toNat + 2672 < 2 ^ 32
   capLe : d.arenaCap.toNat ≤ smallMax + d.arenaMax.toNat
@@ -382,6 +388,62 @@ theorem CodesPart.frame {t t' bases : ByteArray} {cs : List PrefixCode} {total s
   code i hi := by
     obtain ⟨c, h1, h2, h3⟩ := h.code i hi
     exact ⟨c, h1, h2.frame hk.four hk.le hk.frame, h3⟩
+  lo := h.lo
+
+/-- The array changed only in its prefix, after the masks. -/
+structure KeepAbove (t t' : ByteArray) : Prop where
+  size : t'.size = t.size
+  masks : ∀ q, q < 256 → t'.data[q]? = t.data[q]?
+  above : ∀ q, arenaPre ≤ q → t'.data[q]? = t.data[q]?
+
+theorem KeepAbove.slotAt {t t' : ByteArray} (hk : KeepAbove t t') {q : Nat} (hq : arenaPre ≤ 2 * q) :
+    _root_.Brotli.Decoder.slotAt t' q = _root_.Brotli.Decoder.slotAt t q := by
+  simp only [_root_.Brotli.Decoder.slotAt, slotNum]
+  rw [hk.above _ hq, hk.above _ (by omega)]
+
+theorem CatRel.frameAbove {t t' : ByteArray} {a b : USize} {c : BlockCategory} (h : CatRel t a b c) (hk : KeepAbove t t')
+    (ha : arenaPre ≤ 2 * a.toNat) (hb : arenaPre ≤ 2 * b.toNat) : CatRel t' a b c where
+  type hn := by
+    obtain ⟨h1, h2⟩ := h.type hn
+    exact ⟨h1.frameAbove hk.size fun q hq => hk.slotAt (by omega), h2⟩
+  count hn := by
+    obtain ⟨h1, h2⟩ := h.count hn
+    exact ⟨h1.frameAbove hk.size fun q hq => hk.slotAt (by omega), h2⟩
+
+theorem CodesPart.frameAbove {t t' bases : ByteArray} {cs : List PrefixCode} {total size : Nat}
+    (h : CodesPart t bases cs total size) (hk : KeepAbove t t') : CodesPart t' bases cs total size where
+  basesSize := h.basesSize
+  le := h.le
+  code i hi := by
+    obtain ⟨c, h1, h2, h3⟩ := h.code i hi
+    have hl := h.lo i hi
+    exact ⟨c, h1, h2.frameAbove hk.size fun q hq => hk.slotAt (by omega), h3⟩
+  lo := h.lo
+
+/-- An arena changed only in its prefix, after the masks, keeps everything settled. -/
+theorem Upto.frameAbove {d : Done} {g : Gh} {n : Nat} (h : Upto d g n) {a : ByteArray} (hk : KeepAbove d.arena a) :
+    Upto { d with arena := a } g n where
+  four := by rw [hk.size]; exact h.four
+  pre := by rw [hk.size]; exact h.pre
+  masks n hn := (leAt_congr fun q _ h2 => hk.masks q (by omega)).trans (h.masks n hn)
+  lo := h.lo
+  le := by rw [hk.size]; exact h.le
+  max := h.max
+  capLe := h.capLe
+  room := h.room
+  small := h.small
+  cat i hi := by
+    have hc := h.cat i hi
+    have hl := h.lo i
+    cases i <;> exact ⟨hc.n, hc.count, hc.rel.frameAbove hk hl.1 hl.2, hc.wf, hc.tc, hc.cc⟩
+  np := h.np
+  modes := h.modes
+  lmap := h.lmap
+  dmap := h.dmap
+  codes k hk' := by
+    obtain ⟨h1, h2⟩ := h.codes k hk'
+    cases k <;> exact ⟨h1, h2.frameAbove hk⟩
+  fin h' := by rw [hk.size]; exact h.fin h'
 
 /-- A longer arena keeps everything settled. -/
 theorem Upto.frame {d : Done} {g : Gh} {n : Nat} (h : Upto d g n) {a : ByteArray} (hk : Keep d.arena a) (h4 : a.size % 2 = 0)
@@ -393,6 +455,7 @@ theorem Upto.frame {d : Done} {g : Gh} {n : Nat} (h : Upto d g n) {a : ByteArray
     have hp := h.pre
     unfold arenaPre at hp
     exact (leAt_congrB fun q _ h2 => hk.byteN (by omega)).trans (h.masks n hn)
+  lo := h.lo
   le := hle
   max := h.max
   capLe := h.capLe

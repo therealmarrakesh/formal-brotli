@@ -95,9 +95,9 @@ structure FCtx (H : Hdr) (T : ByteArray) (lCur iCur dCur tb : UInt64) (modeOff l
   mode : modeOff.toNat = 512 * (H.modes.data[lCur.toNat]?.getD 0).toNat
   lRow : lRow.toNat = H.tabF0.toNat + 2048 * H.nI.toNat + 256 * lCur.toNat
   iRow : iRow.toNat = H.tabF0.toNat + 2048 * iCur.toNat
-  iFb : 4 * iFb.toNat = H.tabF0.toNat + 2048 * H.nI.toNat + 256 * H.nL.toNat + 16 * H.nD.toNat + 4160 + 4 * iCur.toNat
+  iFb : 4 * iFb.toNat = H.tabF0.toNat + 2048 * H.nI.toNat + 256 * H.nL.toNat + 16 * H.nD.toNat + 4 * iCur.toNat
   dRow : dRow.toNat = H.tabF0.toNat + 2048 * H.nI.toNat + 256 * H.nL.toNat + 16 * dCur.toNat
-  s0 : s0.toNat = H.tabF0.toNat + 2048 * H.nI.toNat + 256 * H.nL.toNat + 16 * H.nD.toNat
+  s0 : s0.toNat = 256
 
 section
 variable {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow s0 : USize}
@@ -112,7 +112,7 @@ theorem FCtx.tab (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) 
 theorem FCtx.size32 (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) : T.size < 2 ^ 32 := C.tab.size32
 
 theorem FCtx.sizeOk (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) :
-    H.tabF0.toNat + 2048 * H.nI.toNat + 256 * H.nL.toNat + 16 * H.nD.toNat + 4160 + 4 * H.nI.toNat + 4 * H.nL.toNat ≤
+    H.tabF0.toNat + 2048 * H.nI.toNat + 256 * H.nL.toNat + 16 * H.nD.toNat + 4 * H.nI.toNat + 4 * H.nL.toNat ≤
       T.size := C.tab.sizeOk
 
 /-- Every table lies within `tabF0 - 8`, and 6 bytes follow it: what `lookupT` needs. -/
@@ -354,16 +354,18 @@ theorem FCtx.dSym (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0)
   rw [← hm.npostfix, ← hm.ndirect] at this
   exact Nat.lt_of_lt_of_le this (distAlpha_le H.npLe H.ndLe)
 
-theorem FCtx.s0Le (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) : s0.toNat + 4160 ≤ T.size := by
+theorem FCtx.s0Le (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) : 4416 ≤ T.size := by
   have := C.sizeOk
-  rw [C.s0]
+  have := C.tab.f0Ok
   omega
 
-/-- A distance symbol's entry in the shared distance table: its extra bits and its base distance. -/
-@[inline] def dshT (T : ByteArray) (s0 : USize) (h : s0.toNat + 4160 ≤ T.size) (h32 : T.size < 2 ^ 32) (dc : UInt64)
-    (hd : dc.toNat < 520) : UInt64 :=
-  load64 T (s0 + (dc.toUSize <<< USize.ofNat 3))
-    (by rw [fastAdd (by rw [u64_shl (by decide) (by omega)]; omega), u64_shl (by decide) (by omega)]; omega) h32
+/-- A distance symbol's entry in the shared distance table, at its fixed place after the masks: its extra bits and its
+base distance. -/
+@[inline] def dshT (T : ByteArray) (h : 4416 ≤ T.size) (h32 : T.size < 2 ^ 32) (dc : UInt64) (hd : dc.toNat < 520) :
+    UInt64 :=
+  load64 T (USize.ofNat 256 + (dc.toUSize <<< USize.ofNat 3))
+    (by rw [fastAdd (by rw [u64_shl (by decide) (by omega), fastLit (by decide)]; omega), u64_shl (by decide) (by omega),
+      fastLit (by decide)]; omega) h32
 
 theorem FCtx.fbLe (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) : 4 * iFb.toNat + 4 ≤ T.size := by
   have := C.sizeOk
@@ -688,7 +690,7 @@ codes or by the shared table and the extra bits; with whether the buffer held th
     k (decide (l ≤ count)) w1 (count - l) dcode (shortFast d0 d1 d2 d3 dcode)
       (fun h => drop1_wf hw (by omega) (UInt64.le_iff_toNat_le.mp (of_decide_eq_true h)))
   else
-    let e := dshT T s0 C.s0Le C.size32 dcode (C.dSym clen word)
+    let e := dshT T C.s0Le C.size32 dcode (C.dSym clen word)
     let nb := e &&& 31
     have hnb : nb.toNat < 32 := and31 e
     k (decide (l + nb ≤ count)) (w1 >>> nb) (count - l - nb) dcode ((e >>> 32) + ((w1 &&& maskT T C.big C.size32 nb) <<< np))
@@ -1316,14 +1318,13 @@ theorem rows_toNat {H : Hdr} (hH : ∃ m, HdrRel H m) {lCur iCur dCur : UInt64} 
     (hi : iCur.toNat < H.nI.toNat) (hd : dCur.toNat < H.nD.toNat) :
     let l0 := H.tabF0 + (H.nI.toUSize <<< USize.ofNat 11)
     let d0 := l0 + (H.nL.toUSize <<< USize.ofNat 8)
-    let s0 := d0 + (H.nD.toUSize <<< USize.ofNat 4)
+    let r0 := d0 + (H.nD.toUSize <<< USize.ofNat 4)
     (l0 + (lCur.toUSize <<< USize.ofNat 8)).toNat = H.tabF0.toNat + 2048 * H.nI.toNat + 256 * lCur.toNat ∧
       (H.tabF0 + (iCur.toUSize <<< USize.ofNat 11)).toNat = H.tabF0.toNat + 2048 * iCur.toNat ∧
-      4 * (((s0 + USize.ofNat 4160) >>> USize.ofNat 2) + iCur.toUSize).toNat =
-        H.tabF0.toNat + 2048 * H.nI.toNat + 256 * H.nL.toNat + 16 * H.nD.toNat + 4160 + 4 * iCur.toNat ∧
+      4 * ((r0 >>> USize.ofNat 2) + iCur.toUSize).toNat =
+        H.tabF0.toNat + 2048 * H.nI.toNat + 256 * H.nL.toNat + 16 * H.nD.toNat + 4 * iCur.toNat ∧
       (d0 + (dCur.toUSize <<< USize.ofNat 4)).toNat =
-        H.tabF0.toNat + 2048 * H.nI.toNat + 256 * H.nL.toNat + 16 * dCur.toNat ∧
-      s0.toNat = H.tabF0.toNat + 2048 * H.nI.toNat + 256 * H.nL.toNat + 16 * H.nD.toNat := by
+        H.tabF0.toNat + 2048 * H.nI.toNat + 256 * H.nL.toNat + 16 * dCur.toNat := by
   obtain ⟨m, hm⟩ := hH
   have t := hm.tab
   have hz := t.sizeOk
@@ -1355,16 +1356,12 @@ theorem rows_toNat {H : Hdr} (hH : ∃ m, HdrRel H m) {lCur iCur dCur : UInt64} 
   have es0 : (H.tabF0 + (H.nI.toUSize <<< USize.ofNat 11) + (H.nL.toUSize <<< USize.ofNat 8) +
       (H.nD.toUSize <<< USize.ofNat 4)).toNat = H.tabF0.toNat + 2048 * H.nI.toNat + 256 * H.nL.toNat + 16 * H.nD.toNat := by
     rw [fastAdd (by rw [ed0, sD]; omega), ed0, sD]
-  have e4 : (H.tabF0 + (H.nI.toUSize <<< USize.ofNat 11) + (H.nL.toUSize <<< USize.ofNat 8) +
-      (H.nD.toUSize <<< USize.ofNat 4) + USize.ofNat 4160).toNat =
-      H.tabF0.toNat + 2048 * H.nI.toNat + 256 * H.nL.toNat + 16 * H.nD.toNat + 4160 := by
-    rw [fastIdx_add (by rw [es0]; omega), es0]
   have hb : 32 ≤ System.Platform.numBits := by rcases System.Platform.numBits_eq with h | h <;> omega
   have e5 : ((H.tabF0 + (H.nI.toUSize <<< USize.ofNat 11) + (H.nL.toUSize <<< USize.ofNat 8) +
-      (H.nD.toUSize <<< USize.ofNat 4) + USize.ofNat 4160) >>> USize.ofNat 2).toNat =
-      (H.tabF0.toNat + 2048 * H.nI.toNat + 256 * H.nL.toNat + 16 * H.nD.toNat + 4160) / 4 := by
-    rw [USize.toNat_shiftRight, e4, fastLit (by decide), Nat.mod_eq_of_lt (by omega), Nat.shiftRight_eq_div_pow]
-  refine ⟨?_, ?_, ?_, ?_, es0⟩
+      (H.nD.toUSize <<< USize.ofNat 4)) >>> USize.ofNat 2).toNat =
+      (H.tabF0.toNat + 2048 * H.nI.toNat + 256 * H.nL.toNat + 16 * H.nD.toNat) / 4 := by
+    rw [USize.toNat_shiftRight, es0, fastLit (by decide), Nat.mod_eq_of_lt (by omega), Nat.shiftRight_eq_div_pow]
+  refine ⟨?_, ?_, ?_, ?_⟩
   · rw [fastAdd (by rw [el0, sl]; omega), el0, sl]
   · rw [fastAdd (by rw [si]; omega), si]
   · rw [fastAdd (by rw [e5, ui]; omega), e5, ui]
@@ -1402,7 +1399,7 @@ place, computed once. `bEnd` is where the room or the meta-block ends, which the
     exact hm.tab
   let l0 := H.tabF0 + (H.nI.toUSize <<< USize.ofNat 11)
   let d0 := l0 + (H.nL.toUSize <<< USize.ofNat 8)
-  let s0 := d0 + (H.nD.toUSize <<< USize.ofNat 4)
+  let r0 := d0 + (H.nD.toUSize <<< USize.ofNat 4)
   have hr := rows_toNat hinv.hdr hinv.lCur hinv.iCur hinv.dCur
   have hmodes : x.lCur.toUSize.toNat < H.modes.size := by rw [cur_usize hinv.lCur, H.modesSize]; exact hinv.lCur
   let modeOff := ((H.modes.uget x.lCur.toUSize hmodes).toUInt64 <<< 9).toUSize
@@ -1443,10 +1440,10 @@ place, computed once. `bEnd` is where the room or the meta-block ends, which the
   fastLoop H kk a stop hs cap H.arena H.npostfix x flags (ringMask kk) (ringSize kk) (ringSize kk - USize.ofNat 16)
     (pend - wpos) (written - wpos) (stop - USize.ofNat 40) (remaining + wpos.toUInt64) bEnd (trivBase H x.lCur hinv.lCur)
     modeOff (l0 + (x.lCur.toUSize <<< USize.ofNat 8)) pairBase (H.tabF0 + (x.iCur.toUSize <<< USize.ofNat 11))
-    (((s0 + USize.ofNat 4160) >>> USize.ofNat 2) + x.iCur.toUSize) (d0 + (x.dCur.toUSize <<< USize.ofNat 4)) s0
+    ((r0 >>> USize.ofNat 2) + x.iCur.toUSize) (d0 + (x.dCur.toUSize <<< USize.ofNat 4)) (USize.ofNat 256)
     ⟨hinv.hdr, rfl, hinv.lCur, hinv.iCur, hinv.dCur, rfl,
-      by rw [modeOff_toNat (H.modesLt _ hmodes), uget_toNat, cur_usize hinv.lCur], hr.1, hr.2.1, hr.2.2.1, hr.2.2.2.1,
-      hr.2.2.2.2⟩
+      by rw [modeOff_toNat (H.modesLt _ hmodes), uget_toNat, cur_usize hinv.lCur], hr.1, hr.2.1, hr.2.2.1, hr.2.2.2,
+      fastLit (by decide)⟩
     ⟨hinv.iPrev, hinv.lPrev, hinv.dPrev⟩
     ⟨hinv.k24, hinv.k16, ringMask_toNat hinv.k24, ringSize_toNat hinv.k24,
       by rw [USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr (by rw [h16, ringSize_toNat hinv.k24]; exact hinv.k16)),

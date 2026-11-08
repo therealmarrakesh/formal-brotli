@@ -295,7 +295,7 @@ theorem tabArgs_of {A : ByteArray} {d : Done} {g : Gh} (hu : Upto { d with arena
 by the policy. -/
 def buildArena (A : ByteArray) (d : Done) (lTriv : ByteArray) (mlen : UInt64)
     (h : TabArgs A d.litBase d.lMap d.icBase d.dBase d.dMap lTriv d.nL.toNat d.nI.toNat d.nD.toNat d.treesL.toNat
-      d.treesD.toNat) :
+      d.treesD.toNat) (hd : DshAt A d.npostfix d.ndirect 256) :
     { T : ByteArray // Extends A T ∧ TabOk T d.litBase d.lMap d.icBase d.dBase d.dMap lTriv d.nL.toNat d.nI.toNat
       d.nD.toNat d.treesL.toNat d.treesD.toNat d.npostfix d.ndirect (A.size + padOf A.size) ∧
       T.size ≤ A.size + tabMax d.nL.toNat d.nI.toNat d.nD.toNat } :=
@@ -304,11 +304,11 @@ def buildArena (A : ByteArray) (d : Done) (lTriv : ByteArray) (mlen : UInt64)
       h.arrs.trivSize h.arrs.nL256 h.trivFits mlen with
   | ⟨(fl, A1), hA⟩ =>
     ⟨buildTab A1 d.litBase d.lMap d.icBase d.dBase d.dMap lTriv d.nL.toNat d.nI.toNat d.nD.toNat d.treesL.toNat
-        d.treesD.toNat (by rw [show A1 = A from hA]; exact h) d.npostfix d.ndirect fl.1 fl.2.1 fl.2.2.1 fl.2.2.2,
+        d.treesD.toNat (by rw [show A1 = A from hA]; exact h) fl.1 fl.2.1 fl.2.2.1 fl.2.2.2,
       by
         have e : A1 = A := hA
         subst e
-        exact ⟨buildTab_extends _ _ _ _ _ _ _, buildTab_ok _ _ _ _ _ _ _, buildTab_size _ _ _ _ _ _ _⟩⟩
+        exact ⟨buildTab_extends _ _ _ _ _, buildTab_ok _ hd _ _ _ _, buildTab_size _ _ _ _ _⟩⟩
 
 /-- A table keeps what it decodes in an arena that begins with the one it was built in. -/
 theorem TableOk.extend {A T : ByteArray} {b : Nat} {c : PrefixCode} (h : TableOk A b c) (he : Extends A T)
@@ -366,7 +366,8 @@ def hdrOfArena (A : ByteArray) (d : Done) (hf : HdrSizes { d with arena := A } �
 
 /-- Makes the command loop's header from a header that was read, with its arena `A` taken out of the rest of its record
 `d`: the literal types' shared tables, then the derived tables appended to the arena in place. -/
-def mkHdrOf (A : ByteArray) (d : Done) (mlen : UInt64) (h : ∃ g, Upto { d with arena := A } g 10) : Hdr :=
+def mkHdrOf (A : ByteArray) (d : Done) (mlen : UInt64) (h : ∃ g, Upto { d with arena := A } g 10)
+    (hd : DshAt A d.npostfix d.ndirect 256) : Hdr :=
   have hf : HdrSizes { d with arena := A } ∧ HdrProps { d with arena := A } := by
     obtain ⟨g, hu⟩ := h
     exact hdr_facts hu
@@ -375,13 +376,41 @@ def mkHdrOf (A : ByteArray) (d : Done) (mlen : UInt64) (h : ∃ g, Upto { d with
     trivBuild_spec.1 trivBuild_spec.2
     (buildArena A d
       (trivBuild d.lMap d.litBase d.treesL.toNat d.nL hf.1.2.2.2.2.2.2.1 hf.1.2.2.1 hf.1.2.2.2.1 hf.1.2.1 hf.2.treeLt) mlen
-      (by obtain ⟨g, hu⟩ := h; exact tabArgs_of hu trivBuild_spec.1 trivBuild_spec.2))
+      (by obtain ⟨g, hu⟩ := h; exact tabArgs_of hu trivBuild_spec.1 trivBuild_spec.2) hd)
+
+theorem takeArena_upto {d d0 : Done} {A : ByteArray} (hT : takeArena d = (A, d0)) (h : ∃ g, Upto d g 10) :
+    ∃ g, Upto { d0 with arena := A } g 10 := by
+  rw [takeArena_back hT]
+  exact h
+
+/-- A header that was read has room for the shared distance table in its arena's prefix. -/
+theorem upto_dshRoom {d : Done} (h : ∃ g, Upto d g 10) : 4416 ≤ d.arena.size ∧ d.arena.size < 2 ^ 32 := by
+  obtain ⟨g, hu⟩ := h
+  have := hu.pre
+  have := hu.le
+  have := hu.max
+  unfold arenaPre at *
+  omega
+
+/-- Writing the shared distance table changes the arena only in its prefix, after the masks. -/
+theorem keepAbove_dsh {A : ByteArray} {np nd : UInt64} {h1 : 4416 ≤ A.size} {h2 : A.size < 2 ^ 32} :
+    KeepAbove A (writeDsh np nd A h1 h2) := by
+  obtain ⟨s1, s2, s3, _⟩ := writeDsh_spec (np := np) (nd := nd) (t := A) (h := h1) (h32 := h2)
+  exact ⟨s1, s2, fun q hq => s3 q hq⟩
+
+theorem upto_dsh {d0 : Done} {A : ByteArray} {np nd : UInt64} {h1 : 4416 ≤ A.size} {h2 : A.size < 2 ^ 32}
+    (h : ∃ g, Upto { d0 with arena := A } g 10) : ∃ g, Upto { d0 with arena := writeDsh np nd A h1 h2 } g 10 := by
+  obtain ⟨g, hu⟩ := h
+  exact ⟨g, hu.frameAbove keepAbove_dsh⟩
 
 /-- Makes the command loop's header from a header that was read. The arena is taken out of the record first, so that it
-is held once while the derived tables are appended. -/
+is held once while the shared distance table is written into its prefix and the derived tables are appended. -/
 def mkHdr (d : Done) (mlen : UInt64) (h : ∃ g, Upto d g 10) : Hdr :=
   match hT : takeArena d with
-  | (A, d0) => mkHdrOf A d0 mlen (by rw [takeArena_back hT]; exact h)
+  | (A, d0) =>
+    have hr := upto_dshRoom (takeArena_upto hT h)
+    mkHdrOf (writeDsh d0.npostfix d0.ndirect A hr.1 hr.2) d0 mlen (upto_dsh (takeArena_upto hT h))
+      writeDsh_spec.2.2.2
 
 /-- The header made from a header that was read matches the spec's. -/
 theorem hdrOfArena_ok {A : ByteArray} {d : Done} {g : Gh} (hu : Upto { d with arena := A } g 10)
@@ -485,7 +514,7 @@ theorem mkHdr_ok {d : Done} {g : Gh} {mlen : UInt64} (hu : Upto d g 10) (h : ∃
   have hb := takeArena_back hT
   subst hb
   unfold mkHdrOf
-  exact hdrOfArena_ok hu _
+  exact hdrOfArena_ok (A := writeDsh d0.npostfix d0.ndirect A _ _) (d := d0) (hu.frameAbove keepAbove_dsh) _
 
 theorem hdrOfArena_size {A : ByteArray} {d : Done} {hf : HdrSizes { d with arena := A } ∧ HdrProps { d with arena := A }}
     {lTriv : ByteArray} {ht : lTriv.size = 4 * d.nL.toNat} {hok : TrivInv d.lMap d.litBase lTriv d.nL.toNat}
@@ -509,6 +538,8 @@ theorem mkHdr_size {d : Done} {g : Gh} {mlen : UInt64} (hu : Upto d g 10) (h : �
   dsimp only
   refine Nat.le_trans (hdrOfArena_size _).1 ?_
   rw [(hdrOfArena_size _).2]
+  have hs : ∀ np nd h1 h2, (writeDsh np nd A h1 h2).size = A.size := fun _ _ _ _ => writeDsh_spec.1
+  rw [hs]
   have hL := hu.cat .L (by decide)
   have hD := hu.cat .D (by decide)
   have hI := hu.cat .I (by decide)

@@ -21,11 +21,11 @@ open Brotli.Spec
 abbrev DState := { D : Dec // ∃ p, DRel D p }
 
 /-- A state at a stream's start, with what the limit leaves for the window and the tables. -/
-def liveD (limit : Nat) : Dec := { deadD with limit := UInt64.ofNat (min (limit - fixedCost) 4294958151) }
+def liveD (limit : Nat) : Dec := { deadD with limit := UInt64.ofNat (min (limit - fixedCost) 4294953991) }
 
 theorem liveD_rel (limit : Nat) : DRel (liveD limit) .wbits := by
   refine ⟨rfl, deadD_rel.2.1, ?_, rfl, rfl⟩
-  show (UInt64.ofNat (min (limit - fixedCost) 4294958151)).toNat + 9144 < 2 ^ 32
+  show (UInt64.ofNat (min (limit - fixedCost) 4294953991)).toNat + 13304 < 2 ^ 32
   rw [u64_ofNat (by omega)]
   omega
 
@@ -812,7 +812,7 @@ theorem decoder_terminates : Terminates decoder := by
 /-! ### Memory usage correctness -/
 
 /-- What the limit leaves for the window and the tables. -/
-def roomOf (limit : Nat) : Nat := min (limit - fixedCost) 4294958151
+def roomOf (limit : Nat) : Nat := min (limit - fixedCost) 4294953991
 
 /-- What every run of the decoder holds, for its stream. -/
 structure MemTop (limit : Nat) (x : List UInt8) (R : Run DState) : Prop where
@@ -838,7 +838,7 @@ theorem liveD_mem (limit : Nat) (x : List UInt8) :
     MemD (winSem.first (bits x)) ((demandSem.first (bits x)).getD 0) (roomOf limit) (liveD limit) (bits x) := by
   refine ⟨⟨.wbits, liveD_rel limit, Nat.le_refl _⟩, fun e => DTag.noConfusion e, fun e => DTag.noConfusion e, fun e => DTag.noConfusion e, fun _ => rfl, fun _ => rfl,
     hsize_none, hsmall_none, Or.inl ⟨rfl, rfl, ?_, .wbits, liveD_rel limit, rfl⟩⟩
-  show (UInt64.ofNat (min (limit - fixedCost) 4294958151)).toNat = _
+  show (UInt64.ofNat (min (limit - fixedCost) 4294953991)).toNat = _
   rw [u64_ofNat (by omega)]
   rfl
 
@@ -1023,7 +1023,7 @@ private theorem twin_inv {l1 l2 : Nat} {x : List UInt8} {R1 R2 : Run DState} (h 
     · by_cases h2 : l2 < fixedCost
       · exact Or.inr (Or.inl (by rw [ite_eq_left h2]))
       · rw [ite_eq_right h1, ite_eq_right h2]
-        exact Or.inr (Or.inr ⟨rfl, rfl, rfl, UInt64.ofNat (min (l1 - fixedCost) 4294958151), 0, rfl⟩)
+        exact Or.inr (Or.inr ⟨rfl, rfl, rfl, UInt64.ofNat (min (l1 - fixedCost) 4294953991), 0, rfl⟩)
   | @call R1 R2 c _ ha1 ha2 ih =>
     rcases ih with h | h | ⟨e1, e2, e3, l, a, e4⟩
     · have := ha1.running

@@ -388,7 +388,7 @@ theorem stepDMeta_hd {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size}
     cases h
 
 /-- A header's start holds the potential of the literal category's number of block types not yet read. -/
-theorem hpot_start {x y z : UInt64} {g : Gh} {p : HPhase} (h : HRel (hdStart x y z) g p) : hpot g p = 15748 := by
+theorem hpot_start {x y z : UInt64} {g : Gh} {p : HPhase} (h : HRel (hdStart x y z) g p) : hpot g p = 19908 := by
   have ht := h.tag_eq
   cases p with
   | cat i =>

@@ -210,8 +210,15 @@ end
 @[noinline] def clearArena (d : Done) : Done := { d with arena := ByteArray.empty }
 
 /-- A settled record with nothing in it, to hold a state's place while the real one is written. -/
-def Done.none : Done := ⟨ByteArray.empty, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ByteArray.empty, ByteArray.empty,
-  ByteArray.empty, ByteArray.empty, ByteArray.empty, ByteArray.empty⟩
+def Done.none : Done := ⟨ByteArray.empty, 0, 0, 0, 0, 0, 0, 0, 0, USize.ofNat 2208, USize.ofNat 2208, USize.ofNat 2208,
+  USize.ofNat 2208, USize.ofNat 2208, USize.ofNat 2208, 0, 0, 0, 0, ByteArray.empty, ByteArray.empty, ByteArray.empty,
+  ByteArray.empty, ByteArray.empty, ByteArray.empty⟩
+
+/-- A settled record's first switch table bases are the first slot after the arena's prefix. -/
+theorem Done.none_lo (i : Cat) : arenaPre ≤ 2 * (Done.none.baseTOf i).toNat ∧ arenaPre ≤ 2 * (Done.none.baseCOf i).toNat := by
+  have h : (USize.ofNat 2208).toNat = 2208 := fastLit (by decide)
+  cases i <;> exact ⟨by show arenaPre ≤ 2 * (USize.ofNat 2208).toNat; rw [h]; decide,
+    by show arenaPre ≤ 2 * (USize.ofNat 2208).toNat; rw [h]; decide⟩
 
 /-- Appends a canonical table to the arena, from the state's lists of each length's symbols. -/
 @[inline] def growLens (st : Hd) (h : ∃ L, BuildArgs st.d.arena st.head st.next L) : Hd :=
@@ -393,6 +400,9 @@ private theorem setBaseT_nOf (d : Done) (i j : Cat) (v : USize) : (d.setBaseT i 
 
 private theorem setBaseT_baseTOf (d : Done) (i : Cat) (v : USize) : (d.setBaseT i v).baseTOf i = v := by cases i <;> rfl
 
+private theorem setBaseT_baseCOf (d : Done) (i j : Cat) (v : USize) : (d.setBaseT i v).baseCOf j = d.baseCOf j := by
+  cases i <;> cases j <;> rfl
+
 private theorem setBaseT_arena (d : Done) (i : Cat) (v : USize) :
     (d.setBaseT i v).arena = d.arena ∧ (d.setBaseT i v).arenaMax = d.arenaMax ∧ (d.setBaseT i v).arenaCap = d.arenaCap := by
   cases i <;> exact ⟨rfl, rfl, rfl⟩
@@ -468,7 +478,13 @@ theorem install_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {c : PrefixCode} 
     refine ⟨g, .code (.count st.cat n c) blockCountAlphabetSize, ⟨hw, ?_, rfl, ⟨rfl, by decide, by decide⟩, rfl, rfl, ?_, h2, h256, rfl, ?_, hC, hsy⟩, (fun bs => rfl),
       by simp only [rankH, rankO, LexLt]; omega, by simp only [budH, budO, catMax, treeMax, blockTypeAlphabetSize]; omega, rfl⟩
     · have ha := setBaseT_arena { st.d with arena := A1 } st.cat base.toUSize
-      exact Upto.setSame hup ha.1 ha.2.1 ha.2.2 (setBaseT_others _ _ _)
+      refine Upto.setSame hup ha.1 ha.2.1 ha.2.2 (setBaseT_others _ _ _) ⟨?_, ?_⟩
+      · rw [setBaseT_baseTOf, hbU, hb]
+        have := hu.pre
+        have := hu.four
+        omega
+      · rw [setBaseT_baseCOf]
+        exact (hu.lo st.cat).2
     · show (({ st.d with arena := A1 }.setBaseT st.cat base.toUSize).nOf st.cat).toNat = n
       rw [setBaseT_nOf]
       cases hc : st.cat <;> rw [hc] at hn <;> exact hn
@@ -485,7 +501,13 @@ theorem install_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {c : PrefixCode} 
     refine ⟨g, .first st.cat n tc c, ⟨hw, ?_, rfl, rfl, ?_, h2, h256, ?_, hTc, hTs, ?_, hC, hsy⟩, (fun bs => rfl),
       by simp only [rankH, rankO, LexLt]; omega, by simp only [budH, budO, blockCountAlphabetSize]; omega, rfl⟩
     · have ha := setBaseC_arena { st.d with arena := A1 } st.cat base.toUSize
-      exact Upto.setSame hup ha.1 ha.2.1 ha.2.2 (setBaseC_others _ _ _)
+      refine Upto.setSame hup ha.1 ha.2.1 ha.2.2 (setBaseC_others _ _ _) ⟨?_, ?_⟩
+      · rw [setBaseC_baseTOf]
+        exact (hu.lo st.cat).1
+      · rw [setBaseC_baseCOf, hbU, hb]
+        have := hu.pre
+        have := hu.four
+        omega
     · show (({ st.d with arena := A1 }.setBaseC st.cat base.toUSize).nOf st.cat).toNat = n
       rw [setBaseC_nOf]
       cases hc : st.cat <;> rw [hc] at hn <;> exact hn
@@ -512,10 +534,21 @@ theorem install_ok {st : Hd} {g : Gh} {o : Owner} {size : Nat} {c : PrefixCode} 
       Or.inr ⟨rfl, show 2 * left < 2 * left + 1 by omega⟩, by cases st.ck <;> simp only [budH, budO, groupsFrom, Nat.add_mul, Nat.one_mul] <;> omega, rfl⟩
     · simp only [List.length_append, List.length_singleton]
       omega
-    · refine ⟨?_, by simp only [List.length_append, List.length_singleton]; omega, fun i hi => ?_⟩
+    · refine ⟨?_, by simp only [List.length_append, List.length_singleton]; omega, fun i hi => ?_, fun i hi => ?_⟩
       · show (u32Set st.fill st.idx base).size = _
         rw [size_u32Set]
         exact hpart.basesSize
+      rotate_left
+      · show arenaPre ≤ 2 * u32At (u32Set st.fill st.idx base) i
+        simp only [List.length_append, List.length_singleton] at hi
+        by_cases he : i = done.length
+        · subst he
+          rw [← hidx, u32At_set_same hidx16 (by have := hpart.basesSize; omega) hbase, hb]
+          have := hu.pre
+          have := hu.four
+          omega
+        · rw [u32At_set_ne hidx16 (by omega)]
+          exact hpart.lo i (by omega)
       · simp only [List.length_append, List.length_singleton] at hi
         by_cases he : i = done.length
         · subst he

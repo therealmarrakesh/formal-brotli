@@ -205,7 +205,7 @@ def fastEnterW (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.
     exact hm.tab
   let l0 := H.tabF0 + (H.nI.toUSize <<< USize.ofNat 11)
   let d0 := l0 + (H.nL.toUSize <<< USize.ofNat 8)
-  let s0 := d0 + (H.nD.toUSize <<< USize.ofNat 4)
+  let r0 := d0 + (H.nD.toUSize <<< USize.ofNat 4)
   have hr := rows_toNat hinv.hdr hinv.lCur hinv.iCur hinv.dCur
   have hmodes : x.lCur.toUSize.toNat < H.modes.size := by rw [cur_usize hinv.lCur, H.modesSize]; exact hinv.lCur
   let modeOff := ((H.modes.uget x.lCur.toUSize hmodes).toUInt64 <<< 9).toUSize
@@ -246,10 +246,10 @@ def fastEnterW (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.
   fastLoopW H kk a stop hs cap H.arena H.npostfix x flags (ringMask kk) (ringSize kk) (ringSize kk - USize.ofNat 16)
     (pend - wpos) (written - wpos) (stop - USize.ofNat 40) (remaining + wpos.toUInt64) bEnd (trivBase H x.lCur hinv.lCur)
     modeOff (l0 + (x.lCur.toUSize <<< USize.ofNat 8)) pairBase (H.tabF0 + (x.iCur.toUSize <<< USize.ofNat 11))
-    (((s0 + USize.ofNat 4160) >>> USize.ofNat 2) + x.iCur.toUSize) (d0 + (x.dCur.toUSize <<< USize.ofNat 4)) s0
+    ((r0 >>> USize.ofNat 2) + x.iCur.toUSize) (d0 + (x.dCur.toUSize <<< USize.ofNat 4)) (USize.ofNat 256)
     ⟨hinv.hdr, rfl, hinv.lCur, hinv.iCur, hinv.dCur, rfl,
-      by rw [modeOff_toNat (H.modesLt _ hmodes), uget_toNat, cur_usize hinv.lCur], hr.1, hr.2.1, hr.2.2.1, hr.2.2.2.1,
-      hr.2.2.2.2⟩
+      by rw [modeOff_toNat (H.modesLt _ hmodes), uget_toNat, cur_usize hinv.lCur], hr.1, hr.2.1, hr.2.2.1, hr.2.2.2,
+      fastLit (by decide)⟩
     ⟨hinv.iPrev, hinv.lPrev, hinv.dPrev⟩
     ⟨hinv.k24, hinv.k16, ringMask_toNat hinv.k24, ringSize_toNat hinv.k24,
       by rw [USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr (by rw [h16, ringSize_toNat hinv.k24]; exact hinv.k16)),

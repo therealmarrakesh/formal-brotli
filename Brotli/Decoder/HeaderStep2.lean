@@ -104,7 +104,7 @@ theorem stepHFirst_ok {i : Cat} {n : Nat} {tc cc : PrefixCode} {st : Hd} {g : Gh
       · exact ⟨by simp only; omega, h256, fun _ => sT⟩
     have hup : Upto (st.d.setCount st.cat r.a) (g.setCat st.cat c) (stageOf (catNextPhase st.cat)) :=
       hu.catDone hd.1 hd.2.1 hd.2.2 (fun j hj => ⟨setCount_nOf' _ _ _ _, setCount_countOf_ne _ _ _ _ hj, setCount_baseT' _ _ _ _,
-        setCount_baseC' _ _ _ _⟩) hcat
+        setCount_baseC' _ _ _ _⟩) (by rw [setCount_baseT', setCount_baseC']; exact hu.lo _) hcat
     have hrel2 := catMoveOn_rel (st := { st with
         word := r.word, count := r.count, pos := pos, status := .next
         d := st.d.setCount st.cat r.a }) hw2 rfl hup
@@ -177,6 +177,7 @@ theorem Upto.npDone {d : Done} {g : Gh} (h : Upto d g 3) {x y : UInt64} {u v : N
   fin h := absurd h (by decide)
   pre := h.pre
   masks := h.masks
+  lo := h.lo
   le := h.le
   max := h.max
   capLe := h.capLe
@@ -318,6 +319,7 @@ theorem Upto.modesDone {d : Done} {g : Gh} (h : Upto d g 4) {b : ByteArray} {l :
   fin h := absurd h (by decide)
   pre := h.pre
   masks := h.masks
+  lo := h.lo
   le := h.le
   max := h.max
   capLe := h.capLe

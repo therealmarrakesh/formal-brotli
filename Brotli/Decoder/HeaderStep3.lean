@@ -56,7 +56,7 @@ private theorem res_sum_lt {a b c T : Nat} (ha : a ≤ 256 * 1264) (hb : b ≤ 2
 /-- What the decoder reserves for the groups' tables, with the distance context map's `n` trees: `treeMax` of each group's
 alphabet for each of its codes. -/
 @[inline] def resFast (d : Done) (n : UInt64) : UInt64 :=
-  d.treesL * 1264 + d.nI * 2160 + n * (2 * (ckSizeFast d .D + 376)) + (4175 + 2052 * d.nI + 1284 * d.nL + 16 * d.nD)
+  d.treesL * 1264 + d.nI * 2160 + n * (2 * (ckSizeFast d .D + 376)) + (15 + 2052 * d.nI + 1284 * d.nL + 16 * d.nD)
 
 theorem resFast_eq {d : Done} {g : Gh} {n : UInt64} {ntrees : Nat} {cmap : List Nat} (hu : Upto d g 6) (hn : n.toNat = ntrees)
     (h2 : ntrees ≤ 256) : (resFast d n).toNat = resBytes (g.setMap false ntrees cmap) := by
@@ -94,7 +94,7 @@ theorem resFast_eq {d : Done} {g : Gh} {n : UInt64} {ntrees : Nat} {cmap : List 
   have hDn : d.nD.toNat = g.m.distance.n := hD.n
   have hL2 : g.m.literal.n ≤ 256 := hL.wf.2.1
   have hD2 : g.m.distance.n ≤ 256 := hD.wf.2.1
-  have et : (4175 + 2052 * d.nI + 1284 * d.nL + 16 * d.nD).toNat =
+  have et : (15 + 2052 * d.nI + 1284 * d.nL + 16 * d.nD).toNat =
       tabMax g.m.literal.n g.m.insertCopy.n g.m.distance.n := by
     have m1 : (2052 * d.nI).toNat = 2052 * g.m.insertCopy.n := by
       rw [UInt64.toNat_mul, hIn, show (2052 : UInt64).toNat = 2052 from rfl]; exact Nat.mod_eq_of_lt (by omega)
@@ -102,7 +102,7 @@ theorem resFast_eq {d : Done} {g : Gh} {n : UInt64} {ntrees : Nat} {cmap : List 
       rw [UInt64.toNat_mul, hLn, show (1284 : UInt64).toNat = 1284 from rfl]; exact Nat.mod_eq_of_lt (by omega)
     have m3 : (16 * d.nD).toNat = 16 * g.m.distance.n := by
       rw [UInt64.toNat_mul, hDn, show (16 : UInt64).toNat = 16 from rfl]; exact Nat.mod_eq_of_lt (by omega)
-    rw [UInt64.toNat_add, UInt64.toNat_add, UInt64.toNat_add, m1, m2, m3, show (4175 : UInt64).toNat = 4175 from rfl]
+    rw [UInt64.toNat_add, UInt64.toNat_add, UInt64.toNat_add, m1, m2, m3, show (15 : UInt64).toNat = 15 from rfl]
     unfold tabMax
     omega
   have hmin : tabMaxOf (g.setMap false ntrees cmap) = tabMax g.m.literal.n g.m.insertCopy.n g.m.distance.n := by
@@ -113,7 +113,7 @@ theorem resFast_eq {d : Done} {g : Gh} {n : UInt64} {ntrees : Nat} {cmap : List 
       g.treesL * 1264 + g.m.insertCopy.n * 2160 + ntrees * (2 * (ckSize .D g + 376)) := by
     rw [UInt64.toNat_add, s1, e4, Nat.mod_eq_of_lt hlt]
   have hfin : (d.treesL * 1264 + d.nI * 2160 + n * (2 * (ckSizeFast d .D + 376)) +
-      (4175 + 2052 * d.nI + 1284 * d.nL + 16 * d.nD)).toNat =
+      (15 + 2052 * d.nI + 1284 * d.nL + 16 * d.nD)).toNat =
       g.treesL * 1264 + g.m.insertCopy.n * 2160 + ntrees * (2 * (ckSize .D g + 376)) +
         tabMax g.m.literal.n g.m.insertCopy.n g.m.distance.n := by
     rw [UInt64.toNat_add, hsum, et]
@@ -183,6 +183,7 @@ theorem Upto.lmapDone {d : Done} {g : Gh} (h : Upto d g 5) {b : ByteArray} {n : 
   fin h := absurd h (by decide)
   pre := h.pre
   masks := h.masks
+  lo := h.lo
   le := h.le
   max := h.max
   capLe := h.capLe
@@ -206,6 +207,7 @@ theorem Upto.dmapRes {d : Done} {g : Gh} (h : Upto d g 6) {b : ByteArray} {n : U
   fin h := absurd h (by decide)
   pre := h.pre
   masks := h.masks
+  lo := h.lo
   le := hc1
   max := by
     have := h.room
@@ -291,7 +293,7 @@ theorem mapFinish_ok {st0 st : Hd} {g : Gh} {p : HPhase} {isL : Bool} {n : UInt6
       · refine ⟨hw, hu7, rfl, rfl, rfl, hT, ?_, hT2, ?_⟩
         · show 0 + g.treesL = g.treesL
           omega
-        · refine ⟨?_, by simp, fun i hi => absurd hi (by simp)⟩
+        · refine ⟨?_, by simp, fun i hi => absurd hi (by simp), fun i hi => absurd hi (by simp)⟩
           show (zeroBytes (4 * st.d.treesL.toNat)).size = 4 * g.treesL
           rw [zeroBytes_size (by omega), hT]
       · refine ⟨hmx, by show st.d.arena.size = st0.d.arena.size + 0; rw [ha, Nat.add_zero], fun h0 => ?_,
@@ -489,6 +491,7 @@ theorem Upto.codesDoneL {d : Done} {g : Gh} (h : Upto d g 7) {b : ByteArray} {cs
   fin h := absurd h (by decide)
   pre := h.pre
   masks := h.masks
+  lo := h.lo
   le := h.le
   max := h.max
   capLe := h.capLe
@@ -513,6 +516,7 @@ theorem Upto.codesDoneI {d : Done} {g : Gh} (h : Upto d g 8) {b : ByteArray} {cs
   fin h := absurd h (by decide)
   pre := h.pre
   masks := h.masks
+  lo := h.lo
   le := h.le
   max := h.max
   capLe := h.capLe
@@ -539,6 +543,7 @@ theorem Upto.codesDoneD {d : Done} {g : Gh} (h : Upto d g 9) {b : ByteArray} {cs
   fin _ := hfin
   pre := h.pre
   masks := h.masks
+  lo := h.lo
   le := h.le
   max := h.max
   capLe := h.capLe
@@ -594,7 +599,7 @@ theorem stepHCodes_ok {k : CK} {done : List PrefixCode} {left : Nat} {st : Hd} {
         (Nat.le_refl _) hp (fun F => ?_) (fun F => rfl)
         (hm := ⟨rfl, rfl, fun h => ⟨hfs, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, hfill, h.icBase, h.dBase, h.work⟩,
           ⟨rfl, by simp only [budH, groupsFrom, tableOf, Gh.setCodes, ckSize, tabMaxOf]; omega⟩⟩)
-      · refine ⟨?_, by simp, fun i hi => absurd hi (by simp)⟩
+      · refine ⟨?_, by simp, fun i hi => absurd hi (by simp), fun i hi => absurd hi (by simp)⟩
         show (zeroBytes (4 * st.d.nI.toNat)).size = 4 * g.m.insertCopy.n
         rw [zeroBytes_size (by omega), hn]
       · exact hrest_codes_L K g done _
@@ -615,7 +620,7 @@ theorem stepHCodes_ok {k : CK} {done : List PrefixCode} {left : Nat} {st : Hd} {
         (Nat.le_refl _) hp (fun F => ?_) (fun F => rfl)
         (hm := ⟨rfl, rfl, fun h => ⟨hfs, h.lens, h.clLens, h.clt, h.mapT, h.modes, h.lMap, h.dMap, h.litBase, hfill, h.dBase, h.work⟩,
           ⟨rfl, by simp only [budH, groupsFrom, tableOf, Gh.setCodes, ckSize, tabMaxOf]; omega⟩⟩)
-      · refine ⟨?_, by simp, fun i hi => absurd hi (by simp)⟩
+      · refine ⟨?_, by simp, fun i hi => absurd hi (by simp), fun i hi => absurd hi (by simp)⟩
         show (zeroBytes (4 * st.d.treesD.toNat)).size = 4 * g.treesD
         rw [zeroBytes_size (by omega), hT]
       · exact hrest_codes_I K g done _

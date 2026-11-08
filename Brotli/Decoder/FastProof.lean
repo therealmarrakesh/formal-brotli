@@ -1351,13 +1351,14 @@ theorem FCtx.maskT_eq (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow
 
 /-- The shared distance table's entry for a symbol is `dEntry`. -/
 theorem FCtx.dshT_eq (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) {dc : UInt64} (hd : dc.toNat < 520) :
-    dshT T s0 C.s0Le C.size32 dc hd = dEntry H.npostfix H.ndirect dc := by
+    dshT T C.s0Le C.size32 dc hd = dEntry H.npostfix H.ndirect dc := by
   have := C.s0Le
   have := C.size32
+  have h256 : (USize.ofNat 256).toNat = 256 := fastLit (by decide)
   apply UInt64.toNat_inj.mp
   unfold dshT
-  rw [load64_toNat, fastAdd (by rw [u64_shl (by decide) (by omega)]; omega), u64_shl (by decide) (by omega),
-    show dc.toNat * 2 ^ 3 = 8 * dc.toNat by rw [Nat.mul_comm], C.s0, C.tab.dsh _ hd, UInt64.ofNat_toNat]
+  rw [load64_toNat, fastAdd (by rw [u64_shl (by decide) (by omega), h256]; omega), u64_shl (by decide) (by omega),
+    show dc.toNat * 2 ^ 3 = 8 * dc.toNat by rw [Nat.mul_comm], h256, C.tab.dsh _ hd, UInt64.ofNat_toNat]
 
 /-- A distance symbol from the context's tree is in the header's distance alphabet. -/
 theorem FCtx.dAlpha (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) {m : MetaBlockHeader}

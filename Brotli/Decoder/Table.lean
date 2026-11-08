@@ -354,4 +354,25 @@ theorem TableOk.frame {t t' : ByteArray} {base : Nat} {c : PrefixCode} (h : Tabl
     rw [heq]
     exact h.hit w
 
+/-- A table stays correct when the array changes only before it, keeping its size. -/
+theorem TableOk.frameAbove {t t' : ByteArray} {base : Nat} {c : PrefixCode} (h : TableOk t base c)
+    (hsize : t'.size = t.size) (hframe : ∀ q, base ≤ q → slotAt t' q = slotAt t q) : TableOk t' base c := by
+  have hrootSlot : ∀ r, r < 256 → slotAt t' (base + r) = slotAt t (base + r) := fun r _ => hframe _ (by omega)
+  refine ⟨⟨by have := h.root; omega, ?_⟩, ?_⟩
+  · intro r hr hb
+    rw [hrootSlot r hr] at hb ⊢
+    obtain ⟨h1, h2⟩ := h.sub r hr hb
+    exact ⟨h1, by omega⟩
+  · intro w
+    have hr : w % 256 < 256 := Nat.mod_lt _ (by decide)
+    have heq : lookupSlots t' base w = lookupSlots t base w := by
+      unfold lookupSlots
+      dsimp only
+      rw [hrootSlot _ hr]
+      split
+      · rfl
+      · exact hframe _ (by omega)
+    rw [heq]
+    exact h.hit w
+
 end Brotli.Decoder

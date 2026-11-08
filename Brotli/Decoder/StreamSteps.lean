@@ -227,13 +227,14 @@ theorem metaStart_ok {bs r : List Bool} {v : MetaStart} (h : metaStart bs = some
           trivial
         · exact msBody_ok h
 
-/-- The header machine's state at the start of a header: the arena holds its prefix, the fast command loop's masks, and
-reserves room for the categories' codes. -/
+/-- The header machine's state at the start of a header: the arena holds its prefix, the fast command loop's masks and
+room for the shared distance table, and reserves room for the categories' codes. -/
 def hdStart (word count : UInt64) (limit : UInt64) : Hd :=
   { Hd.none with
     word := word, count := count
-    d := { Done.none with arena := writeMasks (freshBytes smallMax) (by show 0 + 256 < 2 ^ 32; decide), arenaMax := limit
-                          arenaCap := UInt64.ofNat smallMax } }
+    d := { Done.none with
+      arena := zeroExtend (writeMasks (freshBytes smallMax) (by show 0 + 256 < 2 ^ 32; decide)) 4160, arenaMax := limit
+      arenaCap := UInt64.ofNat smallMax } }
 
 /-- A window's first state, with the buffer as it is after the meta-block's start. -/
 def winStart (c : Cmd) (word count need : UInt64) : Cmd :=
@@ -304,32 +305,39 @@ def stepDMeta (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : D
     else { D with pos := pos, status := .bad }
   else { D with pos := pos, status := .needsOutput }
 
-theorem smallMax_eq : smallMax = 6472 := rfl
+theorem smallMax_eq : smallMax = 10632 := rfl
 
 /-- A header's arena starts with its prefix. -/
 theorem hdStart_arena_size (word count limit : UInt64) : (hdStart word count limit).d.arena.size = arenaPre := by
   have h := (writeMasks_spec (freshBytes smallMax) (by show 0 + 256 < 2 ^ 32; decide)).1
-  exact h
+  show (zeroExtend (writeMasks (freshBytes smallMax) _) 4160).size = arenaPre
+  rw [size_zeroExtend, h]
+  rfl
 
 /-- A header's arena starts with the masks. -/
 theorem hdStart_masks (word count limit : UInt64) :
     ∀ n, n < 32 → leAt (hdStart word count limit).d.arena (8 * n) 8 = 2 ^ n - 1 := by
   intro n hn
   have h := (writeMasks_spec (freshBytes smallMax) (by show 0 + 256 < 2 ^ 32; decide)).2.2 n hn
+  have hs := (writeMasks_spec (freshBytes smallMax) (by show 0 + 256 < 2 ^ 32; decide)).1
   have h0 : (freshBytes smallMax).size + 8 * n = 8 * n := by
     show 0 + 8 * n = 8 * n
     omega
   rw [h0] at h
+  show leAt (zeroExtend (writeMasks (freshBytes smallMax) _) 4160) (8 * n) 8 = _
+  rw [(Extends.zeroExtend _ _).leAt (by rw [hs]; show 8 * n + 8 ≤ 0 + 256; omega)]
   exact h
 
 /-- Nothing is settled at a header's start, and the arena has reserved room for the categories' codes. -/
 theorem Upto.start {d : Done} {g : Gh} (h0 : d.arena.size = arenaPre)
     (hm : ∀ n, n < 32 → leAt d.arena (8 * n) 8 = 2 ^ n - 1) (hc : d.arenaCap.toNat = smallMax)
-    (hl : d.arenaMax.toNat + 9144 < 2 ^ 32) : Upto d g 0 where
+    (hl : d.arenaMax.toNat + 13304 < 2 ^ 32)
+    (hlo : ∀ i, arenaPre ≤ 2 * (d.baseTOf i).toNat ∧ arenaPre ≤ 2 * (d.baseCOf i).toNat) : Upto d g 0 where
   four := by rw [h0]; decide
   fin h := absurd h (by decide)
   pre := Nat.le_of_eq h0.symm
   masks := hm
+  lo := hlo
   le := by rw [h0, hc]; decide
   max := by
     rw [hc, smallMax_eq]
@@ -346,9 +354,18 @@ theorem Upto.start {d : Done} {g : Gh} (h0 : d.arena.size = arenaPre)
   dmap h := absurd h (by decide)
   codes _ h := absurd h (by omega)
 
-theorem hdStart_rel {word count limit : UInt64} (hw : (BitBuffer.mk word count).Wf) (hl : limit.toNat + 9144 < 2 ^ 32) :
+/-- A header's first switch table bases are the first slot after the arena's prefix. Stated per category, so that no check
+compares the header's settled record with `Done.none`, which would compute its arena. -/
+theorem hdStart_lo (word count limit : UInt64) (i : Cat) :
+    arenaPre ≤ 2 * ((hdStart word count limit).d.baseTOf i).toNat ∧
+      arenaPre ≤ 2 * ((hdStart word count limit).d.baseCOf i).toNat := by
+  have h : (USize.ofNat 2208).toNat = 2208 := fastLit (by decide)
+  cases i <;> exact ⟨by show arenaPre ≤ 2 * (USize.ofNat 2208).toNat; rw [h]; decide,
+    by show arenaPre ≤ 2 * (USize.ofNat 2208).toNat; rw [h]; decide⟩
+
+theorem hdStart_rel {word count limit : UInt64} (hw : (BitBuffer.mk word count).Wf) (hl : limit.toNat + 13304 < 2 ^ 32) :
     HRel (hdStart word count limit) Gh.start (.cat .L) :=
-  ⟨hw, Upto.start (by rw [hdStart_arena_size]) (hdStart_masks _ _ _) (u64_lit (by decide)) hl, rfl, rfl⟩
+  ⟨hw, Upto.start (by rw [hdStart_arena_size]) (hdStart_masks _ _ _) (u64_lit (by decide)) hl (hdStart_lo _ _ _), rfl, rfl⟩
 
 /-- At a header's start, the arena reserves room for the categories' codes. -/
 theorem hdStart_bud (word count limit : UInt64) :
@@ -446,7 +463,7 @@ theorem stepDMeta_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {a : 
   obtain ⟨ht, hw, hall⟩ := hrel
   have ht' : tag = .mblock := ht
   subst ht'
-  have hlim : limit.toNat + 9144 < 2 ^ 32 := by
+  have hlim : limit.toNat + 13304 < 2 ^ 32 := by
     rcases hall with ⟨h, _⟩ | h
     · exact h.limit
     · exact h.limit
@@ -635,7 +652,7 @@ theorem stepDMeta_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {a : 
             rw [hneed] at hle
             have hwin := winStart_win (c := cmd) (word := (r.buf.drop (r.count &&& 7)).word)
               (count := (r.buf.drop (r.count &&& 7)).count) hnw' hk24' hk10 hneed
-            have hlim' : (limit - (1 : UInt64) <<< k.toUInt64).toNat + 9144 < 2 ^ 32 := by
+            have hlim' : (limit - (1 : UInt64) <<< k.toUInt64).toNat + 13304 < 2 ^ 32 := by
               rw [UInt64.toNat_sub_of_le _ _ hc, hneed]
               omega
             refine ⟨fun _ => ⟨.raw w ⟨[], 0, initialDistances⟩ (r.b != 0) r.c.toNat,
@@ -703,7 +720,7 @@ theorem stepDMeta_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {a : 
         · rw [ite_eq_left hc]
           have hle := UInt64.le_iff_toNat_le.mp hc
           rw [hneed] at hle
-          have hlim' : (limit - (1 : UInt64) <<< kb).toNat + 9144 < 2 ^ 32 := by
+          have hlim' : (limit - (1 : UInt64) <<< kb).toNat + 13304 < 2 ^ 32 := by
             rw [UInt64.toNat_sub_of_le _ _ hc, hneed]
             omega
           have hwin := winStart_win (c := cmd) (word := r.word) (count := r.count) hbw hkb24 hkb10 hneed
@@ -1099,7 +1116,7 @@ def stepDRaw (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : De
 
 theorem rawFinish_ok {α : Type} {S : Sem α} {w : Nat} {st : StreamState} {last : Bool} {left : Nat} {a : ByteArray} {stop : USize} {cmd : Cmd} {hd : Hd} {H : Hdr} {k : USize}
     {left' limit : UInt64} {pos' pos : USize} {status : DStatus} {n : USize} {moved : List Nat} {r : RawRun}
-    (hw : WinRel w k.toNat cmd st.output st.distances) (hprod : st.produced = st.output.length) (hlim : limit.toNat + 9144 < 2 ^ 32)
+    (hw : WinRel w k.toNat cmd st.output st.distances) (hprod : st.produced = st.output.length) (hlim : limit.toNat + 13304 < 2 ^ 32)
     (hleft : left'.toNat = left) (hl32 : left < 2 ^ 32) (hnl : n.toNat ≤ left) (hn0 : n.toNat ≠ 0) (hnp : cmd.pend.toNat + n.toNat + 16 ≤ 2 ^ k.toNat)
     (hlive : 1 ≤ st.produced + left) (hm : RawOk a stop k.toNat cmd.word cmd.count pos st.output n.toNat moved r) :
     DStepOk S a stop (.raw w st last left) ⟨.raw, cmd, hd, H, k, last, left', limit, pos', status⟩ pos

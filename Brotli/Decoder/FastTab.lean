@@ -446,6 +446,34 @@ theorem fillLoop_spec {P : ByteArray → Prop} {w : Nat} {hP : ∀ t t', P t →
           rw [Nat.add_assoc, mul_step (show j.toNat < k.toNat by omega)]]
         exact e
 
+/-- The writing loop leaves the bytes after its entries as they were. -/
+theorem fillLoop_above {P : ByteArray → Prop} {w : Nat} {hP : ∀ t t', P t → Extends t t' → P t'} {n : USize}
+    {f : (t : ByteArray) → P t → t.size < 2 ^ 32 → (j : USize) → j < n → UInt64} {t0 : ByteArray} {h0 : P t0} :
+    ∀ (N : Nat) (t : ByteArray) (he : Extends t0 t) (h32 : t.size < 2 ^ 32) (o j : USize) (hi : t0.size ≤ o.toNat)
+      (ho : o.toNat + w * (n.toNat - j.toNat) ≤ t.size), n.toNat - j.toNat = N →
+      ∀ q, o.toNat + w * (n.toNat - j.toNat) ≤ q → (fillLoop P w hP n f t0 h0 t he h32 o j hi ho).data[q]? = t.data[q]? := by
+  intro N
+  induction N with
+  | zero =>
+    intro t he h32 o j hi ho hN q _
+    have hj : ¬ j < n := fun e => by have := USize.lt_iff_toNat_lt.mp e; omega
+    rw [fillLoop, dite_eq_right hj]
+  | succ N ih =>
+    intro t he h32 o j hi ho hN q hq
+    have hj : j < n := USize.lt_iff_toNat_lt.mpr (by omega)
+    have hjn := USize.lt_iff_toNat_lt.mp hj
+    have hs := fastIdx_succ hj
+    have hm := mul_step (w := w) hjn
+    have hw : o.toNat + w ≤ t.size := by omega
+    have ho1 : (o + USize.ofNat w).toNat = o.toNat + w := fastIdx_add (by omega)
+    have hsz : (putW t o (f t (hP t0 t h0 he) h32 j hj) w hw h32).size = t.size := by rw [putW_eq, size_putLE]
+    rw [fillLoop, dite_eq_left hj]
+    dsimp only
+    have e := ih (putW t o (f t (hP t0 t h0 he) h32 j hj) w hw h32)
+      (by rw [putW_eq]; exact he.putLE hw h32 hi) (by rw [hsz]; exact h32) (o + USize.ofNat w) (j + USize.ofNat 1)
+      (by rw [ho1]; omega) (by rw [hsz, ho1, hs]; omega) (by rw [hs]; omega) q (by rw [ho1, hs]; omega)
+    rw [e, putW_eq, putLE_out w t o _ hw h32 q (Or.inr (by omega))]
+
 /-- Appends `w`-byte little-endian entries, `f t h _ j _` for each `j` from `j` below `n`, each computed from the array
 so far: room for all of them at once, then each written in place. `P` holds of every array on the way, so that `f` can
 read the array without checks, and the array stays below `2 ^ 32` bytes. -/
@@ -726,8 +754,8 @@ theorem pushMap_spec {base map : ByteArray} {nT : Nat} {hb : base.size = 4 * nT}
 
 /-! ### The shared distance table
 
-From `s0`, 8 bytes for each distance symbol below 520: from 16 on, its extra bits in the low byte, and in the high 4
-bytes the distance before its extra bits, which add to it shifted by NPOSTFIX. -/
+From byte 256 of the arena, after the masks, 8 bytes for each distance symbol below 520: from 16 on, its extra bits in
+the low byte, and in the high 4 bytes the distance before its extra bits, which add to it shifted by NPOSTFIX. -/
 
 /-- The shared distance table's entry for distance symbol `dc`. -/
 @[inline] def dEntry (np nd dc : UInt64) : UInt64 :=
@@ -737,24 +765,34 @@ bytes the distance before its extra bits, which add to it shifted by NPOSTFIX. -
     (_hj : j < USize.ofNat 520) : UInt64 :=
   dEntry np nd j.toUInt64
 
-/-- The shared distance table, appended. -/
-def pushDsh (np nd : UInt64) (t : ByteArray) (hc : t.size + 4160 < 2 ^ 32) : ByteArray :=
-  pushLoop (fun _ => True) 8 (fun _ _ _ _ => trivial) (USize.ofNat 520) (dStep np nd) t trivial 0
-    (show t.size + 8 * ((USize.ofNat 520).toNat - (0 : USize).toNat) < 2 ^ 32 by
-      rw [fastLit (by decide), show (0 : USize).toNat = 0 from rfl]; exact hc)
+/-- The shared distance table, written in place from byte 256, in an array with room for it. -/
+def writeDsh (np nd : UInt64) (t : ByteArray) (h : 4416 ≤ t.size) (h32 : t.size < 2 ^ 32) : ByteArray :=
+  fillLoop (fun _ => True) 8 (fun _ _ _ _ => trivial) (USize.ofNat 520) (dStep np nd) ByteArray.empty trivial t
+    ⟨Nat.zero_le _, fun _ hq => absurd hq (Nat.not_lt_zero _)⟩ h32 (USize.ofNat 256) 0
+    (by rw [fastLit (n := 256) (by decide)]; exact Nat.zero_le _)
+    (by rw [fastLit (n := 256) (by decide), fastLit (n := 520) (by decide), show (0 : USize).toNat = 0 from rfl]; omega)
 
-theorem pushDsh_spec {np nd : UInt64} {t : ByteArray} {hc : t.size + 4160 < 2 ^ 32} :
-    (pushDsh np nd t hc).size = t.size + 4160 ∧ Extends t (pushDsh np nd t hc) ∧
-      ∀ dc, dc < 520 → leAt (pushDsh np nd t hc) (t.size + 8 * dc) 8 = (dEntry np nd (UInt64.ofNat dc)).toNat := by
+theorem writeDsh_spec {np nd : UInt64} {t : ByteArray} {h : 4416 ≤ t.size} {h32 : t.size < 2 ^ 32} :
+    (writeDsh np nd t h h32).size = t.size ∧ (∀ q, q < 256 → (writeDsh np nd t h h32).data[q]? = t.data[q]?) ∧
+      (∀ q, 4416 ≤ q → (writeDsh np nd t h h32).data[q]? = t.data[q]?) ∧
+      ∀ dc, dc < 520 → leAt (writeDsh np nd t h h32) (256 + 8 * dc) 8 = (dEntry np nd (UInt64.ofNat dc)).toNat := by
   have h0 : (0 : USize).toNat = 0 := rfl
   have hN : (USize.ofNat 520).toNat = 520 := fastLit (by decide)
-  unfold pushDsh
-  obtain ⟨s1, s2, s3⟩ := pushLoop_spec (P := fun _ => True) (w := 8) (hP := fun _ _ _ _ => trivial) (f := dStep np nd)
-    (fun _ _ _ _ _ _ _ _ _ => rfl) _ t trivial 0 (by rw [hN, h0]; exact hc) rfl
-  refine ⟨by rw [s1, hN, h0], s2, fun dc hdc => ?_⟩
+  have hO : (USize.ofNat 256).toNat = 256 := fastLit (by decide)
+  have he : Extends ByteArray.empty t := ⟨Nat.zero_le _, fun _ hq => absurd hq (Nat.not_lt_zero _)⟩
+  unfold writeDsh
+  obtain ⟨s1, s2, s3⟩ := fillLoop_spec (P := fun _ => True) (w := 8) (hP := fun _ _ _ _ => trivial) (f := dStep np nd)
+    (t0 := ByteArray.empty) (h0 := trivial) (fun _ _ _ _ _ _ _ _ _ => rfl) _ t he h32 (USize.ofNat 256) 0
+    (by rw [hO]; exact Nat.zero_le _) (by rw [hO, hN, h0]; omega) rfl
+  have s4 := fillLoop_above (P := fun _ => True) (w := 8) (hP := fun _ _ _ _ => trivial) (f := dStep np nd)
+    (t0 := ByteArray.empty) (h0 := trivial) _ t he h32 (USize.ofNat 256) 0
+    (by rw [hO]; exact Nat.zero_le _) (by rw [hO, hN, h0]; omega) rfl
+  refine ⟨s1, fun q hq => s2 q (by rw [hO]; exact hq), fun q hq => s4 q (by rw [hO, hN, h0]; omega), fun dc hdc => ?_⟩
   have hk : (USize.ofNat dc).toNat = dc := fastLit (by omega)
-  have e := s3 (USize.ofNat dc) (USize.lt_iff_toNat_lt.mpr (by rw [hk, hN]; exact hdc)) (USize.le_iff_toNat_le.mpr (by rw [h0]; omega))
-  rw [show t.size + 8 * dc = t.size + 8 * ((USize.ofNat dc).toNat - USize.toNat 0) by rw [hk, h0, Nat.sub_zero], e]
+  have e := s3 (USize.ofNat dc) (USize.lt_iff_toNat_lt.mpr (by rw [hk, hN]; exact hdc))
+    (USize.le_iff_toNat_le.mpr (by rw [h0]; omega))
+  rw [show 256 + 8 * dc = (USize.ofNat 256).toNat + 8 * ((USize.ofNat dc).toNat - USize.toNat 0) by rw [hk, h0, hO,
+    Nat.sub_zero], e]
   unfold dStep
   rw [fastToU64, hk]
   exact Nat.mod_eq_of_lt (UInt64.toNat_lt _)
@@ -1226,9 +1264,8 @@ theorem TableFits.tableIn {t t' : ByteArray} {b lim : Nat} (h : TableFits t b) (
   exact ⟨h1, by omega⟩
 
 /-- The most the derived tables add to an arena: up to 15 bytes of padding (at least 8, after the last table), the fused
-entries, the resolved maps, the shared distance table, the trees' bases, a two-literal table for each literal type and
-their positions. -/
-def tabMax (nL nI nD : Nat) : Nat := 4175 + 2052 * nI + 1284 * nL + 16 * nD
+entries, the resolved maps, the trees' bases, a two-literal table for each literal type and their positions. -/
+def tabMax (nL nI nD : Nat) : Nat := 15 + 2052 * nI + 1284 * nL + 16 * nD
 
 /-- The padding after the last table: at least 8 bytes, so that an 8-byte read of a slot stays in the arena, up to a
 multiple of 8. -/
@@ -1258,7 +1295,7 @@ structure TabArrs (litBase lMap icBase dBase dMap lTriv : ByteArray) (nL nI nD t
 structure TabArgs (A litBase lMap icBase dBase dMap lTriv : ByteArray) (nL nI nD treesL treesD : Nat) : Prop where
   arrs : TabArrs litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD
   size : A.size + tabMax nL nI nD < 2 ^ 32
-  pre : 256 ≤ A.size
+  pre : 4416 ≤ A.size
   masks : ∀ n, n < 32 → leAt A (8 * n) 8 = 2 ^ n - 1
   litFits : ∀ tree, tree < treesL → TableFits A (u32At litBase tree)
   icFits : ∀ t, t < nI → TableFits A (u32At icBase t)
@@ -1281,47 +1318,40 @@ def tab6 (icBase lTriv : ByteArray) (nL nI : Nat) (hic : icBase.size = 4 * nI) (
   tabLast lTriv nL ht hn w0 w1 w2 w3 (T ++ icBase) (hP.extend (Extends.append T icBase))
     (by rw [ByteArray.size_append, hic]; omega)
 
-/-- The shared distance table, then the rest. -/
-def tab5 (icBase lTriv : ByteArray) (nL nI : Nat) (hic : icBase.size = 4 * nI) (ht : lTriv.size = 4 * nL) (hn : nL ≤ 256)
-    (np nd w0 w1 w2 w3 : UInt64) (T : ByteArray) (hP : PairReady lTriv nL T)
-    (hs : T.size + 4160 + 4 * nI + 1028 * nL < 2 ^ 32) : ByteArray :=
-  tab6 icBase lTriv nL nI hic ht hn w0 w1 w2 w3 (pushDsh np nd T (by omega)) (hP.extend pushDsh_spec.2.1)
-    (by rw [pushDsh_spec.1]; omega)
-
 /-- The resolved distance map, then the rest. -/
 def tab4 (icBase dBase dMap lTriv : ByteArray) (nL nI nD treesD : Nat) (hic : icBase.size = 4 * nI)
     (hd : dBase.size = 4 * treesD) (hd256 : treesD ≤ 256) (hdm : dMap.size = 4 * nD) (hnD : nD ≤ 256)
     (hdlt : ∀ p : USize, ∀ h : p.toNat < dMap.size, (dMap.uget p h).toNat < treesD) (ht : lTriv.size = 4 * nL)
-    (hn : nL ≤ 256) (np nd w0 w1 w2 w3 : UInt64) (T : ByteArray) (hP : PairReady lTriv nL T)
-    (hs : T.size + 16 * nD + 4160 + 4 * nI + 1028 * nL < 2 ^ 32) : ByteArray :=
-  tab5 icBase lTriv nL nI hic ht hn np nd w0 w1 w2 w3
+    (hn : nL ≤ 256) (w0 w1 w2 w3 : UInt64) (T : ByteArray) (hP : PairReady lTriv nL T)
+    (hs : T.size + 16 * nD + 4 * nI + 1028 * nL < 2 ^ 32) : ByteArray :=
+  tab6 icBase lTriv nL nI hic ht hn w0 w1 w2 w3
     (pushMap dBase dMap treesD hd (by omega) (by omega) hdlt T (by rw [hdm]; omega)) (hP.extend pushMap_spec.2.1)
     (by rw [pushMap_spec.1, hdm]; omega)
 
 /-- The resolved literal map, then the rest. -/
 def tab3 (litBase lMap icBase dBase dMap lTriv : ByteArray) (nL nI nD treesL treesD : Nat)
-    (ha : TabArrs litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD) (np nd w0 w1 w2 w3 : UInt64) (T : ByteArray)
-    (hP : PairReady lTriv nL T) (hs : T.size + 256 * nL + 16 * nD + 4160 + 4 * nI + 1028 * nL < 2 ^ 32) : ByteArray :=
+    (ha : TabArrs litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD) (w0 w1 w2 w3 : UInt64) (T : ByteArray)
+    (hP : PairReady lTriv nL T) (hs : T.size + 256 * nL + 16 * nD + 4 * nI + 1028 * nL < 2 ^ 32) : ByteArray :=
   tab4 icBase dBase dMap lTriv nL nI nD treesD ha.icSize ha.dSize ha.treesD256 ha.dMapSize ha.nD256 ha.dMapLt ha.trivSize
-    ha.nL256 np nd w0 w1 w2 w3
+    ha.nL256 w0 w1 w2 w3
     (pushMap litBase lMap treesL ha.litSize (by have := ha.litSize; have := ha.trees256; omega)
       (by have := ha.lMapSize; have := ha.nL256; omega) ha.lMapLt T (by rw [ha.lMapSize]; omega))
     (hP.extend pushMap_spec.2.1) (by rw [pushMap_spec.1, ha.lMapSize]; omega)
 
 /-- The fused insert-and-copy entries, then the rest. -/
 def tabFrom (litBase lMap icBase dBase dMap lTriv : ByteArray) (nL nI nD treesL treesD : Nat)
-    (ha : TabArrs litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD) (np nd w0 w1 w2 w3 : UInt64) (T : ByteArray)
+    (ha : TabArrs litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD) (w0 w1 w2 w3 : UInt64) (T : ByteArray)
     (hI : ICReady icBase nI T) (hP : PairReady lTriv nL T)
-    (hs : T.size + 2048 * nI + 256 * nL + 16 * nD + 4160 + 4 * nI + 1028 * nL < 2 ^ 32) : ByteArray :=
-  tab3 litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD ha np nd w0 w1 w2 w3
+    (hs : T.size + 2048 * nI + 256 * nL + 16 * nD + 4 * nI + 1028 * nL < 2 ^ 32) : ByteArray :=
+  tab3 litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD ha w0 w1 w2 w3
     (pushIC icBase nI ha.nI256 ha.icSize (by have := ha.icSize; have := ha.nI256; omega) T hI (by omega))
     (hP.extend pushIC_spec.2.1) (by rw [pushIC_spec.1]; omega)
 
 /-- The derived tables appended to the arena `A`, after its padding, with the two-literal tables for the literal types
 flagged in `w0`–`w3`. -/
 def buildTab (A litBase lMap icBase dBase dMap lTriv : ByteArray) (nL nI nD treesL treesD : Nat)
-    (h : TabArgs A litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD) (np nd w0 w1 w2 w3 : UInt64) : ByteArray :=
-  tabFrom litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD h.arrs np nd w0 w1 w2 w3 (pushLE A 0 (padOf A.size))
+    (h : TabArgs A litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD) (w0 w1 w2 w3 : UInt64) : ByteArray :=
+  tabFrom litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD h.arrs w0 w1 w2 w3 (pushLE A 0 (padOf A.size))
     (fun ti hti => Nat.le_trans (h.icFits ti hti).root (by rw [size_pushLE]; omega))
     (PairReady.extend (fun ti hti hne => h.trivFits ti hti hne) (Extends.pushLE A 0 _))
     (by have h1 := h.size; have h2 := padOf_spec A.size; rw [size_pushLE]; unfold tabMax at h1; omega)
@@ -1427,109 +1457,89 @@ theorem tab6_spec {icBase lTriv : ByteArray} {nL nI : Nat} {hic : icBase.size = 
   refine ⟨(Extends.append T icBase).trans c1, fun t hti => ?_, c2.at (by rw [ByteArray.size_append, hic])⟩
   rw [c1.leAt (by rw [ByteArray.size_append, hic]; omega), leAt_append, leAt_u32]
 
-theorem tab5_spec {icBase lTriv : ByteArray} {nL nI : Nat} {hic : icBase.size = 4 * nI} {ht : lTriv.size = 4 * nL}
-    {hn : nL ≤ 256} {np nd w0 w1 w2 w3 : UInt64} {T : ByteArray} {hP : PairReady lTriv nL T}
-    {hs : T.size + 4160 + 4 * nI + 1028 * nL < 2 ^ 32} :
-    Extends T (tab5 icBase lTriv nL nI hic ht hn np nd w0 w1 w2 w3 T hP hs) ∧
-      DshAt (tab5 icBase lTriv nL nI hic ht hn np nd w0 w1 w2 w3 T hP hs) np nd T.size ∧
-      IresAt (tab5 icBase lTriv nL nI hic ht hn np nd w0 w1 w2 w3 T hP hs) icBase nI (T.size + 4160) ∧
-      PairsAt (tab5 icBase lTriv nL nI hic ht hn np nd w0 w1 w2 w3 T hP hs) lTriv nL w0 w1 w2 w3 (T.size + 4160 + 4 * nI) := by
-  unfold tab5
-  obtain ⟨d1, d2, d3⟩ := pushDsh_spec (np := np) (nd := nd) (t := T) (hc := by omega)
-  obtain ⟨e1, e2, e3⟩ := tab6_spec (hic := hic) (ht := ht) (hn := hn) (w0 := w0) (w1 := w1) (w2 := w2) (w3 := w3)
-    (T := pushDsh np nd T (by omega)) (hP := hP.extend d2) (hs := by rw [d1]; omega)
-  exact ⟨d2.trans e1, fun dc hdc => by rw [e1.leAt (by rw [d1]; omega)]; exact d3 dc hdc, e2.at (by rw [d1]),
-    e3.at (by rw [d1])⟩
-
 theorem tab4_spec {icBase dBase dMap lTriv : ByteArray} {nL nI nD treesD : Nat} {hic : icBase.size = 4 * nI}
     {hd : dBase.size = 4 * treesD} {hd256 : treesD ≤ 256} {hdm : dMap.size = 4 * nD} {hnD : nD ≤ 256}
     {hdlt : ∀ p : USize, ∀ h : p.toNat < dMap.size, (dMap.uget p h).toNat < treesD} {ht : lTriv.size = 4 * nL}
-    {hn : nL ≤ 256} {np nd w0 w1 w2 w3 : UInt64} {T : ByteArray} {hP : PairReady lTriv nL T}
-    {hs : T.size + 16 * nD + 4160 + 4 * nI + 1028 * nL < 2 ^ 32} :
-    Extends T (tab4 icBase dBase dMap lTriv nL nI nD treesD hic hd hd256 hdm hnD hdlt ht hn np nd w0 w1 w2 w3 T hP hs) ∧
-      MapAt (tab4 icBase dBase dMap lTriv nL nI nD treesD hic hd hd256 hdm hnD hdlt ht hn np nd w0 w1 w2 w3 T hP hs)
+    {hn : nL ≤ 256} {w0 w1 w2 w3 : UInt64} {T : ByteArray} {hP : PairReady lTriv nL T}
+    {hs : T.size + 16 * nD + 4 * nI + 1028 * nL < 2 ^ 32} :
+    Extends T (tab4 icBase dBase dMap lTriv nL nI nD treesD hic hd hd256 hdm hnD hdlt ht hn w0 w1 w2 w3 T hP hs) ∧
+      MapAt (tab4 icBase dBase dMap lTriv nL nI nD treesD hic hd hd256 hdm hnD hdlt ht hn w0 w1 w2 w3 T hP hs)
         dBase dMap T.size ∧
-      DshAt (tab4 icBase dBase dMap lTriv nL nI nD treesD hic hd hd256 hdm hnD hdlt ht hn np nd w0 w1 w2 w3 T hP hs)
-        np nd (T.size + 16 * nD) ∧
-      IresAt (tab4 icBase dBase dMap lTriv nL nI nD treesD hic hd hd256 hdm hnD hdlt ht hn np nd w0 w1 w2 w3 T hP hs)
-        icBase nI (T.size + 16 * nD + 4160) ∧
-      PairsAt (tab4 icBase dBase dMap lTriv nL nI nD treesD hic hd hd256 hdm hnD hdlt ht hn np nd w0 w1 w2 w3 T hP hs)
-        lTriv nL w0 w1 w2 w3 (T.size + 16 * nD + 4160 + 4 * nI) := by
+      IresAt (tab4 icBase dBase dMap lTriv nL nI nD treesD hic hd hd256 hdm hnD hdlt ht hn w0 w1 w2 w3 T hP hs)
+        icBase nI (T.size + 16 * nD) ∧
+      PairsAt (tab4 icBase dBase dMap lTriv nL nI nD treesD hic hd hd256 hdm hnD hdlt ht hn w0 w1 w2 w3 T hP hs)
+        lTriv nL w0 w1 w2 w3 (T.size + 16 * nD + 4 * nI) := by
   unfold tab4
   obtain ⟨d1, d2, d3⟩ := pushMap_spec (base := dBase) (map := dMap) (nT := treesD) (hb := hd) (hb32 := by omega)
     (hm32 := by omega) (hlt := hdlt) (t := T) (hc := by rw [hdm]; omega)
-  obtain ⟨e1, e2, e3, e4⟩ := tab5_spec (hic := hic) (ht := ht) (hn := hn) (np := np) (nd := nd) (w0 := w0) (w1 := w1)
+  obtain ⟨e1, e2, e3⟩ := tab6_spec (hic := hic) (ht := ht) (hn := hn) (w0 := w0) (w1 := w1)
     (w2 := w2) (w3 := w3) (T := pushMap dBase dMap treesD hd (by omega) (by omega) hdlt T (by rw [hdm]; omega))
     (hP := hP.extend d2) (hs := by rw [d1, hdm]; omega)
   exact ⟨d2.trans e1, fun J hJ => by rw [e1.leAt (by rw [d1]; omega)]; exact d3 J hJ, e2.at (by rw [d1, hdm]; omega),
-    e3.at (by rw [d1, hdm]; omega), e4.at (by rw [d1, hdm]; omega)⟩
+    e3.at (by rw [d1, hdm]; omega)⟩
 
 theorem tab3_spec {litBase lMap icBase dBase dMap lTriv : ByteArray} {nL nI nD treesL treesD : Nat}
-    {ha : TabArrs litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD} {np nd w0 w1 w2 w3 : UInt64}
-    {T : ByteArray} {hP : PairReady lTriv nL T} {hs : T.size + 256 * nL + 16 * nD + 4160 + 4 * nI + 1028 * nL < 2 ^ 32} :
-    Extends T (tab3 litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD ha np nd w0 w1 w2 w3 T hP hs) ∧
-      MapAt (tab3 litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD ha np nd w0 w1 w2 w3 T hP hs)
+    {ha : TabArrs litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD} {w0 w1 w2 w3 : UInt64}
+    {T : ByteArray} {hP : PairReady lTriv nL T} {hs : T.size + 256 * nL + 16 * nD + 4 * nI + 1028 * nL < 2 ^ 32} :
+    Extends T (tab3 litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD ha w0 w1 w2 w3 T hP hs) ∧
+      MapAt (tab3 litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD ha w0 w1 w2 w3 T hP hs)
         litBase lMap T.size ∧
-      MapAt (tab3 litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD ha np nd w0 w1 w2 w3 T hP hs)
+      MapAt (tab3 litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD ha w0 w1 w2 w3 T hP hs)
         dBase dMap (T.size + 256 * nL) ∧
-      DshAt (tab3 litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD ha np nd w0 w1 w2 w3 T hP hs)
-        np nd (T.size + 256 * nL + 16 * nD) ∧
-      IresAt (tab3 litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD ha np nd w0 w1 w2 w3 T hP hs)
-        icBase nI (T.size + 256 * nL + 16 * nD + 4160) ∧
-      PairsAt (tab3 litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD ha np nd w0 w1 w2 w3 T hP hs)
-        lTriv nL w0 w1 w2 w3 (T.size + 256 * nL + 16 * nD + 4160 + 4 * nI) := by
+      IresAt (tab3 litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD ha w0 w1 w2 w3 T hP hs)
+        icBase nI (T.size + 256 * nL + 16 * nD) ∧
+      PairsAt (tab3 litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD ha w0 w1 w2 w3 T hP hs)
+        lTriv nL w0 w1 w2 w3 (T.size + 256 * nL + 16 * nD + 4 * nI) := by
   unfold tab3
   have hl1 : litBase.size < 2 ^ 32 := by have := ha.litSize; have := ha.trees256; omega
   have hl2 : lMap.size < 2 ^ 32 := by have := ha.lMapSize; have := ha.nL256; omega
   obtain ⟨d1, d2, d3⟩ := pushMap_spec (base := litBase) (map := lMap) (nT := treesL) (hb := ha.litSize) (hb32 := hl1)
     (hm32 := hl2) (hlt := ha.lMapLt) (t := T) (hc := by rw [ha.lMapSize]; omega)
-  obtain ⟨e1, e2, e3, e4, e5⟩ := tab4_spec (hic := ha.icSize) (hd := ha.dSize) (hd256 := ha.treesD256) (hdm := ha.dMapSize)
-    (hnD := ha.nD256) (hdlt := ha.dMapLt) (ht := ha.trivSize) (hn := ha.nL256) (np := np) (nd := nd) (w0 := w0) (w1 := w1)
+  obtain ⟨e1, e2, e3, e4⟩ := tab4_spec (hic := ha.icSize) (hd := ha.dSize) (hd256 := ha.treesD256) (hdm := ha.dMapSize)
+    (hnD := ha.nD256) (hdlt := ha.dMapLt) (ht := ha.trivSize) (hn := ha.nL256) (w0 := w0) (w1 := w1)
     (w2 := w2) (w3 := w3) (T := pushMap litBase lMap treesL ha.litSize hl1 hl2 ha.lMapLt T (by rw [ha.lMapSize]; omega))
     (hP := hP.extend d2) (hs := by rw [d1, ha.lMapSize]; omega)
   exact ⟨d2.trans e1, fun J hJ => by rw [e1.leAt (by rw [d1]; omega)]; exact d3 J hJ,
-    e2.at (by rw [d1, ha.lMapSize]; omega), e3.at (by rw [d1, ha.lMapSize]; omega), e4.at (by rw [d1, ha.lMapSize]; omega),
-    e5.at (by rw [d1, ha.lMapSize]; omega)⟩
+    e2.at (by rw [d1, ha.lMapSize]; omega), e3.at (by rw [d1, ha.lMapSize]; omega), e4.at (by rw [d1, ha.lMapSize]; omega)⟩
 
 theorem tabFrom_spec {litBase lMap icBase dBase dMap lTriv : ByteArray} {nL nI nD treesL treesD : Nat}
-    {ha : TabArrs litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD} {np nd w0 w1 w2 w3 : UInt64}
+    {ha : TabArrs litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD} {w0 w1 w2 w3 : UInt64}
     {T : ByteArray} {hI : ICReady icBase nI T} {hP : PairReady lTriv nL T}
-    {hs : T.size + 2048 * nI + 256 * nL + 16 * nD + 4160 + 4 * nI + 1028 * nL < 2 ^ 32} :
-    Extends T (tabFrom litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD ha np nd w0 w1 w2 w3 T hI hP hs) ∧
-      IcAt (tabFrom litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD ha np nd w0 w1 w2 w3 T hI hP hs)
+    {hs : T.size + 2048 * nI + 256 * nL + 16 * nD + 4 * nI + 1028 * nL < 2 ^ 32} :
+    Extends T (tabFrom litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD ha w0 w1 w2 w3 T hI hP hs) ∧
+      IcAt (tabFrom litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD ha w0 w1 w2 w3 T hI hP hs)
         icBase nI T.size ∧
-      MapAt (tabFrom litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD ha np nd w0 w1 w2 w3 T hI hP hs)
+      MapAt (tabFrom litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD ha w0 w1 w2 w3 T hI hP hs)
         litBase lMap (T.size + 2048 * nI) ∧
-      MapAt (tabFrom litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD ha np nd w0 w1 w2 w3 T hI hP hs)
+      MapAt (tabFrom litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD ha w0 w1 w2 w3 T hI hP hs)
         dBase dMap (T.size + 2048 * nI + 256 * nL) ∧
-      DshAt (tabFrom litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD ha np nd w0 w1 w2 w3 T hI hP hs)
-        np nd (T.size + 2048 * nI + 256 * nL + 16 * nD) ∧
-      IresAt (tabFrom litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD ha np nd w0 w1 w2 w3 T hI hP hs)
-        icBase nI (T.size + 2048 * nI + 256 * nL + 16 * nD + 4160) ∧
-      PairsAt (tabFrom litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD ha np nd w0 w1 w2 w3 T hI hP hs)
-        lTriv nL w0 w1 w2 w3 (T.size + 2048 * nI + 256 * nL + 16 * nD + 4160 + 4 * nI) := by
+      IresAt (tabFrom litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD ha w0 w1 w2 w3 T hI hP hs)
+        icBase nI (T.size + 2048 * nI + 256 * nL + 16 * nD) ∧
+      PairsAt (tabFrom litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD ha w0 w1 w2 w3 T hI hP hs)
+        lTriv nL w0 w1 w2 w3 (T.size + 2048 * nI + 256 * nL + 16 * nD + 4 * nI) := by
   unfold tabFrom
   have hi32 : icBase.size < 2 ^ 32 := by have := ha.icSize; have := ha.nI256; omega
   obtain ⟨d1, d2, d3⟩ := pushIC_spec (icBase := icBase) (nI := nI) (hn := ha.nI256) (hb := ha.icSize) (hb32 := hi32)
     (t := T) (h := hI) (hc := by omega)
-  obtain ⟨e1, e2, e3, e4, e5, e6⟩ := tab3_spec (ha := ha) (np := np) (nd := nd) (w0 := w0) (w1 := w1) (w2 := w2)
+  obtain ⟨e1, e2, e3, e4, e5⟩ := tab3_spec (ha := ha) (w0 := w0) (w1 := w1) (w2 := w2)
     (w3 := w3) (T := pushIC icBase nI ha.nI256 ha.icSize hi32 T hI (by omega)) (hP := hP.extend d2)
     (hs := by rw [d1]; omega)
   refine ⟨d2.trans e1, fun ti hti j hj => ?_, e2.at (by rw [d1]), e3.at (by rw [d1]), e4.at (by rw [d1]),
-    e5.at (by rw [d1]), e6.at (by rw [d1])⟩
+    e5.at (by rw [d1])⟩
   have hr := hI ti hti
   rw [e1.leAt (by rw [d1]; omega), d3 ti hti j hj, (d2.trans e1).slotNum (by omega)]
 
 /-! ### What the built arena holds -/
 
-/-- What the fast command loop's table arena holds, with no mention of the spec: the masks, the tables the header built
-(each within `f0 - 8` bytes, so an 8-byte read of a slot stays in the arena), and the derived tables from `f0`. -/
+/-- What the fast command loop's table arena holds, with no mention of the spec: the masks and the shared distance
+table after them, the tables the header built (each within `f0 - 8` bytes, so an 8-byte read of a slot stays in the
+arena), and the derived tables from `f0`. -/
 structure TabOk (T litBase lMap icBase dBase dMap lTriv : ByteArray) (nL nI nD treesL treesD : Nat) (np nd : UInt64)
     (f0 : Nat) : Prop where
   size32 : T.size < 2 ^ 32
   masks : ∀ n, n < 32 → leAt T (8 * n) 8 = 2 ^ n - 1
-  f0Ok : 264 ≤ f0 ∧ f0 % 8 = 0
-  sizeOk : f0 + 2048 * nI + 256 * nL + 16 * nD + 4160 + 4 * nI + 4 * nL ≤ T.size
+  f0Ok : 4424 ≤ f0 ∧ f0 % 8 = 0
+  sizeOk : f0 + 2048 * nI + 256 * nL + 16 * nD + 4 * nI + 4 * nL ≤ T.size
   lFit : ∀ tree, tree < treesL → TableIn T (u32At litBase tree) (f0 - 8)
   iFit : ∀ t, t < nI → TableIn T (u32At icBase t) (f0 - 8)
   dFit : ∀ tree, tree < treesD → TableIn T (u32At dBase tree) (f0 - 8)
@@ -1537,27 +1547,28 @@ structure TabOk (T litBase lMap icBase dBase dMap lTriv : ByteArray) (nL nI nD t
   ic : IcAt T icBase nI f0
   lres : MapAt T litBase lMap (f0 + 2048 * nI)
   dres : MapAt T dBase dMap (f0 + 2048 * nI + 256 * nL)
-  dsh : DshAt T np nd (f0 + 2048 * nI + 256 * nL + 16 * nD)
-  ires : IresAt T icBase nI (f0 + 2048 * nI + 256 * nL + 16 * nD + 4160)
+  dsh : DshAt T np nd 256
+  ires : IresAt T icBase nI (f0 + 2048 * nI + 256 * nL + 16 * nD)
   pix : ∀ ti, ti < nL → leAt T (T.size - 4 * nL + 4 * ti) 4 ≠ 4294967295 →
     u32At lTriv ti ≠ 4294967295 ∧ leAt T (T.size - 4 * nL + 4 * ti) 4 + 1024 ≤ T.size - 4 * nL ∧
       ∀ j, j < 256 → leAt T (leAt T (T.size - 4 * nL + 4 * ti) 4 + 4 * j) 4 = (pairAt T (u32At lTriv ti) j).toNat % 2 ^ 32
 
 /-- The built arena holds what the fast command loop reads. -/
 theorem buildTab_ok {A litBase lMap icBase dBase dMap lTriv : ByteArray} {nL nI nD treesL treesD : Nat}
-    (h : TabArgs A litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD) (np nd w0 w1 w2 w3 : UInt64) :
-    TabOk (buildTab A litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD h np nd w0 w1 w2 w3) litBase lMap icBase
+    (h : TabArgs A litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD) {np nd : UInt64} (hd : DshAt A np nd 256)
+    (w0 w1 w2 w3 : UInt64) :
+    TabOk (buildTab A litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD h w0 w1 w2 w3) litBase lMap icBase
       dBase dMap lTriv nL nI nD treesL treesD np nd (A.size + padOf A.size) := by
   have hp := padOf_spec A.size
   have hsz := h.size
   unfold tabMax at hsz
   have hT1 := size_pushLE (padOf A.size) A 0
   have hE1 := Extends.pushLE A 0 (padOf A.size)
-  obtain ⟨T, hT⟩ : ∃ T, buildTab A litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD h np nd w0 w1 w2 w3 = T :=
+  obtain ⟨T, hT⟩ : ∃ T, buildTab A litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD h w0 w1 w2 w3 = T :=
     ⟨_, rfl⟩
   rw [hT]
   unfold buildTab at hT
-  obtain ⟨e1, e2, e3, e4, e5, e6, e7⟩ := tabFrom_spec (ha := h.arrs) (np := np) (nd := nd) (w0 := w0) (w1 := w1)
+  obtain ⟨e1, e2, e3, e4, e6, e7⟩ := tabFrom_spec (ha := h.arrs) (w0 := w0) (w1 := w1)
     (w2 := w2) (w3 := w3) (T := pushLE A 0 (padOf A.size))
     (hI := fun ti hti => Nat.le_trans (h.icFits ti hti).root (by rw [size_pushLE]; omega))
     (hP := PairReady.extend (fun ti hti hne => h.trivFits ti hti hne) (Extends.pushLE A 0 _))
@@ -1565,23 +1576,24 @@ theorem buildTab_ok {A litBase lMap icBase dBase dMap lTriv : ByteArray} {nL nI 
   replace e2 := e2.at hT1
   replace e3 := e3.at (by rw [hT1])
   replace e4 := e4.at (by rw [hT1])
-  replace e5 := e5.at (by rw [hT1])
   replace e6 := e6.at (by rw [hT1])
   replace e7 := e7.at (by rw [hT1])
-  rw [hT] at e1 e2 e3 e4 e5 e6 e7
+  rw [hT] at e1 e2 e3 e4 e6 e7
   have hE := hE1.trans e1
   obtain ⟨p1, p2⟩ := e7
   have hcl := cntOn_le (pairOnN w0 w1 w2 w3 lTriv) 0 nL
-  have hx : T.size - 4 * nL = A.size + padOf A.size + 2048 * nI + 256 * nL + 16 * nD + 4160 + 4 * nI +
+  have hx : T.size - 4 * nL = A.size + padOf A.size + 2048 * nI + 256 * nL + 16 * nD + 4 * nI +
       1024 * cntOn (pairOnN w0 w1 w2 w3 lTriv) 0 nL := by rw [p1]; omega
   have hlim : A.size ≤ A.size + padOf A.size - 8 := by omega
-  refine ⟨by rw [p1]; omega, fun n hn => ?_, ⟨by have := h.pre; omega, hp.2.2⟩, by rw [p1]; omega,
+  have hpre := h.pre
+  refine ⟨by rw [p1]; omega, fun n hn => ?_, ⟨by omega, hp.2.2⟩, by rw [p1]; omega,
     fun tree ht => (h.litFits tree ht).tableIn hE hlim, fun t ht => (h.icFits t ht).tableIn hE hlim,
     fun tree ht => (h.dFits tree ht).tableIn hE hlim, fun t ht hne => (h.trivFits t ht hne).tableIn hE hlim,
-    e2, e3, e4, e5, e6, fun ti hti hne => ?_⟩
-  · have := h.pre
-    rw [hE.leAt (by omega)]
+    e2, e3, e4, fun dc hdc => ?_, e6, fun ti hti hne => ?_⟩
+  · rw [hE.leAt (by omega)]
     exact h.masks n hn
+  · rw [hE.leAt (by omega)]
+    exact hd dc hdc
   · rw [hx] at hne ⊢
     obtain ⟨q1, q2⟩ := p2 ti hti
     rw [q1] at hne ⊢
@@ -1598,13 +1610,13 @@ theorem buildTab_ok {A litBase lMap icBase dBase dMap lTriv : ByteArray} {nL nI 
 
 /-- The built arena begins with the arena it was built from. -/
 theorem buildTab_extends {A litBase lMap icBase dBase dMap lTriv : ByteArray} {nL nI nD treesL treesD : Nat}
-    (h : TabArgs A litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD) (np nd w0 w1 w2 w3 : UInt64) :
-    Extends A (buildTab A litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD h np nd w0 w1 w2 w3) := by
+    (h : TabArgs A litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD) (w0 w1 w2 w3 : UInt64) :
+    Extends A (buildTab A litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD h w0 w1 w2 w3) := by
   have hp := padOf_spec A.size
   have hsz := h.size
   unfold tabMax at hsz
   unfold buildTab
-  exact (Extends.pushLE A 0 (padOf A.size)).trans (tabFrom_spec (ha := h.arrs) (np := np) (nd := nd) (w0 := w0)
+  exact (Extends.pushLE A 0 (padOf A.size)).trans (tabFrom_spec (ha := h.arrs) (w0 := w0)
     (w1 := w1) (w2 := w2) (w3 := w3) (T := pushLE A 0 (padOf A.size))
     (hI := fun ti hti => Nat.le_trans (h.icFits ti hti).root (by rw [size_pushLE]; omega))
     (hP := PairReady.extend (fun ti hti hne => h.trivFits ti hti hne) (Extends.pushLE A 0 _))
@@ -1612,18 +1624,18 @@ theorem buildTab_extends {A litBase lMap icBase dBase dMap lTriv : ByteArray} {n
 
 /-- The built arena takes at most `tabMax` more than the arena it was built from. -/
 theorem buildTab_size {A litBase lMap icBase dBase dMap lTriv : ByteArray} {nL nI nD treesL treesD : Nat}
-    (h : TabArgs A litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD) (np nd w0 w1 w2 w3 : UInt64) :
-    (buildTab A litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD h np nd w0 w1 w2 w3).size ≤
+    (h : TabArgs A litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD) (w0 w1 w2 w3 : UInt64) :
+    (buildTab A litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD h w0 w1 w2 w3).size ≤
       A.size + tabMax nL nI nD := by
   have hp := padOf_spec A.size
   have hsz := h.size
   unfold tabMax at hsz ⊢
   have hT1 := size_pushLE (padOf A.size) A 0
-  obtain ⟨T, hT⟩ : ∃ T, buildTab A litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD h np nd w0 w1 w2 w3 = T :=
+  obtain ⟨T, hT⟩ : ∃ T, buildTab A litBase lMap icBase dBase dMap lTriv nL nI nD treesL treesD h w0 w1 w2 w3 = T :=
     ⟨_, rfl⟩
   rw [hT]
   unfold buildTab at hT
-  obtain ⟨_, _, _, _, _, _, e7⟩ := tabFrom_spec (ha := h.arrs) (np := np) (nd := nd) (w0 := w0) (w1 := w1)
+  obtain ⟨_, _, _, _, _, e7⟩ := tabFrom_spec (ha := h.arrs) (w0 := w0) (w1 := w1)
     (w2 := w2) (w3 := w3) (T := pushLE A 0 (padOf A.size))
     (hI := fun ti hti => Nat.le_trans (h.icFits ti hti).root (by rw [size_pushLE]; omega))
     (hP := PairReady.extend (fun ti hti hne => h.trivFits ti hti hne) (Extends.pushLE A 0 _))
