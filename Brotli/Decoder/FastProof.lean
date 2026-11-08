@@ -129,6 +129,12 @@ theorem Rel.insertCopy_of (h : Rel w k m r p) (ht : r.tag = .insertCopy) : ∃ s
   | literalSymbol => exact h.elim
   | _ => exact Tag.noConfusion (h.2.1.symm.trans ht)
 
+/-- Staying put is a move. -/
+theorem MoveOk.refl (hrel : Rel w k m st p) (hp : st.pos = pos) (hs : pos.toNat ≤ stop.toNat) :
+    MoveOk w k m K a stop p st pos p st := by
+  subst hp
+  exact ⟨hrel, Nat.le_refl _, hs, fun _ => rfl, ⟨[], rfl, rfl⟩, fun _ => Reach.refl _ _⟩
+
 /-- A refill under the margin keeps the state's place and future: the bits are the same, held differently. -/
 theorem fill_move {w' c' : UInt64} {pos' : USize} {thr : Nat} (hrel : Rel w k m st p)
     (hf : FillOk a stop st.word st.count pos thr w' c' pos') :
@@ -2368,6 +2374,56 @@ theorem pair_round {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHea
   rw [usize_add_two, e2, e3] at m
   rw [f1, f2, f3, ← u64_shr_shr word' _ _ (by omega), u64_sub2]
   exact m
+
+/-! ### The record a loop state stands for -/
+
+/-- The step machine's record a loop state stands for: the segment's `m` literals counted back into the block count
+and what is left of the command's literals, and its place the literals, or the distance when none are left. -/
+@[inline] def fabs (word count : UInt64) (ring : ByteArray) (opos mask pB cap cap16 wB : USize) (rEnd : UInt64)
+    (iCount lCount dCount : UInt64) (flags : Flags) (x : CmdExt) (d01 d23 code ilen clen lits m : UInt64)
+    (p1 p2 : UInt8) (pos : USize) : Cmd :=
+  fexit word count ring opos mask pB cap cap16 wB rEnd iCount (lCount + m) dCount flags x d01 d23 code ilen clen p1 p2
+    (if m = 0 ∧ lits = 0 then .distance else .literals) (lits + m) pos
+
+theorem u64_add_sub (x m c : UInt64) : x + m - c = x + (m - c) := by
+  have h : x + (m - c) + c = x + m := by rw [UInt64.add_assoc, UInt64.sub_add_cancel]
+  rw [← h, UInt64.add_sub_cancel]
+
+/-- A move to a state among a command's literals is a move to the record the loop state stands for: the same, or, with
+no literal left, its distance. -/
+theorem to_fabs {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader}
+    {K : CommandState → List Bool → Option α} {a : ByteArray} {stop : USize} {word count : UInt64} {ring : ByteArray}
+    {opos mask pB cap cap16 wB : USize} {rEnd : UInt64} {iCount lCount dCount : UInt64} {flags : Flags} {x : CmdExt}
+    {d01 d23 code ilen clen lits mm : UInt64} {p1 p2 : UInt8} {pos : USize} {p : Phase} {st : Cmd} {pos0 : USize}
+    {p' : Phase} (hH : HdrRel H m) (hs : stop.toNat ≤ a.size)
+    (h : MoveOk w k.toNat m K a stop p st pos0 p' (fexit word count ring opos mask pB cap cap16 wB rEnd iCount
+      (lCount + mm) dCount flags x d01 d23 code ilen clen p1 p2 .literals (lits + mm) pos)) :
+    ∃ p'', MoveOk w k.toNat m K a stop p st pos0 p''
+      (fabs word count ring opos mask pB cap cap16 wB rEnd iCount lCount dCount flags x d01 d23 code ilen clen lits mm
+        p1 p2 pos) := by
+  by_cases hz : mm = 0 ∧ lits = 0
+  · obtain ⟨_, _, _, _, _, _, _, _, rfl⟩ := h.rel.literals_of rfl
+    obtain ⟨p'', h2⟩ := litEnd_move (K := K) (stop := stop) (pos := pos) hH h.rel
+      (by show lits + mm = 0; rw [hz.1, hz.2]; rfl) h.posStop hs
+    refine ⟨p'', ?_⟩
+    unfold fabs
+    rw [ite_eq_left hz]
+    exact h.trans h2
+  · refine ⟨p', ?_⟩
+    unfold fabs
+    rw [ite_eq_right hz]
+    exact h
+
+/-- `fillK` passes its continuation a refill's result. -/
+theorem fillK_spec {α : Type} {P : α → Prop} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size}
+    {word count : UInt64} {pos : USize} {thr : UInt64} {hw : (BitBuffer.mk word count).Wf} {ht : thr.toNat ≤ 56}
+    {hp : pos.toNat ≤ stop.toNat} {hm : count.toNat < thr.toNat → pos.toNat + 8 ≤ stop.toNat}
+    {k : (w c : UInt64) → (p : USize) → FillOk a stop word count pos thr.toNat w c p → α}
+    (h : ∀ w c p hf, P (k w c p hf)) : P (fillK a stop hs word count pos thr hw ht hp hm k) := by
+  unfold fillK
+  split
+  · exact h _ _ _ _
+  · exact h _ _ _ _
 
 /-! ### A command's distance -/
 
