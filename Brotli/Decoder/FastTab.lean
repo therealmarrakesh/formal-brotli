@@ -1194,25 +1194,23 @@ theorem pairFlags_fits {lTriv t : ByteArray} {nL : Nat} {ht : lTriv.size = 4 * n
   rw [trivAt_toNat, e]
   rfl
 
-/-- How many literal types a header's pair-table policy examines at most, so that the tables' work and bytes are a
+/-- How many literal types, from the first, the pair-table policy examines, so that the tables' work and bytes are a
 constant per header: each examined type counts its tree's 256 root slots, and each chosen one gets a 1 KiB table. -/
-def pairBudget : UInt64 := 8
+def pairTypes : Nat := 8
 
-/-- The flags of the literal types from `ti` on whose contexts share a table whose root indices give two literals at
-least 75% of the time (P46), examining at most `budget` more of them. -/
+/-- The flags, in the first word, of the literal types from `ti` below `n` (at most `pairTypes`) whose contexts share a
+table whose root indices give two literals at least 75% of the time (P46). -/
 def pairFlags (t : ByteArray) (s : t.size < 2 ^ 32) (lTriv : ByteArray) (nL : Nat) (ht : lTriv.size = 4 * nL)
-    (hl32 : lTriv.size < 2 ^ 32) (hr : PairReady lTriv nL t) (n : USize) (hn : n.toNat = nL) (ti : USize)
-    (budget w0 w1 w2 w3 : UInt64) : UInt64 × UInt64 × UInt64 × UInt64 :=
+    (hl32 : lTriv.size < 2 ^ 32) (hr : PairReady lTriv nL t) (n : USize) (hn : n.toNat ≤ nL) (ti : USize)
+    (w0 : UInt64) : UInt64 :=
   if hti : ti < n then
-    have hti' : ti.toNat < nL := by rw [← hn]; exact USize.lt_iff_toNat_lt.mp hti
-    if hne : trivAt lTriv nL ht hl32 ti hti' = 4294967295 ∨ budget = 0 then
-      pairFlags t s lTriv nL ht hl32 hr n hn (ti + USize.ofNat 1) budget w0 w1 w2 w3
-    else if 192 ≤ pairCount t (trivAt lTriv nL ht hl32 ti hti').toUSize (pairFlags_fits hr (fun e => hne (Or.inl e))) s
-        0 0 then
-      pairFlags t s lTriv nL ht hl32 hr n hn (ti + USize.ofNat 1) (budget - 1) (setFlag ti.toUInt64 0 w0)
-        (setFlag ti.toUInt64 64 w1) (setFlag ti.toUInt64 128 w2) (setFlag ti.toUInt64 192 w3)
-    else pairFlags t s lTriv nL ht hl32 hr n hn (ti + USize.ofNat 1) (budget - 1) w0 w1 w2 w3
-  else (w0, w1, w2, w3)
+    have hti' : ti.toNat < nL := Nat.lt_of_lt_of_le (USize.lt_iff_toNat_lt.mp hti) hn
+    if hne : trivAt lTriv nL ht hl32 ti hti' = 4294967295 then
+      pairFlags t s lTriv nL ht hl32 hr n hn (ti + USize.ofNat 1) w0
+    else if 192 ≤ pairCount t (trivAt lTriv nL ht hl32 ti hti').toUSize (pairFlags_fits hr hne) s 0 0 then
+      pairFlags t s lTriv nL ht hl32 hr n hn (ti + USize.ofNat 1) (setFlag ti.toUInt64 0 w0)
+    else pairFlags t s lTriv nL ht hl32 hr n hn (ti + USize.ofNat 1) w0
+  else w0
 termination_by n.toNat - ti.toNat
 decreasing_by
   all_goals
@@ -1682,7 +1680,8 @@ read before it grows. Which types are chosen is a policy and changes no claim. -
     (hn : nL ≤ 256) (hP : PairReady lTriv nL A) (mlen : UInt64) :
     { p : (UInt64 × UInt64 × UInt64 × UInt64) × ByteArray // p.2 = A } :=
   ⟨(if bigLits A s icBase nI hic hi32 hI mlen then
-      pairFlags A s lTriv nL ht (by omega) hP (USize.ofNat nL) (fastLit (by omega)) 0 pairBudget 0 0 0 0
+      (pairFlags A s lTriv nL ht (by omega) hP (USize.ofNat (min nL pairTypes))
+        (by rw [fastLit (by unfold pairTypes; omega)]; exact Nat.min_le_left _ _) 0 0, 0, 0, 0)
     else (0, 0, 0, 0), A), rfl⟩
 
 end Brotli.Decoder
