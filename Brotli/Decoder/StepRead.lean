@@ -525,7 +525,7 @@ theorem stepCopyLength_ok {α : Type} {w k : Nat} {m : MetaBlockHeader} {K : Com
       have h24 : (2 : Nat) ^ 24 = 16777216 := by decide
       refine StepOk.ofNext (p' := .literals s ic c ilen (copyBase + ((BitBuffer.mk st.word st.count).peek st.copyBits).toNat)
         ilen s.literal s.output) rfl ⟨{ hC with wf := BitBuffer.drop_wf hC.wf hk64 hle', rem := ?_, clen1 := ?_ }, rfl,
-          hprod, hcode, hilen, ?_, hilen, Nat.le_refl _, by omega, rfl⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
+          hprod, hcode, ?_, hilen, Nat.le_refl _, by omega, rfl⟩ (Nat.le_refl _) hp (fun F => ?_) (fun F => ?_)
       · show st.remaining.toNat = _
         omega
       · show 1 ≤ (st.copyBase + (BitBuffer.mk st.word st.count).peek st.copyBits).toNat

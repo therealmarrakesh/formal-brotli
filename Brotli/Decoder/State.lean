@@ -350,7 +350,7 @@ def Rel (w k : Nat) (m : MetaBlockHeader) (st : Cmd) : Phase → Prop
       st.copyBase.toNat = copyBase ∧ copyBits ≤ 24 ∧ copyBase ≤ 2118
   | .literals s ic c ilen clen n lit out =>
     Core w k m st out (s.remaining - (ilen - n)) s.distances ic lit s.distance ∧ st.tag = .literals ∧
-      s.produced = s.output.length ∧ (st.code.toNat < 128 ↔ c < 128) ∧ st.ilen.toNat = ilen ∧ st.clen.toNat = clen ∧
+      s.produced = s.output.length ∧ (st.code.toNat < 128 ↔ c < 128) ∧ st.clen.toNat = clen ∧
       st.left.toNat = n ∧ n ≤ ilen ∧ ilen ≤ s.remaining ∧ out.length + n = s.output.length + ilen
   | .literalSymbol .. => False
   | .distance s c clen =>

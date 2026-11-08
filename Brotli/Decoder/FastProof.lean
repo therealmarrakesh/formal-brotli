@@ -287,7 +287,7 @@ theorem lit_move {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeade
         written := usmin (ringSize k - USize.ofNat 16) (st.written + USize.ofNat 1)
         pos := pos
         status := .next } := by
-  obtain ⟨hC, htag, hprod, hcode, hilen, hclen, hleft, hnle, hirem, hlen⟩ := hrel
+  obtain ⟨hC, htag, hprod, hcode, hclen, hleft, hnle, hirem, hlen⟩ := hrel
   have hk := hC.k24
   have hps : pos.toNat ≤ a.size := Nat.le_trans hp hs
   have hmodeSpec : m.contextModes[st.lCur.toNat]? = some (modeOff.toNat / 512) := by
@@ -305,7 +305,7 @@ theorem lit_move {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeade
     st.count pos st.wpos st.ring st.p1 st.p2 (Nat.le_refl _) hC.wf hC.ring.size hC.ring.pos_lt n lit out rfl
     (by rw [h1]; omega) (by rw [h1, hC.lRel.count]; omega) hC.lRel.cur hC.ctx hC.ring hC.bytes
   dsimp only at hspec
-  have hstep := literals_after (stop := pos) (K := K) hC htag hprod hcode hilen hclen hleft hnle hirem hlen
+  have hstep := literals_after (stop := pos) (K := K) hC htag hprod hcode hclen hleft hnle hirem hlen
     (Nat.le_refl _) _ (run := USize.ofNat 1) (by rw [h1]; decide) (by rw [h1]; omega) (by rw [h1]; exact hc0)
     (by rw [h1]; omega) hspec
   have hone := literalRun_one H.lit hps (st.lCur <<< 6).toUSize modeOff (ringMask k) k.toNat (mapBase_le hlt) hmo hmd

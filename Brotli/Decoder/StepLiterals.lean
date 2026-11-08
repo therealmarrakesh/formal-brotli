@@ -218,7 +218,7 @@ theorem literals_after {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeader} {
     {a : ByteArray} {stop : USize} {s : CommandState} {ic : BlockState} {c ilen clen n : Nat} {lit : BlockState}
     {out : List Nat} {st : Cmd} {pos : USize}
     (hC : Core w k.toNat m st out (s.remaining - (ilen - n)) s.distances ic lit s.distance) (htag : st.tag = .literals)
-    (hprod : s.produced = s.output.length) (hcode : st.code.toNat < 128 ↔ c < 128) (hilen : st.ilen.toNat = ilen)
+    (hprod : s.produced = s.output.length) (hcode : st.code.toNat < 128 ↔ c < 128)
     (hclen : st.clen.toNat = clen) (hleft : st.left.toNat = n) (hnle : n ≤ ilen) (hirem : ilen ≤ s.remaining)
     (hlen : out.length + n = s.output.length + ilen) (hp : pos.toNat ≤ stop.toNat) (r : LitRun) {run : USize}
     (hrun0 : run.toNat ≠ 0) (hrunL : run.toNat ≤ n) (hrunC : run.toNat ≤ st.lCount.toNat) (hrunR : run.toNat + st.pend.toNat + 16 ≤ 2 ^ k.toNat)
@@ -251,7 +251,7 @@ theorem literals_after {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeader} {
     rw [USize.toNat_toUInt64, huN]
   have hnew : Rel w k.toNat m (finishLiterals (clearRing st) r run (ringSize k))
       (.literals s ic c ilen clen (n - (run.toNat - r.left.toNat)) lit' out') := by
-    refine ⟨?_, htag, hprod, hcode, hilen, hclen, ?_, by omega, hirem, by omega⟩
+    refine ⟨?_, htag, hprod, hcode, hclen, ?_, by omega, hirem, by omega⟩
     · refine { hC with
         wf := h8, ring := h6, bytes := h11, ctx := h7, pendLe := ?_, pendOut := ?_, written := ?_, rem := ?_
         lRel := hC.lRel.run h2 h3 ?_ }
@@ -311,7 +311,7 @@ theorem literalsRun_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBloc
     (hrel : Rel w k.toNat m st (.literals s ic c ilen clen n lit out)) (hp : pos.toNat ≤ stop.toNat)
     (hl0 : st.left.toNat ≠ 0) (hc0 : st.lCount.toNat ≠ 0) (hroom : st.pend.toNat < (room k st.cap).toNat) :
     StepOk w k.toNat m K a stop (.literals s ic c ilen clen n lit out) st pos (literalsRun H k a stop hs st pos) := by
-  obtain ⟨hC, htag, hprod, hcode, hilen, hclen, hleft, hnle, hirem, hlen⟩ := hrel
+  obtain ⟨hC, htag, hprod, hcode, hclen, hleft, hnle, hirem, hlen⟩ := hrel
   have hk := hC.k24
   have hRl := room_le16 (cap := st.cap) hk (by have := hC.win; omega)
   have hRmax : 2 ^ k.toNat ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
@@ -357,7 +357,7 @@ theorem literalsRun_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBloc
     hp hC.wf hC.ring.size hC.ring.pos_lt n lit out rfl (by omega) (by omega)
     hC.lRel.cur hC.ctx hC.ring hC.bytes
   dsimp only at hspec
-  exact literals_after hC htag hprod hcode hilen hclen hleft hnle hirem hlen hp _ (by omega) (by omega) (by omega) (by omega) hspec
+  exact literals_after hC htag hprod hcode hclen hleft hnle hirem hlen hp _ (by omega) (by omega) (by omega) (by omega) hspec
 
 /-- The literals' step does its job. -/
 theorem stepLiterals_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
@@ -367,7 +367,7 @@ theorem stepLiterals_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlo
     (hfull : 56 < st.count.toNat ∨ pos = stop) :
     StepOk w k.toNat m K a stop (.literals s ic c ilen clen n lit out) st pos (stepLiterals H k a stop hs st pos) := by
   have hrel0 := hrel
-  obtain ⟨hC, htag, hprod, hcode, hilen, hclen, hleft, hnle, hirem, hlen⟩ := hrel
+  obtain ⟨hC, htag, hprod, hcode, hclen, hleft, hnle, hirem, hlen⟩ := hrel
   have hrem := hC.rem
   unfold stepLiterals
   split
@@ -416,7 +416,7 @@ theorem stepLiterals_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlo
           refine StepOk.ofNext (p' := .literals s ic c ilen clen (n' + 1)
             ⟨⟨st.lCur.toNat, r.cur.toNat⟩, r.blockCount.toNat, r.cur.toNat :: lit.seen⟩ out)
             (hd := Or.inr (Or.inr ⟨rfl, hdn⟩)) rfl
-            ⟨?_, htag, hprod, hcode, hilen, hclen, hleft, hnle, hirem, hlen⟩ (Nat.le_refl _) hp (fun F => ?_)
+            ⟨?_, htag, hprod, hcode, hclen, hleft, hnle, hirem, hlen⟩ (Nat.le_refl _) hp (fun F => ?_)
             (fun F => Reach.one (by
               rw [stateBits_eq]
               show (if lit.count = 0 then _ else _) = _
