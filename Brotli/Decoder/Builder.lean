@@ -4,6 +4,7 @@ public import Brotli.Decoder.TableDown
 public import Brotli.Decoder.Window
 public import Brotli.Decoder.Lookup
 public import Brotli.Decoder.Fixed
+public import Brotli.Decoder.WinCopy
 
 @[expose] public section
 
@@ -124,6 +125,22 @@ theorem uset_get_ne {t : ByteArray} {i : USize} {v : UInt8} {j : Nat} (h : i.toN
     (t.uset i v h).data[j]? = t.data[j]? := by
   rw [uset_setU]
   exact setU_get_ne hj
+
+/-- Every byte after a byte store. -/
+theorem uset_get_if {t : ByteArray} {i : USize} {v : UInt8} {h : i.toNat < t.size} (j : Nat) :
+    (t.uset i v h).data[j]? = if j = i.toNat then some v else t.data[j]? := by
+  by_cases hj : j = i.toNat
+  · subst hj
+    rw [ite_eq_left rfl]
+    have hs : i.toNat < (t.uset i v h).data.size := by
+      show i.toNat < (t.uset i v h).size
+      rw [size_uset']
+      exact h
+    have g := uset_get_same (t := t) (v := v) h
+    rw [Array.getElem?_eq_getElem hs] at g ⊢
+    exact congrArg some g
+  · rw [ite_eq_right hj]
+    exact uset_get_ne h hj
 
 private theorem usize_add' {a b : USize} (h : a.toNat + b.toNat < 2 ^ 32) : (a + b).toNat = a.toNat + b.toNat := by
   rw [USize.toNat_add, ← USize.size_eq_two_pow]
@@ -249,6 +266,28 @@ theorem u16GetU_eq (b : ByteArray) (i : USize) (h : 2 * i.toNat + 1 < b.size) (h
 theorem u16SetU_eq (b : ByteArray) (i : USize) (v : UInt64) (h : 2 * i.toNat + 1 < b.size) (h16 : i.toNat < 2 ^ 16) :
     u16SetU b i v h h16 = u16Set b i v := by
   simp only [u16SetU, u16Set, uset_setU]
+
+/-- `u16SetU` as one 2-byte store (`u16SetU_csimp`). -/
+@[inline] def u16SetUF (b : ByteArray) (i : USize) (v : UInt64) (h : 2 * i.toNat + 1 < b.size) (h16 : i.toNat < 2 ^ 16) :
+    ByteArray :=
+  store16 b (i * USize.ofNat 2) v (by rw [p2 h16]; omega)
+
+/-- The two byte stores are the 2-byte store, so the compiled code makes one. -/
+@[csimp] theorem u16SetU_csimp : @u16SetU = @u16SetUF := by
+  funext b i v h h16
+  apply ByteArray.ext
+  apply Array.ext_getElem?
+  intro q
+  unfold u16SetU u16SetUF store16
+  rw [storeLE_get _ _ _ _ (by rw [p2 h16]; omega) q, uset_get_if q, uset_get_if q, p2 h16, p3 h16]
+  by_cases h0 : q = 2 * i.toNat
+  · subst h0
+    simp [leList]
+  · by_cases h1 : q = 2 * i.toNat + 1
+    · subst h1
+      simp [leList]
+    · have : ¬ (2 * i.toNat ≤ q ∧ q < 2 * i.toNat + 2) := by omega
+      rw [ite_eq_right h1, ite_eq_right h0, ite_eq_right this]
 
 theorem size_u16SetU (b : ByteArray) (i : USize) (v : UInt64) (h : 2 * i.toNat + 1 < b.size) (h16 : i.toNat < 2 ^ 16) :
     (u16SetU b i v h h16).size = b.size := by
@@ -487,6 +526,32 @@ theorem putSlot_eq {t : ByteArray} {pos v : UInt64} {h : 2 * pos.toNat + 1 < t.s
   unfold putSlot writeSlot
   rw [uset_eq, uset_eq, slot2 h32 h (j := 0) (by decide), slot2 h32 h (j := 1) (by decide), e0, e1]
   rfl
+
+/-- `putSlot` as one 2-byte store (`putSlot_csimp`). -/
+@[inline] def putSlotF (t : ByteArray) (pos v : UInt64) (h : 2 * pos.toNat + 1 < t.size) (h32 : t.size < 2 ^ 32) :
+    ByteArray :=
+  store16 t (pos * 2 + 0).toUSize v (by rw [slot2 h32 h (by decide)]; show 2 * pos.toNat + 0 + 2 ≤ _; omega)
+
+/-- The two byte stores are the 2-byte store, so the compiled code makes one. -/
+@[csimp] theorem putSlot_csimp : @putSlot = @putSlotF := by
+  funext t pos v h h32
+  have e0 := slot2 h32 h (j := 0) (by decide)
+  have e1 := slot2 h32 h (j := 1) (by decide)
+  rw [show (0 : UInt64).toNat = 0 from rfl, Nat.add_zero] at e0
+  rw [show (1 : UInt64).toNat = 1 from rfl] at e1
+  apply ByteArray.ext
+  apply Array.ext_getElem?
+  intro q
+  unfold putSlot putSlotF store16
+  rw [storeLE_get _ _ _ _ (by rw [e0]; omega) q, uset_get_if q, uset_get_if q, e0, e1]
+  by_cases h0 : q = 2 * pos.toNat
+  · subst h0
+    simp [leList]
+  · by_cases h1 : q = 2 * pos.toNat + 1
+    · subst h1
+      simp [leList]
+    · have : ¬ (2 * pos.toNat ≤ q ∧ q < 2 * pos.toNat + 2) := by omega
+      rw [ite_eq_right h1, ite_eq_right h0, ite_eq_right this]
 
 /-- Reads one slot's 16-bit number. -/
 @[inline] def getSlot (t : ByteArray) (pos : UInt64) (h : 2 * pos.toNat + 1 < t.size) (h32 : t.size < 2 ^ 32) : UInt64 :=

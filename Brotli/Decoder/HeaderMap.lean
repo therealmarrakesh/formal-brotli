@@ -578,6 +578,80 @@ theorem shiftBy_spec (k : UInt64) : ∀ (N : Nat) (m : ByteArray) (x n : UInt64)
           · omega
         rw [ite_eq_right hc, ite_eq_right hin, uset_get_ne (h.set hz) (by rw [hus]; exact hyx)]
 
+/-- Where `shiftBy`'s places are, as one move: from `x + 1 - n`, the `n` places `k` below them. -/
+theorem shift_idx {m : ByteArray} {x k n : UInt64} (h : ShiftPre m x k n) (hn : ¬ n = 0) :
+    (x + 1 - n).toUSize.toNat = x.toNat + 1 - n.toNat ∧
+      (x + 1 - n - k).toUSize.toNat = x.toNat + 1 - n.toNat - k.toNat ∧ n.toUSize.toNat = n.toNat := by
+  obtain ⟨h1, _, _⟩ := id h
+  have hn0 := (down1 hn).1
+  obtain ⟨h4, h5⟩ := h1 (by omega)
+  have e1 : (x + 1).toNat = x.toNat + 1 := by
+    rw [UInt64.toNat_add, show (1 : UInt64).toNat = 1 from rfl, Nat.mod_eq_of_lt (by omega)]
+  have e2 : (x + 1 - n).toNat = x.toNat + 1 - n.toNat := by
+    rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by rw [e1]; omega)), e1]
+  have e3 : (x + 1 - n - k).toNat = x.toNat + 1 - n.toNat - k.toNat := by
+    rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by rw [e2]; omega)), e2]
+  exact ⟨by rw [word_toUSize (by omega), e2], by rw [word_toUSize (by omega), e3], word_toUSize (by omega)⟩
+
+theorem shift_range {m : ByteArray} {x k n : UInt64} (h : ShiftPre m x k n) (hn : ¬ n = 0) :
+    (x + 1 - n).toUSize.toNat + n.toUSize.toNat ≤ m.size ∧
+      (x + 1 - n - k).toUSize.toNat + n.toUSize.toNat ≤ m.size := by
+  obtain ⟨e1, e2, e3⟩ := shift_idx h hn
+  obtain ⟨h1, _, h3⟩ := id h
+  have := h1 (by have := (down1 hn).1; omega)
+  rw [e1, e2, e3, h3]
+  omega
+
+/-- `shiftBy` as one move within the list (`shiftBy_csimp`). -/
+@[inline] def shiftByF (m : ByteArray) (x k n : UInt64) (h : ShiftPre m x k n) : ByteArray :=
+  if hn : n = 0 then m
+  else winMove m (x + 1 - n).toUSize (x + 1 - n - k).toUSize n.toUSize (shift_range h hn)
+
+/-- Moving the places from the top down reads only places not yet written, so it is a snapshot copy, and the compiled
+code makes it one `memmove`. -/
+@[csimp] theorem shiftBy_csimp : @shiftBy = @shiftByF := by
+  funext m x k n h
+  unfold shiftByF
+  by_cases hn : n = 0
+  · rw [dite_eq_left hn, shiftBy, dite_eq_left hn]
+  · rw [dite_eq_right hn]
+    obtain ⟨i1, i2⟩ := shiftBy_spec k n.toNat m x n h rfl
+    obtain ⟨e1, e2, e3⟩ := shift_idx h hn
+    obtain ⟨hx, hk, hs⟩ := id h
+    obtain ⟨hx1, hx2⟩ := hx (by have := (down1 hn).1; omega)
+    apply ByteArray.ext
+    apply Array.ext_getElem?
+    intro y
+    show (shiftBy m x k n h).data[y]? = (winMove m _ _ _ (shift_range h hn)).data[y]?
+    rw [winMove_get m _ _ _ (shift_range h hn) y, e1, e2, e3]
+    by_cases hy : y < 256
+    · have g := i2 y hy
+      have hl : y < (shiftBy m x k n h).data.size := by
+        show y < (shiftBy m x k n h).size
+        omega
+      by_cases hin : x.toNat + 1 - n.toNat ≤ y ∧ y < x.toNat + 1 - n.toNat + n.toNat
+      · have hc : x.toNat + 1 - n.toNat ≤ y ∧ y ≤ x.toNat := by omega
+        rw [ite_eq_left hin, show x.toNat + 1 - n.toNat - k.toNat + (y - (x.toNat + 1 - n.toNat)) = y - k.toNat by omega]
+        rw [ite_eq_left hc] at g
+        have hl2 : y - k.toNat < m.data.size := by
+          show y - k.toNat < m.size
+          omega
+        rw [Array.getElem?_eq_getElem hl, Array.getElem?_eq_getElem hl2] at g ⊢
+        rw [Option.getD_some, Option.getD_some] at g
+        rw [g]
+      · have hc : ¬ (x.toNat + 1 - n.toNat ≤ y ∧ y ≤ x.toNat) := by omega
+        rw [ite_eq_right hin]
+        rw [ite_eq_right hc] at g
+        have hl2 : y < m.data.size := by
+          show y < m.size
+          omega
+        rw [Array.getElem?_eq_getElem hl, Array.getElem?_eq_getElem hl2] at g ⊢
+        rw [Option.getD_some, Option.getD_some] at g
+        rw [g]
+    · have hin : ¬ (x.toNat + 1 - n.toNat ≤ y ∧ y < x.toNat + 1 - n.toNat + n.toNat) := by omega
+      rw [ite_eq_right hin, Array.getElem?_eq_none (by show (shiftBy m x k n h).size ≤ y; omega),
+        Array.getElem?_eq_none (by show m.size ≤ y; omega)]
+
 /-! The loops, with the sizes they keep, for the loops that follow them. -/
 
 @[inline] def revOutS (m out : ByteArray) (i s j n : UInt64) (h : RevPre m out i s j n) : { r : ByteArray // r.size = out.size } :=

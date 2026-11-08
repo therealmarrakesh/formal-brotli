@@ -355,6 +355,60 @@ theorem putW_eq (t : ByteArray) (i : USize) (v : UInt64) (n : Nat) (h : i.toNat 
       exact tput8_eq t i v h h32
     · rfl
 
+/-- `putLE`'s bytes: `v`'s low bytes from `i`, and the others as they were. -/
+theorem putLE_get : ∀ (n : Nat) (t : ByteArray) (i : USize) (v : UInt64) (h : i.toNat + n ≤ t.size)
+    (h32 : t.size < 2 ^ 32) (q : Nat), (putLE t i v n h h32).data[q]? =
+      if i.toNat ≤ q ∧ q < i.toNat + n then (leList v n)[q - i.toNat]? else t.data[q]?
+  | 0, t, i, v, h, h32, q => by
+    have : ¬ (i.toNat ≤ q ∧ q < i.toNat + 0) := by omega
+    rw [ite_eq_right this]
+    rfl
+  | n + 1, t, i, v, h, h32, q => by
+    have hi1 : (i + USize.ofNat 1).toNat = i.toNat + 1 := fastIdx_add (by omega)
+    rw [putLE, putLE_get n, uset_get_if q, hi1]
+    by_cases hq : q = i.toNat
+    · subst hq
+      have h1 : ¬ (i.toNat + 1 ≤ i.toNat ∧ i.toNat < i.toNat + 1 + n) := by omega
+      have h2 : i.toNat ≤ i.toNat ∧ i.toNat < i.toNat + (n + 1) := by omega
+      rw [ite_eq_right h1, ite_eq_left rfl, ite_eq_left h2, Nat.sub_self]
+      rfl
+    · by_cases hr : i.toNat + 1 ≤ q ∧ q < i.toNat + 1 + n
+      · have h2 : i.toNat ≤ q ∧ q < i.toNat + (n + 1) := by omega
+        rw [ite_eq_left hr, ite_eq_left h2, show q - i.toNat = (q - (i.toNat + 1)) + 1 by omega]
+        rfl
+      · have h2 : ¬ (i.toNat ≤ q ∧ q < i.toNat + (n + 1)) := by omega
+        rw [ite_eq_right hr, ite_eq_right hq, ite_eq_right h2]
+
+/-- The fixed-width store's model is `putLE`. -/
+theorem storeLE_eq_putLE (t : ByteArray) (i : USize) (v : UInt64) (n : Nat) (h : i.toNat + n ≤ t.size)
+    (h32 : t.size < 2 ^ 32) : storeLE t i v n = putLE t i v n h h32 := by
+  apply ByteArray.ext
+  apply Array.ext_getElem?
+  intro q
+  rw [storeLE_get t i v n h q, putLE_get n t i v h h32 q]
+
+/-- `putW` as one store of the width (`putW_csimp`). -/
+@[inline] def putWF (t : ByteArray) (i : USize) (v : UInt64) (n : Nat) (h : i.toNat + n ≤ t.size)
+    (h32 : t.size < 2 ^ 32) : ByteArray :=
+  if h4 : n = 4 then store32 t i v (h4 ▸ h)
+  else if h8 : n = 8 then store64 t i v (h8 ▸ h)
+  else putLE t i v n h h32
+
+/-- The byte stores of a 4- or 8-byte entry are one store, so the compiled code makes one. -/
+@[csimp] theorem putW_csimp : @putW = @putWF := by
+  funext t i v n h h32
+  rw [putW_eq]
+  unfold putWF
+  split
+  · rename_i h4
+    subst h4
+    exact (storeLE_eq_putLE t i v 4 h h32).symm
+  · split
+    · rename_i h8
+      subst h8
+      exact (storeLE_eq_putLE t i v 8 h h32).symm
+    · rfl
+
 /-- A whole entry written reads back, cut to its width. -/
 theorem leAt_putLE' (n : Nat) (t : ByteArray) (i : USize) (v : UInt64) (h : i.toNat + n ≤ t.size) (h32 : t.size < 2 ^ 32) :
     leAt (putLE t i v n h h32) i.toNat n = v.toNat % 256 ^ n :=
