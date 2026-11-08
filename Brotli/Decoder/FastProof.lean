@@ -2313,6 +2313,62 @@ theorem FCtx.pair_lits (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRo
 
 end
 
+/-- Two literals from one entry of the two-literal table, after a refill to 15 bits: the step machine's two literals,
+the second read at the bits after the first. -/
+theorem pair_round {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader}
+    {K : CommandState → List Bool → Option α} {a : ByteArray} {stop : USize} {s : CommandState} {ic : BlockState}
+    {c ilen clen n : Nat} {lit : BlockState} {out : List Nat} {word count : UInt64} {ring : ByteArray}
+    {opos mask pB cap cap16 wB : USize} {rEnd bEnd : UInt64} {iCount LC dCount : UInt64} {flags : Flags} {x : CmdExt}
+    {d01 d23 code ilen' clen' : UInt64} {p1 p2 : UInt8} {L : UInt64} {pos : USize} {T : ByteArray} {tb : UInt64}
+    {modeOff lRow iRow iFb dRow s0 : USize} (C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow s0)
+    (hH : HdrRel H m)
+    (hrel : Rel w k.toNat m (fexit word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code
+      ilen' clen' p1 p2 .literals L pos) (.literals s ic c ilen clen n lit out))
+    (hk : k.toNat ≤ 24) (h16 : 16 ≤ 2 ^ k.toNat) (hmk : mask = ringMask k) (hmN : mask.toNat = 2 ^ k.toNat - 1)
+    (hcap : cap16 = ringSize k - USize.ofNat 16) {ahead : Nat} (N : FNum opos pB wB rEnd bEnd k.toNat ahead)
+    (ha : 2 ≤ ahead) (hL : 2 ≤ L.toNat) (hLC : 2 ≤ LC.toNat) {word' count' : UInt64} {pos' : USize}
+    (hf : FillOk a stop word count pos 15 word' count' pos') (hs : stop.toNat ≤ a.size)
+    (hsz : ring.size = 2 ^ k.toNat) {pairBase : USize}
+    (hpair : pairBase ≠ USize.ofNat 4294967295 → u32At H.lTriv x.lCur.toNat ≠ 4294967295 ∧
+      ∀ j, j < 256 → leAt T (pairBase.toNat + 4 * j) 4 = (pairAt T (u32At H.lTriv x.lCur.toNat) j).toNat % 2 ^ 32)
+    (hp : pairBase ≠ USize.ofNat 4294967295) (hb : pairBase.toNat + 1024 ≤ T.size)
+    (h2 : (row32 T pairBase hb C.size32 word' >>> 8) &&& 255 = 2) :
+    ∃ p', MoveOk w k.toNat m K a stop (.literals s ic c ilen clen n lit out)
+      (fexit word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code ilen' clen' p1 p2
+        .literals L pos) pos p'
+      (fexit (word' >>> (row32 T pairBase hb C.size32 word' &&& 15)) (count' - (row32 T pairBase hb C.size32 word' &&& 15))
+        (wput (wput ring opos mask hk hmN hsz (row32 T pairBase hb C.size32 word' >>> 16).toUInt8) (opos + USize.ofNat 1)
+          mask hk hmN (wput_size _ _ _ hk hmN hsz _) (row32 T pairBase hb C.size32 word' >>> 24).toUInt8)
+        (opos + USize.ofNat 2) mask pB cap cap16 wB rEnd iCount (LC - 2) dCount flags x d01 d23 code ilen' clen'
+        (row32 T pairBase hb C.size32 word' >>> 24).toUInt8 (row32 T pairBase hb C.size32 word' >>> 16).toUInt8
+        .literals (L - 2) pos') := by
+  obtain ⟨hsum, f1, f2, f3⟩ := C.pair_lits hH hpair hp hb p1 p2 (litT C p1 p2 word' >>> 4).toUInt8 p1 word' h2
+  have hl1 := and15_lt (litT C p1 p2 word')
+  have hl2 := and15_lt (litT C (litT C p1 p2 word' >>> 4).toUInt8 p1 (word' >>> (litT C p1 p2 word' &&& 15)))
+  have hsum' := UInt64.le_iff_toNat_le.mp hsum
+  rw [u64_add_small (by omega)] at hsum'
+  have hsum8 : (litT C p1 p2 word' &&& (15 : UInt64)).toNat +
+      (litT C (litT C p1 p2 word' >>> 4).toUInt8 p1 (word' >>> (litT C p1 p2 word' &&& 15)) &&& (15 : UInt64)).toNat
+      ≤ 8 := hsum'
+  have hc15 := hf.enough
+  obtain ⟨p', m1⟩ := lit_round (K := K) C hH hrel hk h16 hmk hmN hcap N (by omega) (by omega) (by omega) hf
+    (UInt64.le_iff_toNat_le.mpr (by omega)) hs hsz
+  obtain ⟨_, _, _, _, _, _, _, _, rfl⟩ := m1.rel.literals_of rfl
+  have e1 : (count' - (litT C p1 p2 word' &&& (15 : UInt64))).toNat =
+      count'.toNat - (litT C p1 p2 word' &&& (15 : UInt64)).toNat := u64_sub_le (by omega)
+  have h1 : (1 : UInt64).toNat = 1 := rfl
+  obtain ⟨p'', m2⟩ := lit_round (K := K) (stop := stop) C hH m1.rel hk h16 hmk hmN hcap (N.succ hk (by omega))
+    (by omega) (by rw [u64_sub_le (by rw [h1]; omega), h1]; omega) (by rw [u64_sub_le (by rw [h1]; omega), h1]; omega)
+    (FillOk.self (thr := 0) (drop1_wf hf.wf (by omega) (by omega)) (Nat.zero_le _) hf.posStop)
+    (UInt64.le_iff_toNat_le.mpr (by rw [e1]; omega)) hs (wput_size _ _ _ hk hmN hsz _)
+  refine ⟨p'', ?_⟩
+  have e2 : LC - 1 - 1 = LC - 2 := by rw [← u64_sub2]; rfl
+  have e3 : L - 1 - 1 = L - 2 := by rw [← u64_sub2]; rfl
+  have m := m1.trans m2
+  rw [usize_add_two, e2, e3] at m
+  rw [f1, f2, f3, ← u64_shr_shr word' _ _ (by omega), u64_sub2]
+  exact m
+
 /-! ### A command's distance -/
 
 /-- The state at a command's copy, in the loop's terms: what remains less the copy, and the copy's length and distance.
