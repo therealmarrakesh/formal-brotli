@@ -2029,9 +2029,9 @@ theorem lit_round {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHead
       ilen' clen' p1 p2 .literals L pos) (.literals s ic c ilen clen n lit out))
     (hk : k.toNat ≤ 24) (h16 : 16 ≤ 2 ^ k.toNat) (hmk : mask = ringMask k) (hmN : mask.toNat = 2 ^ k.toNat - 1)
     (hcap : cap16 = ringSize k - USize.ofNat 16) {ahead : Nat} (N : FNum opos pB wB rEnd bEnd k.toNat ahead)
-    (ha : 1 ≤ ahead) (hL : 1 ≤ L.toNat) (hLC : 1 ≤ LC.toNat) {word' count' : UInt64} {pos' : USize}
-    (hf : FillOk a stop word count pos 15 word' count' pos') (hs : stop.toNat ≤ a.size)
-    (hsz : ring.size = 2 ^ k.toNat) :
+    (ha : 1 ≤ ahead) (hL : 1 ≤ L.toNat) (hLC : 1 ≤ LC.toNat) {word' count' : UInt64} {pos' : USize} {thr : Nat}
+    (hf : FillOk a stop word count pos thr word' count' pos') (hbits : litT C p1 p2 word' &&& 15 ≤ count')
+    (hs : stop.toNat ≤ a.size) (hsz : ring.size = 2 ^ k.toNat) :
     ∃ p', MoveOk w k.toNat m K a stop (.literals s ic c ilen clen n lit out)
       (fexit word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code ilen' clen' p1 p2
         .literals L pos) pos p'
@@ -2048,9 +2048,8 @@ theorem lit_round {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHead
     (by show (opos + pB).toNat + 1 + 16 ≤ _; omega) hf.posStop hs C.hl C.mode C.hm C.hm512 hfit hb
     (by
       show lookup H.arena base word' hfit H.lit.arena32 &&& 15 ≤ count'
-      have := and15_lt (lookup H.arena base word' hfit H.lit.arena32)
-      have := hf.enough
-      exact UInt64.le_iff_toNat_le.mpr (by omega)) hsz hwp
+      rw [← he]
+      exact hbits) hsz hwp
   refine ⟨p', ?_⟩
   have e := fexit_succ (word := word) (count := count) (ring := ring)
     (word' := word' >>> (lookup H.arena base word' hfit H.lit.arena32 &&& 15))
@@ -2126,18 +2125,19 @@ theorem lit2_round {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHea
         (opos + USize.ofNat 2) mask pB cap cap16 wB rEnd iCount (LC - 2) dCount flags x d01 d23 code ilen' clen'
         (litT C (litT C p1 p2 word' >>> 4).toUInt8 p1 (word' >>> (litT C p1 p2 word' &&& 15)) >>> 4).toUInt8
         (litT C p1 p2 word' >>> 4).toUInt8 .literals (L - 2) pos') := by
-  have hf15 : FillOk a stop word count pos 15 word' count' pos' :=
-    ⟨hf.wf, by have := hf.enough; omega, hf.posLe, hf.posStop, hf.bits, hf.acct⟩
-  obtain ⟨p', m1⟩ := lit_round (K := K) C hH hrel hk h16 hmk hmN hcap N (by omega) (by omega) (by omega) hf15 hs hsz
-  obtain ⟨_, _, _, _, _, _, _, _, rfl⟩ := m1.rel.literals_of rfl
   have hl1 := and15_lt (litT C p1 p2 word')
   have hc30 := hf.enough
+  obtain ⟨p', m1⟩ := lit_round (K := K) C hH hrel hk h16 hmk hmN hcap N (by omega) (by omega) (by omega) hf
+    (UInt64.le_iff_toNat_le.mpr (by omega)) hs hsz
+  obtain ⟨_, _, _, _, _, _, _, _, rfl⟩ := m1.rel.literals_of rfl
   have e1 : (count' - (litT C p1 p2 word' &&& (15 : UInt64))).toNat =
       count'.toNat - (litT C p1 p2 word' &&& (15 : UInt64)).toNat := u64_sub_le (by omega)
   have h1 : (1 : UInt64).toNat = 1 := rfl
   obtain ⟨p'', m2⟩ := lit_round (K := K) (stop := stop) C hH m1.rel hk h16 hmk hmN hcap (N.succ hk (by omega))
     (by omega) (by rw [u64_sub_le (by rw [h1]; omega), h1]; omega) (by rw [u64_sub_le (by rw [h1]; omega), h1]; omega)
-    (FillOk.self (drop1_wf hf.wf (by omega) (by omega)) (by rw [e1]; omega) hf.posStop) hs (wput_size _ _ _ hk hmN hsz _)
+    (FillOk.self (thr := 0) (drop1_wf hf.wf (by omega) (by omega)) (Nat.zero_le _) hf.posStop)
+    (UInt64.le_iff_toNat_le.mpr (by rw [e1]; have := and15_lt (litT C (litT C p1 p2 word' >>> 4).toUInt8 p1
+      (word' >>> (litT C p1 p2 word' &&& 15))); omega)) hs (wput_size _ _ _ hk hmN hsz _)
   refine ⟨p'', ?_⟩
   have e2 : LC - 1 - 1 = LC - 2 := by rw [← u64_sub2]; rfl
   have e3 : L - 1 - 1 = L - 2 := by rw [← u64_sub2]; rfl
