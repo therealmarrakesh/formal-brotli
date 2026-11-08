@@ -1766,6 +1766,144 @@ theorem icEntryOf_split {l sym j : UInt64} (hs : sym.toNat < 704) (hl : l.toNat 
     · exact UInt64.toNat_inj.mp (by rw [f32, e5]; omega)
     · exact UInt64.toNat_inj.mp (by rw [f48, e5]; omega)
 
+/-- A code word of at most 8 bits is read from its root slot alone. -/
+theorem lookupT_short {t : ByteArray} {base : USize} {w : UInt64} {lim : Nat} (hin : TableIn t base.toNat lim)
+    (hl : lim + 6 ≤ t.size) (h32 : t.size < 2 ^ 32)
+    (h8 : UInt64.ofNat (slotNum t (base.toNat + w.toNat % 256)) &&& 15 ≤ 8) :
+    lookupT t base w hin hl h32 = UInt64.ofNat (slotNum t (base.toNat + w.toNat % 256)) := by
+  have hroot := lookupT_root hin hl h32 w
+  have e1 := (load64_slot hroot.1 hroot.2 h32).trans (by rw [rootIndex_toNat w (hin.fits (by omega)) h32])
+  unfold lookupT
+  simp only [e1]
+  rw [dite_eq_left h8]
+
+section
+variable {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow s0 : USize}
+
+/-- The fused entry the loop loads is the block type's entry for the next 8 bits. -/
+theorem FCtx.row64_eq (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) (w : UInt64) :
+    row64 T iRow C.iRowLe C.size32 w =
+      icEntryU (UInt64.ofNat (slotNum T (u32At H.icBase iCur.toNat + w.toNat % 256))) (UInt64.ofNat (w.toNat % 256)) := by
+  have h32 := C.size32
+  have hle := C.iRowLe
+  have hj : w.toNat % 256 < 256 := Nat.mod_lt _ (by decide)
+  have h255 : (w &&& 255).toNat = w.toNat % 256 := by
+    rw [UInt64.toNat_and]
+    exact Nat.and_two_pow_sub_one_eq_mod w.toNat 8
+  have e := C.tab.ic _ C.hi _ hj
+  apply UInt64.toNat_inj.mp
+  unfold row64
+  rw [load64_toNat, fastAdd (by rw [u64_shl (by decide) (by rw [h255]; omega)]; rw [h255]; omega),
+    u64_shl (by decide) (by rw [h255]; omega), h255, C.iRow,
+    show w.toNat % 256 * 2 ^ 3 = 8 * (w.toNat % 256) by rw [Nat.mul_comm], e]
+
+/-- The fast loop's insert-and-copy read through the tree, for any code word: `icK`'s second branch. -/
+@[inline] def icFb {α : Type} (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) (word count : UInt64)
+    (hw : (BitBuffer.mk word count).Wf)
+    (k : (ok : Bool) → (w c code ilen clen : UInt64) → (ok = true → (BitBuffer.mk w c).Wf) → α) : α :=
+  let v := lookupT T (icFbBase C) word C.icIn C.lim C.size32
+  let l := v &&& 15
+  let code := wordSym v
+  have hc : code.toNat < 704 := C.icSym word
+  let row := insertRow code hc
+  let cr := copyRow code hc
+  let ib := rowBits row
+  let cb := rowBits cr
+  let w1 := word >>> l
+  let ilen := rowBase row + (w1 &&& maskT T C.big C.size32 ib)
+  let w2 := w1 >>> ib
+  let clen := rowBase cr + (w2 &&& maskT T C.big C.size32 cb)
+  have hl : l.toNat < 16 := and15_lt v
+  have hib : ib.toNat < 64 := insertRow_bits hc
+  have hcb : cb.toNat ≤ 24 := copyRow_bits hc
+  k (decide (l + ib + cb ≤ count)) (w2 >>> cb) (count - l - ib - cb) code ilen clen
+    (fun h => by
+      have h1 := UInt64.le_iff_toNat_le.mp (of_decide_eq_true h)
+      rw [u64_add_small (by rw [u64_add_small (by omega)]; omega), u64_add_small (by omega)] at h1
+      exact drop3_wf hw (by omega) (by omega) (by omega) h1)
+
+end
+
+theorem k_congr {α : Type} {P : UInt64 → UInt64 → Prop}
+    (k : (ok : Bool) → (w c code ilen clen : UInt64) → (ok = true → P w c) → α) {ok ok' : Bool}
+    {w w' c c' code code' il il' cl cl' : UInt64} {h : ok = true → P w c} {h' : ok' = true → P w' c'}
+    (e1 : ok = ok') (e2 : w = w') (e3 : c = c') (e4 : code = code') (e5 : il = il') (e6 : cl = cl') :
+    k ok w c code il cl h = k ok' w' c' code' il' cl' h' := by
+  subst e1 e2 e3 e4 e5 e6
+  rfl
+
+theorem insertRow_congr {c c' : UInt64} {h : c.toNat < 704} {h' : c'.toNat < 704} (e : c = c') :
+    insertRow c h = insertRow c' h' := by
+  subst e
+  rfl
+
+theorem copyRow_congr {c c' : UInt64} {h : c.toNat < 704} {h' : c'.toNat < 704} (e : c = c') :
+    copyRow c h = copyRow c' h' := by
+  subst e
+  rfl
+
+/-- The fused entries give what the tree gives: `icK` is its read through the tree. -/
+theorem icK_fb {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow s0 : USize}
+    {α : Type} (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) (word count : UInt64)
+    (hw : (BitBuffer.mk word count).Wf)
+    (k : (ok : Bool) → (w c code ilen clen : UInt64) → (ok = true → (BitBuffer.mk w c).Wf) → α) :
+    icK C word count hw k = icFb C word count hw k := by
+  unfold icK icFb
+  dsimp only
+  split
+  · rfl
+  · rename_i hne
+    have hE := C.row64_eq word
+    rw [hE] at hne
+    obtain ⟨hl8, hs, hEo⟩ := icEntryU_fused hne
+    generalize hv0 : UInt64.ofNat (slotNum T (u32At H.icBase iCur.toNat + word.toNat % 256)) = v0 at hE hl8 hs hEo
+    have hv : lookupT T (icFbBase C) word C.icIn C.lim C.size32 = v0 := by
+      have := lookupT_short C.icIn C.lim C.size32 (w := word) (by rw [C.icFbBase_toNat, hv0]; exact hl8)
+      rw [C.icFbBase_toNat, hv0] at this
+      exact this
+    have hl : (v0 &&& 15).toNat ≤ 8 := UInt64.le_iff_toNat_le.mp hl8
+    have hw256 : word.toNat % 256 < 256 := Nat.mod_lt _ (by decide)
+    have hjv : (UInt64.ofNat (word.toNat % 256)).toNat = word.toNat % 256 := by
+      rw [UInt64.toNat_ofNat']
+      exact Nat.mod_eq_of_lt (by omega)
+    obtain ⟨hsym, hres, hunres⟩ := icEntryOf_split hs hl (by rw [hjv]; exact hw256)
+    have hib : (rowBits (insertRow ((v0 >>> 4) &&& 4095) hs)).toNat ≤ 24 := insertRow_bits24 hs
+    have hcb : (rowBits (copyRow ((v0 >>> 4) &&& 4095) hs)).toNat ≤ 24 := copyRow_bits hs
+    have h0 : ((1 : UInt64) <<< 0) - 1 = 0 := by decide
+    by_cases hr : (v0 &&& (15 : UInt64)) + rowBits (insertRow ((v0 >>> 4) &&& 4095) hs) +
+        rowBits (copyRow ((v0 >>> 4) &&& 4095) hs) ≤ 8
+    · obtain ⟨f1, f2, f3, f4, f5⟩ := hres hr
+      have hli : ((v0 &&& (15 : UInt64)) + rowBits (insertRow ((v0 >>> 4) &&& 4095) hs)).toNat =
+          (v0 &&& (15 : UInt64)).toNat + (rowBits (insertRow ((v0 >>> 4) &&& 4095) hs)).toNat :=
+        u64_add_small (by omega)
+      have hr' : ((v0 &&& (15 : UInt64)) + rowBits (insertRow ((v0 >>> 4) &&& 4095) hs) +
+          rowBits (copyRow ((v0 >>> 4) &&& 4095) hs)).toNat ≤ 8 := UInt64.le_iff_toNat_le.mp hr
+      rw [u64_add_small (by rw [hli]; omega), hli] at hr'
+      apply k_congr (P := fun w c => (BitBuffer.mk w c).Wf)
+      · simp only [hE, hEo, hv, f1, f2, f3, UInt64.add_zero, wordSym]
+      · simp only [hE, hEo, hv, f1, f2, f3, u64_shr_zero, wordSym]
+        rw [u64_shr_shr word _ _ (by omega), u64_shr_shr word _ _ (by rw [hli]; omega)]
+      · simp only [hE, hEo, hv, f1, f2, f3, UInt64.sub_zero, wordSym]
+        rw [u64_sub3]
+      · simp only [hE, hEo, hv, hsym, wordSym]
+      · simp only [hE, hEo, hv, f1, f2, f4, wordSym]
+        rw [C.maskT_eq (n := 0) (by decide), C.maskT_eq (by omega), h0, UInt64.and_zero, UInt64.add_zero]
+        congr 1
+        apply UInt64.toNat_inj.mp
+        rw [shr_mask_toNat _ _ _ (by omega) (by omega), shr_mask_toNat _ _ _ (by omega) (by omega), hjv]
+        exact low_bits (by omega)
+      · simp only [hE, hEo, hv, f1, f2, f3, f5, wordSym]
+        rw [C.maskT_eq (n := 0) (by decide), C.maskT_eq (by omega), h0, UInt64.and_zero, UInt64.add_zero,
+          u64_shr_shr word _ _ (by omega)]
+        congr 1
+        apply UInt64.toNat_inj.mp
+        rw [shr_mask_toNat _ _ _ (by rw [hli]; omega) (by omega), shr_mask_toNat _ _ _ (by rw [hli]; omega) (by omega),
+          hjv]
+        exact low_bits (by rw [hli]; omega)
+    · obtain ⟨f1, f2, f3, f4, f5⟩ := hunres hr
+      apply k_congr (P := fun w c => (BitBuffer.mk w c).Wf)
+      all_goals simp only [hE, hEo, hv, hsym, f1, f2, f3, f4, f5, wordSym]
+
 /-! ### A literal round -/
 
 theorem ringWrite_wput {ring : ByteArray} {opos mask : USize} {k : Nat} (hk : k ≤ 24) (hm : mask.toNat = 2 ^ k - 1)
