@@ -964,6 +964,9 @@ def fastLoop (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.to
       have h24 : 2 ^ kk.toNat ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
       rw [word_toUSize (by omega)]
       omega
+    -- the bit buffer after the distance, chosen once before the copy, so that only it lives across the copy's call
+    let word2 := if code < 128 then word1 else word2x
+    let count2 := if code < 128 then count1 else count2x
     let dCount' := if code < 128 then dCount else dCount - 1
     let push := !(decide (code < 128)) && dcode != 0
     let n01 := if push then d ||| (d01 <<< 32) else d01
@@ -974,7 +977,7 @@ def fastLoop (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.to
     let q1 := wget ring' (opos' - USize.ofNat 1) mask hmk hsz'
     let q2 := wget ring' (opos' - USize.ofNat 2) mask hmk hsz'
     if iCount = 0 then
-      fexitP C X W (if code < 128 then word1 else word2x) (if code < 128 then count1 else count2x) ring' opos' pB cap wB
+      fexitP C X W word2 count2 ring' opos' pB cap wB
         rEnd iCount lCount dCount' flags n01 n23 code ilen clen q1 q2 .command 0 pos1 hw2 hf1.posStop hsz'
         (Or.inr (Or.inr rfl))
     else
@@ -982,11 +985,11 @@ def fastLoop (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.to
       have := hf1.acct
       have : count1.toNat ≤ 64 := hf1.wf.count_le
       omega
-    fillK a stop hs (if code < 128 then word1 else word2x) (if code < 128 then count1 else count2x) pos1 40 hw2
+    fillK a stop hs word2 count2 pos1 40 hw2
       (by decide) hf1.posStop (fun _ => hp1) fun word3 count3 pos3 hf3 =>
     icK C word3 count3 hf3.wf fun ok1 word4 count4 code' ilen' clen' hok1 =>
     if h1 : ok1 = false ∨ bEnd < opos'.toUInt64 + ilen' + clen' then
-      fexitP C X W (if code < 128 then word1 else word2x) (if code < 128 then count1 else count2x) ring' opos' pB cap wB
+      fexitP C X W word2 count2 ring' opos' pB cap wB
         rEnd iCount lCount dCount' flags n01 n23 code ilen clen q1 q2 .command 0 pos1 hw2 hf1.posStop hsz'
         (Or.inr (Or.inr rfl))
     else
