@@ -1353,6 +1353,122 @@ theorem distFast_short {np nd d0 d1 d2 d3 dc x : UInt64} (h16 : dc < 16) :
   unfold distFast
   rw [ite_eq_left h16]
 
+theorem u64_zero_le (x : UInt64) : 0 ≤ x := UInt64.le_iff_toNat_le.mpr (Nat.zero_le _)
+
+/-- The distance's symbol, a short code: one of the last distances, adjusted. As a move, to `applyDistance` with the
+code word's bits dropped. -/
+theorem distShort_move {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
+    {a : ByteArray} {stop : USize} {s : CommandState} {clen : Nat} {dist : BlockState} {st : Cmd} {pos : USize}
+    {T : ByteArray} {lCur iCur tb : UInt64} {modeOff lRow iRow iFb dRow s0 : USize}
+    (C : FCtx H T lCur iCur st.dCur tb modeOff lRow iRow iFb dRow s0) (hH : HdrRel H m)
+    (hrel : Rel w k m st (.distanceSymbol s clen dist)) (hp : pos.toNat ≤ stop.toNat) {v : UInt64}
+    (hv : v = lookupT T (dRowBase C st.clen) st.word (C.dIn st.clen) C.lim C.size32) (hl : wordBits v ≤ st.count)
+    (h16 : wordSym v < 16) (hd0 : shortFast st.d0 st.d1 st.d2 st.d3 (wordSym v) ≠ 0)
+    (hw : ¬ st.written.toUInt64 < shortFast st.d0 st.d1 st.d2 st.d3 (wordSym v)) (hrc : ¬ st.remaining < st.clen) :
+    ∃ p', MoveOk w k m K a stop (.distanceSymbol s clen dist) st pos p'
+      (applyDistance (setBits st (st.word >>> wordBits v) (st.count - wordBits v)) pos (wordSym v)
+        (shortFast st.d0 st.d1 st.d2 st.d3 (wordSym v))) := by
+  have hrel0 := hrel
+  obtain ⟨hC, _, _, _⟩ := hrel
+  have h0lt : st.d0.toNat < 2 ^ 32 := by rw [← hC.d0]; exact hC.dsLt.1
+  have h1lt : st.d1.toNat < 2 ^ 32 := by rw [← hC.d1]; exact hC.dsLt.2.1
+  have hwr := hC.written
+  have hwin := hC.win
+  have hR : 2 ^ k ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hC.k24
+  have hlt : (shortFast st.d0 st.d1 st.d2 st.d3 (wordSym v)).toNat < 2 ^ 32 := by
+    have := UInt64.le_iff_toNat_le.mp (UInt64.not_lt.mp hw)
+    rw [USize.toNat_toUInt64] at this
+    have : min w s.output.length ≤ w := Nat.min_le_left _ _
+    omega
+  have hsf := shortFast_eq h0lt h1lt (UInt64.lt_iff_toNat_lt.mp h16) hd0 hlt
+  have h := stepDistanceSymbol_ok (K := K) (a := a) (stop := pos) hH hrel0 (Nat.le_refl _) (Or.inr rfl)
+  rw [stepDistanceSymbol_fast C pos, ← hv] at h
+  have hnd := H.ndLe
+  have hx : extraBitsFast H.npostfix H.ndirect (wordSym v) = 0 := by
+    have h16' := UInt64.lt_iff_toNat_lt.mp h16
+    unfold extraBitsFast
+    rw [ite_eq_left (UInt64.lt_iff_toNat_lt.mpr (by
+      rw [u64_add_small (by rw [show (16 : UInt64).toNat = 16 from rfl]; omega)]
+      exact Nat.lt_of_lt_of_le h16' (Nat.le_add_right _ _)))]
+  have e : distanceStep H st pos v = applyDistance (setBits st (st.word >>> wordBits v) (st.count - wordBits v)) pos
+      (wordSym v) (shortFast st.d0 st.d1 st.d2 st.d3 (wordSym v)) := by
+    unfold distanceStep
+    dsimp only
+    rw [ite_eq_left hl, hx, ite_eq_left (show (0 : UInt64) ≤ 24 by decide), ite_eq_left (u64_zero_le _),
+      distFast_short h16, ← hsf, ite_eq_right hd0]
+    simp only [BitBuffer.drop, u64_shr_zero, UInt64.sub_zero]
+  rw [e] at h
+  obtain ⟨hs1, hs2⟩ := applyDistance_next (st := setBits st (st.word >>> wordBits v) (st.count - wordBits v))
+    (pos := pos) (dcode := wordSym v) hw hrc
+  exact h.widen hs1 hs2 hp
+
+/-- The distance's symbol, from 16 on: the shared table's distance with no extra bits, plus the extra bits shifted by
+NPOSTFIX. As a move, to `applyDistance` with the code word's and the extra bits dropped. -/
+theorem distLong_move {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
+    {a : ByteArray} {stop : USize} {s : CommandState} {clen : Nat} {dist : BlockState} {st : Cmd} {pos : USize}
+    {T : ByteArray} {lCur iCur tb : UInt64} {modeOff lRow iRow iFb dRow s0 : USize}
+    (C : FCtx H T lCur iCur st.dCur tb modeOff lRow iRow iFb dRow s0) (hH : HdrRel H m)
+    (hrel : Rel w k m st (.distanceSymbol s clen dist)) (hp : pos.toNat ≤ stop.toNat) {v E D : UInt64}
+    (hv : v = lookupT T (dRowBase C st.clen) st.word (C.dIn st.clen) C.lim C.size32) (h16 : ¬ wordSym v < 16)
+    (hE : E = dEntry H.npostfix H.ndirect (wordSym v))
+    (hD : D = (E >>> 32) + (((st.word >>> wordBits v) &&& maskT T C.big C.size32 (E &&& 31)) <<< H.npostfix))
+    (hok : wordBits v + (E &&& 31) ≤ st.count) (hd0 : D ≠ 0) (hw : ¬ st.written.toUInt64 < D)
+    (hrc : ¬ st.remaining < st.clen) :
+    ∃ p', MoveOk w k m K a stop (.distanceSymbol s clen dist) st pos p'
+      (applyDistance (setBits st ((st.word >>> wordBits v) >>> (E &&& 31)) (st.count - wordBits v - (E &&& 31))) pos
+        (wordSym v) D) := by
+  have hrel0 := hrel
+  have hnp := H.npLe
+  have hnd := H.ndLe
+  have hsymA : (wordSym v).toNat < distanceAlphabetSize H.npostfix.toNat H.ndirect.toNat := by
+    rw [hv]
+    exact C.dAlpha hH st.clen st.word
+  have hn24 := (distanceExtraBits_le_iff _ _ _).mp hsymA
+  have hbitsE : (extraBitsFast H.npostfix H.ndirect (wordSym v)).toNat =
+      distanceExtraBits H.npostfix.toNat H.ndirect.toNat (wordSym v).toNat :=
+    extraBitsFast_toNat hnp hnd (wordValue_lt v)
+  obtain ⟨eA, eB⟩ := dEntry_split hnp hnd (wordValue_lt v) h16 (by rw [hbitsE]; exact hn24)
+  rw [← hE] at eA eB
+  rw [eA] at hok hD
+  rw [eA]
+  have hlv : (wordBits v).toNat < 16 := and15_lt v
+  have hok' := UInt64.le_iff_toNat_le.mp hok
+  rw [u64_add_small (by omega)] at hok'
+  have hl : wordBits v ≤ st.count := UInt64.le_iff_toNat_le.mpr (by omega)
+  have hnbc : extraBitsFast H.npostfix H.ndirect (wordSym v) ≤ ((BitBuffer.mk st.word st.count).drop (wordBits v)).count :=
+    UInt64.le_iff_toNat_le.mpr (by
+      rw [drop_count (UInt64.le_iff_toNat_le.mp hl)]
+      show (extraBitsFast H.npostfix H.ndirect (wordSym v)).toNat ≤ st.count.toNat - (wordBits v).toNat
+      omega)
+  have hDeq : distFast H.npostfix H.ndirect st.d0 st.d1 st.d2 st.d3 (wordSym v)
+      (((BitBuffer.mk st.word st.count).drop (wordBits v)).peek (extraBitsFast H.npostfix H.ndirect (wordSym v))) = D := by
+    rw [distFast_split h16, hD, eB]
+    congr 1
+    split
+    · rename_i hdir
+      have h0 : extraBitsFast H.npostfix H.ndirect (wordSym v) = 0 := by
+        unfold extraBitsFast
+        rw [ite_eq_left hdir]
+      rw [h0, C.maskT_eq (by decide), show ((1 : UInt64) <<< 0) - 1 = 0 by decide, UInt64.and_zero]
+      exact UInt64.toNat_inj.mp (by rw [UInt64.toNat_shiftLeft]; simp)
+    · rw [C.maskT_eq (by omega)]
+      rfl
+  have h := stepDistanceSymbol_ok (K := K) (a := a) (stop := pos) hH hrel0 (Nat.le_refl _) (Or.inr rfl)
+  rw [stepDistanceSymbol_fast C pos, ← hv] at h
+  have e : distanceStep H st pos v = applyDistance (setBits st ((st.word >>> wordBits v) >>>
+      extraBitsFast H.npostfix H.ndirect (wordSym v)) (st.count - wordBits v - extraBitsFast H.npostfix H.ndirect
+      (wordSym v))) pos (wordSym v) D := by
+    unfold distanceStep
+    dsimp only
+    rw [ite_eq_left hl, ite_eq_left (UInt64.le_iff_toNat_le.mpr (by rw [hbitsE]; exact hn24)), ite_eq_left hnbc,
+      hDeq, ite_eq_right hd0]
+    simp only [BitBuffer.drop]
+  rw [e] at h
+  obtain ⟨hs1, hs2⟩ := applyDistance_next (st := setBits st ((st.word >>> wordBits v) >>>
+      extraBitsFast H.npostfix H.ndirect (wordSym v)) (st.count - wordBits v - extraBitsFast H.npostfix H.ndirect
+      (wordSym v))) (pos := pos) (dcode := wordSym v) hw hrc
+  exact h.widen hs1 hs2 hp
+
 /-! ### A literal round -/
 
 theorem ringWrite_wput {ring : ByteArray} {opos mask : USize} {k : Nat} (hk : k ≤ 24) (hm : mask.toNat = 2 ^ k - 1)
