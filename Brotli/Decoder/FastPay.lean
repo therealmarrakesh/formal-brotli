@@ -34,11 +34,11 @@ section
 variable {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow : USize}
 
 theorem distK_rel {α β : Type} {R : α → β → Prop} (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow)
-    {np word count clen d0 d1 d2 d3 : UInt64} {hw hw' : (BitBuffer.mk word count).Wf}
+    {np word count clen d01 d23 : UInt64} {hw hw' : (BitBuffer.mk word count).Wf}
     {k1 : (ok : Bool) → (w c dcode d : UInt64) → (ok = true → (BitBuffer.mk w c).Wf) → α}
     {k2 : (ok : Bool) → (w c dcode d : UInt64) → (ok = true → (BitBuffer.mk w c).Wf) → β}
     (h : ∀ ok w c dcode d hk hk', R (k1 ok w c dcode d hk) (k2 ok w c dcode d hk')) :
-    R (distK C np word count clen d0 d1 d2 d3 hw k1) (distK C np word count clen d0 d1 d2 d3 hw' k2) := by
+    R (distK C np word count clen d01 d23 hw k1) (distK C np word count clen d01 d23 hw' k2) := by
   unfold distK
   dsimp only
   split <;> exact h _ _ _ _ _ _ _

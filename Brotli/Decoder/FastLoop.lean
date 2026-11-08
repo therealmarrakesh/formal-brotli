@@ -672,13 +672,21 @@ or past the bytes written, and the loop leaves at either. -/
   let base := if idx &&& 2 = 2 then hi else lo
   base + (((0x6051426051423333 : UInt64) >>> (dcode <<< 2)) &&& 15) - 3
 
+/-- `shortFast` on the last distances as two packed words (`d0 ||| d1 <<< 32`, `d2 ||| d3 <<< 32`): the word by the
+index's high bit, then its half by the low bit, so that only the distance needed is unpacked. -/
+@[inline] def shortFastP (d01 d23 dcode : UInt64) : UInt64 :=
+  let idx := ((0x555000E4 : UInt64) >>> (dcode <<< 1)) &&& 3
+  let w := if idx &&& 2 = 2 then d23 else d01
+  let base := (w >>> ((idx &&& 1) <<< 5)) &&& 0xFFFFFFFF
+  base + (((0x6051426051423333 : UInt64) >>> (dcode <<< 2)) &&& 15) - 3
+
 section
 variable {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow : USize}
 
 /-- Head 2's explicit distance: the tree for the copy length's context, the symbol, and the distance, by the short
 codes or by the shared table and the extra bits; with whether the buffer held the bits. -/
 @[inline] def distK {α : Type} (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) (np : UInt64)
-    (word count clen d0 d1 d2 d3 : UInt64) (hw : (BitBuffer.mk word count).Wf)
+    (word count clen d01 d23 : UInt64) (hw : (BitBuffer.mk word count).Wf)
     (k : (ok : Bool) → (w c dcode d : UInt64) → (ok = true → (BitBuffer.mk w c).Wf) → α) : α :=
   let v := lookupT T (dRowBase C clen) word (C.dIn clen) C.lim C.size32
   let l := v &&& 15
@@ -686,7 +694,7 @@ codes or by the shared table and the extra bits; with whether the buffer held th
   let w1 := word >>> l
   have hl : l.toNat < 16 := and15_lt v
   if dcode < 16 then
-    k (decide (l ≤ count)) w1 (count - l) dcode (shortFast d0 d1 d2 d3 dcode)
+    k (decide (l ≤ count)) w1 (count - l) dcode (shortFastP d01 d23 dcode)
       (fun h => drop1_wf hw (by omega) (UInt64.le_iff_toNat_le.mp (of_decide_eq_true h)))
   else
     let e := dshT T C.s0Le C.size32 dcode (C.dSym clen word)
@@ -1232,7 +1240,7 @@ def fastLoop (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.to
     have hlim := W.lim
     fillK a stop hs word count pos 40 S.wf (by decide) S.posStop (fun _ => by omega) fun word1 count1 pos1 hf1 =>
     let d0 := d01 &&& 0xFFFFFFFF
-    distK C np word1 count1 clen d0 (d01 >>> 32) (d23 &&& 0xFFFFFFFF) (d23 >>> 32) hf1.wf
+    distK C np word1 count1 clen d01 d23 hf1.wf
       fun ok2 word2x count2x dcode dx hok2 =>
     let d := if code < 128 then d0 else dx
     let written := usmin cap16 (opos + wB)

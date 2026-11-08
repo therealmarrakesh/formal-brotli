@@ -130,7 +130,7 @@ def fastLoopW (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.t
     have hlim := W.lim
     fillK a stop hs word count pos 40 S.wf (by decide) S.posStop (fun _ => by omega) fun word1 count1 pos1 hf1 =>
     let d0 := d01 &&& 0xFFFFFFFF
-    distK C np word1 count1 clen d0 (d01 >>> 32) (d23 &&& 0xFFFFFFFF) (d23 >>> 32) hf1.wf
+    distK C np word1 count1 clen d01 d23 hf1.wf
       fun ok2 word2x count2x dcode dx hok2 =>
     let d := if code < 128 then d0 else dx
     let written := usmin cap16 (opos + wB)

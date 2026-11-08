@@ -642,6 +642,36 @@ theorem short_add_case {b : UInt64} {x : Nat} (hx : x ≤ 3) (hb : b.toNat < 2 ^
     h3, u64_add_small (by rw [hx']; omega), hx']
   omega
 
+theorem shr32_mask (x : UInt64) : (x >>> (32 : UInt64)) &&& (0xFFFFFFFF : UInt64) = x >>> (32 : UInt64) := by
+  apply UInt64.toNat_inj.mp
+  have hx := x.toNat_lt
+  have h64 : (2 : Nat) ^ 32 * 2 ^ 32 = 2 ^ 64 := by rw [← Nat.pow_add]
+  rw [UInt64.toNat_and, UInt64.toNat_shiftRight, show (32 : UInt64).toNat % 64 = 32 from rfl,
+    show (0xFFFFFFFF : UInt64).toNat = 2 ^ 32 - 1 from rfl, Nat.and_two_pow_sub_one_eq_mod, Nat.shiftRight_eq_div_pow]
+  exact Nat.mod_eq_of_lt (Nat.div_lt_of_lt_mul (by rw [h64]; exact hx))
+
+theorem and1_cases (x : UInt64) : x &&& 1 = 1 ∨ x &&& 1 = 0 := by
+  have : (x &&& 1).toNat < 2 := by
+    rw [UInt64.toNat_and]
+    exact Nat.lt_of_le_of_lt Nat.and_le_right (by decide)
+  rcases (show (x &&& 1).toNat = 1 ∨ (x &&& 1).toNat = 0 by omega) with h | h
+  · exact Or.inl (UInt64.toNat_inj.mp h)
+  · exact Or.inr (UInt64.toNat_inj.mp h)
+
+/-- The short codes on the packed last distances are `shortFast` on them unpacked. -/
+theorem shortFastP_eq (d01 d23 dc : UInt64) :
+    shortFastP d01 d23 dc = shortFast (d01 &&& 0xFFFFFFFF) (d01 >>> 32) (d23 &&& 0xFFFFFFFF) (d23 >>> 32) dc := by
+  unfold shortFastP shortFast
+  generalize ((0x555000E4 : UInt64) >>> (dc <<< 1)) &&& 3 = idx
+  dsimp only
+  rcases and1_cases idx with h1 | h1
+  · rw [h1, show ((1 : UInt64) <<< 5) = 32 from rfl, shr32_mask]
+    simp only [↓reduceIte]
+    split <;> rfl
+  · rw [h1, show ((0 : UInt64) <<< 5) = 0 from rfl]
+    simp only [show ((0 : UInt64) = 1) = False from by decide, UInt64.shiftRight_zero, ↓reduceIte]
+    split <;> rfl
+
 /-- The branch-free short codes are the step machine's wherever the fast loop goes on with them: a distance not 0 and
 below `2 ^ 32`. -/
 theorem shortFast_eq {d0 d1 d2 d3 dc : UInt64} (h0 : d0.toNat < 2 ^ 32) (h1 : d1.toNat < 2 ^ 32) (hd : dc.toNat < 16)
@@ -2632,9 +2662,9 @@ end
 /-- `distK` passes its continuation the distance's reads, whichever they are. -/
 theorem distK_spec {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow : USize}
     {α : Type} {P : α → Prop} (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) (np : UInt64)
-    (word count clen d0 d1 d2 d3 : UInt64) (hw : (BitBuffer.mk word count).Wf)
+    (word count clen d01 d23 : UInt64) (hw : (BitBuffer.mk word count).Wf)
     (k : (ok : Bool) → (w c dcode d : UInt64) → (ok = true → (BitBuffer.mk w c).Wf) → α)
-    (h : ∀ ok w c dcode d hk, P (k ok w c dcode d hk)) : P (distK C np word count clen d0 d1 d2 d3 hw k) := by
+    (h : ∀ ok w c dcode d hk, P (k ok w c dcode d hk)) : P (distK C np word count clen d01 d23 hw k) := by
   unfold distK
   dsimp only
   split <;> exact h _ _ _ _ _ _
@@ -2642,21 +2672,22 @@ theorem distK_spec {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeO
 /-- `distK`'s two cases: a short code, or a code from 16 on through the shared table. -/
 theorem distK_cases {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow : USize}
     {α : Type} {P : α → Prop} (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) (np : UInt64)
-    (word count clen d0 d1 d2 d3 : UInt64) (hw : (BitBuffer.mk word count).Wf)
+    (word count clen d01 d23 : UInt64) (hw : (BitBuffer.mk word count).Wf)
     (k : (ok : Bool) → (w c dcode d : UInt64) → (ok = true → (BitBuffer.mk w c).Wf) → α)
     (h1 : ∀ v, v = lookupT T (dRowBase C clen) word (C.dIn clen) C.lim C.size32 → wordSym v < 16 → ∀ hk,
       P (k (decide (wordBits v ≤ count)) (word >>> wordBits v) (count - wordBits v) (wordSym v)
-        (shortFast d0 d1 d2 d3 (wordSym v)) hk))
+        (shortFast (d01 &&& 0xFFFFFFFF) (d01 >>> 32) (d23 &&& 0xFFFFFFFF) (d23 >>> 32) (wordSym v)) hk))
     (h2 : ∀ v E, v = lookupT T (dRowBase C clen) word (C.dIn clen) C.lim C.size32 → ¬ wordSym v < 16 →
       E = dEntry H.npostfix H.ndirect (wordSym v) → ∀ hk,
       P (k (decide (wordBits v + (E &&& 31) ≤ count)) ((word >>> wordBits v) >>> (E &&& 31))
         (count - wordBits v - (E &&& 31)) (wordSym v)
         ((E >>> 32) + (((word >>> wordBits v) &&& maskT T C.big C.size32 (E &&& 31)) <<< np)) hk)) :
-    P (distK C np word count clen d0 d1 d2 d3 hw k) := by
+    P (distK C np word count clen d01 d23 hw k) := by
   unfold distK
   dsimp only
   split
-  · exact h1 _ rfl ‹_› _
+  · rw [shortFastP_eq]
+    exact h1 _ rfl ‹_› _
   · exact h2 _ _ rfl ‹_› (C.dshT_eq _) _
 
 /-- `icFb` passes its continuation the element's reads through the tree. -/
@@ -2914,7 +2945,7 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
         by_cases hc : code < 128
         · refine distK_spec (P := fun r => ∃ p', MoveOk w kk.toNat mH K a stop _ _ pos p' (Subtype.val r) ∧
           FFrame cap pB bEnd opos (Subtype.val r)) C np _ _ _
-            _ _ _ _ _ _ ?_
+            _ _ _ _ ?_
           intro ok2 word2x count2x dcode dx hok2
           simp only [hc, ↓reduceIte, decide_true, Bool.not_true, Bool.false_and, Bool.false_eq_true]
           by_cases hbad : ¬True ∧ ok2 = false ∨ d01 &&& 4294967295 = 0 ∨
@@ -3004,7 +3035,7 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
                 exact ⟨pe, md.trans me, fe.mono (copy_pos N1).1⟩
         · refine distK_cases (P := fun r => ∃ p', MoveOk w kk.toNat mH K a stop _ _ pos p' (Subtype.val r) ∧
           FFrame cap pB bEnd opos (Subtype.val r)) C np _ _ _
-            _ _ _ _ _ _ ?_ ?_
+            _ _ _ _ ?_ ?_
           · intro v hv h16 hk2
             simp only [hc, ↓reduceIte, decide_false, Bool.not_false, Bool.true_and, not_false_eq_true, true_and]
             by_cases hbad : decide (wordBits v ≤ count1) = false ∨
