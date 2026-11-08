@@ -2256,6 +2256,70 @@ theorem fcopy_move {s : CommandState} {dd nn : Nat} {d : UInt64}
     exact UInt64.toNat_inj.mp (by rw [USize.toNat_toUInt64, hcU])
   exact ⟨_, by unfold fexit; rw [ep, ew, er]; exact m3⟩
 
+/-- A command's start within its block, then its insert-and-copy element read through the tree (`icFb`, which the
+fused entries equal): from a refill to 40 bits, the command's literals, in the loop's record. -/
+theorem ic_round {T : ByteArray} {tb : UInt64} {modeOff lRow iRow iFb dRow s0 : USize}
+    (C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow s0)
+    (hK : ∀ s bs, s.remaining ≠ 0 → K s bs = readCommand w m s bs >>= fun (s1, b) => K s1 b) (hH : HdrRel H m)
+    {s : CommandState}
+    (hrel : Rel w k.toNat m (fexit word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code
+      ilen clen p1 p2 .command 0 pos) (.command s))
+    {word3 count3 : UInt64} {pos3 : USize} (hf : FillOk a stop word count pos 40 word3 count3 pos3)
+    (hi : iCount ≠ 0) {v : UInt64} (hv : v = lookupT T (icFbBase C) word3 C.icIn C.lim C.size32)
+    (hc : (wordSym v).toNat < 704)
+    (hok : wordBits v + rowBits (insertRow (wordSym v) hc) + rowBits (copyRow (wordSym v) hc) ≤ count3)
+    (hrem : opos.toNat + (rowBase (insertRow (wordSym v) hc) +
+        ((word3 >>> wordBits v) &&& maskT T C.big C.size32 (rowBits (insertRow (wordSym v) hc)))).toNat +
+      (rowBase (copyRow (wordSym v) hc) + (((word3 >>> wordBits v) >>> rowBits (insertRow (wordSym v) hc)) &&&
+        maskT T C.big C.size32 (rowBits (copyRow (wordSym v) hc)))).toNat ≤ rEnd.toNat) :
+    ∃ p', MoveOk w k.toNat m K a stop (.command s)
+      (fexit word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code ilen clen p1 p2
+        .command 0 pos) pos p'
+      (fexit (((word3 >>> wordBits v) >>> rowBits (insertRow (wordSym v) hc)) >>> rowBits (copyRow (wordSym v) hc))
+        (count3 - wordBits v - rowBits (insertRow (wordSym v) hc) - rowBits (copyRow (wordSym v) hc)) ring opos mask pB
+        cap cap16 wB rEnd (iCount - 1) LC dCount flags x d01 d23 (wordSym v)
+        (rowBase (insertRow (wordSym v) hc) +
+          ((word3 >>> wordBits v) &&& maskT T C.big C.size32 (rowBits (insertRow (wordSym v) hc))))
+        (rowBase (copyRow (wordSym v) hc) + (((word3 >>> wordBits v) >>> rowBits (insertRow (wordSym v) hc)) &&&
+          maskT T C.big C.size32 (rowBits (copyRow (wordSym v) hc))))
+        p1 p2 .literals
+        (rowBase (insertRow (wordSym v) hc) +
+          ((word3 >>> wordBits v) &&& maskT T C.big C.size32 (rowBits (insertRow (wordSym v) hc)))) pos3) := by
+  have hC := hrel.1
+  have hcb : 1 ≤ x.copyBase.toNat := hC.cbase1
+  have m1 := fill_move (K := K) hrel hf
+  have hcl : 1 ≤ (rowBase (copyRow (wordSym v) hc) + (((word3 >>> wordBits v) >>> rowBits (insertRow (wordSym v) hc)) &&&
+      maskT T C.big C.size32 (rowBits (copyRow (wordSym v) hc)))).toNat := by
+    have h2 := cmdRow_copy2 hc
+    rw [← (copyRow_fields hc).2] at h2
+    have h3 : (rowBase (copyRow (wordSym v) hc)).toNat ≤ 2118 := by
+      rw [(copyRow_fields hc).2]; exact (cmdRow_small hc).2.2.2
+    have hcb24 := copyRow_bits hc
+    have hX : (((word3 >>> wordBits v) >>> rowBits (insertRow (wordSym v) hc)) &&&
+        maskT T C.big C.size32 (rowBits (copyRow (wordSym v) hc))).toNat < 16777216 := by
+      rw [C.maskT_eq (by omega), shr_mask_toNat _ _ _ (by have := insertRow_bits hc; omega) (by omega)]
+      exact Nat.lt_of_lt_of_le (Nat.mod_lt _ (Nat.two_pow_pos _)) (Nat.pow_le_pow_right (by decide) hcb24)
+    rw [u64_add_small (by omega)]
+    omega
+  have e : (rEnd - opos.toUInt64).toNat = rEnd.toNat - opos.toNat := by
+    rw [u64_sub_le (by rw [USize.toNat_toUInt64]; omega), USize.toNat_toUInt64]
+  have hr0 : rEnd - opos.toUInt64 ≠ 0 := fun h0 => by
+    have h0' := congrArg UInt64.toNat h0
+    rw [e] at h0'
+    have : (0 : UInt64).toNat = 0 := rfl
+    omega
+  have hrc : ¬ rEnd - opos.toUInt64 < rowBase (insertRow (wordSym v) hc) +
+      ((word3 >>> wordBits v) &&& maskT T C.big C.size32 (rowBits (insertRow (wordSym v) hc))) := fun hl => by
+    have := UInt64.lt_iff_toNat_lt.mp hl
+    rw [e] at this
+    omega
+  obtain ⟨p2, m2⟩ := cmd_move (a := a) (stop := stop) (pos := pos3) hK hH m1.rel hr0 hi hf.posStop
+  obtain ⟨_, _, rfl⟩ := m2.rel.insertCopy_of rfl
+  obtain ⟨p3, m3⟩ := ic_move C hH m2.rel hf.posStop hv hc rfl rfl rfl rfl rfl hok hrc
+  obtain ⟨_, _, _, _, _, _, _, _, rfl⟩ := m3.rel.literals_of rfl
+  exact ⟨_, ((m1.trans m2).trans m3).congr
+    (m3.rel.literals_ext (cbits := x.copyBits) (cb := x.copyBase) (d := x.dist) hcb) rfl rfl rfl rfl⟩
+
 end
 
 end Brotli.Decoder
