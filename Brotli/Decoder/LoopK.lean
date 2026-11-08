@@ -31,7 +31,7 @@ is reused when it is held once. `spare` is never written, which is what makes th
 proved equal to the plain one, with the given record's spare field kept. -/
 
 /-- The record a literal run builds its result in: the run's fields, and a spare one. -/
-structure RunOut where
+public structure RunOut where
   word : UInt64
   count : UInt64
   pos : USize
@@ -275,7 +275,7 @@ theorem literalRunCS_inv (cell : RunOut) (H : Hdr) (t : UInt64) (ht : t.toNat < 
   exact literalRun_inv H.lit a stop hs _ modeOff mask k _ hm hd hmask hk n word count pos wpos ring p1 p2 hp hw hsize hwp
 
 /-- The command state from its fields. -/
-def mkCmd (word count : UInt64) (ring : ByteArray) (wpos pend cap written : USize) (p1 p2 : UInt8)
+@[expose] public def mkCmd (word count : UInt64) (ring : ByteArray) (wpos pend cap written : USize) (p1 p2 : UInt8)
     (remaining iCount lCount dCount : UInt64) (flags : Flags)
     (iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist : UInt64)
     (wordBuf : ByteArray) (wordPos : USize) (tag : Tag) (left : UInt64) (pos : USize) (status : StepStatus) : Cmd :=
@@ -284,13 +284,13 @@ def mkCmd (word count : UInt64) (ring : ByteArray) (wpos pend cap written : USiz
     tag, left, pos, status⟩
 
 /-- A step's continuation: the state's fields and the position. -/
-abbrev KCont (α : Type) : Type :=
+public abbrev KCont (α : Type) : Type :=
   UInt64 → UInt64 → ByteArray → USize → USize → USize → USize → UInt8 → UInt8 → UInt64 → UInt64 → UInt64 → UInt64 →
     Flags → UInt64 → UInt64 → UInt64 → UInt64 → UInt64 → UInt64 → UInt64 → UInt64 → UInt64 → UInt64 → UInt64 →
     UInt64 → UInt64 → UInt64 → UInt64 → UInt64 → ByteArray → USize → Tag → UInt64 → USize → α
 
 /-- A step's continuation in the loop: the state's fields, the position, and what the loop knows of them. -/
-abbrev KContP (H : Hdr) (k stop : USize) (α : Type) : Type :=
+public abbrev KContP (H : Hdr) (k stop : USize) (α : Type) : Type :=
   (word count : UInt64) → (ring : ByteArray) → (wpos pend cap written : USize) → (p1 p2 : UInt8) →
     (remaining iCount lCount dCount : UInt64) → (flags : Flags) →
     (iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist : UInt64) →
@@ -298,10 +298,10 @@ abbrev KContP (H : Hdr) (k stop : USize) (α : Type) : Type :=
     KInv H k stop word count ring wpos written iCur iPrev lCur lPrev dCur dPrev copyBits dist wordBuf wordPos tag pos → α
 
 /-- A step's continuation in the loop, which also takes the record the next literal run builds its result in. -/
-abbrev KContC (H : Hdr) (k stop : USize) (α : Type) : Type := RunOut → KContP H k stop α
+public abbrev KContC (H : Hdr) (k stop : USize) (α : Type) : Type := RunOut → KContP H k stop α
 
 /-- How a step's result goes on: with the record's fields if it moved on, otherwise with the record. -/
-def kcase {α : Type} (cont : KCont α) (exit : Cmd → α) (r : Cmd) : α :=
+@[expose] public def kcase {α : Type} (cont : KCont α) (exit : Cmd → α) (r : Cmd) : α :=
   if r.status = .next then
     cont r.word r.count r.ring r.wpos r.pend r.cap r.written r.p1 r.p2 r.remaining r.iCount r.lCount r.dCount r.flags
       r.ext.iCur r.ext.iPrev r.ext.lCur r.ext.lPrev r.ext.dCur r.ext.dPrev r.ext.d0 r.ext.d1 r.ext.d2 r.ext.d3
@@ -343,7 +343,7 @@ def kcase {α : Type} (cont : KCont α) (exit : Cmd → α) (r : Cmd) : α :=
       (hki.retag (copy_dist_ok hd hwd hki.written))
 
 /-- One step of the command loop on the fields: `stepCmd`, ending in a continuation. -/
-@[inline] def kstep {α : Type} (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size)
+@[inline] public def kstep {α : Type} (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size)
     (contC : KContC H k stop α) (exit : Cmd → α)
     (word count : UInt64) (ring : ByteArray) (wpos pend cap written : USize) (p1 p2 : UInt8)
     (remaining iCount lCount dCount : UInt64) (flags : Flags)
@@ -672,7 +672,7 @@ public def runCmdE (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : st
 /-- The command loop with the fast loop (`FastLoop.lean`): at a command's literals or its distance, with 40 bytes of the
 chunk left and room for the rest of the command, the fast loop; otherwise, and always after the fast loop has left, one
 step of the step machine. -/
-def runCmdKF (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (n : USize) (fresh : Bool) :
+@[expose] public def runCmdKF (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (n : USize) (fresh : Bool) :
     (cell : RunOut) → (word count : UInt64) → (ring : ByteArray) → (wpos pend cap written : USize) → (p1 p2 : UInt8) →
     (remaining iCount lCount dCount : UInt64) → (flags : Flags) →
     (iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist : UInt64) →
@@ -727,7 +727,7 @@ decreasing_by
     omega
 
 /-- The command loop with the fast loop, from a state the compiled loop may run from. -/
-public def runCmdF (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (n : USize) (st : Cmd)
+@[expose] public def runCmdF (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (n : USize) (st : Cmd)
     (pos : USize) (h : CmdInv H k stop st pos) : Cmd :=
   match st, h with
   | ⟨word, count, ring, wpos, pend, cap, written, p1, p2, remaining, iCount, lCount, dCount, flags,
@@ -758,7 +758,7 @@ macro "ksplitT " t:tacticSeq : tactic =>
 
 section
 /-- A continuation that depends neither on the record it is handed nor on the proof. -/
-abbrev Drops {α : Type} (H : Hdr) (k stop : USize) (contC : KContC H k stop α) (g : KCont α) : Prop :=
+public abbrev Drops {α : Type} (H : Hdr) (k stop : USize) (contC : KContC H k stop α) (g : KCont α) : Prop :=
   ∀ c word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev
     d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos h,
     contC c word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur
@@ -774,7 +774,7 @@ variable {α : Type} (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : 
   (wordBuf : ByteArray) (wordPos : USize) (left : UInt64) (pos sp : USize) (ss : StepStatus) (cell : RunOut)
 
 /-- What a step on the fields must equal, for a tag, when its continuation doesn't depend on the record it passes. -/
-abbrev KStepIs (tag : Tag) (hinv : KInv H k stop word count ring wpos written iCur iPrev lCur lPrev dCur dPrev copyBits dist wordBuf wordPos tag pos) :
+public abbrev KStepIs (tag : Tag) (hinv : KInv H k stop word count ring wpos written iCur iPrev lCur lPrev dCur dPrev copyBits dist wordBuf wordPos tag pos) :
     Prop :=
   kstep H k a stop hs contC exit word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur
       iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos cell
@@ -922,7 +922,7 @@ theorem kstep_word (hcont : Drops H k stop contC g)
 set_option linter.unusedSimpArgs true
 
 /-- A step on the fields is `stepCmd` on the record they make, gone on with. -/
-theorem kstep_eq (hcont : Drops H k stop contC g) (tag : Tag)
+public theorem kstep_eq (hcont : Drops H k stop contC g) (tag : Tag)
     (hinv : KInv H k stop word count ring wpos written iCur iPrev lCur lPrev dCur dPrev copyBits dist wordBuf wordPos tag pos) :
     KStepIs H k a stop hs contC g exit word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur
       iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos left pos sp ss cell tag

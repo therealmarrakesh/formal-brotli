@@ -2,6 +2,7 @@ module
 
 public import Brotli.Decoder.Work
 public import Brotli.Decoder.CostHeader
+public import Brotli.Decoder.FastProof
 
 @[expose] public section
 
@@ -1371,14 +1372,6 @@ theorem Rel.word_of {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {p : Phase} (h 
     ∃ s pending, p = .word s pending := by
   cases p
   case word s pending => exact ⟨s, pending, rfl⟩
-  case literalSymbol => exact h.elim
-  all_goals exact absurd (h.2.1.symm.trans ht) (fun e => Tag.noConfusion e)
-
-/-- A state at a copy stands for a copy's place. -/
-theorem Rel.copy_of {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {p : Phase} (h : Rel w k m st p) (ht : st.tag = .copy) :
-    ∃ s d n, p = .copy s d n := by
-  cases p
-  case copy s d n => exact ⟨s, d, n, rfl⟩
   case literalSymbol => exact h.elim
   all_goals exact absurd (h.2.1.symm.trans ht) (fun e => Tag.noConfusion e)
 
