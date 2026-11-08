@@ -1511,9 +1511,11 @@ def listsLoop (lens : ByteArray) (n : USize) (hn : n.toNat ≤ lens.size) (hs : 
         rw [lens_byte_toUSize hil]
         exact hs.2 _ (USize.lt_iff_toNat_lt.mp hi)
       have hi' : i.toNat < n.toNat := USize.lt_iff_toNat_lt.mp hi
+      -- the old head read before `head` is written, so that it is held once there and written in place
+      let old := u16GetU head l (by omega) (by omega)
       listsLoop lens n hn hs (i + USize.ofNat 1)
         (u16SetU head l (i.toUInt64 + 1) (by omega) (by omega))
-        (u16SetU next i (u16GetU head l (by omega) (by omega)) (by have := hs.1; omega) (by have := hs.1; omega))
+        (u16SetU next i old (by have := hs.1; omega) (by have := hs.1; omega))
         (by rw [size_u16SetU]; exact hh) (by rw [size_u16SetU]; exact hx)
   else (head, next)
 termination_by n.toNat - i.toNat
