@@ -36,9 +36,9 @@ def callWin (s : DState) (a : ByteArray) (start stop : Nat) (space : Nat) : Nat 
 
 private theorem arith_pause {W dq ho ph dp hh size u hand po win P0 P1 : Nat} (hu : u ≤ size) (h0 : P0 = size)
     (h1 : P1 = size - u)
-    (h : W + dq + 2980 * (ho + (size - u) * 8) + P1 + 31 * ph ≤
-      dp + 2980 * (hh + size * 8) + P0 + 33 * hand + 31 * po + win + 93) :
-    W + dq + 2980 * ho + 31 * ph ≤ dp + 2980 * hh + 23841 * u + 33 * hand + 31 * po + win + 93 := by
+    (h : W + dq + 2980 * (ho + (size - u) * 8) + P1 + 32 * ph ≤
+      dp + 2980 * (hh + size * 8) + P0 + 34 * hand + 32 * po + win + 96) :
+    W + dq + 2980 * ho + 32 * ph ≤ dp + 2980 * hh + 23841 * u + 34 * hand + 32 * po + win + 96 := by
   obtain ⟨d, rfl⟩ : ∃ d, size = u + d := ⟨size - u, by omega⟩
   rw [Nat.add_sub_cancel_left] at h h1
   rw [h0, h1] at h
@@ -57,8 +57,8 @@ private theorem arith_pause {W dq ho ph dp hh size u hand po win P0 P1 : Nat} (h
 
 private theorem arith_any {W dp hh s size o hand win P0 P1 : Nat} (h1 : s ≤ o) (h2 : o ≤ s + size) (h3 : P0 = size)
     (h4 : P1 = s + size - o)
-    (h : W + 2980 * ((s + size - o) * 8) + P1 ≤ dp + 2980 * (hh + size * 8) + P0 + 33 * hand + win + 132) :
-    W ≤ dp + 2980 * hh + 23841 * (o - s) + 33 * hand + win + 132 := by
+    (h : W + 2980 * ((s + size - o) * 8) + P1 ≤ dp + 2980 * (hh + size * 8) + P0 + 34 * hand + win + 136) :
+    W ≤ dp + 2980 * hh + 23841 * (o - s) + 34 * hand + win + 136 := by
   obtain ⟨d, rfl⟩ : ∃ d, o = s + d := ⟨o - s, by omega⟩
   obtain ⟨e, rfl⟩ : ∃ e, size = d + e := ⟨size - d, by omega⟩
   have g1 : s + (d + e) - (s + d) = e := by omega
@@ -75,7 +75,7 @@ private theorem arith_any {W dp hh s size o hand win P0 P1 : Nat} (h1 : s ≤ o)
   generalize 2980 * hh = B at h ⊢
   generalize 23840 * d = C at h ⊢
   generalize 23840 * e = E at h
-  generalize 33 * hand = F at h ⊢
+  generalize 34 * hand = F at h ⊢
   omega
 
 section
@@ -83,9 +83,9 @@ variable {x : List UInt8} {R : Run DState} {c : Call}
 
 /-- One call of the decoder, against the potential: a call that pauses is paid for by the potential of where it starts,
 2980 for each bit it takes from what its state holds and each of eight for each byte it uses and one more for taking the
-byte, 33 for each byte it hands out, 31 for each byte it leaves waiting, the window it allocates and 93, less the
+byte, 34 for each byte it hands out, 32 for each byte it leaves waiting, the window it allocates and 96, less the
 potential and bits where it pauses. Any call is paid for by the potential, 2980 for each bit its state holds, 23841 for
-each byte it uses, 33 for each byte it hands out, the window and 132. -/
+each byte it uses, 34 for each byte it hands out, the window and 136. -/
 theorem call_pays (hin : R.read + c.size ≤ x.length) (hfit : c.pre.length + c.size + c.post.length < USize.size) {p : SPhase}
     (hrel : DRel R.state.val p) (hsi : SInv p) (hk : R.state.val.tag ≠ .wbits → 10 ≤ R.state.val.k.toNat) :
     ((R.reply decoder x c).status = .needsInput ∨ (R.reply decoder x c).status = .needsOutput →
@@ -94,14 +94,14 @@ theorem call_pays (hin : R.read + c.size ≤ x.length) (hfit : c.pre.length + c.
         (R.reply decoder x c).state.val.cmd.pend.toNat ≤ R.state.val.cmd.pend.toNat + 1 ∧
         callWork R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.buf.toByteArray c.space c.final +
           dpot q (R.reply decoder x c).state.val + 2980 * (R.reply decoder x c).state.val.held.length +
-          31 * R.state.val.cmd.pend.toNat ≤
+          32 * R.state.val.cmd.pend.toNat ≤
           dpot p R.state.val + 2980 * R.state.val.held.length + 23841 * (R.reply decoder x c).used +
-            33 * ((R.reply decoder x c).output.size - c.buf.length) + 31 * (R.reply decoder x c).state.val.cmd.pend.toNat +
-            callWin R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.space + 93) ∧
+            34 * ((R.reply decoder x c).output.size - c.buf.length) + 32 * (R.reply decoder x c).state.val.cmd.pend.toNat +
+            callWin R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.space + 96) ∧
     callWork R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.buf.toByteArray c.space c.final ≤
       dpot p R.state.val + 2980 * R.state.val.held.length + 23841 * (R.reply decoder x c).used +
-        33 * ((R.reply decoder x c).output.size - c.buf.length) +
-        callWin R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.space + 132 := by
+        34 * ((R.reply decoder x c).output.size - c.buf.length) +
+        callWin R.state (R.input x c) c.pre.length (c.pre.length + c.size) c.space + 136 := by
   have hg : c.pre.length + c.size ≤ (R.input x c).size ∧ c.pre.length ≤ c.pre.length + c.size ∧ c.pre.length + c.size < USize.size :=
     ⟨by rw [input_size hin]; omega, by omega, by omega⟩
   have hs : (USize.ofNat (c.pre.length + c.size)).toNat ≤ (R.input x c).size := by

@@ -554,13 +554,13 @@ theorem CDown.step {w k : Nat} {last : Bool} {m : MetaBlockHeader} {a : ByteArra
   · obtain ⟨s, ⟨b1, bL⟩, b2, b3⟩ := hin.done e
     exact ⟨s, ⟨b1, fun h => bL (hL h)⟩, b2, fun F => (b3 F).trans (Or.inl (h3 F))⟩
 
-/-- The command loop with the fast loop, from a record: no higher in the measure, and lower when it has fuel (it starts
-with a step, which goes lower, and a move of the fast loop is always followed by one). -/
+/-- The command loop with the fast loop, from a record: no higher in the measure, and lower when it has fuel for two
+rounds (a step goes lower, and a move of the fast loop is always followed by one). -/
 theorem runCmdF_meas {w : Nat} {k : USize} {last : Bool} {H : Hdr} {m : MetaBlockHeader} {a : ByteArray} {stop : USize}
     {hs : stop.toNat ≤ a.size} (hH : HdrRel H m) (n : USize) {p : Phase} {st : Cmd} {pos : USize}
     (hrel : Rel w k.toNat m st p) (h : CmdInv H k stop st pos) :
     CDown Lex4Eq w k.toNat last m a stop p st pos (runCmdF H k a stop hs n st pos h) ∧
-      (1 ≤ n.toNat → CDown Lex4 w k.toNat last m a stop p st pos (runCmdF H k a stop hs n st pos h)) := by
+      (2 ≤ n.toNat → CDown Lex4 w k.toNat last m a stop p st pos (runCmdF H k a stop hs n st pos h)) := by
   have e1 : ∀ {u v x : (Nat × Nat) × (Nat × Nat)}, Lex4Eq u v → Lex4Eq v x → Lex4Eq u x := fun a b => a.trans b
   have e2 : ∀ {u v x : (Nat × Nat) × (Nat × Nat)}, Lex4 u v → Lex4Eq v x → Lex4 u x := fun a b => lex4_lt_eq a b
   have := runCmdF_rec (K := commandsFrom w m) (fun _ bs h0 => commandsFrom_step bs h0) hH
@@ -578,10 +578,10 @@ theorem runCmdF_meas {w : Nat} {k : USize} {last : Bool} {H : Hdr} {m : MetaBloc
       obtain ⟨p', ⟨hR, hL⟩, h1, _, h3⟩ := (stepCmd_down (last := last) (a := a) (stop := stop) (hs := hs) hH hrel hp).next hst
       have d := CDown.step hL h1 h3 (ih p' hR).1
       exact ⟨d.weak, fun _ => d⟩)
-    (fun _ _ _ _ _ _ hrel mv _ _ _ ih => ⟨CDown.move (R := Lex4Eq) e1 hrel mv ih.1, fun hc =>
+    (fun _ _ _ _ _ _ _ hrel mv _ _ _ ih => ⟨CDown.move (R := Lex4Eq) e1 hrel mv ih.1, fun hc =>
       CDown.move (R := Lex4) e2 hrel mv (ih.2 hc)⟩)
     n hrel h
-  exact ⟨this.1, fun h2 => this.2 (Or.inr ⟨h2, rfl⟩)⟩
+  exact ⟨this.1, fun h2 => this.2 (Or.inl h2)⟩
 
 /-! ### The measure on the stream -/
 
@@ -810,7 +810,7 @@ theorem stepDCmds_down {w : Nat} {last : Bool} {m : MetaBlockHeader} {p : Phase}
   subst ht'
   have hl0 : last' = last := hl
   subst hl0
-  have hb1 : 1 ≤ cmdBudget.toNat := by
+  have hb1 : 2 ≤ cmdBudget.toNat := by
     have : cmdBudget.toNat = 65536 := usize_ofNat' (by decide)
     omega
   have hstep := (runCmdF_meas (last := last') (a := a) (stop := stop) (hs := hs) hH cmdBudget hR h).2 hb1

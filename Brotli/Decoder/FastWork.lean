@@ -236,8 +236,8 @@ def fastEnterW (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.
     lits 0 p1 p2 ⟨hinv.wf, hinv.pos, hinv.size, fun h => absurd rfl h⟩
 
 open Classical in
-/-- The work of `runCmdKF`: an entry into the fast loop, which counts the fast loop's work, or a step of the step machine
-and its round. -/
+/-- The work of `runCmdKF`: a round, and in it an entry into the fast loop, which counts the fast loop's work, or a step
+of the step machine. -/
 noncomputable def runCmdKFW (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (n : USize)
     (fresh : Bool) :
     (word count : UInt64) → (ring : ByteArray) → (wpos pend cap written : USize) → (p1 p2 : UInt8) →
@@ -263,7 +263,7 @@ noncomputable def runCmdKFW (H : Hdr) (k : USize) (a : ByteArray) (stop : USize)
         rw [fastLit (by decide), USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr hinv.pos)] at h1
         have := hinv.pos
         omega
-      fastEnterW H k a stop hs cap n word count ring wpos pend written p1 p2 remaining iCount lCount dCount flags
+      1 + fastEnterW H k a stop hs cap n word count ring wpos pend written p1 p2 remaining iCount lCount dCount flags
           ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf,
             wordPos⟩ tag lits bEnd pos hinv hm +
         match fastEnter H k a stop hs cap n word count ring wpos pend written p1 p2 remaining iCount lCount dCount flags
@@ -305,7 +305,7 @@ noncomputable def runCmdFW (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) 
   | ⟨word, count, ring, wpos, pend, cap, written, p1, p2, remaining, iCount, lCount, dCount, flags,
       ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf, wordPos⟩,
       tag, left, _, _⟩, h =>
-    runCmdKFW H k a stop hs n false word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags
+    runCmdKFW H k a stop hs n true word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags
       iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos h
 
 end Brotli.Decoder

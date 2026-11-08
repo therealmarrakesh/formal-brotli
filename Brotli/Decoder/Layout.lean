@@ -395,7 +395,7 @@ theorem runCmdF_same (H : Hdr) (k : USize) {a1 a2 : ByteArray} {e1 e2 : USize} (
   obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _⟩, _, _, _, _⟩ := t
   dsimp only at he
   cases he
-  exact runCmdKF_same H k hs1 hs2 _ n rfl false _ _ word count ring wpos pend cap written b1 b2 remaining iCount lCount
+  exact runCmdKF_same H k hs1 hs2 _ n rfl true _ _ word count ring wpos pend cap written b1 b2 remaining iCount lCount
     dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag
     left p1 p2 hi1 hi2 h
 

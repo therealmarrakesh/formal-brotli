@@ -840,17 +840,19 @@ theorem runCmdF_full {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a : 
       obtain ⟨p', hR, -⟩ := (stepCmd_ok (hs := hs) (K := commandsFrom w m) (fun _ bs h0 => commandsFrom_step bs h0) hH
         hrel hp).next hst
       exact ih p' hR)
-    (fun _ _ _ _ _ _ _ _ _ _ _ ih => ih)
+    (fun _ _ _ _ _ _ _ _ _ _ _ _ ih => ih)
     n hrel h
 
 /-! ### The potential on the commands' places
 
 A step of the commands read in order reads bits, produces bytes, or goes lower in `crank`, which ranks the places in the
 order the command loop's steps take them: a command, its insert and copy lengths, its literals, its distance and its
-distance's symbol, its copy, and a copy's or word's end. A command loop step, with its round, costs 22, ten for each byte
-and a word's building: the potential holds 22 for each rank and 95 for a word not yet built, so a step that reads and
-produces nothing pays from the potential, and any other step pays at most 366 for each bit it reads and 281 for each byte
-it adds. The most a byte pays for is the next command's steps, after a copy or word of one byte. -/
+distance's symbol, its copy, and a copy's or word's end. A command loop step, with its round, costs three when it reads
+and produces nothing, besides a word's building: the potential (`cpot`) holds three for each rank, more from the literals
+up so that the steps into the literals and into the distance leave three for an entry into the fast loop there (`alw`),
+79 for a word's building, and what a copy or a word with bytes left holds. So a step that reads and produces nothing
+pays from the potential, and any other step pays at most 200 for each bit it reads and 31 for each byte it adds. The
+most a byte pays for is the next command's steps, after a copy or word of one byte. -/
 
 /-- The places' ranks are 2, for the commands' end, and from 13 on. -/
 theorem cstage_vals (p : Phase) : cstage p = 2 ∨ 13 ≤ cstage p := by
@@ -907,21 +909,21 @@ theorem cStep_rank {w : Nat} {m : MetaBlockHeader} (hm : m.ndirect ≤ 120) {p q
       repeat' split
       all_goals omega
 
-/-- What a copy or a dictionary word with bytes left holds for the next command's steps, less 26 for each byte left: the
-next command's steps from a copy's end are paid for by the copy's bytes, at least two, or a word's, at least four when
-no bit was read. -/
+/-- What a copy or a dictionary word with bytes left holds for the next command's steps, less 26 for each byte left of a
+copy and 27 of a word: the next command's steps from a copy's end are paid for by the copy's bytes, at least two, or a
+word's, at least four when no bit was read. -/
 def cred : Phase → Nat
   | .copy _ _ n => if n = 0 then 0 else 107 - 26 * n
-  | .word _ pending => if pending = [] then 0 else 104 - 26 * pending.length
+  | .word _ pending => if pending = [] then 0 else 106 - 27 * pending.length
   -- the other places are listed rather than matched by `_`, whose equation lemma took 4 s to generate
   | .command .. | .insertCopy .. | .copyLength .. | .literals .. | .literalSymbol .. | .distance .. | .distanceSymbol .. =>
     0
 
-/-- The potential of a command's place: three for each rank, and five for the copy length's and the literals' (so that
-the steps from them into the literals and into the distance leave two over, for an entry into the fast loop there), a
-dictionary word's building where one may begin, and what a copy or a word holds. -/
+/-- The potential of a command's place: three for each rank, and three more for the literals' and six more for the copy
+length's and above (so that the steps from them into the literals and into the distance leave three over, for an entry
+into the fast loop there), a dictionary word's building where one may begin, and what a copy or a word holds. -/
 def cpot (p : Phase) : Nat :=
-  3 * crank p + 2 * min (crank p - 3) 2 + (if 2 ≤ crank p then 79 else 0) + cred p
+  3 * crank p + 3 * min (crank p - 3) 2 + (if 2 ≤ crank p then 79 else 0) + cred p
 
 /-- Whether a place is a dictionary word's. -/
 def isWordP : Phase → Bool
@@ -1398,12 +1400,12 @@ theorem word_crank {p : Phase} (h : isWordP p = true) : crank p = 1 ∨ crank p 
 
 /-- A state at a command's start has the potential of a command's place. -/
 theorem cpot_command {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {p : Phase} (h : Rel w k m st p) (ht : st.tag = .command) :
-    cpot p ≤ 104 := by
+    cpot p ≤ 106 := by
   cases p with
   | command s => by_cases h0 : s.remaining = 0 <;> simp [cpot, crank, cstage, cred, h0]
   | _ => first | exact False.elim h | exact absurd (ht.symm.trans h.2.1) (fun e => by cases e)
 
-theorem cpot_le (p : Phase) : cpot p ≤ 107 := by
+theorem cpot_le (p : Phase) : cpot p ≤ 109 := by
   have := crank_le p
   by_cases hc : cred p = 0
   · unfold cpot
@@ -1434,9 +1436,9 @@ def isLD : Phase → Bool
   | .command .. | .insertCopy .. | .copyLength .. | .literalSymbol .. | .distanceSymbol .. | .copy .. | .word .. => false
 
 /-- What a place where the fast loop may be entered holds for an entry that writes nothing. -/
-def alw (p : Phase) : Nat := if isLD p then 2 else 0
+def alw (p : Phase) : Nat := if isLD p then 3 else 0
 
-theorem alw_le (p : Phase) : alw p ≤ 2 := by
+theorem alw_le (p : Phase) : alw p ≤ 3 := by
   unfold alw
   split <;> omega
 
@@ -1464,7 +1466,7 @@ theorem cpot_down {w : Nat} {m : MetaBlockHeader} (hm : m.ndirect ≤ 120) {n : 
       simp only [isWordP, alw, isLD, Bool.false_eq_true, ↓reduceIte]
       omega
     · have h4 := reach_word_four hm hr hci hn hb ho s (x :: r) rfl
-      have e : cpot (.word s (x :: r)) = 3 + (104 - 26 * (x :: r).length) := by simp [cpot, cred, crank, cstage]
+      have e : cpot (.word s (x :: r)) = 3 + (106 - 27 * (x :: r).length) := by simp [cpot, cred, crank, cstage]
       rw [e]
       simp only [isWordP, alw, isLD, Bool.false_eq_true, ↓reduceIte]
       simp only [List.length_cons] at h4 ⊢
@@ -1476,7 +1478,7 @@ theorem cpot_down {w : Nat} {m : MetaBlockHeader} (hm : m.ndirect ≤ 120) {n : 
       · rcases word_crank e with h | h <;> omega
     rw [hw]
     simp only [Bool.false_eq_true, ↓reduceIte]
-    have hld : alw q = 0 ∨ (alw q = 2 ∧ (crank q = 4 ∨ crank q = 3)) := by
+    have hld : alw q = 0 ∨ (alw q = 3 ∧ (crank q = 4 ∨ crank q = 3)) := by
       unfold alw
       by_cases h : isLD q = true
       · rw [ite_eq_left h]
@@ -1527,7 +1529,7 @@ theorem Rel.alw_zero {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {p : Phase} (h
   | _ => rfl
 
 /-- What a command loop round pays, any way it ends but a rejection: its work, and the potential where it ends, are paid
-for by the potential, 200 for each bit it reads, 30 for each byte it adds, a round for each byte its refills take, and 84
+for by the potential, 200 for each bit it reads, 31 for each byte it adds, a round for each byte its refills take, and 84
 for a round that stops. -/
 theorem round_pay {w : Nat} {m : MetaBlockHeader} {H : Hdr} {k : USize} {a : ByteArray} {stop : USize}
     {hs : stop.toNat ≤ a.size} {st : Cmd} {pos : USize} {p q : Phase} {c0 L : Nat} {bs c : List Bool} (hm : m.ndirect ≤ 120)
@@ -1539,11 +1541,11 @@ theorem round_pay {w : Nat} {m : MetaBlockHeader} {H : Hdr} {k : USize} {a : Byt
     (hc0 : (stepCmd H k a stop hs st pos).status = .next → 1 ≤ c0) :
     stepCmdW H k a stop hs st pos + 1 + cpot q + (if (stepCmd H k a stop hs st pos).status = .next then alw q else 0) +
         200 * c.length + (stop.toNat - (stepCmd H k a stop hs st pos).pos.toNat) ≤
-      cpot p + 200 * bs.length + (stop.toNat - pos.toNat) + 30 * L +
+      cpot p + 200 * bs.length + (stop.toNat - pos.toNat) + 31 * L +
         (if (stepCmd H k a stop hs st pos).status = .next then 0 else 84) := by
   have hal := alw_le q
   generalize hA2 : (if (stepCmd H k a stop hs st pos).status = .next then alw q else 0) = A2
-  have hA2le : A2 ≤ 2 := by rw [← hA2]; split <;> omega
+  have hA2le : A2 ≤ 3 := by rw [← hA2]; split <;> omega
   have hA2n : (stepCmd H k a stop hs st pos).status ≠ .next → A2 = 0 := fun h => by rw [← hA2, ite_eq_right h]
   have hA2y : (stepCmd H k a stop hs st pos).status = .next → A2 = alw q := fun h => by rw [← hA2, ite_eq_left h]
   have hW := stepCmdW_kind (H := H) (a := a) (hs := hs) (st := st) hk hp hrel.wf
@@ -1612,7 +1614,7 @@ theorem round_pay {w : Nat} {m : MetaBlockHeader} {H : Hdr} {k : USize} {a : Byt
     have hext : 0 ≤ (if (stepCmd H k a stop hs st pos).status = .next then 0 else 84) := Nat.zero_le _
     by_cases hlit : st.tag = .literals
     · obtain ⟨hr4, hc4⟩ := hrel.lit_of hlit
-      have e : cpot p = 93 := by unfold cpot; rw [hr4, hc4]; rfl
+      have e : cpot p = 94 := by unfold cpot; rw [hr4, hc4]; rfl
       omega
     by_cases hcp : st.tag = .copy
     · have hA0 : A2 = 0 := by
@@ -1625,7 +1627,7 @@ theorem round_pay {w : Nat} {m : MetaBlockHeader} {H : Hdr} {k : USize} {a : Byt
       rw [hkc] at hW
       cases n with
       | zero =>
-        have e : cpot (.copy s d 0) = 107 := rfl
+        have e : cpot (.copy s d 0) = 109 := rfl
         omega
       | succ n =>
         have e : cpot (.copy s d (n + 1)) = 3 + (107 - 26 * (n + 1)) := by simp [cpot, cred, crank, cstage]
@@ -1652,10 +1654,10 @@ theorem round_pay {w : Nat} {m : MetaBlockHeader} {H : Hdr} {k : USize} {a : Byt
       rw [hkc] at hW
       cases pending with
       | nil =>
-        have e : cpot (.word s []) = 107 := rfl
+        have e : cpot (.word s []) = 109 := rfl
         omega
       | cons x r =>
-        have e : cpot (.word s (x :: r)) = 3 + (104 - 26 * (r.length + 1)) := by simp [cpot, cred, crank, cstage]
+        have e : cpot (.word s (x :: r)) = 3 + (106 - 27 * (r.length + 1)) := by simp [cpot, cred, crank, cstage]
         by_cases hlt : L < r.length + 1
         · obtain ⟨s', r', e', hr'⟩ := reach_word_left hm hr hci s (x :: r) rfl (by simp; omega)
           subst e'
@@ -1664,42 +1666,15 @@ theorem round_pay {w : Nat} {m : MetaBlockHeader} {H : Hdr} {k : USize} {a : Byt
           cases r' with
           | nil => simp at hr'; omega
           | cons y r'' =>
-            have eq : cpot (.word s' (y :: r'')) = 3 + (104 - 26 * (r''.length + 1)) := by simp [cpot, cred, crank, cstage]
+            have eq : cpot (.word s' (y :: r'')) = 3 + (106 - 27 * (r''.length + 1)) := by simp [cpot, cred, crank, cstage]
             simp only [List.length_cons] at hr'
             omega
         · omega
     · have := stepCmd_pend_other (H := H) (k := k) (a := a) (hs := hs) (pos := pos) hlit hcp hwd
       exact absurd this hpne
 
-/-- A command loop step that goes on, against the potential: what it does is paid by the potential, 200 for each bit it
-reads, 30 for each byte it adds, and a round for each byte its refills take. -/
-theorem stepCmd_pot {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a : ByteArray} {stop : USize}
-    {hs : stop.toNat ≤ a.size} {p : Phase} {st : Cmd} {pos : USize} (hm : m.ndirect ≤ 120) (hH : HdrRel H m)
-    (hrel : Rel w k.toNat m st p) (hci : CInv w p) (hp : pos.toNat ≤ stop.toNat) (hn : (stepCmd H k a stop hs st pos).status = .next) :
-    ∃ p', Rel w k.toNat m (stepCmd H k a stop hs st pos) p' ∧ OutStep p p' st (stepCmd H k a stop hs st pos) ∧ CInv w p' ∧
-      (stepCmd H k a stop hs st pos).pos.toNat ≤ stop.toNat ∧ pos.toNat ≤ (stepCmd H k a stop hs st pos).pos.toNat ∧
-      ∀ F, ∃ n, 1 ≤ n ∧ ReachN (cStep w m) n p (stateBits st a pos stop F) p'
-        (stateBits (stepCmd H k a stop hs st pos) a (stepCmd H k a stop hs st pos).pos stop F) ∧
-        stepCmdW H k a stop hs st pos + 1 + cpot p' + 200 * (stateBits (stepCmd H k a stop hs st pos) a (stepCmd H k a stop hs st pos).pos stop F).length +
-          (stop.toNat - (stepCmd H k a stop hs st pos).pos.toNat) ≤
-          cpot p + 200 * (stateBits st a pos stop F).length + (stop.toNat - pos.toNat) + 30 * (p'.out.length - p.out.length) := by
-  obtain ⟨p', hR, hout, h2, h1, hj⟩ := stepCmd_count (hs := hs) hH hrel hp hn
-  obtain ⟨l, hl1, hl2⟩ := hout
-  refine ⟨p', hR, ⟨l, hl1, hl2⟩, ?_, h2, h1, fun F => ?_⟩
-  · obtain ⟨n, hn1, hr⟩ := hj []
-    exact (creach hm hr hci).1
-  obtain ⟨n, hn1, hr⟩ := hj F
-  refine ⟨n, hn1, hr, ?_⟩
-  have hlo : p'.out.length = l.length + p.out.length := by rw [hl1, List.length_append]
-  have hb : (stepCmd H k a stop hs st pos).status ≠ .bad := by rw [hn]; exact fun e => StepStatus.noConfusion e
-  have := round_pay hm hrel.k24 hp hrel hR hb h1 h2 hl2 hci hr hlo (fun _ => hn1)
-  simp only [hn, ↓reduceIte] at this
-  have hx : p'.out.length - p.out.length = l.length := by omega
-  rw [hx]
-  omega
-
 /-- A round that stops the command loop where its step ends, without rejecting: its work, and the potential of where it
-stops, are paid for by the potential, 200 for each bit it reads, 30 for each byte it adds, a round for each byte its
+stops, are paid for by the potential, 200 for each bit it reads, 31 for each byte it adds, a round for each byte its
 refills take, and 84. -/
 theorem stopRound_pay {w : Nat} {m : MetaBlockHeader} {H : Hdr} {k : USize} {a : ByteArray} {stop : USize}
     {hs : stop.toNat ≤ a.size} {st : Cmd} {pos : USize} {p q : Phase} {c0 L : Nat} {bs c : List Bool} (hm : m.ndirect ≤ 120)
@@ -1709,7 +1684,7 @@ theorem stopRound_pay {w : Nat} {m : MetaBlockHeader} {H : Hdr} {k : USize} {a :
     (hL : (stepCmd H k a stop hs st pos).pend.toNat = st.pend.toNat + L) (hci : CInv w p)
     (hr : ReachN (cStep w m) c0 p bs q c) (hlo : q.out.length = L + p.out.length) :
     stepCmdW H k a stop hs st pos + 1 + cpot q + 200 * c.length + (stop.toNat - (stepCmd H k a stop hs st pos).pos.toNat) ≤
-      cpot p + 200 * bs.length + (stop.toNat - pos.toNat) + 30 * L + 84 := by
+      cpot p + 200 * bs.length + (stop.toNat - pos.toNat) + 31 * L + 84 := by
   have := round_pay hm hrel.k24 hp hrel hrq hnb hq1 hq2 hL hci hr hlo (fun e => absurd e hnx)
   simp only [hnx, ↓reduceIte] at this
   omega

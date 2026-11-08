@@ -427,19 +427,19 @@ theorem runCmdF_rec {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHe
       (stepCmd H k a stop hs st pos).status = .next →
       (∀ p', Rel w k.toNat m (stepCmd H k a stop hs st pos) p' →
         Q N true p' (stepCmd H k a stop hs st pos) (stepCmd H k a stop hs st pos).pos R) → Q (N + 1) fresh p st pos R)
-    (hentry : ∀ N p st pos r R, Rel w k.toNat m st p → MoveOk w k.toNat m K a stop p st pos p r → r.pend = st.pend →
-      (∀ F, stateBits r a r.pos stop F = stateBits st a pos stop F) → r.cap = st.cap → Q N false p r r.pos R →
-      Q N false p st pos R)
+    (hentry : ∀ N fresh p st pos r R, Rel w k.toNat m st p → MoveOk w k.toNat m K a stop p st pos p r →
+      r.pend = st.pend → (∀ F, stateBits r a r.pos stop F = stateBits st a pos stop F) → r.cap = st.cap →
+      Q N fresh p r r.pos R → Q N fresh p st pos R)
     (n : USize) {p : Phase} {st : Cmd} {pos : USize} (hrel : Rel w k.toNat m st p) (h : CmdInv H k stop st pos) :
-    Q n.toNat false p st pos (runCmdF H k a stop hs n st pos h) := by
+    Q n.toNat true p st pos (runCmdF H k a stop hs n st pos h) := by
   obtain ⟨word, count, ring, wpos, pend, cap, written, p1, p2, remaining, iCount, lCount, dCount, flags,
     ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf, wordPos⟩,
     tag, left, sp, ss⟩ := st
   have hR := hrel.mark pos .next
-  exact hentry _ p _ pos _ _ hrel (MoveOk.same (st := ⟨word, count, ring, wpos, pend, cap, written, p1, p2, remaining,
-      iCount, lCount, dCount, flags, ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits,
-        copyBase, dist, wordBuf, wordPos⟩, tag, left, sp, ss⟩) hR rfl rfl rfl rfl h.pos) rfl (fun _ => rfl) rfl
-    (runCmdKF_rec hK hH Q hzero hmove hstop hnext _ n rfl false _ word count ring wpos pend cap written p1 p2 remaining
+  exact hentry _ true p _ pos _ _ hrel (MoveOk.same (st := ⟨word, count, ring, wpos, pend, cap, written, p1, p2,
+      remaining, iCount, lCount, dCount, flags, ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen,
+        copyBits, copyBase, dist, wordBuf, wordPos⟩, tag, left, sp, ss⟩) hR rfl rfl rfl rfl h.pos) rfl (fun _ => rfl) rfl
+    (runCmdKF_rec hK hH Q hzero hmove hstop hnext _ n rfl true _ word count ring wpos pend cap written p1 p2 remaining
       iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist
       wordBuf wordPos tag left pos h p hR)
 
@@ -456,7 +456,7 @@ theorem runCmdF_ok {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHea
     (fun _ _ _ _ _ _ hrel hp hst ih => by
       obtain ⟨p', hR, h1, h2, h3, _, h4, h5⟩ := (stepCmd_ok (hs := hs) hK hH hrel hp).next hst
       exact RunOk.trans h1 h3 h4 h5 (ih p' hR))
-    (fun _ _ _ _ _ _ _ mv _ _ _ h2 => mv.then h2)
+    (fun _ _ _ _ _ _ _ _ mv _ _ _ h2 => mv.then h2)
     n hrel h
 
 /-- The command loop with the fast loop, when it rejects, decides at the last of its steps: from a place the reading in
@@ -497,7 +497,7 @@ theorem runCmdF_bad {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHe
       obtain ⟨p', hR, h1, _, _, _, _, h5⟩ := (stepCmd_ok (hs := hs) hK hH hrel hp).next hst
       obtain ⟨p1, st1, pos1, g1, g2, g3, g4, g5, g6⟩ := ih p' hR hb
       exact ⟨p1, st1, pos1, Nat.le_trans h1 g1, g2, g3, g4, fun F => (h5 F).trans (g5 F), g6⟩)
-    (fun _ p st pos r R _ mv _ _ _ ih => back p st pos p r R mv ih)
+    (fun _ _ p st pos r R _ mv _ _ _ ih => back p st pos p r R mv ih)
     n hrel h
 
 /-- The command loop with the fast loop, when it rejects, leaves the window and the bytes waiting of a state at a place. -/
@@ -515,7 +515,7 @@ theorem runCmdF_badWin {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBloc
     (fun _ _ _ _ _ _ hrel hp hst ih hb => by
       obtain ⟨p', hR, -⟩ := (stepCmd_ok (hs := hs) hK hH hrel hp).next hst
       exact ih p' hR hb)
-    (fun _ _ _ _ _ _ _ _ _ _ _ ih hb => ih hb)
+    (fun _ _ _ _ _ _ _ _ _ _ _ _ ih hb => ih hb)
     n hrel h
 
 end Brotli.Decoder

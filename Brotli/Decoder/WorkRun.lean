@@ -181,13 +181,14 @@ theorem sreach_byte {q : SPhase} {bs c : List Bool} {p : SPhase} (h : SReach p b
 pauses, the loop's and the call's rounds, and handing out. -/
 def roundCost : Nat := 8
 
-/-- What the commands' end costs: the round that ends the command loop, the check that every block type occurred, the
-loop's round, and a round of the call at the next meta-block's start. -/
-def cmdsEnd : Nat := 84 + 1 + 1 + roundCost
+/-- What the commands' end costs: the round that ends the command loop, what the command loop's start holds for an entry
+into the fast loop, the check that every block type occurred, the loop's round, and a round of the call at the next
+meta-block's start. -/
+def cmdsEnd : Nat := 84 + 3 + 1 + 1 + roundCost
 
 /-- What a header's end costs beyond its potential: the command loop's header with its shared table bases and first
 state, the loop's round, and what the commands' start holds. Its last step is within its place's potential. -/
-def hdrEnd : Nat := 770 + trivRounds + 1 + 104 + cmdsEnd
+def hdrEnd : Nat := 770 + trivRounds + 1 + 106 + cmdsEnd
 
 /-- What a metadata block's or an uncompressed block's end costs: its last step and the loop's round, and a round of the
 call at the next meta-block's start. -/
@@ -210,19 +211,19 @@ def dpot (p : SPhase) (D : Dec) : Nat :=
     | _ => 0
 
 /-- A step's work against the potential: the potential at the place after it, the bits left there and the chunk's bytes
-not yet taken, with its work, are at most the potential before, the bits and bytes there, 31 for each byte it produces,
+not yet taken, with its work, are at most the potential before, the bits and bytes there, 32 for each byte it produces,
 and `extra`. A byte taken pays for the round that takes it. -/
 def Pays (a : ByteArray) (stop : USize) (p : SPhase) (D : Dec) (pos : USize) (r : Dec) (W extra : Nat) : Prop :=
   ∃ q, DRel r q ∧ OutD p q D r ∧ pos.toNat ≤ r.pos.toNat ∧ r.pos.toNat ≤ stop.toNat ∧ (SInv p → SInv q) ∧
     ∀ t : List UInt8, W + dpot q r + hdrRate * (r.bits a r.pos stop (bits t)).length + (stop.toNat - r.pos.toNat) ≤
-      dpot p D + hdrRate * (D.bits a pos stop (bits t)).length + (stop.toNat - pos.toNat) + 31 *(q.out.length - p.out.length) +
+      dpot p D + hdrRate * (D.bits a pos stop (bits t)).length + (stop.toNat - pos.toNat) + 32 *(q.out.length - p.out.length) +
         extra
 
 /-- A step that pays without the bytes it takes. -/
 theorem Pays.intro {a : ByteArray} {stop : USize} {p : SPhase} {D : Dec} {pos : USize} {r : Dec} {W extra : Nat} (q : SPhase)
     (h1 : DRel r q) (h2 : OutD p q D r) (h3 : pos.toNat ≤ r.pos.toNat) (h4 : r.pos.toNat ≤ stop.toNat) (h5 : SInv p → SInv q)
     (h6 : ∀ t : List UInt8, W + dpot q r + hdrRate * (r.bits a r.pos stop (bits t)).length ≤
-      dpot p D + hdrRate * (D.bits a pos stop (bits t)).length + 31 *(q.out.length - p.out.length) + extra) :
+      dpot p D + hdrRate * (D.bits a pos stop (bits t)).length + 32 *(q.out.length - p.out.length) + extra) :
     Pays a stop p D pos r W extra :=
   ⟨q, h1, h2, h3, h4, h5, fun t => by have := h6 t; omega⟩
 
@@ -775,12 +776,12 @@ theorem pay_cmds {w : Nat} {last : Bool} {m : MetaBlockHeader} {q0 : Phase} {a :
     ((stepDCmds a stop hs D pos h).status = .next → Pays a stop (.cmds w last m q0) D pos (stepDCmds a stop hs D pos h)
       (stepDCmdsW a stop hs D pos h + 1) 0) ∧
     ((stepDCmds a stop hs D pos h).status = .needsInput ∨ (stepDCmds a stop hs D pos h).status = .needsOutput →
-      Pays a stop (.cmds w last m q0) D pos (stepDCmds a stop hs D pos h) (stepDCmdsW a stop hs D pos h + 1) 85) ∧
+      Pays a stop (.cmds w last m q0) D pos (stepDCmds a stop hs D pos h) (stepDCmdsW a stop hs D pos h + 1) 88) ∧
     ((stepDCmds a stop hs D pos h).status = .bad → ∃ L, D.cmd.pend.toNat + L ≤ (stepDCmds a stop hs D pos h).cmd.pend.toNat ∧
       ∀ t : List UInt8, stepDCmdsW a stop hs D pos h + 1 +
         hdrRate * ((stop.toNat - (stepDCmds a stop hs D pos h).pos.toNat) * 8) +
         (stop.toNat - (stepDCmds a stop hs D pos h).pos.toNat) ≤
-        dpot (.cmds w last m q0) D + hdrRate * (D.bits a pos stop (bits t)).length + (stop.toNat - pos.toNat) + 31 *L + 93) := by
+        dpot (.cmds w last m q0) D + hdrRate * (D.bits a pos stop (bits t)).length + (stop.toNat - pos.toNat) + 32 *L + 96) := by
   obtain ⟨tag, cmd, hd, H, k, last', left, limit, pos', status⟩ := D
   obtain ⟨ht, hl, hlim, hH, hR, hlive⟩ := hrel
   have ht' : tag = .cmds := ht
@@ -796,6 +797,7 @@ theorem pay_cmds {w : Nat} {last : Bool} {m : MetaBlockHeader} {q0 : Phase} {a :
   have hq8 := crank_le q
   have hp8 := crank_le q0
   have hcp := cpot_le q0
+  have hal := alw_le q0
   have hb65 : cmdBudget.toNat = 65536 := usize_ofNat' (by decide)
   obtain ⟨l, hl1, hl2⟩ := o1
   have hl2' : st'.pend.toNat = cmd.pend.toNat + l.length := hl2
@@ -816,7 +818,7 @@ theorem pay_cmds {w : Nat} {last : Bool} {m : MetaBlockHeader} {q0 : Phase} {a :
     subst e1
     subst e2
     have hc := g6 hst
-    simp only [Bool.false_eq_true, ↓reduceIte] at hc
+    simp only [↓reduceIte] at hc
     have he : cmdEnd st' = 1 := by unfold cmdEnd; rw [hst]; rfl
     rw [he] at g3
     rw [ite_eq_right (fun e => StepStatus.noConfusion e)]
@@ -1234,7 +1236,7 @@ theorem stepDWbits_ring {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.si
 
 /-- What a step that pauses costs beyond the potential: a meta-block's start that waits for output space the least, and
 any other pause at most the command loop's stopping round and its round. -/
-def stopCost (r : Dec) : Nat := if r.status = .needsOutput ∧ r.tag = .mblock then 2 else 85
+def stopCost (r : Dec) : Nat := if r.status = .needsOutput ∧ r.tag = .mblock then 2 else 88
 
 theorem stopCost_ge (r : Dec) : 2 ≤ stopCost r := by
   unfold stopCost
@@ -1247,11 +1249,11 @@ theorem stepDCmds_out_tag {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.
   dsimp only
   repeat' (first | split_all | (intro h; exact absurd h (fun e => DStatus.noConfusion e)) | (intro _; exact ht))
 
-theorem stopCost_in {r : Dec} (h : r.status = .needsInput) : stopCost r = 85 := by
+theorem stopCost_in {r : Dec} (h : r.status = .needsInput) : stopCost r = 88 := by
   unfold stopCost
   rw [ite_eq_right (fun e => absurd (h.symm.trans e.1) (fun e => DStatus.noConfusion e))]
 
-theorem stopCost_out {r : Dec} (ht : r.tag ≠ .mblock) : stopCost r = 85 := by
+theorem stopCost_out {r : Dec} (ht : r.tag ≠ .mblock) : stopCost r = 88 := by
   unfold stopCost
   rw [ite_eq_right (fun e => ht e.2)]
 
@@ -1373,8 +1375,8 @@ theorem stepDHdr_memPend {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.s
   repeat' (first | split_all | (intro _; rfl) | (intro _; trivial) | (intro h; exact absurd h (fun e => DStatus.noConfusion e)))
 
 /-- A stream step, against the potential: one that goes on is paid for, with the window when it is WBITS's; one that
-pauses costs at most 86 more; one that rejects or reports the limit costs at most the potential, the bits, the bytes it
-decodes first, which are waiting after it, and 93. -/
+pauses costs at most 88 more; one that rejects or reports the limit costs at most the potential, the bits, the bytes it
+decodes first, which are waiting after it, and 96. -/
 theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {p : SPhase} (hrel : DRel D p)
     (hsi : SInv p) (he : D.tag ≠ .ended) (hp : D.pos.toNat ≤ stop.toNat) {hinv : DInv stop D} :
     ((stepD a stop hs D hinv).status = .next → Pays a stop p D D.pos (stepD a stop hs D hinv) (stepDW a stop hs D hinv + 1)
@@ -1386,7 +1388,7 @@ theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
       ((stepD a stop hs D hinv).status = .memory → (stepD a stop hs D hinv).cmd.pend.toNat = 0) ∧ ∀ t : List UInt8,
       stepDW a stop hs D hinv + 1 + hdrRate * ((stop.toNat - (stepD a stop hs D hinv).pos.toNat) * 8) +
         (stop.toNat - (stepD a stop hs D hinv).pos.toNat) ≤
-        dpot p D + hdrRate * (D.bits a D.pos stop (bits t)).length + (stop.toNat - D.pos.toNat) + 31 *L + 93) := by
+        dpot p D + hdrRate * (D.bits a D.pos stop (bits t)).length + (stop.toNat - D.pos.toNat) + 32 *L + 96) := by
   have hok := stepD_ok specSem (hs := hs) (h := hinv) hrel he hp
   have hpl := stepD_pendLe a stop hs D hinv
   have hmem : (stepD a stop hs D hinv).status = .memory →
@@ -1788,9 +1790,9 @@ theorem runD_k10 {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} (x 
 
 /-! ### The decoder's loop -/
 
-/-- The decoder's loop, against the potential: its steps are paid for by the potential, 2980 for each bit, 31 for each
-byte and the window, and the step that stops it by at most 87 more, or, when it rejects or reports the limit, by the bits
-and the bytes it may decode first, and 94. -/
+/-- The decoder's loop, against the potential: its steps are paid for by the potential, 2980 for each bit, 32 for each
+byte and the window, and the step that stops it by at most 88 more, or, when it rejects or reports the limit, by the bits
+and the bytes it may decode first, and 97. -/
 theorem pay_runD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} : ∀ (x : RunArg a stop hs) (p : SPhase),
     DRel x.D p → SInv p →
     ((runD a stop hs x.D x.inv).status = .next ∨ (runD a stop hs x.D x.inv).status = .needsInput ∨
@@ -1802,8 +1804,8 @@ theorem pay_runD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} : �
       ((runD a stop hs x.D x.inv).status = .memory → (runD a stop hs x.D x.inv).cmd.pend.toNat = 0) ∧ ∀ t : List UInt8,
       runDW a stop hs x.D x.inv + hdrRate * ((stop.toNat - (runD a stop hs x.D x.inv).pos.toNat) * 8) +
         (stop.toNat - (runD a stop hs x.D x.inv).pos.toNat) ≤
-        dpot p x.D + hdrRate * (x.D.bits a x.D.pos stop (bits t)).length + (stop.toNat - x.D.pos.toNat) + 31 *L +
-          winD x.D (runD a stop hs x.D x.inv) + 94) := by
+        dpot p x.D + hdrRate * (x.D.bits a x.D.pos stop (bits t)).length + (stop.toNat - x.D.pos.toNat) + 32 *L +
+          winD x.D (runD a stop hs x.D x.inv) + 97) := by
   intro x
   induction x using (runRel_wf a stop hs).induction with
   | _ x ih =>

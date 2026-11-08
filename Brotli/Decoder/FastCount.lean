@@ -8,9 +8,10 @@ public import Brotli.Decoder.FastPay
 # The work of the command loop with the fast loop is paid for
 
 `runCmdKFW` against `runCmdKF`, by induction on the fuel, the two taken apart together: an entry into the fast loop is a
-move whose work is four for each byte it writes and two (`fastEnter_work`), paid for by the bytes and, when it writes
-nothing, by what the place holds for it (`alw`, which the step before it left, `round_pay`); a step is paid for as the
-step machine's are (`round_pay`). The account is `CW`: the step machine's with what a fresh state holds.
+move whose work, with its round, is four for each byte it writes and three (`fastEnter_work`), paid for by the bytes and,
+when it writes nothing, by what the place holds for it (`alw`, which the step before it left, `round_pay`, or the caller
+gave); a step is paid for as the step machine's are (`round_pay`). The account is `CW`: the step machine's with what a
+fresh state holds.
 -/
 
 namespace Brotli.Decoder
@@ -103,7 +104,7 @@ theorem stepCmd_potA {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a : 
         stepCmdW H k a stop hs st pos + 1 + cpot p' + alw p' +
           200 * (stateBits (stepCmd H k a stop hs st pos) a (stepCmd H k a stop hs st pos).pos stop F).length +
           (stop.toNat - (stepCmd H k a stop hs st pos).pos.toNat) ≤
-          cpot p + 200 * (stateBits st a pos stop F).length + (stop.toNat - pos.toNat) + 30 * (p'.out.length - p.out.length) := by
+          cpot p + 200 * (stateBits st a pos stop F).length + (stop.toNat - pos.toNat) + 31 * (p'.out.length - p.out.length) := by
   obtain ⟨p', hR, hout, h2, h1, hj⟩ := stepCmd_count (hs := hs) hH hrel hp hn
   obtain ⟨l, hl1, hl2⟩ := hout
   refine ⟨p', hR, ⟨l, hl1, hl2⟩, ?_, h2, h1, fun F => ?_⟩
@@ -161,7 +162,7 @@ def CW (w : Nat) (k : USize) (m : MetaBlockHeader) (a : ByteArray) (stop : USize
     pos'.toNat ≤ stop.toNat ∧ ReachN (cStep w m) c p (stateBits st a pos stop F) q (stateBits st' a pos' stop F) ∧
     W + cpot q + 200 * (stateBits st' a pos' stop F).length + (stop.toNat - pos'.toNat) ≤
       cpot p + A + 200 * (stateBits st a pos stop F).length + (stop.toNat - pos.toNat) +
-        30 * (q.out.length - p.out.length) + cmdEnd R ∧
+        31 * (q.out.length - p.out.length) + cmdEnd R ∧
     (R.status ≠ .bad → st' = R ∧ pos' = R.pos) ∧
     (R.status = .bad → R.WinSame st' ∧ pos'.toNat ≤ R.pos.toNat) ∧
     (R.status = .done → ∃ s, q = .command s ∧ s.remaining = 0) ∧
@@ -262,7 +263,7 @@ theorem CW.halt {H : Hdr} {hs : stop.toNat ≤ a.size} {p : Phase} {st : Cmd} {p
 theorem CW.move {α : Type} {K : CommandState → List Bool → Option α} {p p' : Phase} {st r : Cmd} {pos : USize}
     {Wf W : Nat} {R : Cmd} {N : Nat} (hm : m.ndirect ≤ 120) (hci : CInv w p)
     (hld : isLD p = true) (mv : MoveOk w k.toNat m K a stop p st pos p' r)
-    (hW : Wf ≤ 4 * (r.pend.toNat - st.pend.toNat) + 2)
+    (hW : Wf ≤ 4 * (r.pend.toNat - st.pend.toNat) + 3)
     (ih : CInv w p' → CW w k m a stop p' r r.pos 0 W R N false) : CW w k m a stop p st pos (alw p) (Wf + W) R (N + 1) true := by
   intro F
   obtain ⟨c1, hc1⟩ := (mv.reach F).count
@@ -275,7 +276,7 @@ theorem CW.move {α : Type} {K : CommandState → List Bool → Option α} {p p'
     rw [e1, List.length_append]
     omega
   have hle := mv.posLe
-  have hal : alw p = 2 := by unfold alw; rw [ite_eq_left hld]
+  have hal : alw p = 3 := by unfold alw; rw [ite_eq_left hld]
   have hcp := cpot_le p'
   have h88 := cpot_LD hld
   have hmono : (stateBits st a pos stop F).length - (stateBits r a r.pos stop F).length = 0 → l.length = 0 →
@@ -291,7 +292,7 @@ theorem CW.move {α : Type} {K : CommandState → List Bool → Option α} {p p'
 end
 
 open Classical in
-/-- The work of the command loop with the fast loop is paid for by the potential, 200 for each bit it reads, 30 for each
+/-- The work of the command loop with the fast loop is paid for by the potential, 200 for each bit it reads, 31 for each
 byte it adds, a round for each byte its refills take, and its end; a fresh state holds what its place holds for an entry
 into the fast loop. -/
 theorem runCmdKFW_count {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a : ByteArray} {stop : USize}
@@ -369,7 +370,8 @@ theorem runCmdKFW_count {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a
       subst hfr
       exact CW.move hm hci hld (mv.trans (MoveOk.same (st := mkCmd word' count' ring' wpos' pend' cap' written' q1 q2
           remaining' iCount' lCount' dCount' flags' iCur' iPrev' lCur' lPrev' dCur' dPrev' e0 e1 e2 e3 code' ilen' clen'
-          copyBits' copyBase' dist' wordBuf' wordPos' tag' left' pos' ss') hR rfl rfl rfl rfl mv.posStop)) hw
+          copyBits' copyBase' dist' wordBuf' wordPos' tag' left' pos' ss') hR rfl rfl rfl rfl mv.posStop))
+        (by rw [Nat.add_comm]; exact Nat.succ_le_succ hw)
         (fun hci' => ih _ hnN false cell word' count' ring' wpos' pend' cap' written' q1 q2 remaining' iCount' lCount'
           dCount' flags' iCur' iPrev' lCur' lPrev' dCur' dPrev' e0 e1 e2 e3 code' ilen' clen' copyBits' copyBase' dist'
           wordBuf' wordPos' tag' left' pos' h' p' hR hci')
@@ -431,16 +433,17 @@ theorem CW.congr {w : Nat} {k : USize} {m : MetaBlockHeader} {a : ByteArray} {st
   rw [e] at h5 h6
   exact ⟨c, q, st', pos', h1, h2, ⟨l, o1, by rw [← hpe]; exact o2⟩, h3, h4, h5, h6, h7⟩
 
-/-- The work of the command loop with the fast loop, from a record, is paid for by the potential, 200 for each bit it
-reads, 30 for each byte it adds, a round for each byte its refills take, and its end. -/
+/-- The work of the command loop with the fast loop, from a record, is paid for by the potential, what its place holds
+for an entry into the fast loop, 200 for each bit it reads, 31 for each byte it adds, a round for each byte its refills
+take, and its end. -/
 theorem runCmdFW_count {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a : ByteArray} {stop : USize}
     {hs : stop.toNat ≤ a.size} (hm : m.ndirect ≤ 120) (hH : HdrRel H m) (n : USize) {p : Phase} {st : Cmd} {pos : USize}
     (hrel : Rel w k.toNat m st p) (hci : CInv w p) (h : CmdInv H k stop st pos) :
-    CW w k m a stop p st pos 0 (runCmdFW H k a stop hs n st pos h) (runCmdF H k a stop hs n st pos h) n.toNat false := by
+    CW w k m a stop p st pos (alw p) (runCmdFW H k a stop hs n st pos h) (runCmdF H k a stop hs n st pos h) n.toNat true := by
   obtain ⟨word, count, ring, wpos, pend, cap, written, p1, p2, remaining, iCount, lCount, dCount, flags,
     ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf, wordPos⟩,
     tag, left, sp, ss⟩ := st
-  exact (runCmdKFW_count hm hH _ n rfl false _ word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount
+  exact (runCmdKFW_count hm hH _ n rfl true _ word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount
     flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos h
     p (hrel.mark pos .next) hci).congr rfl rfl rfl
 

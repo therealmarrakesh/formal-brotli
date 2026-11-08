@@ -253,9 +253,9 @@ theorem callD_ring {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {
           exact hfr0
 
 /-- A call's work against the potential. A call that pauses leaves the potential of where it pauses and its bits to pay
-later, at most one more byte waiting than it found, and pays 2980 for each bit it reads, 33 for each byte it hands out,
-31 for each byte it leaves waiting, the window, and 93. Any call pays at most the potential, 2980 for each bit, 33 for
-each byte it hands out, the window, and 132: it decodes at most one byte more than it hands out. -/
+later, at most one more byte waiting than it found, and pays 2980 for each bit it reads, 34 for each byte it hands out,
+32 for each byte it leaves waiting, the window, and 96. Any call pays at most the potential, 2980 for each bit, 34 for
+each byte it hands out, the window, and 136: it decodes at most one byte more than it hands out. -/
 theorem pay_callD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {final : Bool} :
     ∀ (space : Nat) (D : Dec) (h : DInv stop D) (p : SPhase) (buf : ByteArray), DRel D p → SInv p →
     (D.tag ≠ .wbits → 10 ≤ D.k.toNat) →
@@ -268,16 +268,16 @@ theorem pay_callD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {f
         (callD a stop hs final D h buf space).D.cmd.pend.toNat ≤ D.cmd.pend.toNat + 1 ∧
         ∀ t : List UInt8, callDW a stop hs final D h buf space + dpot q (callD a stop hs final D h buf space).D +
           hdrRate * ((callD a stop hs final D h buf space).D.bits a (callD a stop hs final D h buf space).pos stop (bits t)).length +
-          (stop.toNat - (callD a stop hs final D h buf space).pos.toNat) + 31 *D.cmd.pend.toNat ≤
+          (stop.toNat - (callD a stop hs final D h buf space).pos.toNat) + 32 *D.cmd.pend.toNat ≤
           dpot p D + hdrRate * (D.bits a D.pos stop (bits t)).length + (stop.toNat - D.pos.toNat) +
-            33 * ((callD a stop hs final D h buf space).buf.size - buf.size) +
-            31 *(callD a stop hs final D h buf space).D.cmd.pend.toNat +
-            winD D (runD a stop hs (withCap D space) (h.withCap space)) + 93) ∧
+            34 * ((callD a stop hs final D h buf space).buf.size - buf.size) +
+            32 *(callD a stop hs final D h buf space).D.cmd.pend.toNat +
+            winD D (runD a stop hs (withCap D space) (h.withCap space)) + 96) ∧
     (∀ t : List UInt8, callDW a stop hs final D h buf space + hdrRate * ((stop.toNat - (callD a stop hs final D h buf space).pos.toNat) * 8) +
       (stop.toNat - (callD a stop hs final D h buf space).pos.toNat) ≤
       dpot p D + hdrRate * (D.bits a D.pos stop (bits t)).length + (stop.toNat - D.pos.toNat) +
-      33 * ((callD a stop hs final D h buf space).buf.size - buf.size) +
-      winD D (runD a stop hs (withCap D space) (h.withCap space)) + 132) := by
+      34 * ((callD a stop hs final D h buf space).buf.size - buf.size) +
+      winD D (runD a stop hs (withCap D space) (h.withCap space)) + 136) := by
   intro space
   induction space using Nat.strongRecOn with
   | _ space ih =>
@@ -345,7 +345,7 @@ theorem pay_callD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {f
                   rw [ite_eq_left ⟨hO, hm⟩]
                 omega
               | _ => exact absurd (hR.1.symm.trans hm) (fun e => DTag.noConfusion e)
-            · have e3 : stopCost (runD a stop hs (withCap D space) (h.withCap space)) = 85 := stopCost_out hm
+            · have e3 : stopCost (runD a stop hs (withCap D space) (h.withCap space)) = 88 := stopCost_out hm
               have hroom := runD_room ⟨withCap D space, h.withCap space⟩ hO hm
               dsimp only at hroom
               have hk24 : (runD a stop hs (withCap D space) (h.withCap space)).k.toNat ≤ 24 := by
@@ -407,7 +407,7 @@ theorem pay_callD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {f
         have hne : (flushD (runD a stop hs (withCap D space) (h.withCap space)) buf space).D.cmd.pend.toNat ≠ 0 :=
           fun e => hz (USize.toNat_inj.mp (by rw [e]; rfl))
         have hsp : space - len' = 0 := a6 (by omega)
-        have e3 : stopCost (runD a stop hs (withCap D space) (h.withCap space)) ≤ 85 := by
+        have e3 : stopCost (runD a stop hs (withCap D space) (h.withCap space)) ≤ 88 := by
           unfold stopCost
           split <;> omega
         refine ⟨by dsimp only; omega, fun _ => ⟨q, a4, hsiq hsi, fun _ => hk10, rfl, by dsimp only; rw [a8]; exact hp1,
@@ -484,7 +484,7 @@ theorem pay_callD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {f
         have hfw := flushW_le hR buf space
         have hlo : q.out.length - p.out.length = l.length := by rw [hl1, List.length_append]; omega
         have hl2' : (runD a stop hs (withCap D space) (h.withCap space)).cmd.pend.toNat = D.cmd.pend.toNat + l.length := hl2
-        have hsc : stopCost (runD a stop hs (withCap D space) (h.withCap space)) = 85 := stopCost_in hst
+        have hsc : stopCost (runD a stop hs (withCap D space) (h.withCap space)) = 88 := stopCost_in hst
         have htw : (runD a stop hs (withCap D space) (h.withCap space)).tag ≠ .wbits →
             10 ≤ (runD a stop hs (withCap D space) (h.withCap space)).k.toNat :=
           runD_k10' ⟨withCap D space, h.withCap space⟩ hrel' hk
@@ -547,7 +547,7 @@ theorem pay_callD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {f
         have hfw := flushW_le hR buf space
         have hlo : q.out.length - p.out.length = l.length := by rw [hl1, List.length_append]; omega
         have hl2' : (runD a stop hs (withCap D space) (h.withCap space)).cmd.pend.toNat = D.cmd.pend.toNat + l.length := hl2
-        have hsc : stopCost (runD a stop hs (withCap D space) (h.withCap space)) = 85 := by
+        have hsc : stopCost (runD a stop hs (withCap D space) (h.withCap space)) = 88 := by
           unfold stopCost
           rw [ite_eq_right (fun e => absurd (hst.symm.trans e.1) (fun e => DStatus.noConfusion e))]
         have hend := runD_next ⟨withCap D space, h.withCap space⟩ hst

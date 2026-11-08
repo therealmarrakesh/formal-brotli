@@ -278,7 +278,7 @@ theorem runCmdF_pendLe {w : Nat} {k : USize} {H : Hdr} {m : Brotli.Spec.MetaBloc
       obtain ⟨p', hR, -⟩ := (stepCmd_ok (hs := hs) (K := commandsFrom w m) (fun _ bs h0 => commandsFrom_step bs h0) hH
         hrel hp).next hst
       exact (stepCmd_pendLe H k a stop hs st pos).trans (ih p' hR))
-    (fun _ _ _ _ _ _ _ _ hpe _ hc ih => (PendLe.keep hpe hc).trans ih)
+    (fun _ _ _ _ _ _ _ _ _ hpe _ hc ih => (PendLe.keep hpe hc).trans ih)
     n hrel h
 
 /-- A command's start writes nothing. -/
