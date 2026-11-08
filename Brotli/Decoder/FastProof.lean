@@ -2034,6 +2034,13 @@ theorem lit2_round {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHea
 
 /-! ### The two-literal table -/
 
+/-- A word whose low byte is at most 8 has it in its low four bits. -/
+theorem and255_of_lo {e : UInt64} (h : (e &&& 255).toNat ≤ 8) : e &&& 255 = e &&& 15 := by
+  apply UInt64.toNat_inj.mp
+  rw [UInt64.toNat_and, show (255 : UInt64).toNat = 2 ^ 8 - 1 from rfl, Nat.and_two_pow_sub_one_eq_mod] at h ⊢
+  rw [UInt64.toNat_and, show (15 : UInt64).toNat = 2 ^ 4 - 1 from rfl, Nat.and_two_pow_sub_one_eq_mod]
+  omega
+
 /-- A two-literal entry whose count field is 2: both code words fit 8 bits together, and the entry holds their bits and
 both literals. -/
 theorem pairEntry_two {v1 v2 e : UInt64} (he : e.toNat = (pairEntryU v1 v2).toNat % 2 ^ 32)
@@ -2223,12 +2230,18 @@ theorem pair_round {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHea
     ∃ p', MoveOk w k.toNat m K a stop (.literals s ic c ilen clen n lit out)
       (fexit word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code ilen' clen' p1 p2
         .literals L pos) pos p'
-      (fexit (word' >>> (row32 T pairBase hb C.size32 word' &&& 15)) (count' - (row32 T pairBase hb C.size32 word' &&& 15))
+      (fexit (word' >>> (row32 T pairBase hb C.size32 word' &&& 255)) (count' - (row32 T pairBase hb C.size32 word' &&& 255))
         (wput (wput ring opos mask hk hmN hsz (row32 T pairBase hb C.size32 word' >>> 16).toUInt8) (opos + USize.ofNat 1)
           mask hk hmN (wput_size _ _ _ hk hmN hsz _) (row32 T pairBase hb C.size32 word' >>> 24).toUInt8)
         (opos + USize.ofNat 2) mask pB cap cap16 wB rEnd iCount (LC - 2) dCount flags x d01 d23 code ilen' clen'
         (row32 T pairBase hb C.size32 word' >>> 24).toUInt8 (row32 T pairBase hb C.size32 word' >>> 16).toUInt8
         .literals (L - 2) pos') := by
+  -- the entry's low byte is its bit count alone, so reading it whole is reading its low four bits
+  have hlo : ∀ j, j < 256 → leAt T (pairBase.toNat + 4 * j) 4 % 256 ≤ 8 := fun j hj => by
+    rw [(hpair hp).2 j hj]
+    have := pairAt_lo T (u32At H.lTriv x.lCur.toNat) j
+    omega
+  rw [and255_of_lo (row32_lo hlo word')]
   obtain ⟨hsum, f1, f2, f3⟩ := C.pair_lits hH hpair hp hb p1 p2 (litT C p1 p2 word' >>> 4).toUInt8 p1 word' h2
   have hl1 := and15_lt (litT C p1 p2 word')
   have hl2 := and15_lt (litT C (litT C p1 p2 word' >>> 4).toUInt8 p1 (word' >>> (litT C p1 p2 word' &&& 15)))

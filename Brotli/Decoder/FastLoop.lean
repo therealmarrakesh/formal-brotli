@@ -713,6 +713,64 @@ theorem or_shl_toNat {a b s : UInt64} {k P : Nat} (hs : s.toNat = k) (hk : k < 6
     exact Nat.mod_eq_of_lt (by omega)
   rw [UInt64.toNat_or, hsh, Nat.or_comm, ← Nat.two_pow_add_eq_or_of_lt ha, Nat.add_comm]
 
+/-- A two-literal entry's low byte is its bit count alone, at most 8. -/
+theorem pairEntryU_lo (v1 v2 : UInt64) : (pairEntryU v1 v2).toNat % 256 ≤ 8 := by
+  have hl1 := and15_lt v1
+  have hl2 := and15_lt v2
+  have hb1 := and255 (v1 >>> 4)
+  have hb2 := and255 (v2 >>> 4)
+  unfold pairEntryU
+  dsimp only
+  by_cases c1 : v1 &&& 15 ≤ 8
+  · rw [ite_eq_left c1]
+    have c1' : (v1 &&& 15).toNat ≤ 8 := UInt64.le_iff_toNat_le.mp c1
+    by_cases c2 : (v1 &&& 15) + (v2 &&& 15) ≤ 8
+    · rw [ite_eq_left c2]
+      have hs : ((v1 &&& 15) + (v2 &&& 15)).toNat = (v1 &&& 15).toNat + (v2 &&& 15).toNat := u64_add_small (by omega)
+      have c2' : ((v1 &&& 15) + (v2 &&& 15)).toNat ≤ 8 := UInt64.le_iff_toNat_le.mp c2
+      have e1 := or_shl_toNat (a := (v1 &&& 15) + (v2 &&& 15)) (b := 2) (s := 8) (P := 256) rfl (by decide) rfl
+        (by omega) (by decide)
+      have e2 := or_shl_toNat (a := ((v1 &&& (15 : UInt64)) + (v2 &&& (15 : UInt64))) ||| ((2 : UInt64) <<< 8))
+        (b := (v1 >>> 4) &&& (255 : UInt64))
+        (s := 16) (P := 65536) rfl (by decide) rfl (by rw [e1]; show _ + 256 * 2 < _; omega) (by omega)
+      have e3 := or_shl_toNat
+        (a := ((v1 &&& (15 : UInt64)) + (v2 &&& (15 : UInt64))) ||| ((2 : UInt64) <<< 8) |||
+          (((v1 >>> 4) &&& (255 : UInt64)) <<< 16))
+        (b := (v2 >>> 4) &&& (255 : UInt64)) (s := 24) (P := 16777216) rfl (by decide) rfl
+        (by rw [e2, e1]; show _ + 256 * 2 + _ < _; omega) (by omega)
+      rw [e3, e2, e1, show (2 : UInt64).toNat = 2 from rfl]
+      omega
+    · rw [ite_eq_right c2]
+      have e1 := or_shl_toNat (a := v1 &&& 15) (b := 1) (s := 8) (P := 256) rfl (by decide) rfl (by omega) (by decide)
+      have e2 := or_shl_toNat (a := (v1 &&& (15 : UInt64)) ||| ((1 : UInt64) <<< 8))
+        (b := (v1 >>> 4) &&& (255 : UInt64)) (s := 16)
+        (P := 65536) rfl (by decide) rfl (by rw [e1]; show _ + 256 * 1 < _; omega) (by omega)
+      rw [e2, e1, show (1 : UInt64).toNat = 1 from rfl]
+      omega
+  · rw [ite_eq_right c1]
+    decide
+
+/-- See `pairEntryU_lo`. -/
+theorem pairAt_lo (t : ByteArray) (tb j : Nat) : (pairAt t tb j).toNat % 256 ≤ 8 := by
+  unfold pairAt
+  exact pairEntryU_lo _ _
+
+/-- A read from a two-literal table whose entries' low bytes are at most 8 has its low byte at most 8. -/
+theorem row32_lo {T : ByteArray} {base : USize} {h : base.toNat + 1024 ≤ T.size} {h32 : T.size < 2 ^ 32}
+    (hlo : ∀ j, j < 256 → leAt T (base.toNat + 4 * j) 4 % 256 ≤ 8) (w : UInt64) :
+    (row32 T base h h32 w &&& 255).toNat ≤ 8 := by
+  have h255 : (w &&& 255).toNat = w.toNat % 256 := by
+    rw [UInt64.toNat_and]
+    exact Nat.and_two_pow_sub_one_eq_mod w.toNat 8
+  have hj : w.toNat % 256 < 256 := Nat.mod_lt _ (by decide)
+  have he : (row32 T base h h32 w).toNat = leAt T (base.toNat + 4 * (w.toNat % 256)) 4 := by
+    unfold row32
+    rw [load32_toNat, fastAdd (by rw [u64_shl (by decide) (by rw [h255]; omega)]; rw [h255]; omega),
+      u64_shl (by decide) (by rw [h255]; omega), h255,
+      show w.toNat % 256 * 2 ^ 2 = 4 * (w.toNat % 256) by rw [Nat.mul_comm]]
+  rw [UInt64.toNat_and, show (255 : UInt64).toNat = 2 ^ 8 - 1 from rfl, Nat.and_two_pow_sub_one_eq_mod, he]
+  exact hlo _ hj
+
 /-- An entry that isn't 255 in its low byte is the fused entry of a root slot holding a code word of at most 8 bits and
 a symbol below 704. -/
 theorem icEntryU_fused {v j : UInt64} (h : icEntryU v j &&& 255 ≠ 255) :
@@ -930,7 +988,8 @@ end
 /-! ### The loop -/
 
 /-- What the loop knows of its window and input while it runs: the window's size and mask, its size less the slack,
-the margin (`posLim` is 40 bytes before the chunk's end), the two-literal table's place, and the header's `NPOSTFIX`. -/
+the margin (`posLim` is 40 bytes before the chunk's end), the two-literal table's place and its entries' low bytes (each
+the bit count alone), and the header's `NPOSTFIX`. -/
 structure FWin (H : Hdr) (T : ByteArray) (kk mask size cap16 posLim stop pairBase : USize) (np : UInt64) : Prop where
   k24 : kk.toNat ≤ 24
   k16 : 16 ≤ 2 ^ kk.toNat
@@ -940,6 +999,7 @@ structure FWin (H : Hdr) (T : ByteArray) (kk mask size cap16 posLim stop pairBas
   lim : posLim.toNat + 40 = stop.toNat
   pair : pairBase ≠ USize.ofNat 4294967295 → pairBase.toNat + 1024 ≤ T.size
   np : np = H.npostfix
+  pairLo : pairBase ≠ USize.ofNat 4294967295 → ∀ j, j < 256 → leAt T (pairBase.toNat + 4 * j) 4 % 256 ≤ 8
 
 /-- What the loop knows of a state: the bits well formed, the position within the chunk, the window's size, and, inside
 a segment of `m` literals, the margin: the next bit unread (`8 * pos - count`) at most `15 * m` bits short of 30 bytes
@@ -1075,8 +1135,9 @@ def fastLoop (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.to
         fun word' count' pos' hf =>
       let e := row32 T pairBase (W.pair hp.2) C.size32 word'
       if (e >>> 8) &&& 255 = 2 then
-        let l := e &&& 15
-        have hl : l.toNat < 16 := and15_lt e
+        -- the low byte is the bit count alone, so it is read whole, with no mask on the decode's chain
+        let l := e &&& 255
+        have hl : l.toNat < 16 := Nat.lt_of_le_of_lt (row32_lo (W.pairLo hp.2) word') (by decide)
         have hc15 : 15 ≤ count'.toNat := hf.enough
         let b1 := (e >>> 16).toUInt8
         let b2 := (e >>> 24).toUInt8
@@ -1362,6 +1423,21 @@ place, computed once. `bEnd` is where the room or the meta-block ends, which the
       show (if pv = 4294967295 then USize.ofNat 4294967295 else pv.toUSize).toNat + 1024 ≤ _
       rw [ite_eq_right hv, word_toUSize (by rw [hpv]; exact Nat.lt_of_lt_of_le (leAt_lt _ _ 4) (by decide)), hpv]
       omega
+  have hlo : pairBase ≠ USize.ofNat 4294967295 → ∀ j, j < 256 →
+      leAt H.arena (pairBase.toNat + 4 * j) 4 % 256 ≤ 8 := by
+    intro hne j hj
+    by_cases hv : pv = 4294967295
+    · exact absurd (by show (if pv = 4294967295 then USize.ofNat 4294967295 else pv.toUSize) = _; rw [ite_eq_left hv]) hne
+    · have hpv : pv.toNat = leAt H.arena (H.arena.size - 4 * H.nL.toNat + 4 * x.lCur.toNat) 4 := by
+        show (load32 _ _ _ _).toNat = _
+        rw [load32_toNat, hx.1]
+      have hpv' : leAt H.arena (H.arena.size - 4 * H.nL.toNat + 4 * x.lCur.toNat) 4 ≠ 4294967295 := fun e =>
+        hv (UInt64.toNat_inj.mp (by rw [hpv, e]; rfl))
+      have h3 := (hT.pix _ hinv.lCur hpv').2.2 j hj
+      have h4 := pairAt_lo H.arena (u32At H.lTriv x.lCur.toNat) j
+      show leAt H.arena ((if pv = 4294967295 then USize.ofNat 4294967295 else pv.toUSize).toNat + 4 * j) 4 % 256 ≤ 8
+      rw [ite_eq_right hv, word_toUSize (by rw [hpv]; exact Nat.lt_of_lt_of_le (leAt_lt _ _ 4) (by decide)), hpv, h3]
+      omega
   have h40 : (USize.ofNat 40).toNat = 40 := fastLit (by decide)
   have h16 : (USize.ofNat 16).toNat = 16 := fastLit (by decide)
   fastLoop H kk a stop hs cap H.arena H.npostfix x flags (ringMask kk) (ringSize kk) (ringSize kk - USize.ofNat 16)
@@ -1375,7 +1451,7 @@ place, computed once. `bEnd` is where the room or the meta-block ends, which the
     ⟨hinv.k24, hinv.k16, ringMask_toNat hinv.k24, ringSize_toNat hinv.k24,
       by rw [USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr (by rw [h16, ringSize_toNat hinv.k24]; exact hinv.k16)),
         h16, ringSize_toNat hinv.k24],
-      by rw [USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr (by rw [h40]; omega)), h40]; omega, hpair, rfl⟩
+      by rw [USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr (by rw [h40]; omega)), h40]; omega, hpair, rfl, hlo⟩
     word count pos ring wpos iCount lCount dCount (x.d0 ||| (x.d1 <<< 32)) (x.d2 ||| (x.d3 <<< 32)) x.code x.ilen x.clen
     lits 0 p1 p2 ⟨hinv.wf, hinv.pos, hinv.size, fun h => absurd rfl h⟩
 

@@ -41,8 +41,8 @@ def fastLoopW (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.t
         fun word' count' pos' hf =>
       let e := row32 T pairBase (W.pair hp.2) C.size32 word'
       if (e >>> 8) &&& 255 = 2 then
-        let l := e &&& 15
-        have hl : l.toNat < 16 := and15_lt e
+        let l := e &&& 255
+        have hl : l.toNat < 16 := Nat.lt_of_le_of_lt (row32_lo (W.pairLo hp.2) word') (by decide)
         have hc15 : 15 ≤ count'.toNat := hf.enough
         let b1 := (e >>> 16).toUInt8
         let b2 := (e >>> 24).toUInt8
@@ -226,6 +226,21 @@ def fastEnterW (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.
       show (if pv = 4294967295 then USize.ofNat 4294967295 else pv.toUSize).toNat + 1024 ≤ _
       rw [ite_eq_right hv, word_toUSize (by rw [hpv]; exact Nat.lt_of_lt_of_le (leAt_lt _ _ 4) (by decide)), hpv]
       omega
+  have hlo : pairBase ≠ USize.ofNat 4294967295 → ∀ j, j < 256 →
+      leAt H.arena (pairBase.toNat + 4 * j) 4 % 256 ≤ 8 := by
+    intro hne j hj
+    by_cases hv : pv = 4294967295
+    · exact absurd (by show (if pv = 4294967295 then USize.ofNat 4294967295 else pv.toUSize) = _; rw [ite_eq_left hv]) hne
+    · have hpv : pv.toNat = leAt H.arena (H.arena.size - 4 * H.nL.toNat + 4 * x.lCur.toNat) 4 := by
+        show (load32 _ _ _ _).toNat = _
+        rw [load32_toNat, hx.1]
+      have hpv' : leAt H.arena (H.arena.size - 4 * H.nL.toNat + 4 * x.lCur.toNat) 4 ≠ 4294967295 := fun e =>
+        hv (UInt64.toNat_inj.mp (by rw [hpv, e]; rfl))
+      have h3 := (hT.pix _ hinv.lCur hpv').2.2 j hj
+      have h4 := pairAt_lo H.arena (u32At H.lTriv x.lCur.toNat) j
+      show leAt H.arena ((if pv = 4294967295 then USize.ofNat 4294967295 else pv.toUSize).toNat + 4 * j) 4 % 256 ≤ 8
+      rw [ite_eq_right hv, word_toUSize (by rw [hpv]; exact Nat.lt_of_lt_of_le (leAt_lt _ _ 4) (by decide)), hpv, h3]
+      omega
   have h40 : (USize.ofNat 40).toNat = 40 := fastLit (by decide)
   have h16 : (USize.ofNat 16).toNat = 16 := fastLit (by decide)
   fastLoopW H kk a stop hs cap H.arena H.npostfix x flags (ringMask kk) (ringSize kk) (ringSize kk - USize.ofNat 16)
@@ -239,7 +254,7 @@ def fastEnterW (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.
     ⟨hinv.k24, hinv.k16, ringMask_toNat hinv.k24, ringSize_toNat hinv.k24,
       by rw [USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr (by rw [h16, ringSize_toNat hinv.k24]; exact hinv.k16)),
         h16, ringSize_toNat hinv.k24],
-      by rw [USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr (by rw [h40]; omega)), h40]; omega, hpair, rfl⟩
+      by rw [USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr (by rw [h40]; omega)), h40]; omega, hpair, rfl, hlo⟩
     word count pos ring wpos iCount lCount dCount (x.d0 ||| (x.d1 <<< 32)) (x.d2 ||| (x.d3 <<< 32)) x.code x.ilen x.clen
     lits 0 p1 p2 ⟨hinv.wf, hinv.pos, hinv.size, fun h => absurd rfl h⟩
 
