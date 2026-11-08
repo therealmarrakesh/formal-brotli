@@ -109,13 +109,13 @@ def stepDHdrW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : D
     else 0
 
 /-- The work of `stepDCmds`: the command loop, and at the commands' end the check that every block type occurred. -/
-noncomputable def stepDCmdsW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize)
+def stepDCmdsW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize)
     (h : CmdInv D.H D.k stop D.cmd pos) : Nat :=
   runCmdFW D.H D.k a stop hs cmdBudget D.cmd pos h +
     if (runCmdF D.H D.k a stop hs cmdBudget D.cmd pos h).status = .done then 1 else 0
 
 /-- The work of a step of the whole decoder. -/
-noncomputable def stepDW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (h : DInv stop D) : Nat :=
+def stepDW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (h : DInv stop D) : Nat :=
   match ht : D.tag with
   | .wbits => stepDWbitsW a stop hs D D.pos
   | .mblock => stepDMetaW a stop hs D D.pos
@@ -143,7 +143,7 @@ theorem stepDW_cmds (ht : D.tag = .cmds) : stepDW a stop hs D h = stepDCmdsW a s
 end
 
 /-- The work of the decoder's loop: its rounds and their steps. -/
-noncomputable def runDW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (h : DInv stop D) : Nat :=
+def runDW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (h : DInv stop D) : Nat :=
   if he : D.tag = .ended then 1
   else
     let r := stepD a stop hs D h
@@ -171,7 +171,7 @@ def afterRunW (r : Dec) (buf : ByteArray) (space : Nat) : Nat :=
   | _ => 1
 
 /-- The work of a call: its rounds of the loop and of handing bytes out. -/
-noncomputable def callDW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (final : Bool) (D : Dec) (h : DInv stop D) (buf : ByteArray)
+def callDW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (final : Bool) (D : Dec) (h : DInv stop D) (buf : ByteArray)
     (space : Nat) : Nat :=
   runDW a stop hs (withCap D space) (h.withCap space) + 1 +
     if hO : (runD a stop hs (withCap D space) (h.withCap space)).status = .needsOutput then

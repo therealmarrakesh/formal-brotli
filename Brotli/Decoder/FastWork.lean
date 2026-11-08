@@ -235,10 +235,9 @@ def fastEnterW (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.
     n word count pos ring wpos iCount lCount dCount (x.d0 ||| (x.d1 <<< 32)) (x.d2 ||| (x.d3 <<< 32)) x.code x.ilen x.clen
     lits 0 p1 p2 ⟨hinv.wf, hinv.pos, hinv.size, fun h => absurd rfl h⟩
 
-open Classical in
 /-- The work of `runCmdKF`: a round, and in it an entry into the fast loop, which counts the fast loop's work, or a step
-of the step machine. -/
-noncomputable def runCmdKFW (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (n : USize)
+of the step machine, gone on with as `runCmdKF` goes on (`kstep`). -/
+def runCmdKFW (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (n : USize)
     (fresh : Bool) :
     (word count : UInt64) → (ring : ByteArray) → (wpos pend cap written : USize) → (p1 p2 : UInt8) →
     (remaining iCount lCount dCount : UInt64) → (flags : Flags) →
@@ -279,18 +278,16 @@ noncomputable def runCmdKFW (H : Hdr) (k : USize) (a : ByteArray) (stop : USize)
       stepCmdW H k a stop hs (mkCmd word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur
         iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos .next)
         pos + 1 +
-      kcase (fun word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
-          dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos =>
-          if h : KInv H k stop word count ring wpos written iCur iPrev lCur lPrev dCur dPrev copyBits dist wordBuf
-              wordPos tag pos then
-            runCmdKFW H k a stop hs (n - USize.ofNat 1) true word count ring wpos pend cap written p1 p2 remaining
-              iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase
-              dist wordBuf wordPos tag left pos h
-          else 0)
+      kstep H k a stop hs
+        (fun _ word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur
+            dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos h =>
+          runCmdKFW H k a stop hs (n - USize.ofNat 1) true word count ring wpos pend cap written p1 p2 remaining iCount
+            lCount dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf
+            wordPos tag left pos h)
         (fun _ => 0)
-        (stepCmd H k a stop hs (mkCmd word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags
-          iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos
-          .next) pos)
+        word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev
+        d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos
+        ⟨0, 0, 0, 0, ByteArray.empty, 0, 0, 0, 0⟩ hinv
 termination_by n.toNat
 decreasing_by
   all_goals
@@ -299,7 +296,7 @@ decreasing_by
     omega
 
 /-- The work of `runCmdF`: the record's fields, then the loop on them. -/
-noncomputable def runCmdFW (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (n : USize)
+def runCmdFW (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (n : USize)
     (st : Cmd) (pos : USize) (h : CmdInv H k stop st pos) : Nat :=
   match st, h with
   | ⟨word, count, ring, wpos, pend, cap, written, p1, p2, remaining, iCount, lCount, dCount, flags,

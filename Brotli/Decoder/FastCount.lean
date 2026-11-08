@@ -396,7 +396,25 @@ theorem runCmdKFW_count {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a
           dsimp only
           rw [dite_eq_left h]
           apply runCmdKF_cell H k a stop hs _ _ rfl
-      rw [kstep_eq (sp := pos) (ss := .next) (hcont := hc)]
+      have hcW : Drops H k stop
+          (fun _ word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
+              dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos h =>
+            runCmdKFW H k a stop hs (n - USize.ofNat 1) true word count ring wpos pend cap written p1 p2 remaining iCount
+              lCount dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist
+              wordBuf wordPos tag left pos h)
+          (fun word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
+              dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos =>
+            if h : KInv H k stop word count ring wpos written iCur iPrev lCur lPrev dCur dPrev copyBits dist wordBuf
+                wordPos tag pos then
+              runCmdKFW H k a stop hs (n - USize.ofNat 1) true word count ring wpos pend cap written p1 p2 remaining
+                iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase
+                dist wordBuf wordPos tag left pos h
+            else 0) :=
+        fun _ word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
+            dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos h => by
+          dsimp only
+          rw [dite_eq_left h]
+      rw [kstep_eq (sp := pos) (ss := .next) (hcont := hc), kstep_eq (sp := pos) (ss := .next) (hcont := hcW)]
       by_cases hst : (stepCmd H k a stop hs (mkCmd word count ring wpos pend cap written p1 p2 remaining iCount lCount
           dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos
           tag left pos .next) pos).status = .next

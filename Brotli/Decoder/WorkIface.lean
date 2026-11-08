@@ -16,7 +16,7 @@ namespace Brotli.Decoder
 open Brotli.Spec
 
 /-- The work of one call of the decoder: the call's own, for a call `decStep` takes, and one for a call it turns away. -/
-noncomputable def callWork (s : DState) (a : ByteArray) (start stop : Nat) (buf : ByteArray) (space : Nat) (final : Bool) : Nat :=
+def callWork (s : DState) (a : ByteArray) (start stop : Nat) (buf : ByteArray) (space : Nat) (final : Bool) : Nat :=
   if h : stop ≤ a.size ∧ start ≤ stop ∧ stop < USize.size then
     have hs : (USize.ofNat stop).toNat ≤ a.size := by
       rw [usize_of h.2.2]
