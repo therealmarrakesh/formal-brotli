@@ -726,14 +726,16 @@ decreasing_by
     have := usize_ne _hn
     omega
 
-/-- The command loop with the fast loop, from a state the compiled loop may run from. -/
+/-- The command loop with the fast loop, from a state the compiled loop may run from. It starts with a step of the step
+machine, so that every entry into the fast loop follows a step, which holds what the entry costs when it writes
+nothing (`cpot`). -/
 @[expose] public def runCmdF (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (n : USize) (st : Cmd)
     (pos : USize) (h : CmdInv H k stop st pos) : Cmd :=
   match st, h with
   | ⟨word, count, ring, wpos, pend, cap, written, p1, p2, remaining, iCount, lCount, dCount, flags,
       ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf, wordPos⟩,
       tag, left, _, _⟩, h =>
-    runCmdKF H k a stop hs n true ⟨word, count, pos, wpos, ByteArray.empty, p1, p2, 0, 0⟩ word count ring wpos pend cap
+    runCmdKF H k a stop hs n false ⟨word, count, pos, wpos, ByteArray.empty, p1, p2, 0, 0⟩ word count ring wpos pend cap
       written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen
       copyBits copyBase dist wordBuf wordPos tag left pos h
 
