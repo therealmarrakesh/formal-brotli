@@ -1175,20 +1175,30 @@ theorem wget_ctx {ring : ByteArray} {x mask : USize} {k : Nat} {out : List Nat} 
 
 /-! ### A copy -/
 
+/-- Masking before an addition changes nothing once the sum is masked. -/
+theorem mask_add {x y mask : USize} {k : Nat} (hk : k ≤ 24) (hm : mask.toNat = 2 ^ k - 1) :
+    ((x &&& mask) + y) &&& mask = (x + y) &&& mask := by
+  have hb : 32 ≤ System.Platform.numBits := by rcases System.Platform.numBits_eq with h | h <;> omega
+  have hdv : 2 ^ k ∣ 2 ^ System.Platform.numBits := Nat.pow_dvd_pow 2 (by omega)
+  apply USize.toNat_inj.mp
+  simp only [USize.toNat_and, hm, Nat.and_two_pow_sub_one_eq_mod, USize.toNat_add]
+  rw [Nat.mod_mod_of_dvd _ hdv, Nat.mod_mod_of_dvd _ hdv, Nat.mod_add_mod]
+
 /-- A whole copy, as a move: the step machine's copy with the chunk ending where it starts and room for all of it, with
-the fast copy's window and the context bytes read back from it. -/
+the fast copy's window and the context bytes read back from it, at the loop's unmasked position `x`. -/
 theorem copy_move {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
     {a : ByteArray} {stop : USize} {s : CommandState} {d n : Nat} {st : Cmd} {pos : USize}
     (hrel : Rel w k.toNat m st (.copy s d n)) (hn1 : 1 ≤ n) (hroom : st.pend.toNat + n + 16 ≤ 2 ^ k.toNat)
     (hp : pos.toNat ≤ stop.toNat) (hk : k.toNat ≤ 24) (hsz : st.ring.size = 2 ^ k.toNat)
     (hwp : st.wpos.toNat < 2 ^ k.toNat) (hd : st.dist.toUSize.toNat + 16 ≤ 2 ^ k.toNat) {ring' : ByteArray}
     (hR : ring' = copyF st.ring st.wpos st.dist.toUSize st.left.toUSize (ringMask k) (ringSize k) hk
-      (ringMask_toNat hk) (ringSize_toNat hk) hsz hwp hd) (hs' : ring'.size = 2 ^ k.toNat) :
+      (ringMask_toNat hk) (ringSize_toNat hk) hsz hwp hd) (hs' : ring'.size = 2 ^ k.toNat) {x : USize}
+    (hx : st.wpos = x &&& ringMask k) :
     ∃ p', MoveOk w k.toNat m K a stop (.copy s d n) st pos p'
       { st with
-        ring := ring', wpos := (st.wpos + st.left.toUSize) &&& ringMask k
-        p1 := wget ring' (st.wpos + st.left.toUSize - USize.ofNat 1) (ringMask k) (ringMask_toNat hk) hs'
-        p2 := wget ring' (st.wpos + st.left.toUSize - USize.ofNat 2) (ringMask k) (ringMask_toNat hk) hs'
+        ring := ring', wpos := (x + st.left.toUSize) &&& ringMask k
+        p1 := wget ring' (x + st.left.toUSize - USize.ofNat 1) (ringMask k) (ringMask_toNat hk) hs'
+        p2 := wget ring' (x + st.left.toUSize - USize.ofNat 2) (ringMask k) (ringMask_toNat hk) hs'
         left := 0, pend := st.pend + st.left.toUSize
         written := usmin (ringSize k - USize.ofNat 16) (st.written + st.left.toUSize), pos := pos
         status := .next } := by
@@ -1211,13 +1221,14 @@ theorem copy_move {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeader} {K : C
     (ringMask_toNat hk) (ringSize_toNat hk) hsz hwp hd (by omega) hd1' hd2' st.p1 st.p2 h1
   rw [← hR, copyRun_wpos hk (ringMask_toNat hk) (ringSize_toNat hk) hd1' hd2' _ st.left.toUSize st.ring st.wpos st.p1
     st.p2 hsz hwp rfl] at h1'
+  rw [hx, mask_add hk (ringMask_toNat hk)] at h1'
   rw [← hrunN] at h1' h3 h4
-  have h2' := wget_ctx (x := st.wpos + st.left.toUSize) hk (ringMask_toNat hk) (by omega) hs' h1' (by omega)
+  have h2' := wget_ctx (x := x + st.left.toUSize) hk (ringMask_toNat hk) (by omega) hs' h1' (by omega)
   have hstep := copy_after (stop := pos) (K := K) (a := a) hC htag hprod hdist hleft hd1 hdw hdo (Nat.le_refl _)
     (run := st.left.toUSize)
-    (r := ⟨ring', (st.wpos + st.left.toUSize) &&& ringMask k,
-      wget ring' (st.wpos + st.left.toUSize - USize.ofNat 1) (ringMask k) (ringMask_toNat hk) hs',
-      wget ring' (st.wpos + st.left.toUSize - USize.ofNat 2) (ringMask k) (ringMask_toNat hk) hs'⟩)
+    (r := ⟨ring', (x + st.left.toUSize) &&& ringMask k,
+      wget ring' (x + st.left.toUSize - USize.ofNat 1) (ringMask k) (ringMask_toNat hk) hs',
+      wget ring' (x + st.left.toUSize - USize.ofNat 2) (ringMask k) (ringMask_toNat hk) hs'⟩)
     (by omega) (by omega) (by omega) h1' h2' h3 h4
   obtain ⟨p', hmv⟩ := hstep.widen rfl rfl hp
   refine ⟨p', ?_⟩
@@ -1904,6 +1915,98 @@ theorem icK_fb {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff l
       apply k_congr (P := fun w c => (BitBuffer.mk w c).Wf)
       all_goals simp only [hE, hEo, hv, hsym, f1, f2, f3, f4, f5, wordSym]
 
+/-! ### The records of a command's round -/
+
+/-- A copy's distance taken as it is (an implied 0 or a code 0): the copy, the last distances unchanged. -/
+theorem applyDistance_zero {st : Cmd} {pos : USize} {d : UInt64} (hw : ¬ st.written.toUInt64 < d)
+    (hrc : ¬ st.remaining < st.clen) :
+    applyDistance st pos 0 d =
+      { st with
+        remaining := st.remaining - st.clen, left := st.clen, tag := .copy, pos := pos, status := .next
+        ext := { st.ext with dist := d } } := by
+  unfold applyDistance
+  rw [ite_eq_right hw, ite_eq_right hrc, ite_eq_left rfl]
+
+/-- A copy's distance from any other code: the copy, the distance pushed onto the last distances. -/
+theorem applyDistance_push {st : Cmd} {pos : USize} {dcode d : UInt64} (hw : ¬ st.written.toUInt64 < d)
+    (hrc : ¬ st.remaining < st.clen) (h0 : dcode ≠ 0) :
+    applyDistance st pos dcode d =
+      { st with
+        remaining := st.remaining - st.clen, left := st.clen, tag := .copy, pos := pos, status := .next
+        ext := { st.ext with dist := d, d0 := d, d1 := st.d0, d2 := st.d1, d3 := st.d2 } } := by
+  unfold applyDistance
+  rw [ite_eq_right hw, ite_eq_right hrc, ite_eq_right h0]
+
+/-- The bytes written, capped, after `n` more: the cap of the uncapped count plus `n`. -/
+theorem usmin_add {c x n : USize} (hx : x.toNat + n.toNat < 2 ^ 32) :
+    usmin c (usmin c x + n) = usmin c (x + n) := by
+  apply USize.toNat_inj.mp
+  have hm : (usmin c x).toNat + n.toNat < 2 ^ 32 := by rw [usmin_toNat]; omega
+  rw [usmin_toNat, usmin_toNat, fastAdd hm, fastAdd hx, usmin_toNat]
+  omega
+
+/-- What remains from `n` more bytes on. -/
+theorem rem_add {r : UInt64} {x n : USize} (hx : x.toNat + n.toNat < 2 ^ 32) (hr : x.toNat + n.toNat ≤ r.toNat) :
+    r - (x + n).toUInt64 = r - x.toUInt64 - n.toUInt64 := by
+  apply UInt64.toNat_inj.mp
+  have e1 : (x + n).toUInt64.toNat = x.toNat + n.toNat := by rw [USize.toNat_toUInt64, fastAdd hx]
+  have e2 : x.toUInt64.toNat = x.toNat := USize.toNat_toUInt64 x
+  have e3 : n.toUInt64.toNat = n.toNat := USize.toNat_toUInt64 n
+  have e4 : (r - x.toUInt64).toNat = r.toNat - x.toNat := by rw [u64_sub_le (by rw [e2]; omega), e2]
+  rw [u64_sub_le (by rw [e1]; exact hr), e1, u64_sub_le (by rw [e4, e3]; omega), e4, e3]
+  omega
+
+/-- Two 32-bit halves packed in one word: the low half `a`, the high half the low 32 bits of `b`. -/
+theorem or_shl32 {a b : UInt64} (ha : a.toNat < 2 ^ 32) :
+    ((a ||| (b <<< 32)) &&& 0xFFFFFFFF) = a ∧ (a ||| (b <<< 32)) >>> 32 = b &&& 0xFFFFFFFF := by
+  have hsh : (b <<< 32).toNat = 2 ^ 32 * (b.toNat % 2 ^ 32) := by
+    rw [UInt64.toNat_shiftLeft, show (32 : UInt64).toNat % 64 = 32 from rfl, Nat.shiftLeft_eq, Nat.mul_comm,
+      show (2 : Nat) ^ 64 = 2 ^ 32 * 2 ^ 32 from rfl, Nat.mul_mod_mul_left]
+  have hv : (a ||| (b <<< 32)).toNat = a.toNat + 2 ^ 32 * (b.toNat % 2 ^ 32) := by
+    rw [UInt64.toNat_or, hsh, Nat.or_comm, ← Nat.two_pow_add_eq_or_of_lt ha, Nat.add_comm]
+  constructor
+  · apply UInt64.toNat_inj.mp
+    rw [UInt64.toNat_and, hv, show (0xFFFFFFFF : UInt64).toNat = 2 ^ 32 - 1 from rfl, Nat.and_two_pow_sub_one_eq_mod]
+    simp only [Nat.reducePow] at ha ⊢
+    omega
+  · apply UInt64.toNat_inj.mp
+    rw [UInt64.toNat_shiftRight, hv, show (32 : UInt64).toNat % 64 = 32 from rfl, Nat.shiftRight_eq_div_pow,
+      UInt64.toNat_and, show (0xFFFFFFFF : UInt64).toNat = 2 ^ 32 - 1 from rfl, Nat.and_two_pow_sub_one_eq_mod]
+    simp only [Nat.reducePow] at ha ⊢
+    omega
+
+theorem shr32_lt (x : UInt64) : (x >>> 32).toNat < 2 ^ 32 := by
+  rw [UInt64.toNat_shiftRight, show (32 : UInt64).toNat % 64 = 32 from rfl, Nat.shiftRight_eq_div_pow]
+  have := x.toNat_lt
+  simp only [Nat.reducePow] at this ⊢
+  omega
+
+section
+variable {w k : Nat} {m : MetaBlockHeader} {st : Cmd}
+
+/-- The copy's fields (`copyBits`, `copyBase`, `dist`) don't matter to the places among a command's literals, at its
+distance or at a command's start, as long as the copy base stays at least 1. -/
+theorem Rel.literals_ext {s : CommandState} {ic : BlockState} {c ilen clen n : Nat} {lit : BlockState}
+    {out : List Nat} (h : Rel w k m st (.literals s ic c ilen clen n lit out)) {cbits cb d : UInt64}
+    (hcb : 1 ≤ cb.toNat) :
+    Rel w k m { st with ext := { st.ext with copyBits := cbits, copyBase := cb, dist := d } }
+      (.literals s ic c ilen clen n lit out) := by
+  obtain ⟨hC, hr⟩ := h
+  exact ⟨{ hC with cbase1 := hcb }, hr⟩
+
+theorem Rel.distance_ext {s : CommandState} {c clen : Nat} (h : Rel w k m st (.distance s c clen))
+    {cbits cb d : UInt64} (hcb : 1 ≤ cb.toNat) :
+    Rel w k m { st with ext := { st.ext with copyBits := cbits, copyBase := cb, dist := d } } (.distance s c clen) := by
+  obtain ⟨hC, hr⟩ := h
+  exact ⟨{ hC with cbase1 := hcb }, hr⟩
+
+theorem Rel.command_ext {s : CommandState} (h : Rel w k m st (.command s)) {cbits cb d : UInt64} (hcb : 1 ≤ cb.toNat) :
+    Rel w k m { st with ext := { st.ext with copyBits := cbits, copyBase := cb, dist := d } } (.command s) := by
+  obtain ⟨hC, hr⟩ := h
+  exact ⟨{ hC with cbase1 := hcb }, hr⟩
+
+end
+
 /-! ### A literal round -/
 
 theorem ringWrite_wput {ring : ByteArray} {opos mask : USize} {k : Nat} (hk : k ≤ 24) (hm : mask.toNat = 2 ^ k - 1)
@@ -1959,5 +2062,79 @@ theorem lit_round {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHead
   have e' := m1.trans m2
   rw [he, ← ringWrite_wput hk hmN hsz _ (by omega), ← e]
   exact e'
+
+/-! ### A command's distance -/
+
+/-- The state at a command's copy, in the loop's terms: what remains less the copy, and the copy's length and distance.
+-/
+@[inline] def fcopy (word count : UInt64) (ring : ByteArray) (opos mask pB cap cap16 wB : USize) (rEnd : UInt64)
+    (iCount lCount dCount : UInt64) (flags : Flags) (x : CmdExt) (d01 d23 code ilen clen : UInt64) (p1 p2 : UInt8)
+    (d : UInt64) (pos : USize) : Cmd :=
+  ⟨word, count, ring, opos &&& mask, opos + pB, cap, usmin cap16 (opos + wB), p1, p2, rEnd - opos.toUInt64 - clen,
+    iCount, lCount, dCount, flags,
+    ⟨x.iCur, x.iPrev, x.lCur, x.lPrev, x.dCur, x.dPrev, d01 &&& 0xFFFFFFFF, d01 >>> 32, d23 &&& 0xFFFFFFFF, d23 >>> 32,
+      code, ilen, clen, x.copyBits, x.copyBase, d, x.wordBuf, x.wordPos⟩,
+    .copy, clen, pos, .next⟩
+
+/-- With the copy within the meta-block, something remains, and at least the copy. -/
+theorem rem_facts {rEnd clen : UInt64} {opos : USize} (h : opos.toNat + clen.toNat ≤ rEnd.toNat)
+    (h1 : 1 ≤ clen.toNat) : rEnd - opos.toUInt64 ≠ 0 ∧ ¬ rEnd - opos.toUInt64 < clen := by
+  have e : (rEnd - opos.toUInt64).toNat = rEnd.toNat - opos.toNat := by
+    rw [u64_sub_le (by rw [USize.toNat_toUInt64]; omega), USize.toNat_toUInt64]
+  refine ⟨fun h0 => ?_, fun hl => ?_⟩
+  · have h0' := congrArg UInt64.toNat h0
+    rw [e] at h0'
+    have : (0 : UInt64).toNat = 0 := rfl
+    omega
+  · have := UInt64.lt_iff_toNat_lt.mp hl
+    rw [e] at this
+    omega
+
+section
+variable {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
+  {a : ByteArray} {stop : USize} {s : CommandState} {c cl : Nat} {word count : UInt64} {ring : ByteArray}
+  {opos mask pB cap cap16 wB : USize} {rEnd : UInt64} {iCount LC dCount : UInt64} {flags : Flags} {x : CmdExt}
+  {d01 d23 code ilen clen : UInt64} {p1 p2 : UInt8} {pos : USize}
+
+/-- A distance implied 0 (the last distance): from the distance, a refill to 40 bits, then the copy. -/
+theorem dImpl_move (hH : HdrRel H m)
+    (hrel : Rel w k.toNat m (fexit word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code
+      ilen clen p1 p2 .distance 0 pos) (.distance s c cl))
+    {word1 count1 : UInt64} {pos1 : USize} (hf : FillOk a stop word count pos 40 word1 count1 pos1)
+    (hrem : opos.toNat + clen.toNat ≤ rEnd.toNat) (hc : code < 128) (hd0 : d01 &&& 0xFFFFFFFF ≠ 0)
+    (hw : ¬ (usmin cap16 (opos + wB)).toUInt64 < d01 &&& 0xFFFFFFFF) :
+    ∃ p', MoveOk w k.toNat m K a stop (.distance s c cl)
+      (fexit word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code ilen clen p1 p2
+        .distance 0 pos) pos p'
+      (fcopy word1 count1 ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code ilen clen p1 p2
+        (d01 &&& 0xFFFFFFFF) pos1) := by
+  have m1 := fill_move (K := K) hrel hf
+  have hcl : 1 ≤ clen.toNat := hrel.1.clen1
+  obtain ⟨hr0, hrc⟩ := rem_facts hrem hcl
+  obtain ⟨p', m2⟩ := distImplicit_move (K := K) (a := a) (stop := stop) (pos := pos1) hH m1.rel hr0 hc hd0 hw hrc
+    hf.posStop
+  exact ⟨p', m1.trans m2⟩
+
+/-- `applyDistance` after a distance's symbol, as the state at the copy: the last distances as the loop packs them,
+the distance pushed or not. -/
+theorem applyDistance_fcopy {word1 count1 w' c' dcode d n01 n23 : UInt64} {pos1 : USize}
+    (hw : ¬ (usmin cap16 (opos + wB)).toUInt64 < d) (hrc : ¬ rEnd - opos.toUInt64 < clen) (hd : d.toNat < 2 ^ 32)
+    (hn : (dcode = 0 ∧ n01 = d01 ∧ n23 = d23) ∨
+      (dcode ≠ 0 ∧ n01 = d ||| (d01 <<< 32) ∧ n23 = (d01 >>> 32) ||| (d23 <<< 32))) :
+    applyDistance (setBits { { fexit word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code
+        ilen clen p1 p2 .distance 0 pos with word := word1, count := count1, pos := pos1 } with
+        dCount := dCount - 1, tag := .distanceSymbol, pos := pos1, status := .next } w' c') pos1 dcode d =
+      fcopy w' c' ring opos mask pB cap cap16 wB rEnd iCount LC (dCount - 1) flags x n01 n23 code ilen clen p1 p2 d
+        pos1 := by
+  rcases hn with ⟨h0, rfl, rfl⟩ | ⟨h0, rfl, rfl⟩
+  · rw [h0, applyDistance_zero hw hrc]
+    rfl
+  · rw [applyDistance_push hw hrc h0]
+    obtain ⟨e1, e2⟩ := or_shl32 (b := d01) hd
+    obtain ⟨e3, e4⟩ := or_shl32 (a := d01 >>> 32) (b := d23) (shr32_lt d01)
+    simp only [fcopy, e1, e2, e3, e4]
+    rfl
+
+end
 
 end Brotli.Decoder
