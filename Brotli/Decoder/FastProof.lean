@@ -2215,6 +2215,104 @@ theorem pairEntry_two {v1 v2 e : UInt64} (he : e.toNat = (pairEntryU v1 v2).toNa
     rw [he] at g2
     exact absurd g2 (by decide)
 
+/-- A code word of `l1 ≤ 8` bits followed by one of `l2` bits, `l1 + l2 ≤ 8`, reads the same from the low byte as from
+the whole word: the table's slots for both are the low byte's. -/
+theorem pair_slots {t : ByteArray} {tb : Nat} {c : PrefixCode} (hok : TableOk t tb c) (hC : Complete c) (w : Nat)
+    (h1 : (lookupSlots t tb (w % 256)).1 ≤ 8)
+    (h2 : (lookupSlots t tb (w % 256)).1 + (lookupSlots t tb (w % 256 / 2 ^ (lookupSlots t tb (w % 256)).1)).1 ≤ 8) :
+    lookupSlots t tb w = lookupSlots t tb (w % 256) ∧
+      lookupSlots t tb (w / 2 ^ (lookupSlots t tb (w % 256)).1) =
+        lookupSlots t tb (w % 256 / 2 ^ (lookupSlots t tb (w % 256)).1) := by
+  refine ⟨?_, ?_⟩
+  · have htr := (hok.hit (w % 256)).transfer (w' := w) (n := 8) h1
+      (by rw [show (2 : Nat) ^ 8 = 256 from rfl, Nat.mod_mod])
+    obtain ⟨u1, u2⟩ := Hit.unique (hok.hit w) htr hC
+    exact Prod.ext u1 u2
+  · generalize (lookupSlots t tb (w % 256)).1 = l1 at h2 ⊢
+    have htr := (hok.hit (w % 256 / 2 ^ l1)).transfer (w' := w / 2 ^ l1) (n := 8 - l1) (by omega)
+      (low_bits (w := w) (l := l1) (b := 8 - l1) (by omega)).symm
+    obtain ⟨u1, u2⟩ := Hit.unique (hok.hit (w / 2 ^ l1)) htr hC
+    exact Prod.ext u1 u2
+
+theorem lookupW_bits (t : ByteArray) (b x : Nat) : (lookupW t b x &&& 15).toNat = (lookupSlots t b x).1 := by
+  have := lookupSlots_lt t b x
+  unfold lookupW
+  rw [UInt64.toNat_and, UInt64.toNat_ofNat', Nat.mod_eq_of_lt (by omega)]
+  show _ &&& (2 ^ 4 - 1) = _
+  rw [Nat.and_two_pow_sub_one_eq_mod]
+  omega
+
+section
+variable {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow s0 : USize}
+
+/-- A two-literal entry with count 2, for a block type whose contexts share one tree: its bits are the two code words',
+and its literals the two lookups', the second at the bits after the first, in any context. -/
+theorem FCtx.pair_lits (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) {m : MetaBlockHeader}
+    (hH : HdrRel H m) {pairBase : USize}
+    (hpair : pairBase ≠ USize.ofNat 4294967295 → u32At H.lTriv lCur.toNat ≠ 4294967295 ∧
+      ∀ j, j < 256 → leAt T (pairBase.toNat + 4 * j) 4 = (pairAt T (u32At H.lTriv lCur.toNat) j).toNat % 2 ^ 32)
+    (hp : pairBase ≠ USize.ofNat 4294967295) (hb : pairBase.toNat + 1024 ≤ T.size) (p1 p2 q1 q2 : UInt8)
+    (word : UInt64) (h2 : (row32 T pairBase hb C.size32 word >>> 8) &&& 255 = 2) :
+    (litT C p1 p2 word &&& 15) + (litT C q1 q2 (word >>> (litT C p1 p2 word &&& 15)) &&& 15) ≤ 8 ∧
+      row32 T pairBase hb C.size32 word &&& 15 =
+        (litT C p1 p2 word &&& 15) + (litT C q1 q2 (word >>> (litT C p1 p2 word &&& 15)) &&& 15) ∧
+      (row32 T pairBase hb C.size32 word >>> 16).toUInt8 = (litT C p1 p2 word >>> 4).toUInt8 ∧
+      (row32 T pairBase hb C.size32 word >>> 24).toUInt8 =
+        (litT C q1 q2 (word >>> (litT C p1 p2 word &&& 15)) >>> 4).toUInt8 := by
+  obtain ⟨htv, hrow⟩ := hpair hp
+  have h32 := C.size32
+  have htb : tb.toNat = u32At H.lTriv lCur.toNat := by rw [C.tbEq, trivBase_toNat]
+  have htn : ¬ tb = 4294967295 := fun e => htv (by rw [← htb, e]; rfl)
+  have hlit : ∀ (a b : UInt8) (x : UInt64), litT C a b x = lookupW T (u32At H.lTriv lCur.toNat) x.toNat :=
+    fun a b x => by
+      unfold litT
+      rw [dite_eq_right htn, lookupT_eq, lookup_eq_W, word_toUSize (by rw [htb]; exact u32At_lt _ _), htb]
+  have hJ : 64 * lCur.toNat + 0 < H.lMap.size := by rw [H.lMapSize]; have := C.hl; omega
+  obtain ⟨code, _, hok, hC, _⟩ := hH.lit.code _ (tree_byteN H hJ)
+  have hbase : u32At H.litBase (byteN H.lMap (64 * lCur.toNat + 0)) = u32At H.lTriv lCur.toNat :=
+    H.trivOk _ C.hl htv 0 (by decide)
+  rw [hbase, ← C.arena] at hok
+  have hj : word.toNat % 256 < 256 := Nat.mod_lt _ (by decide)
+  have h255 : (word &&& 255).toNat = word.toNat % 256 := by
+    rw [UInt64.toNat_and]
+    exact Nat.and_two_pow_sub_one_eq_mod word.toNat 8
+  have he : (row32 T pairBase hb C.size32 word).toNat =
+      (pairAt T (u32At H.lTriv lCur.toNat) (word.toNat % 256)).toNat % 2 ^ 32 := by
+    unfold row32
+    rw [load32_toNat, fastAdd (by rw [u64_shl (by decide) (by rw [h255]; omega)]; rw [h255]; omega),
+      u64_shl (by decide) (by rw [h255]; omega), h255,
+      show word.toNat % 256 * 2 ^ 2 = 4 * (word.toNat % 256) by rw [Nat.mul_comm], hrow _ hj]
+  unfold pairAt at he
+  obtain ⟨c1, c2, f1, f2, f3⟩ := pairEntry_two he h2
+  generalize u32At H.lTriv lCur.toNat = tbN at hlit hok he f1 f2 f3 c1 c2
+  have hl1 := lookupW_bits T tbN (word.toNat % 256)
+  have hlt := lookupSlots_lt T tbN (word.toNat % 256)
+  have c1' : (lookupW T tbN (word.toNat % 256) &&& 15).toNat ≤ 8 := UInt64.le_iff_toNat_le.mp c1
+  have c2' : ((lookupW T tbN (word.toNat % 256) &&& 15) +
+      (lookupW T tbN (word.toNat % 256 / 2 ^ (lookupSlots T tbN (word.toNat % 256)).1) &&& 15)).toNat ≤ 8 :=
+    UInt64.le_iff_toNat_le.mp c2
+  have := and15_lt (lookupW T tbN (word.toNat % 256))
+  have := and15_lt (lookupW T tbN (word.toNat % 256 / 2 ^ (lookupSlots T tbN (word.toNat % 256)).1))
+  rw [u64_add_small (by omega), hl1, lookupW_bits] at c2'
+  rw [hl1] at c1'
+  obtain ⟨ps1, ps2⟩ := pair_slots hok hC word.toNat c1' c2'
+  have hv1 : litT C p1 p2 word = lookupW T tbN (word.toNat % 256) := by
+    rw [hlit]
+    unfold lookupW
+    rw [ps1]
+  have hshr : (word >>> (lookupW T tbN (word.toNat % 256) &&& 15)).toNat =
+      word.toNat / 2 ^ (lookupSlots T tbN (word.toNat % 256)).1 := by
+    rw [UInt64.toNat_shiftRight, hl1, Nat.mod_eq_of_lt (by omega), Nat.shiftRight_eq_div_pow]
+  have hv2 : litT C q1 q2 (word >>> (lookupW T tbN (word.toNat % 256) &&& 15)) =
+      lookupW T tbN (word.toNat % 256 / 2 ^ (lookupSlots T tbN (word.toNat % 256)).1) := by
+    rw [hlit, hshr]
+    unfold lookupW
+    rw [ps2]
+  rw [hv1, hv2]
+  exact ⟨c2, f1, f2, f3⟩
+
+end
+
 /-! ### A command's distance -/
 
 /-- The state at a command's copy, in the loop's terms: what remains less the copy, and the copy's length and distance.
