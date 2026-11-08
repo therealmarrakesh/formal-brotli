@@ -448,6 +448,49 @@ theorem refill_spec {word count : UInt64} {a : ByteArray} {pos stop : USize} (hs
       exact ⟨w, p1, p2, e, Or.inl c⟩
     · exact BitBuffer.fillSlow_spec hs _ word count pos rfl hw hp
 
+/-- `refill` with its result handed to `k` as three values, each with its equation, in every branch: so that, where
+the branches would meet, no record is built. -/
+@[inline] def refillK {α : Type} (word count : UInt64) (a : ByteArray) (pos stop : USize) (hs : stop.toNat ≤ a.size)
+    (hp : pos.toNat ≤ stop.toNat)
+    (k : (w c : UInt64) → (p : USize) → w = (refill word count a pos stop hs hp).word ∧
+      c = (refill word count a pos stop hs hp).count ∧ p = (refill word count a pos stop hs hp).pos → α) : α :=
+  if h1 : 56 < count then
+    k word count pos (by unfold refill; rw [ite_eq_left h1]; exact ⟨rfl, rfl, rfl⟩)
+  else if h : USize.ofNat 8 ≤ stop - pos then
+    let r := (BitBuffer.mk word count).fill a pos
+      (by
+        have h1 := USize.le_iff_toNat_le.mp h
+        rw [usize_ofNat_toNat (by decide), USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr hp)] at h1
+        omega)
+      (by
+        have h1 := USize.le_iff_toNat_le.mp h
+        rw [usize_ofNat_toNat (by decide), USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr hp)] at h1
+        have := stop.toNat_lt_size
+        omega)
+    k r.1.word r.1.count r.2 (by unfold refill; rw [ite_eq_right h1, dite_eq_left h]; exact ⟨rfl, rfl, rfl⟩)
+  else
+    let r := BitBuffer.fillSlow a stop hs word count pos
+    k r.word r.count r.pos (by unfold refill; rw [ite_eq_right h1, dite_eq_right h]; exact ⟨rfl, rfl, rfl⟩)
+
+/-- `refillK` hands `k` the fields of `refill`'s result. -/
+theorem refillK_eq {α : Type} {word count : UInt64} {a : ByteArray} {pos stop : USize} {hs : stop.toNat ≤ a.size}
+    {hp : pos.toNat ≤ stop.toNat}
+    (k : (w c : UInt64) → (p : USize) → w = (refill word count a pos stop hs hp).word ∧
+      c = (refill word count a pos stop hs hp).count ∧ p = (refill word count a pos stop hs hp).pos → α) :
+    refillK word count a pos stop hs hp k = k (refill word count a pos stop hs hp).word
+      (refill word count a pos stop hs hp).count (refill word count a pos stop hs hp).pos ⟨rfl, rfl, rfl⟩ := by
+  have key : ∀ w c p e, k w c p e = k (refill word count a pos stop hs hp).word
+      (refill word count a pos stop hs hp).count (refill word count a pos stop hs hp).pos ⟨rfl, rfl, rfl⟩ := by
+    intro w c p e
+    obtain ⟨rfl, rfl, rfl⟩ := e
+    rfl
+  unfold refillK
+  split
+  · exact key _ _ _ _
+  · split
+    · exact key _ _ _ _
+    · exact key _ _ _ _
+
 /-- No bytes between a position and itself. -/
 theorem chunkBits_self (input : ByteArray) (n : Nat) : chunkBits input n n = [] := by
   simp [chunkBits, chunk, bits]

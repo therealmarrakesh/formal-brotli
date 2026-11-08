@@ -73,6 +73,24 @@ theorem SymsS.put_put (st : Hd) (s s' : SymsS) : SymsS.put (SymsS.put st s) s' =
 /-- The fields of a state written back are the fields written. -/
 theorem SymsS.of_put (st : Hd) (s : SymsS) : SymsS.of (SymsS.put st s) = s := rfl
 
+/-- A code's lists of the right sizes for a state whose own lists are held elsewhere; never written. -/
+def noHead : ByteArray := ⟨Array.replicate 32 0⟩
+
+/-- See `noHead`. -/
+def noNext : ByteArray := ⟨Array.replicate 1408 0⟩
+
+theorem noHead_size : noHead.size = 32 := by simp [noHead, ByteArray.size]
+
+theorem noNext_size : noNext.size = 1408 := by simp [noNext, ByteArray.size]
+
+/-- The state without its code's lists, while a run on its fields holds them, so that they are held once and written
+in place; `SymsS.put` writes them back. Not inlined, so that the state is let go of here. -/
+@[noinline] def SymsS.drop (st : Hd) : Hd :=
+  { st with head := noHead, next := noNext, headSz := noHead_size, nextSz := noNext_size }
+
+/-- Writing back over a state without its lists is writing back over the state. -/
+theorem SymsS.put_drop (st : Hd) (s : SymsS) : SymsS.put (SymsS.drop st) s = SymsS.put st s := rfl
+
 /-- A symbol index below a code's size is below 704. -/
 theorem ln_lt704 {ln size : UInt64} (hsz : size.toNat ≤ 704) (hln : ln.toNat ≤ size.toNat) (h1 : ¬ ln = size) :
     ln.toNat < 704 := by

@@ -161,28 +161,83 @@ def FInv (stop : USize) (st : Hd) (sc : Bool) (s : SymsS) (pos : USize) : Prop :
   HIn (curH st sc s) ∧ (curP sc s pos).toNat ≤ stop.toNat ∧
     (sc = true → st.tag = .syms ∧ st.size.toNat ≤ 704 ∧ s.ln.toNat ≤ st.size.toNat)
 
+/-- The state a run goes on with from a state a step moved on to: at a code's lengths without its lists, which the run
+holds as fields. -/
+@[inline] def enterH (r : Hd) : Hd := if r.tag == .syms then SymsS.drop r else r
+
+/-- The lists a run holds from a state a step moved on to: the state's own at a code's lengths, else constants, so that
+the state's own lists are held once either way. -/
+@[inline] def headOf (r : Hd) : ByteArray := if r.tag == .syms then r.head else noHead
+
+/-- See `headOf`. -/
+@[inline] def nextOf (r : Hd) : ByteArray := if r.tag == .syms then r.next else noNext
+
+theorem headOf_size (r : Hd) : (headOf r).size = 32 := by
+  unfold headOf
+  split
+  · exact r.headSz
+  · exact noHead_size
+
+theorem nextOf_size (r : Hd) : (nextOf r).size = 1408 := by
+  unfold nextOf
+  split
+  · exact r.nextSz
+  · exact noNext_size
+
+/-- The fields a run holds from a state a step moved on to. -/
+@[inline] def enterS (r : Hd) : SymsS :=
+  ⟨r.word, r.count, r.pos, headOf r, nextOf r, r.ln, r.prevLen, r.repSym, r.repCount, r.symSum, headOf_size r,
+    nextOf_size r⟩
+
+/-- Fields equal but for their lists are equal when their lists are. -/
+theorem SymsS.mk_lists {w c ln pl rs rc ss : UInt64} {p : USize} {hd nx hd' nx' : ByteArray} {hh : hd.size = 32}
+    {hn : nx.size = 1408} {hh' : hd'.size = 32} {hn' : nx'.size = 1408} (e1 : hd = hd') (e2 : nx = nx') :
+    (⟨w, c, p, hd, nx, ln, pl, rs, rc, ss, hh, hn⟩ : SymsS) = ⟨w, c, p, hd', nx', ln, pl, rs, rc, ss, hh', hn'⟩ := by
+  subst e1 e2
+  rfl
+
+/-- At a code's lengths, the fields a run holds are the state's. -/
+theorem enterS_syms {r : Hd} (h : (r.tag == .syms) = true) : enterS r = SymsS.of r :=
+  SymsS.mk_lists (by unfold headOf; rw [ite_eq_left h]) (by unfold nextOf; rw [ite_eq_left h])
+
+/-- The state a run stands for, from a state a step moved on to, is that state. -/
+theorem curH_enter (r : Hd) (hn : r.status = .next) : curH (enterH r) (r.tag == .syms) (enterS r) = r := by
+  by_cases h : (r.tag == .syms) = true
+  · unfold curH enterH
+    rw [ite_eq_left h, ite_eq_left h, SymsS.put_drop, enterS_syms h]
+    exact SymsS.put_of r hn
+  · unfold curH enterH
+    rw [ite_eq_right h, ite_eq_right h]
+
+theorem curP_enter (r : Hd) : curP (r.tag == .syms) (enterS r) r.pos = r.pos := by
+  unfold curP
+  split <;> rfl
+
 /-- The invariant at a state a step moved on to, the mode chosen by its place. -/
 theorem FInv.enter {stop : USize} {r : Hd} (h : HIn r) (hn : r.status = .next) (hp : r.pos.toNat ≤ stop.toNat) :
-    FInv stop r (r.tag == .syms) (SymsS.of r) r.pos := by
+    FInv stop (enterH r) (r.tag == .syms) (enterS r) r.pos := by
   refine ⟨?_, ?_, ?_⟩
-  · unfold curH
-    split
-    · rw [SymsS.put_of r hn]
-      exact h
-    · exact h
-  · unfold curP
-    split <;> exact hp
+  · rw [curH_enter r hn]
+    exact h
+  · rw [curP_enter r]
+    exact hp
   · intro ht
     have ht' : r.tag = .syms := by simpa using ht
-    exact ⟨ht', syms_bounds h.rel ht'⟩
+    have e : enterH r = SymsS.drop r := by unfold enterH; rw [ite_eq_left ht]
+    have hb := syms_bounds h.rel ht'
+    rw [e]
+    exact ⟨ht', hb⟩
 
 /-- A plain scalar step keeps the invariant. -/
 theorem FInv.plain {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {st : Hd} {s : SymsS} {pos : USize}
-    (I : FInv stop st true s pos) {s' : { s' : SymsS // s'.ln.toNat ≤ st.size.toNat }}
-    (hq : symsPlain st.clt st.size (I.2.2 rfl).2.1 (refill s.word s.count a s.pos stop hs I.2.1).word
-      (refill s.word s.count a s.pos stop hs I.2.1).count (refill s.word s.count a s.pos stop hs I.2.1).pos s
-      (I.2.2 rfl).2.2 = some s') :
+    (I : FInv stop st true s pos) {qw qc : UInt64} {qp : USize}
+    (he : qw = (refill s.word s.count a s.pos stop hs I.2.1).word ∧
+      qc = (refill s.word s.count a s.pos stop hs I.2.1).count ∧ qp = (refill s.word s.count a s.pos stop hs I.2.1).pos)
+    {s' : { s' : SymsS // s'.ln.toNat ≤ st.size.toNat }}
+    (hq : symsPlain st.clt st.size (I.2.2 rfl).2.1 qw qc qp s (I.2.2 rfl).2.2 = some s') :
     FInv stop st true s'.1 s'.1.pos := by
+  obtain ⟨e1, e2, e3⟩ := he
+  subst e1 e2 e3
   have hin : HIn (SymsS.put st s) := I.1
   have hp : s.pos.toNat ≤ stop.toNat := I.2.1
   have heq := stepH_symsPlain (a := a) (hs := hs) (st := SymsS.put st s) (pos := s.pos) (h := hin) (hp := hp)
@@ -206,19 +261,32 @@ def hdrRunF (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (c : Cmd
   | f + 1, st, sc, w, cn, p, hd, nx, ln, pl, rs, rc, ss, hh, hn, pos, I =>
     let s : SymsS := ⟨w, cn, p, hd, nx, ln, pl, rs, rc, ss, hh, hn⟩
     let next (r : { r : Hd // r.status = .ready → ∃ g, Upto r.d g 10 }) (hr : HIn r.1 → r.1.status = .next →
-        r.1.pos.toNat ≤ stop.toNat → FInv stop r.1 (r.1.tag == .syms) (SymsS.of r.1) r.1.pos) (hin : HIn r.1 ∧
+        r.1.pos.toNat ≤ stop.toNat → FInv stop (enterH r.1) (r.1.tag == .syms) (enterS r.1) r.1.pos) (hin : HIn r.1 ∧
         r.1.pos.toNat ≤ stop.toNat ∨ r.1.status ≠ .next) : Dec :=
       if hnx : r.1.status = .next then
-        hdrRunF a stop hs c left D0 f r.1 (r.1.tag == .syms) r.1.word r.1.count r.1.pos r.1.head r.1.next r.1.ln
-          r.1.prevLen r.1.repSym r.1.repCount r.1.symSum r.1.headSz r.1.nextSz r.1.pos
-          (hr (hin.resolve_right (by simpa using hnx)).1 hnx (hin.resolve_right (by simpa using hnx)).2)
+        -- the fields first, then the state without its lists, so that it is let go of there and reused
+        let sc' := r.1.tag == .syms
+        let w' := r.1.word
+        let cn' := r.1.count
+        let p' := r.1.pos
+        let hd' := headOf r.1
+        let nx' := nextOf r.1
+        let ln' := r.1.ln
+        let pl' := r.1.prevLen
+        let rs' := r.1.repSym
+        let rc' := r.1.repCount
+        let ss' := r.1.symSum
+        hdrRunF a stop hs c left D0 f (enterH r.1) sc' w' cn' p' hd' nx' ln' pl' rs' rc' ss' (headOf_size r.1)
+          (nextOf_size r.1) p' (hr (hin.resolve_right (by simpa using hnx)).1 hnx (hin.resolve_right (by simpa using hnx)).2)
       else hdrNext c left D0 r
     if hsc : sc = true then
       have I' : FInv stop st true s pos := by rw [← hsc]; exact I
-      match hq : symsPlain st.clt st.size (I'.2.2 rfl).2.1 (refill w cn a p stop hs I'.2.1).word
-          (refill w cn a p stop hs I'.2.1).count (refill w cn a p stop hs I'.2.1).pos s (I'.2.2 rfl).2.2 with
+      -- the refill hands its values on in each branch, so that no record of them is built
+      -- (its position's bound typed as `p`'s, not through `curP`, so that its equation lemma matches)
+      refillK w cn a p stop hs (Nat.le_trans (Nat.le_refl p.toNat) I'.2.1) fun qw qc qp he =>
+      match hq : symsPlain st.clt st.size (I'.2.2 rfl).2.1 qw qc qp s (I'.2.2 rfl).2.2 with
       | some s' =>
-        have I2 := FInv.plain I' hq
+        have I2 := FInv.plain I' he hq
         hdrRunF a stop hs c left D0 f st true s'.1.word s'.1.count s'.1.pos s'.1.head s'.1.next s'.1.ln s'.1.prevLen
           s'.1.repSym s'.1.repCount s'.1.symSum s'.1.headSz s'.1.nextSz s'.1.pos I2
       | none =>
@@ -240,17 +308,6 @@ theorem hdrRun_congr {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size}
     hdrRun a stop hs c left D0 f st1 pos1 h1 hp1 = hdrRun a stop hs c left D0 f st2 pos2 h2 hp2 := by
   subst e1 e2
   rfl
-
-/-- The state a step moved on to, with the mode its place chooses, is that state. -/
-theorem curH_enter (r : Hd) (hn : r.status = .next) : curH r (r.tag == .syms) (SymsS.of r) = r := by
-  unfold curH
-  split
-  · exact SymsS.put_of r hn
-  · rfl
-
-theorem curP_enter (r : Hd) : curP (r.tag == .syms) (SymsS.of r) r.pos = r.pos := by
-  unfold curP
-  split <;> rfl
 
 /-- The runner is `hdrRun` from the state it stands for. -/
 theorem hdrRunF_eq {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} (c : Cmd) (left : UInt64) (D0 : Dec) :
@@ -278,6 +335,7 @@ theorem hdrRunF_eq {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} (
     · have hin : HIn (SymsS.put st ⟨w, cn, p, hd, nx, ln, pl, rs, rc, ss, hh, hn⟩) := I.1
       have hp : p.toNat ≤ stop.toNat := I.2.1
       simp only [curH, curP, ↓reduceIte, ↓reduceDIte]
+      rw [refillK_eq]
       split
       · -- a plain scalar step: `stepH` on the state written back, by `stepH_symsPlain`
         rename_i s' hq
@@ -297,8 +355,8 @@ theorem hdrRunF_eq {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} (
 /-- `hdrRun` as the compiler runs it: `hdrRunF` from the state in plain mode. -/
 def hdrRunC (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (c : Cmd) (left : UInt64) (D0 : Dec)
     (fuel : Nat) (st : Hd) (pos : USize) (h : HIn st) (hp : pos.toNat ≤ stop.toNat) : Dec :=
-  hdrRunF a stop hs c left D0 fuel st false st.word st.count st.pos st.head st.next st.ln st.prevLen st.repSym
-    st.repCount st.symSum st.headSz st.nextSz pos ⟨h, hp, fun e => Bool.noConfusion e⟩
+  hdrRunF a stop hs c left D0 fuel st false st.word st.count st.pos noHead noNext st.ln st.prevLen st.repSym
+    st.repCount st.symSum noHead_size noNext_size pos ⟨h, hp, fun e => Bool.noConfusion e⟩
 
 /-- The compiler runs `hdrRunC` in place of `hdrRun`. -/
 @[csimp] theorem hdrRun_csimp : @hdrRun = @hdrRunC := by
