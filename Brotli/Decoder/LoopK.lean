@@ -644,8 +644,9 @@ step of the step machine. -/
     let ahead := umin remaining roomLeft
     let bEnd := wpos.toUInt64 + ahead
     -- the command's literals and copy fit what is ahead, compared so that nothing wraps
+    -- and two bytes are written, so that the loop reads the context bytes from the window
     if hf : fresh = true ∧ (tag = .literals ∨ tag = .distance) ∧ USize.ofNat 40 ≤ stop - pos ∧
-        lits ≤ ahead ∧ clen ≤ ahead - lits then
+        lits ≤ ahead ∧ clen ≤ ahead - lits ∧ USize.ofNat 2 ≤ written then
       have hm : pos.toNat + 40 ≤ stop.toNat := by
         have h1 := USize.le_iff_toNat_le.mp hf.2.2.1
         rw [fastLit (by decide), USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr hinv.pos)] at h1

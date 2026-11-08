@@ -369,13 +369,14 @@ theorem FCtx.litT_lookup {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} 
 /-- What keeps the loop's unmasked positions from wrapping: the bytes the current command still writes (`ahead`) fit
 before `bEnd`, which is within the meta-block (what remains from `opos`, `rEnd - opos`, which may wrap in 64 bits but
 stands for the record's remaining count); the bytes waiting and written, as the loop computes them from `opos`, stay
-within the window up to `bEnd`. -/
+within the window up to `bEnd`; and at least two bytes are written, so that the window holds the context bytes. -/
 structure FNum (opos pB wB : USize) (rEnd bEnd : UInt64) (k ahead : Nat) : Prop where
   ahead : opos.toNat + ahead ≤ bEnd.toNat
   rem : bEnd.toNat - opos.toNat ≤ (rEnd - opos.toUInt64).toNat
   small : bEnd.toNat < 2 ^ 30
   pend : (opos + pB).toNat + (bEnd.toNat - opos.toNat) + 16 ≤ 2 ^ k
   wr : (opos + wB).toNat + (bEnd.toNat - opos.toNat) < 2 ^ 30
+  two : 2 ≤ (opos + wB).toNat
 
 theorem u64_add_sub_one {a b : UInt64} (h : 1 ≤ b.toNat) (h' : a.toNat + b.toNat < 2 ^ 64) :
     a + b - 1 = a + (b - 1) := by
@@ -1948,7 +1949,8 @@ theorem FNum.succ {opos pB wB : USize} {rEnd bEnd : UInt64} {k ahead : Nat} (N :
   have e4 : (rEnd - (opos + USize.ofNat 1).toUInt64).toNat = (rEnd - opos.toUInt64).toNat - 1 := by
     rw [rem_succ (by omega), u64_sub_le (by show 1 ≤ _; omega)]
     rfl
-  exact ⟨by rw [e1]; omega, by rw [e1, e4]; omega, h2, by rw [e2, e1]; omega, by rw [e3, e1]; omega⟩
+  have h6 := N.two
+  exact ⟨by rw [e1]; omega, by rw [e1, e4]; omega, h2, by rw [e2, e1]; omega, by rw [e3, e1]; omega, by rw [e3]; omega⟩
 
 /-- The loop's numbers `n` bytes on, for what is then ahead. -/
 theorem FNum.adv {opos pB wB : USize} {rEnd bEnd : UInt64} {k ahead : Nat} (N : FNum opos pB wB rEnd bEnd k ahead)
@@ -1967,7 +1969,8 @@ theorem FNum.adv {opos pB wB : USize} {rEnd bEnd : UInt64} {k ahead : Nat} (N : 
   have h5 := N.rem
   have e4 : (rEnd - (opos + n).toUInt64).toNat = (rEnd - opos.toUInt64).toNat - n.toNat := by
     rw [rem_add (by omega), u64_sub_le (by rw [USize.toNat_toUInt64]; omega), USize.toNat_toUInt64]
-  exact ⟨by rw [e1]; omega, by rw [e1, e4]; omega, h2, by rw [e2, e1]; omega, by rw [e3, e1]; omega⟩
+  have h6 := N.two
+  exact ⟨by rw [e1]; omega, by rw [e1, e4]; omega, h2, by rw [e2, e1]; omega, by rw [e3, e1]; omega, by rw [e3]; omega⟩
 
 theorem u64_sub2 (x a b : UInt64) : x - (a + b) = x - a - b := by
   have hy : x - a - b + b + a = x := by rw [UInt64.sub_add_cancel, UInt64.sub_add_cancel]
@@ -2255,13 +2258,57 @@ theorem pair_round {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHea
 
 /-! ### The record a loop state stands for -/
 
+/-- The window's byte at `i`, masked, as `wget` reads it, with no bound to give. -/
+def wbyte (ring : ByteArray) (i mask : USize) : UInt8 := ring.data[(i &&& mask).toNat]?.getD 0
+
+theorem wget_wbyte {ring : ByteArray} {i mask : USize} {k : Nat} {hm : mask.toNat = 2 ^ k - 1}
+    {hs : ring.size = 2 ^ k} : wget ring i mask hm hs = wbyte ring i mask :=
+  UInt8.toNat_inj.mp (by unfold wget wbyte; rw [uget_toNat])
+
+/-- The context bytes a record the loop leaves holds are the window's two bytes before it, once two bytes are
+written. -/
+theorem fexit_ctx {w : Nat} {k : USize} {m : MetaBlockHeader} {word count : UInt64} {ring : ByteArray}
+    {opos mask pB cap cap16 wB : USize} {rEnd : UInt64} {iCount lCount dCount : UInt64} {flags : Flags} {x : CmdExt}
+    {d01 d23 code ilen clen : UInt64} {p1 p2 : UInt8} {tag : Tag} {left : UInt64} {pos : USize}
+    {out : List Nat} {rem : Nat} {ds : Distances} {ic lit dist : BlockState}
+    (hC : Core w k.toNat m (fexit word count ring opos mask pB cap cap16 wB rEnd iCount lCount dCount flags x d01 d23 code
+      ilen clen p1 p2 tag left pos) out rem ds ic lit dist)
+    (hmk : mask.toNat = 2 ^ k.toNat - 1) (hcap : cap16.toNat = 2 ^ k.toNat - 16) (h2 : 2 ≤ (opos + wB).toNat) :
+    p1 = wbyte ring (opos - USize.ofNat 1) mask ∧ p2 = wbyte ring (opos - USize.ofNat 2) mask := by
+  have hk := hC.k24
+  have h10 := hC.k10
+  have h1024 : 2 ^ 10 ≤ 2 ^ k.toNat := Nat.pow_le_pow_right (by decide) h10
+  have hwin := hC.win
+  have hr : RingOk ring k.toNat (opos &&& mask).toNat out := hC.ring
+  have hw : (usmin cap16 (opos + wB)).toNat = min w out.length := hC.written
+  rw [usmin_toNat] at hw
+  have hl : 2 ≤ out.length := by omega
+  have e := wget_ctx hk hmk (by omega) hr.size hr hl
+  have hc : contextBytes out = (p1.toNat, p2.toNat) := hC.ctx
+  rw [hc] at e
+  obtain ⟨e1, e2⟩ := Prod.mk.inj e
+  exact ⟨UInt8.toNat_inj.mp (by rw [e1, wget_wbyte]), UInt8.toNat_inj.mp (by rw [e2, wget_wbyte])⟩
+
 /-- The step machine's record a loop state stands for: the segment's `m` literals counted back into the block count
-and what is left of the command's literals, and its place the literals, or the distance when none are left. -/
+and what is left of the command's literals, and its place the literals, or the distance when none are left. Outside a
+segment its context bytes are the window's, which the loop reads only when it needs them. -/
 @[inline] def fabs (word count : UInt64) (ring : ByteArray) (opos mask pB cap cap16 wB : USize) (rEnd : UInt64)
     (iCount lCount dCount : UInt64) (flags : Flags) (x : CmdExt) (d01 d23 code ilen clen lits m : UInt64)
     (p1 p2 : UInt8) (pos : USize) : Cmd :=
-  fexit word count ring opos mask pB cap cap16 wB rEnd iCount (lCount + m) dCount flags x d01 d23 code ilen clen p1 p2
+  fexit word count ring opos mask pB cap cap16 wB rEnd iCount (lCount + m) dCount flags x d01 d23 code ilen clen
+    (if m = 0 then wbyte ring (opos - USize.ofNat 1) mask else p1)
+    (if m = 0 then wbyte ring (opos - USize.ofNat 2) mask else p2)
     (if m = 0 ∧ lits = 0 then .distance else .literals) (lits + m) pos
+
+/-- Outside a segment, the record a loop state stands for doesn't depend on the context bytes it carries. -/
+theorem fabs_ctx {word count : UInt64} {ring : ByteArray} {opos mask pB cap cap16 wB : USize} {rEnd : UInt64}
+    {iCount lCount dCount : UInt64} {flags : Flags} {x : CmdExt} {d01 d23 code ilen clen lits : UInt64}
+    {p1 p2 : UInt8} (q1 q2 : UInt8) {pos : USize} :
+    fabs word count ring opos mask pB cap cap16 wB rEnd iCount lCount dCount flags x d01 d23 code ilen clen lits 0 p1 p2
+      pos = fabs word count ring opos mask pB cap cap16 wB rEnd iCount lCount dCount flags x d01 d23 code ilen clen lits 0
+      q1 q2 pos := by
+  unfold fabs
+  rw [ite_eq_left rfl, ite_eq_left rfl, ite_eq_left rfl, ite_eq_left rfl]
 
 theorem u64_add_sub (x m c : UInt64) : x + m - c = x + (m - c) := by
   have h : x + (m - c) + c = x + m := by rw [UInt64.add_assoc, UInt64.sub_add_cancel]
@@ -2275,22 +2322,34 @@ theorem to_fabs {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader
     {d01 d23 code ilen clen lits mm : UInt64} {p1 p2 : UInt8} {pos : USize} {p : Phase} {st : Cmd} {pos0 : USize}
     {p' : Phase} (hH : HdrRel H m) (hs : stop.toNat ≤ a.size) {LC L : UInt64}
     (h : MoveOk w k.toNat m K a stop p st pos0 p' (fexit word count ring opos mask pB cap cap16 wB rEnd iCount
-      LC dCount flags x d01 d23 code ilen clen p1 p2 .literals L pos)) (hLC : LC = lCount + mm) (hL : L = lits + mm) :
+      LC dCount flags x d01 d23 code ilen clen p1 p2 .literals L pos)) (hLC : LC = lCount + mm) (hL : L = lits + mm)
+    (hmk : mask.toNat = 2 ^ k.toNat - 1) (hcap : cap16.toNat = 2 ^ k.toNat - 16) (hw2 : 2 ≤ (opos + wB).toNat) :
     ∃ p'', MoveOk w k.toNat m K a stop p st pos0 p''
       (fabs word count ring opos mask pB cap cap16 wB rEnd iCount lCount dCount flags x d01 d23 code ilen clen lits mm
         p1 p2 pos) := by
   subst hLC hL
+  have hp : (if mm = 0 then wbyte ring (opos - USize.ofNat 1) mask else p1) = p1 ∧
+      (if mm = 0 then wbyte ring (opos - USize.ofNat 2) mask else p2) = p2 := by
+    by_cases h0 : mm = 0
+    · rw [ite_eq_left h0, ite_eq_left h0]
+      obtain ⟨_, _, _, _, _, _, _, _, hp'⟩ := h.rel.literals_of rfl
+      have hr := h.rel
+      rw [hp'] at hr
+      obtain ⟨e1, e2⟩ := fexit_ctx hr.1 hmk hcap hw2
+      exact ⟨e1.symm, e2.symm⟩
+    · rw [ite_eq_right h0, ite_eq_right h0]
+      exact ⟨rfl, rfl⟩
   by_cases hz : mm = 0 ∧ lits = 0
   · obtain ⟨_, _, _, _, _, _, _, _, rfl⟩ := h.rel.literals_of rfl
     obtain ⟨p'', h2⟩ := litEnd_move (K := K) (stop := stop) (pos := pos) hH h.rel
       (by show lits + mm = 0; rw [hz.1, hz.2]; rfl) h.posStop hs
     refine ⟨p'', ?_⟩
     unfold fabs
-    rw [ite_eq_left hz]
+    rw [hp.1, hp.2, ite_eq_left hz]
     exact h.trans h2
   · refine ⟨p', ?_⟩
     unfold fabs
-    rw [ite_eq_right hz]
+    rw [hp.1, hp.2, ite_eq_right hz]
     exact h
 
 /-- `fillK` passes its continuation a refill's result. -/
@@ -2696,7 +2755,7 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
           lits m p1 p2 pos = fexit word count ring opos mask pB cap cap16 wB rEnd iCount (lCount + m) dCount flags x d01
           d23 code ilen clen p1 p2 .literals (lits + m) pos := by
         unfold fabs
-        rw [ite_eq_right (fun h => hm0 h.1)]
+        rw [ite_eq_right hm0, ite_eq_right hm0, ite_eq_right (fun h => hm0 h.1)]
       rw [hf0] at hrel ⊢
       obtain ⟨sP, icP, cP, ilP, clP, nP, litP, outP, rfl⟩ := hrel.literals_of rfl
       have hLN : (lits + m).toNat = lits.toNat + m.toNat := u64_add_small (by omega)
@@ -2723,13 +2782,14 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
               modeOff lRow pairBase iRow iFb dRow s0 C X W word' count' pos' ring' opos' iCount lCount
               dCount d01 d23 code ilen clen lits (m - j) q1 q2 S').val := by
         intro j hj1 hjm jU hjU word' count' pos' ring' q1 q2 S' p' opos' ho mv
-        obtain ⟨p2, m2⟩ := to_fabs (mm := m - j) hH hs mv (u64_add_sub _ _ _) (u64_add_sub _ _ _)
         have hjN := hsub j hjm
         have hlN : (lits + (m - j)).toNat = lits.toNat + (m.toNat - j.toNat) := by
           rw [u64_add_small (by omega), hjN]
+        have Nj : FNum opos' pB wB rEnd bEnd kk.toNat ((lits + (m - j)).toNat + clen.toNat) := by
+          rw [ho]; exact N0.adv hk (n := jU) (by omega) (by rw [hlN, hjU]; omega)
+        obtain ⟨p2, m2⟩ := to_fabs (mm := m - j) hH hs mv (u64_add_sub _ _ _) (u64_add_sub _ _ _) hmN W.cap16 Nj.two
         obtain ⟨p3, m3, f3⟩ := ih _ (by rw [← hL, hjN]; omega) word' count' pos' ring' opos' iCount lCount dCount d01
-          d23 code ilen clen lits (m - j) q1 q2 S' hI rfl
-          (by rw [ho]; exact N0.adv hk (n := jU) (by omega) (by rw [hlN, hjU]; omega))
+          d23 code ilen clen lits (m - j) q1 q2 S' hI rfl Nj
           (by rw [hjN]; omega) (by rw [hjN]; omega) p2 m2.rel
         exact ⟨p3, m2.trans m3, f3.mono (by rw [ho, fastAdd (by omega), hjU]; omega)⟩
       by_cases hp : 2 ≤ m ∧ pairBase ≠ USize.ofNat 4294967295
@@ -2775,9 +2835,11 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
       · rw [dite_eq_left hcl]
         have e : fabs word count ring opos mask pB cap cap16 wB rEnd iCount lCount dCount flags x d01 d23 code ilen clen
             lits 0 p1 p2 pos = fexit word count ring opos mask pB cap cap16 wB rEnd iCount lCount dCount flags x d01 d23
-            code ilen clen p1 p2 .literals lits pos := by
+            code ilen clen (wget ring (opos - USize.ofNat 1) mask hmN S.size) (wget ring (opos - USize.ofNat 2) mask hmN S.size)
+            .literals lits pos := by
           unfold fabs
-          rw [UInt64.add_zero, UInt64.add_zero, ite_eq_right (fun h => hl h.2)]
+          rw [ite_eq_left rfl, ite_eq_left rfl, UInt64.add_zero, UInt64.add_zero, ite_eq_right (fun h => hl h.2),
+            wget_wbyte, wget_wbyte]
         rw [e] at hrel ⊢
         exact ⟨p, MoveOk.refl hrel rfl S.posStop,
           fexit_frame (Nat.le_refl _) (Nat.le_trans (Nat.le_add_right _ _) N0.ahead)⟩
@@ -2793,17 +2855,23 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
           u64_sub_le (by omega)
         have e2 : (lits - umin (umin lits lCount) 16).toNat = lits.toNat - (umin (umin lits lCount) 16).toNat :=
           u64_sub_le (by omega)
+        have hm'0 : ¬ umin (umin lits lCount) 16 = 0 := fun h => by
+          have := congrArg UInt64.toNat h
+          simp at this
+          omega
         have e : fabs word count ring opos mask pB cap cap16 wB rEnd iCount (lCount - umin (umin lits lCount) 16)
-            dCount flags x d01 d23 code ilen clen (lits - umin (umin lits lCount) 16) (umin (umin lits lCount) 16) p1 p2
+            dCount flags x d01 d23 code ilen clen (lits - umin (umin lits lCount) 16) (umin (umin lits lCount) 16)
+            (wget ring (opos - USize.ofNat 1) mask hmN S.size) (wget ring (opos - USize.ofNat 2) mask hmN S.size)
             pos = fabs word count ring opos mask pB cap cap16 wB rEnd iCount lCount dCount
             flags x d01 d23 code ilen clen lits 0 p1 p2 pos := by
           unfold fabs
-          rw [UInt64.sub_add_cancel, UInt64.sub_add_cancel, UInt64.add_zero, UInt64.add_zero,
-            ite_eq_right (fun h => by have := congrArg UInt64.toNat h.1; simp at this; omega),
-            ite_eq_right (fun h => hl h.2)]
+          rw [ite_eq_right hm'0, ite_eq_right hm'0, ite_eq_left rfl, ite_eq_left rfl, wget_wbyte, wget_wbyte,
+            UInt64.sub_add_cancel, UInt64.sub_add_cancel, UInt64.add_zero, UInt64.add_zero,
+            ite_eq_right (fun h => hm'0 h.1), ite_eq_right (fun h => hl h.2)]
         obtain ⟨p', mv, fv⟩ := ih _ (by rw [← hL, e2]; have : (0 : UInt64).toNat = 0 := rfl; omega) word count pos
           ring opos iCount (lCount - umin (umin lits lCount) 16) dCount d01 d23 code ilen clen
-          (lits - umin (umin lits lCount) 16) (umin (umin lits lCount) 16) p1 p2 _ hI rfl
+          (lits - umin (umin lits lCount) 16) (umin (umin lits lCount) 16)
+          (wget ring (opos - USize.ofNat 1) mask hmN S.size) (wget ring (opos - USize.ofNat 2) mask hmN S.size) _ hI rfl
           (by rw [UInt64.sub_add_cancel]; rw [UInt64.add_zero] at N0; exact N0)
           (by rw [e1]; have := lCount.toNat_lt; omega) (by rw [e2]; have : (0 : UInt64).toNat = 0 := rfl; omega) p
           (by rw [e]; exact hrel)
@@ -2814,9 +2882,11 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
       subst hl0
       have e : fabs word count ring opos mask pB cap cap16 wB rEnd iCount lCount dCount flags x d01 d23 code ilen clen
           0 0 p1 p2 pos = fexit word count ring opos mask pB cap cap16 wB rEnd iCount lCount dCount flags x d01 d23
-          code ilen clen p1 p2 .distance 0 pos := by
+          code ilen clen (wget ring (opos - USize.ofNat 1) mask hmN S.size) (wget ring (opos - USize.ofNat 2) mask hmN S.size)
+          .distance 0 pos := by
         unfold fabs
-        rw [UInt64.add_zero, UInt64.add_zero, ite_eq_left ⟨rfl, rfl⟩]
+        rw [ite_eq_left rfl, ite_eq_left rfl, UInt64.add_zero, UInt64.add_zero, ite_eq_left ⟨rfl, rfl⟩, wget_wbyte,
+          wget_wbyte]
       rw [e] at hrel ⊢
       rw [UInt64.add_zero] at N0
       by_cases hd2 : posLim < pos ∨ (128 ≤ code ∧ dCount = 0)
@@ -2909,7 +2979,9 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
                 obtain ⟨pc, mc⟩ := ic_round C hK hH mb.rel hf3 hi hv hcv (of_decide_eq_true hA) (by omega)
                 obtain ⟨pd, md⟩ := to_fabs (lits := rowBase (insertRow (wordSym v) hcv) +
                     ((word3 >>> wordBits v) &&& maskT T C.big C.size32 (rowBits (insertRow (wordSym v) hcv))))
-                  (mm := 0) hH hs ((ma.trans mb).trans mc) (UInt64.add_zero _).symm (UInt64.add_zero _).symm
+                  (mm := 0) hH hs ((ma.trans mb).trans mc) (UInt64.add_zero _).symm (UInt64.add_zero _).symm hmN W.cap16
+                  (N0.adv hk (n := clen.toUSize) (ahead' := 0) (by rw [hcU]; omega) (by rw [hcU]; omega)).two
+                rw [fabs_ctx 0 0] at md
                 obtain ⟨pe, me, fe⟩ := ihI _ (by rw [← hI]; exact icount_dec hi) _ _ _ pos3 _ (opos + clen.toUSize)
                   (iCount - 1) lCount dCount d01 d23 (codeClass (wordSym v)) _ _ _ 0 _ _ _ rfl rfl
                   (N0.adv hk (n := clen.toUSize) (by rw [hcU]; omega)
@@ -3031,7 +3103,9 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
                   obtain ⟨pc, mc⟩ := ic_round C hK hH mb.rel hf3 hi hvi hcv (of_decide_eq_true hA) (by omega)
                   obtain ⟨pd, md⟩ := to_fabs (lits := rowBase (insertRow (wordSym vi) hcv) +
                       ((word3 >>> wordBits vi) &&& maskT T C.big C.size32 (rowBits (insertRow (wordSym vi) hcv))))
-                    (mm := 0) hH hs ((ma.trans mb).trans mc) (UInt64.add_zero _).symm (UInt64.add_zero _).symm
+                    (mm := 0) hH hs ((ma.trans mb).trans mc) (UInt64.add_zero _).symm (UInt64.add_zero _).symm hmN
+                    W.cap16 (N0.adv hk (n := clen.toUSize) (ahead' := 0) (by rw [hcU]; omega) (by rw [hcU]; omega)).two
+                  rw [fabs_ctx 0 0] at md
                   obtain ⟨pe, me, fe⟩ := ihI _ (by rw [← hI]; exact icount_dec hi) _ _ _ pos3 _ (opos + clen.toUSize)
                     (iCount - 1) lCount (dCount - 1) _ _ (codeClass (wordSym vi)) _ _ _ 0 _ _ _ rfl rfl
                     (N0.adv hk (n := clen.toUSize) (by rw [hcU]; omega)
@@ -3151,7 +3225,9 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
                   obtain ⟨pc, mc⟩ := ic_round C hK hH mb.rel hf3 hi hvi hcv (of_decide_eq_true hA) (by omega)
                   obtain ⟨pd, md⟩ := to_fabs (lits := rowBase (insertRow (wordSym vi) hcv) +
                       ((word3 >>> wordBits vi) &&& maskT T C.big C.size32 (rowBits (insertRow (wordSym vi) hcv))))
-                    (mm := 0) hH hs ((ma.trans mb).trans mc) (UInt64.add_zero _).symm (UInt64.add_zero _).symm
+                    (mm := 0) hH hs ((ma.trans mb).trans mc) (UInt64.add_zero _).symm (UInt64.add_zero _).symm hmN
+                    W.cap16 (N0.adv hk (n := clen.toUSize) (ahead' := 0) (by rw [hcU]; omega) (by rw [hcU]; omega)).two
+                  rw [fabs_ctx 0 0] at md
                   obtain ⟨pe, me, fe⟩ := ihI _ (by rw [← hI]; exact icount_dec hi) _ _ _ pos3 _ (opos + clen.toUSize)
                     (iCount - 1) lCount (dCount - 1) _ _ (codeClass (wordSym vi)) _ _ _ 0 _ _ _ rfl rfl
                     (N0.adv hk (n := clen.toUSize) (by rw [hcU]; omega)

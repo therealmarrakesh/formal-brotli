@@ -223,7 +223,8 @@ theorem fastLoop_work {H : Hdr} {kk : USize} {a : ByteArray} {stop : USize} {hs 
           omega
         exact FW.seg (ih _ (by rw [← hL, e2]; have : (0 : UInt64).toNat = 0 := rfl; omega) word count pos ring opos
           iCount (lCount - umin (umin lits lCount) 16) dCount d01 d23 code ilen clen (lits - umin (umin lits lCount) 16)
-          (umin (umin lits lCount) 16) p1 p2 _ hI rfl
+          (umin (umin lits lCount) 16) (wget ring (opos - USize.ofNat 1) mask W.mask S.size)
+          (wget ring (opos - USize.ofNat 2) mask W.mask S.size) _ hI rfl
           (by rw [UInt64.sub_add_cancel]; rw [UInt64.add_zero] at N0; exact N0)
           (by rw [e1]; have := lCount.toNat_lt; omega) (by rw [e2]; have : (0 : UInt64).toNat = 0 := rfl; omega) hcl) hm'
     · rw [dite_eq_right hl, dite_eq_right hl]

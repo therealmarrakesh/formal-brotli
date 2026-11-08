@@ -54,8 +54,14 @@ theorem and_mask32 {x : UInt64} (hx : x.toNat < 2 ^ 32) : x &&& 0xFFFFFFFF = x :
     rw [UInt64.toNat_and, show (0xFFFFFFFF : UInt64).toNat = 2 ^ 32 - 1 from rfl, Nat.and_two_pow_sub_one_eq_mod,
       Nat.mod_eq_of_lt hx])
 
+/-- The admission's test that two bytes are written, as a number. -/
+theorem two_written {written : USize} (h : USize.ofNat 2 ≤ written) : 2 ≤ written.toNat := by
+  have := USize.le_iff_toNat_le.mp h
+  rwa [fastLit (by decide)] at this
+
 /-- Into the fast loop from the step machine's record at a command's literals or its distance: a move to whatever the
-loop leaves with. The command's literals and copy fit what is ahead (the room and the meta-block). -/
+loop leaves with. The command's literals and copy fit what is ahead (the room and the meta-block), and two bytes are
+written, so that the window holds the context bytes. -/
 theorem fastEnter_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandState → List Bool → Option α}
     (hK : ∀ s bs, s.remaining ≠ 0 → K s bs = readCommand w mH s bs >>= fun (s1, b) => K s1 b)
     {H : Hdr} {kk : USize} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {cap : USize}
@@ -69,7 +75,8 @@ theorem fastEnter_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSt
     (htag : tag = .literals ∨ tag = .distance) (hlits : lits = if tag = .literals then left else 0)
     (hbE : bEnd = wpos.toUInt64 + umin remaining (if room kk cap ≤ pend then 0 else (room kk cap - pend).toUInt64))
     (hl : lits ≤ umin remaining (if room kk cap ≤ pend then 0 else (room kk cap - pend).toUInt64))
-    (hcl : x.clen ≤ umin remaining (if room kk cap ≤ pend then 0 else (room kk cap - pend).toUInt64) - lits) :
+    (hcl : x.clen ≤ umin remaining (if room kk cap ≤ pend then 0 else (room kk cap - pend).toUInt64) - lits)
+    (hw2 : 2 ≤ written.toNat) :
     ∃ p', MoveOk w kk.toNat mH K a stop p ⟨word, count, ring, wpos, pend, cap, written, p1, p2, remaining, iCount,
       lCount, dCount, flags, x, tag, left, pos, .next⟩ pos p'
       (fastEnter H kk a stop hs cap word count ring wpos pend written p1 p2 remaining iCount lCount dCount flags x tag
@@ -93,8 +100,21 @@ theorem fastEnter_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSt
       exact ⟨_, _, _, _, _, _, hrel.1⟩
     · obtain ⟨_, _, _, rfl⟩ := hrel.distance_of ht
       exact ⟨_, _, _, _, _, _, hrel.1⟩
-  obtain ⟨_, _, ds, _, _, _, hC⟩ := hCx
+  obtain ⟨out, _, ds, _, _, _, hC⟩ := hCx
   have hpL : pend.toNat + 16 ≤ 2 ^ kk.toNat := hC.pendLe
+  have hctx : wbyte ring (wpos - USize.ofNat 1) (ringMask kk) = p1 ∧
+      wbyte ring (wpos - USize.ofNat 2) (ringMask kk) = p2 := by
+    have hr : RingOk ring kk.toNat (wpos &&& ringMask kk).toNat out := by rw [mask_small hk hwp]; exact hC.ring
+    have hw : written.toNat = min w out.length := hC.written
+    have hwin : w + 16 = 2 ^ kk.toNat := hC.win
+    have h1024 : 2 ^ 10 ≤ 2 ^ kk.toNat := Nat.pow_le_pow_right (by decide) hC.k10
+    have hl : 2 ≤ out.length := by omega
+    have e := wget_ctx hk (ringMask_toNat hk) (by omega) hr.size hr hl
+    have hc : contextBytes out = (p1.toNat, p2.toNat) := hC.ctx
+    rw [hc] at e
+    obtain ⟨e1, e2⟩ := Prod.mk.inj e
+    exact ⟨UInt8.toNat_inj.mp (by rw [← wget_wbyte (hm := ringMask_toNat hk) (hs := hr.size)]; exact e1.symm),
+      UInt8.toNat_inj.mp (by rw [← wget_wbyte (hm := ringMask_toNat hk) (hs := hr.size)]; exact e2.symm)⟩
   have hd0 : x.d0.toNat < 2 ^ 32 := by rw [← hC.d0]; exact hC.dsLt.1
   have hd1 : x.d1.toNat < 2 ^ 32 := by rw [← hC.d1]; exact hC.dsLt.2.1
   have hd2 : x.d2.toNat < 2 ^ 32 := by rw [← hC.d2]; exact hC.dsLt.2.2.1
@@ -130,7 +150,7 @@ theorem fastEnter_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSt
     have e2 : (wpos + (pend - wpos)).toNat = pend.toNat := by rw [USize.add_comm, USize.sub_add_cancel]
     have e3 : (wpos + (written - wpos)).toNat = written.toNat := by rw [USize.add_comm, USize.sub_add_cancel]
     have e4 : (remaining + wpos.toUInt64 - wpos.toUInt64).toNat = remaining.toNat := by rw [UInt64.add_sub_cancel]
-    exact ⟨by rw [hl0]; omega, by rw [e4]; omega, by omega, by rw [e2]; omega, by rw [e3]; omega⟩
+    exact ⟨by rw [hl0]; omega, by rw [e4]; omega, by omega, by rw [e2]; omega, by rw [e3]; omega, by rw [e3]; exact hw2⟩
   have e0 : fabs word count ring wpos (ringMask kk) (pend - wpos) cap (ringSize kk - USize.ofNat 16) (written - wpos)
       (remaining + wpos.toUInt64) iCount lCount dCount flags x (x.d0 ||| (x.d1 <<< 32)) (x.d2 ||| (x.d3 <<< 32)) x.code
       x.ilen x.clen lits 0 p1 p2 pos = ⟨word, count, ring, wpos, pend, cap, written, p1, p2, remaining, iCount, lCount,
@@ -145,7 +165,7 @@ theorem fastEnter_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSt
         (by rw [fastLit (by decide), ringSize_toNat hk]; exact h16)), fastLit (by decide), ringSize_toNat hk]
       omega
     unfold fabs fexit
-    rw [mask_small hk hwp, f2, f3, UInt64.add_sub_cancel, UInt64.add_zero, UInt64.add_zero, g1, g2, g3, g4,
+    rw [ite_eq_left rfl, ite_eq_left rfl, hctx.1, hctx.2, mask_small hk hwp, f2, f3, UInt64.add_sub_cancel, UInt64.add_zero, UInt64.add_zero, g1, g2, g3, g4,
       and_mask32 hd1, and_mask32 hd3]
   have key : ∃ p0, MoveOk w kk.toNat mH K a stop p ⟨word, count, ring, wpos, pend, cap, written, p1, p2, remaining,
       iCount, lCount, dCount, flags, x, tag, left, pos, .next⟩ pos p0
@@ -240,7 +260,7 @@ theorem runCmdKF_cell (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs :
         (if tag = .literals then left else 0) ≤
           umin remaining (if room k cap ≤ pend then 0 else (room k cap - pend).toUInt64) ∧
         clen ≤ umin remaining (if room k cap ≤ pend then 0 else (room k cap - pend).toUInt64) -
-          (if tag = .literals then left else 0)
+          (if tag = .literals then left else 0) ∧ USize.ofNat 2 ≤ written
     · rw [dite_eq_left hf, dite_eq_left hf]
       have hm : pos.toNat + 40 ≤ stop.toNat := by
         have h1 := USize.le_iff_toNat_le.mp hf.2.2.1
@@ -332,7 +352,7 @@ theorem runCmdKF_rec {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockH
         (if tag = .literals then left else 0) ≤
           umin remaining (if room k cap ≤ pend then 0 else (room k cap - pend).toUInt64) ∧
         clen ≤ umin remaining (if room k cap ≤ pend then 0 else (room k cap - pend).toUInt64) -
-          (if tag = .literals then left else 0)
+          (if tag = .literals then left else 0) ∧ USize.ofNat 2 ≤ written
     · rw [dite_eq_left hf]
       have hm : pos.toNat + 40 ≤ stop.toNat := by
         have h1 := USize.le_iff_toNat_le.mp hf.2.2.1
@@ -342,7 +362,7 @@ theorem runCmdKF_rec {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockH
       obtain ⟨p', mv, fc, fp⟩ := fastEnter_ok (hs := hs) (cap := cap) (pend := pend) (p1 := p1) (p2 := p2)
         (remaining := remaining) (iCount := iCount) (lCount := lCount) (dCount := dCount) (flags := flags)
         (x := ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf,
-          wordPos⟩) (left := left) hK hinv hm hH hrel hf.2.1 rfl rfl hf.2.2.2.1 hf.2.2.2.2
+          wordPos⟩) (left := left) hK hinv hm hH hrel hf.2.1 rfl rfl hf.2.2.2.1 hf.2.2.2.2.1 (two_written hf.2.2.2.2.2)
       generalize fastEnter H k a stop hs cap word count ring wpos pend written p1 p2 remaining iCount lCount dCount
         flags ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf,
           wordPos⟩ tag (if tag = .literals then left else 0)

@@ -1144,7 +1144,8 @@ def fastLoop (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.to
           lit_margin (j := 1) S.margin hm1 (by decide) hf.acct (by show l.toNat ≤ 15 * 1; omega) (by omega)⟩
   else if hl : lits ≠ 0 then
     if hcl : lCount = 0 ∨ posLim < pos then
-      fexitP C X W word count ring opos pB cap wB rEnd iCount lCount dCount flags d01 d23 code ilen clen p1 p2
+      fexitP C X W word count ring opos pB cap wB rEnd iCount lCount dCount flags d01 d23 code ilen clen
+        (wget ring (opos - USize.ofNat 1) mask hmk S.size) (wget ring (opos - USize.ofNat 2) mask hmk S.size)
         .literals lits pos S.wf S.posStop S.size (Or.inl rfl)
     else
       let m' := umin (umin lits lCount) 16
@@ -1157,10 +1158,12 @@ def fastLoop (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.to
           (fun e => hcl (Or.inl (UInt64.toNat_inj.mp (by rw [e]; rfl))))
       fastLoop H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase iRow iFb
         dRow s0 C X W word count pos ring opos iCount (lCount - m') dCount d01 d23 code ilen clen
-        (lits - m') m' p1 p2 ⟨S.wf, S.posStop, S.size, fun _ => by omega⟩
+        (lits - m') m' (wget ring (opos - USize.ofNat 1) mask hmk S.size) (wget ring (opos - USize.ofNat 2) mask hmk S.size)
+        ⟨S.wf, S.posStop, S.size, fun _ => by omega⟩
   else
     if hd2 : posLim < pos ∨ (128 ≤ code ∧ dCount = 0) then
-      fexitP C X W word count ring opos pB cap wB rEnd iCount lCount dCount flags d01 d23 code ilen clen p1 p2
+      fexitP C X W word count ring opos pB cap wB rEnd iCount lCount dCount flags d01 d23 code ilen clen
+        (wget ring (opos - USize.ofNat 1) mask hmk S.size) (wget ring (opos - USize.ofNat 2) mask hmk S.size)
         .distance 0 pos S.wf S.posStop S.size (Or.inr (Or.inl rfl))
     else
     have hpl : pos.toNat ≤ posLim.toNat := Nat.le_of_not_lt fun h => hd2 (Or.inl (USize.lt_iff_toNat_lt.mpr h))
@@ -1172,7 +1175,8 @@ def fastLoop (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.to
     let d := if code < 128 then d0 else dx
     let written := usmin cap16 (opos + wB)
     if hbad : (¬ code < 128 ∧ ok2 = false) ∨ d = 0 ∨ written.toUInt64 < d then
-      fexitP C X W word count ring opos pB cap wB rEnd iCount lCount dCount flags d01 d23 code ilen clen p1 p2
+      fexitP C X W word count ring opos pB cap wB rEnd iCount lCount dCount flags d01 d23 code ilen clen
+        (wget ring (opos - USize.ofNat 1) mask hmk S.size) (wget ring (opos - USize.ofNat 2) mask hmk S.size)
         .distance 0 pos S.wf S.posStop S.size (Or.inr (Or.inl rfl))
     else
     have hw2 : (BitBuffer.mk (if code < 128 then word1 else word2x) (if code < 128 then count1 else count2x)).Wf := by
@@ -1206,12 +1210,11 @@ def fastLoop (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.to
     let ring' := copyF ring (opos &&& mask) d.toUSize clen.toUSize mask size hk hmk W.size S.size (mask_lt hmk) hd
     have hsz' : ring'.size = 2 ^ kk.toNat := copyF_size _ _ _ _ _ _ hk hmk W.size S.size _ hd
     let opos' := opos + clen.toUSize
-    let q1 := wget ring' (opos' - USize.ofNat 1) mask hmk hsz'
-    let q2 := wget ring' (opos' - USize.ofNat 2) mask hmk hsz'
     if hi0 : iCount = 0 then
       fexitP C X W word2 count2 ring' opos' pB cap wB
-        rEnd iCount lCount dCount' flags n01 n23 code ilen clen q1 q2 .command 0 pos1 hw2 hf1.posStop hsz'
-        (Or.inr (Or.inr rfl))
+        rEnd iCount lCount dCount' flags n01 n23 code ilen clen
+        (wget ring' (opos' - USize.ofNat 1) mask hmk hsz') (wget ring' (opos' - USize.ofNat 2) mask hmk hsz')
+        .command 0 pos1 hw2 hf1.posStop hsz' (Or.inr (Or.inr rfl))
     else
     have _hdi : (iCount - 1).toNat < iCount.toNat :=
       lit_dec (j := 1) (by decide) (by
@@ -1227,12 +1230,14 @@ def fastLoop (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.to
     icK C word3 count3 hf3.wf fun ok1 word4 count4 code' ilen' clen' hok1 =>
     if h1 : ok1 = false ∨ bEnd < opos'.toUInt64 + ilen' + clen' then
       fexitP C X W word2 count2 ring' opos' pB cap wB
-        rEnd iCount lCount dCount' flags n01 n23 code ilen clen q1 q2 .command 0 pos1 hw2 hf1.posStop hsz'
-        (Or.inr (Or.inr rfl))
+        rEnd iCount lCount dCount' flags n01 n23 code ilen clen
+        (wget ring' (opos' - USize.ofNat 1) mask hmk hsz') (wget ring' (opos' - USize.ofNat 2) mask hmk hsz')
+        .command 0 pos1 hw2 hf1.posStop hsz' (Or.inr (Or.inr rfl))
     else
+      -- no segment is open: the context bytes are read from the window when the next one starts
       fastLoop H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase iRow iFb
         dRow s0 C X W word4 count4 pos3 ring' opos' (iCount - 1) lCount dCount' n01 n23 code' ilen'
-        clen' ilen' 0 q1 q2
+        clen' ilen' 0 0 0
         ⟨hok1 (by cases h : ok1 with
           | false => exact absurd (Or.inl h) h1
           | true => rfl), hf3.posStop, hsz', fun h => absurd rfl h⟩

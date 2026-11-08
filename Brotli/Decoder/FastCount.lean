@@ -31,7 +31,8 @@ theorem fastEnter_work {w : Nat} {mH : MetaBlockHeader}
     (htag : tag = .literals ∨ tag = .distance)
     (hbE : bEnd = wpos.toUInt64 + umin remaining (if room kk cap ≤ pend then 0 else (room kk cap - pend).toUInt64))
     (hl : lits ≤ umin remaining (if room kk cap ≤ pend then 0 else (room kk cap - pend).toUInt64))
-    (hcl : x.clen ≤ umin remaining (if room kk cap ≤ pend then 0 else (room kk cap - pend).toUInt64) - lits) :
+    (hcl : x.clen ≤ umin remaining (if room kk cap ≤ pend then 0 else (room kk cap - pend).toUInt64) - lits)
+    (hw2 : 2 ≤ written.toNat) :
     pend.toNat ≤ (fastEnter H kk a stop hs cap word count ring wpos pend written p1 p2 remaining iCount lCount dCount
         flags x tag lits bEnd pos hinv hm).val.pend.toNat ∧
       fastEnterW H kk a stop hs cap word count ring wpos pend written p1 p2 remaining iCount lCount dCount flags x tag
@@ -77,7 +78,7 @@ theorem fastEnter_work {w : Nat} {mH : MetaBlockHeader}
     have e2 : (wpos + (pend - wpos)).toNat = pend.toNat := by rw [USize.add_comm, USize.sub_add_cancel]
     have e3 : (wpos + (written - wpos)).toNat = written.toNat := by rw [USize.add_comm, USize.sub_add_cancel]
     have e4 : (remaining + wpos.toUInt64 - wpos.toUInt64).toNat = remaining.toNat := by rw [UInt64.add_sub_cancel]
-    exact ⟨by rw [hl0]; omega, by rw [e4]; omega, by omega, by rw [e2]; omega, by rw [e3]; omega⟩
+    exact ⟨by rw [hl0]; omega, by rw [e4]; omega, by omega, by rw [e2]; omega, by rw [e3]; omega, by rw [e3]; exact hw2⟩
   unfold fastEnter fastEnterW
   dsimp only
   obtain ⟨o, g3, g1, g2, gw⟩ := fastLoop_work _ _ word count pos ring wpos iCount lCount dCount _ _ _ _ _ lits 0 p1 p2
@@ -335,7 +336,7 @@ theorem runCmdKFW_count {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a
         (if tag = .literals then left else 0) ≤
           umin remaining (if room k cap ≤ pend then 0 else (room k cap - pend).toUInt64) ∧
         clen ≤ umin remaining (if room k cap ≤ pend then 0 else (room k cap - pend).toUInt64) -
-          (if tag = .literals then left else 0)
+          (if tag = .literals then left else 0) ∧ USize.ofNat 2 ≤ written
     · rw [dite_eq_left hf, dite_eq_left hf]
       have hm' : pos.toNat + 40 ≤ stop.toNat := by
         have h1 := USize.le_iff_toNat_le.mp hf.2.2.1
@@ -352,11 +353,11 @@ theorem runCmdKFW_count {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a
         (hs := hs) (cap := cap) (pend := pend) (p1 := p1) (p2 := p2)
         (remaining := remaining) (iCount := iCount) (lCount := lCount) (dCount := dCount) (flags := flags)
         (x := ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf,
-          wordPos⟩) (left := left) hinv hm' hH hrel hf.2.1 rfl rfl hf.2.2.2.1 hf.2.2.2.2
+          wordPos⟩) (left := left) hinv hm' hH hrel hf.2.1 rfl rfl hf.2.2.2.1 hf.2.2.2.2.1 (two_written hf.2.2.2.2.2)
       obtain ⟨-, hw⟩ := fastEnter_work (hs := hs) (cap := cap) (pend := pend) (p1 := p1) (p2 := p2)
         (remaining := remaining) (iCount := iCount) (lCount := lCount) (dCount := dCount) (flags := flags)
         (x := ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf,
-          wordPos⟩) (left := left) hinv hm' hrel hf.2.1 rfl hf.2.2.2.1 hf.2.2.2.2
+          wordPos⟩) (left := left) hinv hm' hrel hf.2.1 rfl hf.2.2.2.1 hf.2.2.2.2.1 (two_written hf.2.2.2.2.2)
       generalize fastEnter H k a stop hs cap word count ring wpos pend written p1 p2 remaining iCount lCount dCount
         flags ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf,
           wordPos⟩ tag (if tag = .literals then left else 0)

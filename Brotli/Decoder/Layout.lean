@@ -252,12 +252,12 @@ theorem runCmdKF_same (H : Hdr) (k : USize) {a1 a2 : ByteArray} {e1 e2 : USize} 
         (if tag = .literals then left else 0) ≤
           umin remaining (if room k cap ≤ pend then 0 else (room k cap - pend).toUInt64) ∧
         clen ≤ umin remaining (if room k cap ≤ pend then 0 else (room k cap - pend).toUInt64) -
-          (if tag = .literals then left else 0)
+          (if tag = .literals then left else 0) ∧ USize.ofNat 2 ≤ written
     · have hf2 : fresh = true ∧ (tag = .literals ∨ tag = .distance) ∧ USize.ofNat 40 ≤ e2 - p2 ∧
           (if tag = .literals then left else 0) ≤
             umin remaining (if room k cap ≤ pend then 0 else (room k cap - pend).toUInt64) ∧
           clen ≤ umin remaining (if room k cap ≤ pend then 0 else (room k cap - pend).toUInt64) -
-            (if tag = .literals then left else 0) := by rw [← hd]; exact hf
+            (if tag = .literals then left else 0) ∧ USize.ofNat 2 ≤ written := by rw [← hd]; exact hf
       rw [dite_eq_left hf, dite_eq_left hf2]
       have hm1 : p1.toNat + 40 ≤ e1.toNat := by
         have := USize.le_iff_toNat_le.mp hf.2.2.1
@@ -305,7 +305,7 @@ theorem runCmdKF_same (H : Hdr) (k : USize) {a1 a2 : ByteArray} {e1 e2 : USize} 
           (if tag = .literals then left else 0) ≤
             umin remaining (if room k cap ≤ pend then 0 else (room k cap - pend).toUInt64) ∧
           clen ≤ umin remaining (if room k cap ≤ pend then 0 else (room k cap - pend).toUInt64) -
-            (if tag = .literals then left else 0)) := by rw [← hd]; exact hf
+            (if tag = .literals then left else 0) ∧ USize.ofNat 2 ≤ written) := by rw [← hd]; exact hf
       rw [dite_eq_right hf, dite_eq_right hf2]
       have hc1 : Drops H k e1
           (fun c word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev

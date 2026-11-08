@@ -121,7 +121,8 @@ def fastLoopW (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.t
           (fun e => hcl (Or.inl (UInt64.toNat_inj.mp (by rw [e]; rfl))))
       1 + fastLoopW H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase iRow
         iFb dRow s0 C X W word count pos ring opos iCount (lCount - m') dCount d01 d23 code ilen clen
-        (lits - m') m' p1 p2 ⟨S.wf, S.posStop, S.size, fun _ => by omega⟩
+        (lits - m') m' (wget ring (opos - USize.ofNat 1) mask hmk S.size) (wget ring (opos - USize.ofNat 2) mask hmk S.size)
+        ⟨S.wf, S.posStop, S.size, fun _ => by omega⟩
   else
     if hd2 : posLim < pos ∨ (128 ≤ code ∧ dCount = 0) then 1
     else
@@ -163,8 +164,6 @@ def fastLoopW (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.t
     let ring' := copyF ring (opos &&& mask) d.toUSize clen.toUSize mask size hk hmk W.size S.size (mask_lt hmk) hd
     have hsz' : ring'.size = 2 ^ kk.toNat := copyF_size _ _ _ _ _ _ hk hmk W.size S.size _ hd
     let opos' := opos + clen.toUSize
-    let q1 := wget ring' (opos' - USize.ofNat 1) mask hmk hsz'
-    let q2 := wget ring' (opos' - USize.ofNat 2) mask hmk hsz'
     if hi0 : iCount = 0 then 1 + clen.toNat
     else
     have _hdi : (iCount - 1).toNat < iCount.toNat :=
@@ -183,7 +182,7 @@ def fastLoopW (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.t
     else
       1 + clen.toNat + fastLoopW H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow
         pairBase iRow iFb dRow s0 C X W word4 count4 pos3 ring' opos' (iCount - 1) lCount dCount' n01
-        n23 code' ilen' clen' ilen' 0 q1 q2
+        n23 code' ilen' clen' ilen' 0 0 0
         ⟨hok1 (by cases h : ok1 with
           | false => exact absurd (Or.inl h) h1
           | true => rfl), hf3.posStop, hsz', fun h => absurd rfl h⟩
@@ -265,7 +264,7 @@ def runCmdKFW (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs : stop.to
     let ahead := umin remaining roomLeft
     let bEnd := wpos.toUInt64 + ahead
     if hf : fresh = true ∧ (tag = .literals ∨ tag = .distance) ∧ USize.ofNat 40 ≤ stop - pos ∧
-        lits ≤ ahead ∧ clen ≤ ahead - lits then
+        lits ≤ ahead ∧ clen ≤ ahead - lits ∧ USize.ofNat 2 ≤ written then
       have hm : pos.toNat + 40 ≤ stop.toNat := by
         have h1 := USize.le_iff_toNat_le.mp hf.2.2.1
         rw [fastLit (by decide), USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr hinv.pos)] at h1
