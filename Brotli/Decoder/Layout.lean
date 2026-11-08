@@ -1,6 +1,7 @@
 module
 
 public import Brotli.Decoder.StreamTop
+public import Brotli.Decoder.FastSame
 
 @[expose] public section
 
@@ -226,6 +227,204 @@ theorem runCmd_same (H : Hdr) (k : USize) {a1 a2 : ByteArray} {e1 e2 : USize} (h
       split
       · exact ih _ hlt _ rfl e hS
       · exact ⟨e, hS⟩
+
+/-- What the compiled loop knows of its fields holds at any chunk's end its position is within. -/
+theorem KInv.restop {H : Hdr} {k stop stop' : USize} {word count : UInt64} {ring : ByteArray} {wpos written : USize}
+    {iCur iPrev lCur lPrev dCur dPrev copyBits dist : UInt64} {wordBuf : ByteArray} {wordPos : USize} {tag : Tag}
+    {pos pos' : USize}
+    (h : KInv H k stop word count ring wpos written iCur iPrev lCur lPrev dCur dPrev copyBits dist wordBuf wordPos tag pos)
+    (hp : pos'.toNat ≤ stop'.toNat) :
+    KInv H k stop' word count ring wpos written iCur iPrev lCur lPrev dCur dPrev copyBits dist wordBuf wordPos tag pos' :=
+  ⟨h.hdr, h.k24, h.k16, h.size, h.wpos, h.written, h.wf, hp, h.iCur, h.iPrev, h.lCur, h.lPrev, h.dCur, h.dPrev, h.tagged⟩
+
+open Classical in
+/-- The command loop with the fast loop depends only on the unread bytes. -/
+theorem runCmdKF_same (H : Hdr) (k : USize) {a1 a2 : ByteArray} {e1 e2 : USize} (hs1 : e1.toNat ≤ a1.size)
+    (hs2 : e2.toNat ≤ a2.size) :
+    ∀ (N : Nat) (n : USize), n.toNat = N → ∀ (fresh : Bool) (c1 c2 : RunOut) (word count : UInt64) (ring : ByteArray)
+      (wpos pend cap written : USize) (b1 b2 : UInt8) (remaining iCount lCount dCount : UInt64) (flags : Flags)
+      (iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist : UInt64)
+      (wordBuf : ByteArray) (wordPos : USize) (tag : Tag) (left : UInt64) (p1 p2 : USize)
+      (h1 : KInv H k e1 word count ring wpos written iCur iPrev lCur lPrev dCur dPrev copyBits dist wordBuf wordPos tag p1)
+      (h2 : KInv H k e2 word count ring wpos written iCur iPrev lCur lPrev dCur dPrev copyBits dist wordBuf wordPos tag p2),
+      Same a1 e1 a2 e2 p1 p2 →
+      CmdSame a1 e1 a2 e2
+        (runCmdKF H k a1 e1 hs1 n fresh c1 word count ring wpos pend cap written b1 b2 remaining iCount lCount dCount flags
+          iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left p1 h1)
+        (runCmdKF H k a2 e2 hs2 n fresh c2 word count ring wpos pend cap written b1 b2 remaining iCount lCount dCount flags
+          iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left p2
+          h2) := by
+  intro N
+  induction N with
+  | zero =>
+    intro n hn fresh c1 c2 word count ring wpos pend cap written b1 b2 remaining iCount lCount dCount flags iCur iPrev
+      lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left p1 p2 h1 h2 h
+    rw [runCmdKF.eq_1 H k a1 e1 hs1 n, runCmdKF.eq_1 H k a2 e2 hs2 n, dite_eq_left (usize_zero hn),
+      dite_eq_left (usize_zero hn)]
+    exact ⟨rfl, h⟩
+  | succ N ih =>
+    intro n hn fresh c1 c2 word count ring wpos pend cap written b1 b2 remaining iCount lCount dCount flags iCur iPrev
+      lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left p1 p2 h1 h2 h
+    have hn0 : n ≠ 0 := fun e => by
+      rw [e, show (0 : USize).toNat = 0 from rfl] at hn
+      omega
+    have hnN : (n - USize.ofNat 1).toNat = N := by rw [usize_pred hn0]; omega
+    rw [runCmdKF.eq_1 H k a1 e1 hs1 n, runCmdKF.eq_1 H k a2 e2 hs2 n, dite_eq_right hn0, dite_eq_right hn0]
+    dsimp only
+    have hd : e1 - p1 = e2 - p2 := USize.toNat_inj.mp (by
+      rw [USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr h.2.2.1),
+        USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr h.2.2.2.1)]
+      exact h.2.2.2.2.1)
+    by_cases hf : fresh = true ∧ (tag = .literals ∨ tag = .distance) ∧ USize.ofNat 40 ≤ e1 - p1 ∧
+        (if tag = .literals then left else 0) ≤
+          umin remaining (if room k cap ≤ pend then 0 else (room k cap - pend).toUInt64) ∧
+        clen ≤ umin remaining (if room k cap ≤ pend then 0 else (room k cap - pend).toUInt64) -
+          (if tag = .literals then left else 0)
+    · have hf2 : fresh = true ∧ (tag = .literals ∨ tag = .distance) ∧ USize.ofNat 40 ≤ e2 - p2 ∧
+          (if tag = .literals then left else 0) ≤
+            umin remaining (if room k cap ≤ pend then 0 else (room k cap - pend).toUInt64) ∧
+          clen ≤ umin remaining (if room k cap ≤ pend then 0 else (room k cap - pend).toUInt64) -
+            (if tag = .literals then left else 0) := by rw [← hd]; exact hf
+      rw [dite_eq_left hf, dite_eq_left hf2]
+      have hm1 : p1.toNat + 40 ≤ e1.toNat := by
+        have := USize.le_iff_toNat_le.mp hf.2.2.1
+        rw [fastLit (by decide), USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr h1.pos)] at this
+        have := h1.pos
+        omega
+      have hm2 : p2.toNat + 40 ≤ e2.toNat := by
+        have := USize.le_iff_toNat_le.mp hf2.2.2.1
+        rw [fastLit (by decide), USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr h2.pos)] at this
+        have := h2.pos
+        omega
+      have hS : FSame a1 e1 a2 e2
+          (fastEnter H k a1 e1 hs1 cap n word count ring wpos pend written b1 b2 remaining iCount lCount dCount flags
+            ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf,
+              wordPos⟩ tag (if tag = .literals then left else 0)
+            (wpos.toUInt64 + umin remaining (if room k cap ≤ pend then 0 else (room k cap - pend).toUInt64)) p1 h1
+            hm1).val
+          (fastEnter H k a2 e2 hs2 cap n word count ring wpos pend written b1 b2 remaining iCount lCount dCount flags
+            ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf,
+              wordPos⟩ tag (if tag = .literals then left else 0)
+            (wpos.toUInt64 + umin remaining (if room k cap ≤ pend then 0 else (room k cap - pend).toUInt64)) p2 h2
+            hm2).val := fastEnter_same h
+      generalize fastEnter H k a1 e1 hs1 cap n word count ring wpos pend written b1 b2 remaining iCount lCount dCount
+        flags ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf,
+          wordPos⟩ tag (if tag = .literals then left else 0)
+        (wpos.toUInt64 + umin remaining (if room k cap ≤ pend then 0 else (room k cap - pend).toUInt64)) p1 h1 hm1 = r1
+        at hS ⊢
+      generalize fastEnter H k a2 e2 hs2 cap n word count ring wpos pend written b1 b2 remaining iCount lCount dCount
+        flags ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf,
+          wordPos⟩ tag (if tag = .literals then left else 0)
+        (wpos.toUInt64 + umin remaining (if room k cap ≤ pend then 0 else (room k cap - pend).toUInt64)) p2 h2 hm2 = r2
+        at hS ⊢
+      obtain ⟨⟨word', count', ring', wpos', pend', cap', written', q1, q2, remaining', iCount', lCount', dCount', flags',
+        ⟨iCur', iPrev', lCur', lPrev', dCur', dPrev', f0, f1, f2, f3, code', ilen', clen', copyBits', copyBase', dist',
+          wordBuf', wordPos'⟩, tag', left', pos1, ss1⟩, g1⟩ := r1
+      obtain ⟨⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _⟩, _, _,
+        pos2, _⟩, g2⟩ := r2
+      obtain ⟨e, hS'⟩ := hS
+      dsimp only at e hS'
+      cases e
+      exact ih _ hnN false c1 c2 word' count' ring' wpos' pend' cap' written' q1 q2 remaining' iCount' lCount' dCount'
+        flags' iCur' iPrev' lCur' lPrev' dCur' dPrev' f0 f1 f2 f3 code' ilen' clen' copyBits' copyBase' dist' wordBuf'
+        wordPos' tag' left' pos1 pos2 g1 g2 hS'
+    · have hf2 : ¬ (fresh = true ∧ (tag = .literals ∨ tag = .distance) ∧ USize.ofNat 40 ≤ e2 - p2 ∧
+          (if tag = .literals then left else 0) ≤
+            umin remaining (if room k cap ≤ pend then 0 else (room k cap - pend).toUInt64) ∧
+          clen ≤ umin remaining (if room k cap ≤ pend then 0 else (room k cap - pend).toUInt64) -
+            (if tag = .literals then left else 0)) := by rw [← hd]; exact hf
+      rw [dite_eq_right hf, dite_eq_right hf2]
+      have hc1 : Drops H k e1
+          (fun c word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
+              dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos h =>
+            runCmdKF H k a1 e1 hs1 (n - USize.ofNat 1) true c word count ring wpos pend cap written p1 p2 remaining
+              iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase
+              dist wordBuf wordPos tag left pos h)
+          (fun word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
+              dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos =>
+            if h : KInv H k e1 word count ring wpos written iCur iPrev lCur lPrev dCur dPrev copyBits dist wordBuf
+                wordPos tag pos then
+              runCmdKF H k a1 e1 hs1 (n - USize.ofNat 1) true c1 word count ring wpos pend cap written p1 p2 remaining
+                iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase
+                dist wordBuf wordPos tag left pos h
+            else mkCmd word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur
+              lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos .next) :=
+        fun c word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
+            dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos h => by
+          dsimp only
+          rw [dite_eq_left h]
+          apply runCmdKF_cell H k a1 e1 hs1 _ _ rfl
+      have hc2 : Drops H k e2
+          (fun c word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
+              dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos h =>
+            runCmdKF H k a2 e2 hs2 (n - USize.ofNat 1) true c word count ring wpos pend cap written p1 p2 remaining
+              iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase
+              dist wordBuf wordPos tag left pos h)
+          (fun word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
+              dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos =>
+            if h : KInv H k e2 word count ring wpos written iCur iPrev lCur lPrev dCur dPrev copyBits dist wordBuf
+                wordPos tag pos then
+              runCmdKF H k a2 e2 hs2 (n - USize.ofNat 1) true c2 word count ring wpos pend cap written p1 p2 remaining
+                iCount lCount dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase
+                dist wordBuf wordPos tag left pos h
+            else mkCmd word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur
+              lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos .next) :=
+        fun c word count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
+            dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left pos h => by
+          dsimp only
+          rw [dite_eq_left h]
+          apply runCmdKF_cell H k a2 e2 hs2 _ _ rfl
+      rw [kstep_eq (sp := p1) (ss := .next) (hcont := hc1), kstep_eq (sp := p2) (ss := .next) (hcont := hc2)]
+      obtain ⟨e, hS⟩ := stepCmd_same H k hs1 hs2
+        (s := mkCmd word count ring wpos pend cap written b1 b2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
+          dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left p1 .next)
+        (t := mkCmd word count ring wpos pend cap written b1 b2 remaining iCount lCount dCount flags iCur iPrev lCur lPrev
+          dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left p2 .next) rfl h
+      generalize stepCmd H k a1 e1 hs1 (mkCmd word count ring wpos pend cap written b1 b2 remaining iCount lCount dCount
+        flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left
+        p1 .next) p1 = r1 at e hS ⊢
+      generalize stepCmd H k a2 e2 hs2 (mkCmd word count ring wpos pend cap written b1 b2 remaining iCount lCount dCount
+        flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag left
+        p2 .next) p2 = r2 at e hS ⊢
+      obtain ⟨word', count', ring', wpos', pend', cap', written', q1, q2, remaining', iCount', lCount', dCount', flags',
+        ⟨iCur', iPrev', lCur', lPrev', dCur', dPrev', f0, f1, f2, f3, code', ilen', clen', copyBits', copyBase', dist',
+          wordBuf', wordPos'⟩, tag', left', pos1, ss⟩ := r1
+      obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _⟩, _, _,
+        pos2, _⟩ := r2
+      dsimp only at e hS
+      cases e
+      unfold kcase
+      dsimp only
+      by_cases hst : ss = .next
+      · rw [ite_eq_left hst, ite_eq_left hst]
+        by_cases hI1 : KInv H k e1 word' count' ring' wpos' written' iCur' iPrev' lCur' lPrev' dCur' dPrev' copyBits'
+            dist' wordBuf' wordPos' tag' pos1
+        · have hI2 := hI1.restop hS.2.2.2.1
+          rw [dite_eq_left hI1, dite_eq_left hI2]
+          exact ih _ hnN true c1 c2 word' count' ring' wpos' pend' cap' written' q1 q2 remaining' iCount' lCount' dCount'
+            flags' iCur' iPrev' lCur' lPrev' dCur' dPrev' f0 f1 f2 f3 code' ilen' clen' copyBits' copyBase' dist'
+            wordBuf' wordPos' tag' left' pos1 pos2 hI1 hI2 hS
+        · have hI2 : ¬ KInv H k e2 word' count' ring' wpos' written' iCur' iPrev' lCur' lPrev' dCur' dPrev' copyBits'
+              dist' wordBuf' wordPos' tag' pos2 := fun e => hI1 (e.restop hS.2.2.1)
+          rw [dite_eq_right hI1, dite_eq_right hI2]
+          exact ⟨rfl, hS⟩
+      · rw [ite_eq_right hst, ite_eq_right hst]
+        exact ⟨rfl, hS⟩
+
+/-- The command loop with the fast loop, from a record, depends only on the unread bytes. -/
+theorem runCmdF_same (H : Hdr) (k : USize) {a1 a2 : ByteArray} {e1 e2 : USize} (hs1 : e1.toNat ≤ a1.size)
+    (hs2 : e2.toNat ≤ a2.size) (n : USize) {s t : Cmd} {p1 p2 : USize} (he : { s with pos := 0 } = { t with pos := 0 })
+    (h : Same a1 e1 a2 e2 p1 p2) (hi1 : CmdInv H k e1 s p1) (hi2 : CmdInv H k e2 t p2) :
+    CmdSame a1 e1 a2 e2 (runCmdF H k a1 e1 hs1 n s p1 hi1) (runCmdF H k a2 e2 hs2 n t p2 hi2) := by
+  obtain ⟨word, count, ring, wpos, pend, cap, written, b1, b2, remaining, iCount, lCount, dCount, flags,
+    ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf, wordPos⟩,
+    tag, left, sp, ss⟩ := s
+  obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _⟩, _, _, _, _⟩ := t
+  dsimp only at he
+  cases he
+  exact runCmdKF_same H k hs1 hs2 _ n rfl false _ _ word count ring wpos pend cap written b1 b2 remaining iCount lCount
+    dCount flags iCur iPrev lCur lPrev dCur dPrev d0 d1 d2 d3 code ilen clen copyBits copyBase dist wordBuf wordPos tag
+    left p1 p2 hi1 hi2 h
 
 /-! ### The header machine -/
 

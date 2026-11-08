@@ -574,6 +574,24 @@ private theorem fillSlow_same {a1 a2 : ByteArray} {e1 e2 : USize} (hs1 : e1.toNa
       rw [dite_eq_right hc, dite_eq_right hc2]
       exact ⟨rfl, rfl, hS⟩
 
+/-- An 8-byte fill depends only on the unread bytes: the same buffer, and positions with the same unread bytes. -/
+theorem fill_same {b : BitBuffer} {a1 a2 : ByteArray} {e1 e2 p1 p2 : USize} (h : Same a1 e1 a2 e2 p1 p2)
+    (hk : p1.toNat + 8 ≤ e1.toNat) (hc : b.count.toNat ≤ 64) (h81 : p1.toNat + 8 ≤ a1.size)
+    (hu1 : p1.toNat + 8 ≤ USize.size) (h82 : p2.toNat + 8 ≤ a2.size) (hu2 : p2.toNat + 8 ≤ USize.size) :
+    (b.fill a1 p1 h81 hu1).1 = (b.fill a2 p2 h82 hu2).1 ∧
+      Same a1 e1 a2 e2 (b.fill a1 p1 h81 hu1).2 (b.fill a2 p2 h82 hu2).2 := by
+  unfold BitBuffer.fill
+  dsimp only
+  rw [loadBuffer_same h hk h81 hu1 h82 hu2]
+  refine ⟨rfl, h.adv ?_⟩
+  have hk8 : ((64 - b.count) >>> 3).toNat ≤ 8 := by
+    rw [UInt64.toNat_shiftRight, UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by show b.count.toNat ≤ 64; omega))]
+    rw [Nat.shiftRight_eq_div_pow]
+    show (64 - b.count.toNat) / 8 ≤ 8
+    omega
+  rw [UInt64.toNat_toUSize, Nat.mod_eq_of_lt (by rw [← USize.size_eq_two_pow]; have := USize.le_size; omega)]
+  omega
+
 /-- A refill depends only on the unread bytes: the same buffer, and positions with the same unread bytes. -/
 theorem refill_same {word count : UInt64} {a1 a2 : ByteArray} {e1 e2 p1 p2 : USize} (hs1 : e1.toNat ≤ a1.size)
     (hs2 : e2.toNat ≤ a2.size) (hp1 : p1.toNat ≤ e1.toNat) (hp2 : p2.toNat ≤ e2.toNat) (h : Same a1 e1 a2 e2 p1 p2) :
