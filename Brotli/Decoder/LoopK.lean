@@ -651,7 +651,7 @@ step of the step machine. -/
         rw [fastLit (by decide), USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr hinv.pos)] at h1
         have := hinv.pos
         omega
-      match fastEnter H k a stop hs cap n word count ring wpos pend written p1 p2 remaining iCount lCount dCount flags
+      match fastEnter H k a stop hs cap word count ring wpos pend written p1 p2 remaining iCount lCount dCount flags
           ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf,
             wordPos⟩ tag lits bEnd pos hinv hm with
       | ⟨⟨word, count, ring, wpos, pend, cap, written, p1, p2, remaining, iCount, lCount, dCount, flags,

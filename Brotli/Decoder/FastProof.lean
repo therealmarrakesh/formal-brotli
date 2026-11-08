@@ -2661,9 +2661,9 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
     (hH : HdrRel H mH) (hmk : mask = ringMask kk) (hcap : cap16 = ringSize kk - USize.ofNat 16)
     (hpair : pairBase ≠ USize.ofNat 4294967295 → u32At H.lTriv x.lCur.toNat ≠ 4294967295 ∧
       ∀ j, j < 256 → leAt T (pairBase.toNat + 4 * j) 4 = (pairAt T (u32At H.lTriv x.lCur.toNat) j).toNat % 2 ^ 32) :
-    ∀ (N : Nat) (n : USize), n.toNat = N → ∀ (word count : UInt64) (pos : USize) (ring : ByteArray) (opos : USize)
+    ∀ (I L : Nat) (word count : UInt64) (pos : USize) (ring : ByteArray) (opos : USize)
       (iCount lCount dCount d01 d23 code ilen clen lits m : UInt64) (p1 p2 : UInt8)
-      (S : FSt kk stop posLim word count pos ring m),
+      (S : FSt kk stop posLim word count pos ring m), iCount.toNat = I → 17 * lits.toNat + m.toNat = L →
       FNum opos pB wB rEnd bEnd kk.toNat ((lits + m).toNat + clen.toNat) →
       lCount.toNat + m.toNat < 2 ^ 64 → lits.toNat + m.toNat < 2 ^ 30 →
       ∀ p, Rel w kk.toNat mH (fabs word count ring opos mask pB cap cap16 wB rEnd iCount lCount dCount flags x d01 d23
@@ -2671,23 +2671,18 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
       ∃ p', MoveOk w kk.toNat mH K a stop p (fabs word count ring opos mask pB cap cap16 wB rEnd iCount lCount dCount
         flags x d01 d23 code ilen clen lits m p1 p2 pos) pos p'
         (fastLoop H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase iRow
-          iFb dRow s0 C X W n word count pos ring opos iCount lCount dCount d01 d23 code ilen clen lits m p1 p2 S).1 ∧
+          iFb dRow s0 C X W word count pos ring opos iCount lCount dCount d01 d23 code ilen clen lits m p1 p2 S).1 ∧
         FFrame cap pB bEnd opos (fastLoop H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb
-          modeOff lRow pairBase iRow iFb dRow s0 C X W n word count pos ring opos iCount lCount dCount d01 d23 code ilen
+          modeOff lRow pairBase iRow iFb dRow s0 C X W word count pos ring opos iCount lCount dCount d01 d23 code ilen
           clen lits m p1 p2 S).1 := by
-  intro N
-  induction N with
-  | zero =>
-    intro n hn word count pos ring opos iCount lCount dCount d01 d23 code ilen clen lits m p1 p2 S N0 hLm hlm p hrel
-    rw [fastLoop, dite_eq_left (usize_zero hn)]
-    exact ⟨p, MoveOk.refl hrel rfl S.posStop, fexit_frame (Nat.le_refl _) (Nat.le_trans (Nat.le_add_right _ _) N0.ahead)⟩
-  | succ N ih =>
-    intro n hn word count pos ring opos iCount lCount dCount d01 d23 code ilen clen lits m p1 p2 S N0 hLm hlm p hrel
-    have hn0 : n ≠ 0 := fun e => by
-      rw [e, show (0 : USize).toNat = 0 from rfl] at hn
-      omega
-    have hnN : (n - USize.ofNat 1).toNat = N := by rw [usize_pred hn0]; omega
-    rw [fastLoop, dite_eq_right hn0]
+  intro I
+  induction I using Nat.strongRecOn with
+  | ind I ihI =>
+  intro L
+  induction L using Nat.strongRecOn with
+  | ind L ih =>
+    intro word count pos ring opos iCount lCount dCount d01 d23 code ilen clen lits m p1 p2 S hI hL N0 hLm hlm p hrel
+    rw [fastLoop]
     dsimp only
     have hk := W.k24
     have h16 := W.k16
@@ -2722,18 +2717,18 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
             pB cap cap16 wB rEnd iCount
             (lCount + m) dCount flags x d01 d23 code ilen clen p1 p2 .literals (lits + m) pos) pos p'
             (fastLoop H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase
-              iRow iFb dRow s0 C X W (n - USize.ofNat 1) word' count' pos' ring' opos' iCount lCount dCount d01 d23 code
+              iRow iFb dRow s0 C X W word' count' pos' ring' opos' iCount lCount dCount d01 d23 code
               ilen clen lits (m - j) q1 q2 S').val ∧
             FFrame cap pB bEnd opos (fastLoop H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb
-              modeOff lRow pairBase iRow iFb dRow s0 C X W (n - USize.ofNat 1) word' count' pos' ring' opos' iCount lCount
+              modeOff lRow pairBase iRow iFb dRow s0 C X W word' count' pos' ring' opos' iCount lCount
               dCount d01 d23 code ilen clen lits (m - j) q1 q2 S').val := by
         intro j hj1 hjm jU hjU word' count' pos' ring' q1 q2 S' p' opos' ho mv
         obtain ⟨p2, m2⟩ := to_fabs (mm := m - j) hH hs mv (u64_add_sub _ _ _) (u64_add_sub _ _ _)
         have hjN := hsub j hjm
         have hlN : (lits + (m - j)).toNat = lits.toNat + (m.toNat - j.toNat) := by
           rw [u64_add_small (by omega), hjN]
-        obtain ⟨p3, m3, f3⟩ := ih (n - USize.ofNat 1) hnN word' count' pos' ring' opos' iCount lCount dCount d01 d23 code
-          ilen clen lits (m - j) q1 q2 S'
+        obtain ⟨p3, m3, f3⟩ := ih _ (by rw [← hL, hjN]; omega) word' count' pos' ring' opos' iCount lCount dCount d01
+          d23 code ilen clen lits (m - j) q1 q2 S' hI rfl
           (by rw [ho]; exact N0.adv hk (n := jU) (by omega) (by rw [hlN, hjU]; omega))
           (by rw [hjN]; omega) (by rw [hjN]; omega) p2 m2.rel
         exact ⟨p3, m2.trans m3, f3.mono (by rw [ho, fastAdd (by omega), hjU]; omega)⟩
@@ -2775,7 +2770,7 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
     have hm : m = 0 := Decidable.of_not_not hm0
     subst hm
     by_cases hl : lits ≠ 0
-    · rw [ite_eq_left hl]
+    · rw [dite_eq_left hl]
       by_cases hcl : lCount = 0 ∨ posLim < pos
       · rw [dite_eq_left hcl]
         have e : fabs word count ring opos mask pB cap cap16 wB rEnd iCount lCount dCount flags x d01 d23 code ilen clen
@@ -2806,15 +2801,15 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
           rw [UInt64.sub_add_cancel, UInt64.sub_add_cancel, UInt64.add_zero, UInt64.add_zero,
             ite_eq_right (fun h => by have := congrArg UInt64.toNat h.1; simp at this; omega),
             ite_eq_right (fun h => hl h.2)]
-        obtain ⟨p', mv, fv⟩ := ih (n - USize.ofNat 1) hnN word count pos ring opos iCount
-          (lCount - umin (umin lits lCount) 16) dCount d01 d23 code ilen clen (lits - umin (umin lits lCount) 16)
-          (umin (umin lits lCount) 16) p1 p2 _
+        obtain ⟨p', mv, fv⟩ := ih _ (by rw [← hL, e2]; have : (0 : UInt64).toNat = 0 := rfl; omega) word count pos
+          ring opos iCount (lCount - umin (umin lits lCount) 16) dCount d01 d23 code ilen clen
+          (lits - umin (umin lits lCount) 16) (umin (umin lits lCount) 16) p1 p2 _ hI rfl
           (by rw [UInt64.sub_add_cancel]; rw [UInt64.add_zero] at N0; exact N0)
           (by rw [e1]; have := lCount.toNat_lt; omega) (by rw [e2]; have : (0 : UInt64).toNat = 0 := rfl; omega) p
           (by rw [e]; exact hrel)
         rw [e] at mv
         exact ⟨p', mv, fv⟩
-    · rw [ite_eq_right hl]
+    · rw [dite_eq_right hl]
       have hl0 : lits = 0 := Decidable.of_not_not hl
       subst hl0
       have e : fabs word count ring opos mask pB cap cap16 wB rEnd iCount lCount dCount flags x d01 d23 code ilen clen
@@ -2867,9 +2862,9 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
             obtain ⟨pb, mb⟩ := fcopy_move (K := K) (a := a) (stop := stop) ma.rel hk hmk hmN W.size hcap N1 S.size hdd
               hf1.posStop
             by_cases hi : iCount = 0
-            · rw [ite_eq_left hi]
+            · rw [dite_eq_left hi]
               exact ⟨pb, ma.trans mb, fexit_frame (copy_pos N1).1 (copy_pos N1).2⟩
-            · rw [ite_eq_right hi]
+            · rw [dite_eq_right hi]
               refine fillK_spec (P := fun r => ∃ p', MoveOk w kk.toNat mH K a stop _ _ pos p' (Subtype.val r) ∧
           FFrame cap pB bEnd opos (Subtype.val r)) ?_
               intro word3 count3 pos3 hf3
@@ -2915,8 +2910,8 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
                 obtain ⟨pd, md⟩ := to_fabs (lits := rowBase (insertRow (wordSym v) hcv) +
                     ((word3 >>> wordBits v) &&& maskT T C.big C.size32 (rowBits (insertRow (wordSym v) hcv))))
                   (mm := 0) hH hs ((ma.trans mb).trans mc) (UInt64.add_zero _).symm (UInt64.add_zero _).symm
-                obtain ⟨pe, me, fe⟩ := ih (n - USize.ofNat 1) hnN _ _ pos3 _ (opos + clen.toUSize) (iCount - 1) lCount
-                  dCount d01 d23 (codeClass (wordSym v)) _ _ _ 0 _ _ _
+                obtain ⟨pe, me, fe⟩ := ihI _ (by rw [← hI]; exact icount_dec hi) _ _ _ pos3 _ (opos + clen.toUSize)
+                  (iCount - 1) lCount dCount d01 d23 (codeClass (wordSym v)) _ _ _ 0 _ _ _ rfl rfl
                   (N0.adv hk (n := clen.toUSize) (by rw [hcU]; omega)
                     (by rw [hcU, UInt64.add_zero]; omega))
                   (by rw [h0]; have := lCount.toNat_lt; omega) (by rw [h0]; omega) pd md.rel
@@ -2984,9 +2979,9 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
               obtain ⟨pb, mb⟩ := fcopy_move (K := K) (a := a) (stop := stop) ma.rel hk hmk hmN W.size hcap N1 S.size hdd
                 hf1.posStop
               by_cases hi : iCount = 0
-              · rw [ite_eq_left hi]
+              · rw [dite_eq_left hi]
                 exact ⟨pb, ma.trans mb, fexit_frame (copy_pos N1).1 (copy_pos N1).2⟩
-              · rw [ite_eq_right hi]
+              · rw [dite_eq_right hi]
                 refine fillK_spec (P := fun r => ∃ p', MoveOk w kk.toNat mH K a stop _ _ pos p' (Subtype.val r) ∧
           FFrame cap pB bEnd opos (Subtype.val r)) ?_
                 intro word3 count3 pos3 hf3
@@ -3037,8 +3032,8 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
                   obtain ⟨pd, md⟩ := to_fabs (lits := rowBase (insertRow (wordSym vi) hcv) +
                       ((word3 >>> wordBits vi) &&& maskT T C.big C.size32 (rowBits (insertRow (wordSym vi) hcv))))
                     (mm := 0) hH hs ((ma.trans mb).trans mc) (UInt64.add_zero _).symm (UInt64.add_zero _).symm
-                  obtain ⟨pe, me, fe⟩ := ih (n - USize.ofNat 1) hnN _ _ pos3 _ (opos + clen.toUSize) (iCount - 1) lCount
-                    (dCount - 1) _ _ (codeClass (wordSym vi)) _ _ _ 0 _ _ _
+                  obtain ⟨pe, me, fe⟩ := ihI _ (by rw [← hI]; exact icount_dec hi) _ _ _ pos3 _ (opos + clen.toUSize)
+                    (iCount - 1) lCount (dCount - 1) _ _ (codeClass (wordSym vi)) _ _ _ 0 _ _ _ rfl rfl
                     (N0.adv hk (n := clen.toUSize) (by rw [hcU]; omega)
                       (by rw [hcU, UInt64.add_zero]; omega))
                     (by rw [h0]; have := lCount.toNat_lt; omega) (by rw [h0]; omega) pd md.rel
@@ -3104,9 +3099,9 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
               obtain ⟨pb, mb⟩ := fcopy_move (K := K) (a := a) (stop := stop) ma.rel hk hmk hmN W.size hcap N1 S.size hdd
                 hf1.posStop
               by_cases hi : iCount = 0
-              · rw [ite_eq_left hi]
+              · rw [dite_eq_left hi]
                 exact ⟨pb, ma.trans mb, fexit_frame (copy_pos N1).1 (copy_pos N1).2⟩
-              · rw [ite_eq_right hi]
+              · rw [dite_eq_right hi]
                 refine fillK_spec (P := fun r => ∃ p', MoveOk w kk.toNat mH K a stop _ _ pos p' (Subtype.val r) ∧
           FFrame cap pB bEnd opos (Subtype.val r)) ?_
                 intro word3 count3 pos3 hf3
@@ -3157,8 +3152,8 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
                   obtain ⟨pd, md⟩ := to_fabs (lits := rowBase (insertRow (wordSym vi) hcv) +
                       ((word3 >>> wordBits vi) &&& maskT T C.big C.size32 (rowBits (insertRow (wordSym vi) hcv))))
                     (mm := 0) hH hs ((ma.trans mb).trans mc) (UInt64.add_zero _).symm (UInt64.add_zero _).symm
-                  obtain ⟨pe, me, fe⟩ := ih (n - USize.ofNat 1) hnN _ _ pos3 _ (opos + clen.toUSize) (iCount - 1) lCount
-                    (dCount - 1) _ _ (codeClass (wordSym vi)) _ _ _ 0 _ _ _
+                  obtain ⟨pe, me, fe⟩ := ihI _ (by rw [← hI]; exact icount_dec hi) _ _ _ pos3 _ (opos + clen.toUSize)
+                    (iCount - 1) lCount (dCount - 1) _ _ (codeClass (wordSym vi)) _ _ _ 0 _ _ _ rfl rfl
                     (N0.adv hk (n := clen.toUSize) (by rw [hcU]; omega)
                       (by rw [hcU, UInt64.add_zero]; omega))
                     (by rw [h0]; have := lCount.toNat_lt; omega) (by rw [h0]; omega) pd md.rel

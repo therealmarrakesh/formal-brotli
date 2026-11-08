@@ -58,7 +58,7 @@ theorem and_mask32 {x : UInt64} (hx : x.toNat < 2 ^ 32) : x &&& 0xFFFFFFFF = x :
 loop leaves with. The command's literals and copy fit what is ahead (the room and the meta-block). -/
 theorem fastEnter_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandState → List Bool → Option α}
     (hK : ∀ s bs, s.remaining ≠ 0 → K s bs = readCommand w mH s bs >>= fun (s1, b) => K s1 b)
-    {H : Hdr} {kk : USize} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {cap n : USize}
+    {H : Hdr} {kk : USize} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {cap : USize}
     {word count : UInt64} {ring : ByteArray} {wpos pend written : USize} {p1 p2 : UInt8}
     {remaining iCount lCount dCount : UInt64} {flags : Flags} {x : CmdExt} {tag : Tag} {left lits bEnd : UInt64}
     {pos : USize}
@@ -72,11 +72,11 @@ theorem fastEnter_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSt
     (hcl : x.clen ≤ umin remaining (if room kk cap ≤ pend then 0 else (room kk cap - pend).toUInt64) - lits) :
     ∃ p', MoveOk w kk.toNat mH K a stop p ⟨word, count, ring, wpos, pend, cap, written, p1, p2, remaining, iCount,
       lCount, dCount, flags, x, tag, left, pos, .next⟩ pos p'
-      (fastEnter H kk a stop hs cap n word count ring wpos pend written p1 p2 remaining iCount lCount dCount flags x tag
+      (fastEnter H kk a stop hs cap word count ring wpos pend written p1 p2 remaining iCount lCount dCount flags x tag
         lits bEnd pos hinv hm).val ∧
-      (fastEnter H kk a stop hs cap n word count ring wpos pend written p1 p2 remaining iCount lCount dCount flags x tag
+      (fastEnter H kk a stop hs cap word count ring wpos pend written p1 p2 remaining iCount lCount dCount flags x tag
         lits bEnd pos hinv hm).val.cap = cap ∧
-      (fastEnter H kk a stop hs cap n word count ring wpos pend written p1 p2 remaining iCount lCount dCount flags x tag
+      (fastEnter H kk a stop hs cap word count ring wpos pend written p1 p2 remaining iCount lCount dCount flags x tag
         lits bEnd pos hinv hm).val.pend.toNat ≤ max pend.toNat (room kk cap).toNat := by
   generalize hA : umin remaining (if room kk cap ≤ pend then 0 else (room kk cap - pend).toUInt64) = A at hbE hl hcl
   have hk := hinv.k24
@@ -185,8 +185,8 @@ theorem fastEnter_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSt
     have hd : (o - wpos).toNat = o.toNat - wpos.toNat := USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr g1)
     rw [e, fastAdd (by omega), hd]
     omega
-  refine fastLoop_ok hK hH rfl rfl ?_ n.toNat n rfl word count pos ring wpos iCount lCount dCount _ _ _ _ _ lits 0 p1 p2
-    _ N0 (by have := lCount.toNat_lt; omega) (by omega) p0 m0.rel
+  refine fastLoop_ok hK hH rfl rfl ?_ _ _ word count pos ring wpos iCount lCount dCount _ _ _ _ _ lits 0 p1 p2
+    _ rfl rfl N0 (by have := lCount.toNat_lt; omega) (by omega) p0 m0.rel
   intro hne
   have hT := hH.tab
   have hx := pairIdx_toNat ⟨mH, hH⟩ hinv.lCur
@@ -247,7 +247,7 @@ theorem runCmdKF_cell (H : Hdr) (k : USize) (a : ByteArray) (stop : USize) (hs :
         rw [fastLit (by decide), USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr hinv.pos)] at h1
         have := hinv.pos
         omega
-      generalize fastEnter H k a stop hs cap n word count ring wpos pend written p1 p2 remaining iCount lCount dCount
+      generalize fastEnter H k a stop hs cap word count ring wpos pend written p1 p2 remaining iCount lCount dCount
         flags ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf,
           wordPos⟩ tag (if tag = .literals then left else 0)
         (wpos.toUInt64 + umin remaining (if room k cap ≤ pend then 0 else (room k cap - pend).toUInt64)) pos hinv hm = r
@@ -339,11 +339,11 @@ theorem runCmdKF_rec {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockH
         rw [fastLit (by decide), USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr hinv.pos)] at h1
         have := hinv.pos
         omega
-      obtain ⟨p', mv, fc, fp⟩ := fastEnter_ok (n := n) (hs := hs) (cap := cap) (pend := pend) (p1 := p1) (p2 := p2)
+      obtain ⟨p', mv, fc, fp⟩ := fastEnter_ok (hs := hs) (cap := cap) (pend := pend) (p1 := p1) (p2 := p2)
         (remaining := remaining) (iCount := iCount) (lCount := lCount) (dCount := dCount) (flags := flags)
         (x := ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf,
           wordPos⟩) (left := left) hK hinv hm hH hrel hf.2.1 rfl rfl hf.2.2.2.1 hf.2.2.2.2
-      generalize fastEnter H k a stop hs cap n word count ring wpos pend written p1 p2 remaining iCount lCount dCount
+      generalize fastEnter H k a stop hs cap word count ring wpos pend written p1 p2 remaining iCount lCount dCount
         flags ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf,
           wordPos⟩ tag (if tag = .literals then left else 0)
         (wpos.toUInt64 + umin remaining (if room k cap ≤ pend then 0 else (room k cap - pend).toUInt64)) pos hinv hm = r

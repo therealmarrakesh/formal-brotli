@@ -270,22 +270,22 @@ theorem runCmdKF_same (H : Hdr) (k : USize) {a1 a2 : ByteArray} {e1 e2 : USize} 
         have := h2.pos
         omega
       have hS : FSame a1 e1 a2 e2
-          (fastEnter H k a1 e1 hs1 cap n word count ring wpos pend written b1 b2 remaining iCount lCount dCount flags
+          (fastEnter H k a1 e1 hs1 cap word count ring wpos pend written b1 b2 remaining iCount lCount dCount flags
             ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf,
               wordPos⟩ tag (if tag = .literals then left else 0)
             (wpos.toUInt64 + umin remaining (if room k cap ≤ pend then 0 else (room k cap - pend).toUInt64)) p1 h1
             hm1).val
-          (fastEnter H k a2 e2 hs2 cap n word count ring wpos pend written b1 b2 remaining iCount lCount dCount flags
+          (fastEnter H k a2 e2 hs2 cap word count ring wpos pend written b1 b2 remaining iCount lCount dCount flags
             ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf,
               wordPos⟩ tag (if tag = .literals then left else 0)
             (wpos.toUInt64 + umin remaining (if room k cap ≤ pend then 0 else (room k cap - pend).toUInt64)) p2 h2
             hm2).val := fastEnter_same h
-      generalize fastEnter H k a1 e1 hs1 cap n word count ring wpos pend written b1 b2 remaining iCount lCount dCount
+      generalize fastEnter H k a1 e1 hs1 cap word count ring wpos pend written b1 b2 remaining iCount lCount dCount
         flags ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf,
           wordPos⟩ tag (if tag = .literals then left else 0)
         (wpos.toUInt64 + umin remaining (if room k cap ≤ pend then 0 else (room k cap - pend).toUInt64)) p1 h1 hm1 = r1
         at hS ⊢
-      generalize fastEnter H k a2 e2 hs2 cap n word count ring wpos pend written b1 b2 remaining iCount lCount dCount
+      generalize fastEnter H k a2 e2 hs2 cap word count ring wpos pend written b1 b2 remaining iCount lCount dCount
         flags ⟨iCur, iPrev, lCur, lPrev, dCur, dPrev, d0, d1, d2, d3, code, ilen, clen, copyBits, copyBase, dist, wordBuf,
           wordPos⟩ tag (if tag = .literals then left else 0)
         (wpos.toUInt64 + umin remaining (if room k cap ≤ pend then 0 else (room k cap - pend).toUInt64)) p2 h2 hm2 = r2

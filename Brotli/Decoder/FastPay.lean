@@ -131,29 +131,24 @@ theorem fastLoop_work {H : Hdr} {kk : USize} {a : ByteArray} {stop : USize} {hs 
     {rEnd bEnd tb : UInt64} {modeOff lRow pairBase iRow iFb dRow s0 : USize}
     {C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow s0} {X : XInv H x}
     {W : FWin H T kk mask size cap16 posLim stop pairBase np} :
-    ∀ (N : Nat) (n : USize), n.toNat = N → ∀ (word count : UInt64) (pos : USize) (ring : ByteArray) (opos : USize)
+    ∀ (I L : Nat) (word count : UInt64) (pos : USize) (ring : ByteArray) (opos : USize)
       (iCount lCount dCount d01 d23 code ilen clen lits m : UInt64) (p1 p2 : UInt8)
-      (S : FSt kk stop posLim word count pos ring m),
+      (S : FSt kk stop posLim word count pos ring m), iCount.toNat = I → 17 * lits.toNat + m.toNat = L →
       FNum opos pB wB rEnd bEnd kk.toNat ((lits + m).toNat + clen.toNat) →
       lCount.toNat + m.toNat < 2 ^ 64 → lits.toNat + m.toNat < 2 ^ 30 → 1 ≤ clen.toNat →
       FW pB bEnd opos m (fastLoop H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow
-          pairBase iRow iFb dRow s0 C X W n word count pos ring opos iCount lCount dCount d01 d23 code ilen clen lits m p1 p2
+          pairBase iRow iFb dRow s0 C X W word count pos ring opos iCount lCount dCount d01 d23 code ilen clen lits m p1 p2
           S).1
         (fastLoopW H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase iRow
-          iFb dRow s0 C X W n word count pos ring opos iCount lCount dCount d01 d23 code ilen clen lits m p1 p2 S) := by
-  intro N
-  induction N with
-  | zero =>
-    intro n hn word count pos ring opos iCount lCount dCount d01 d23 code ilen clen lits m p1 p2 S N0 hLm hlm hcl
-    rw [fastLoop, fastLoopW, dite_eq_left (usize_zero hn), dite_eq_left (usize_zero hn)]
-    exact FW.exit rfl (Nat.le_trans (Nat.le_add_right _ _) N0.ahead)
-  | succ N ih =>
-    intro n hn word count pos ring opos iCount lCount dCount d01 d23 code ilen clen lits m p1 p2 S N0 hLm hlm hcl
-    have hn0 : n ≠ 0 := fun e => by
-      rw [e, show (0 : USize).toNat = 0 from rfl] at hn
-      omega
-    have hnN : (n - USize.ofNat 1).toNat = N := by rw [usize_pred hn0]; omega
-    rw [fastLoop, fastLoopW, dite_eq_right hn0, dite_eq_right hn0]
+          iFb dRow s0 C X W word count pos ring opos iCount lCount dCount d01 d23 code ilen clen lits m p1 p2 S) := by
+  intro I
+  induction I using Nat.strongRecOn with
+  | ind I ihI =>
+  intro L
+  induction L using Nat.strongRecOn with
+  | ind L ih =>
+    intro word count pos ring opos iCount lCount dCount d01 d23 code ilen clen lits m p1 p2 S hI hL N0 hLm hlm hcl
+    rw [fastLoop, fastLoopW]
     dsimp only
     have hk := W.k24
     have hah := N0.ahead
@@ -168,17 +163,17 @@ theorem fastLoop_work {H : Hdr} {kk : USize} {a : ByteArray} {stop : USize} {hs 
           ∀ (word' count' : UInt64) (pos' : USize) (ring' : ByteArray) (q1 q2 : UInt8)
           (S' : FSt kk stop posLim word' count' pos' ring' (m - j)),
           FW pB bEnd opos m (fastLoop H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff
-              lRow pairBase iRow iFb dRow s0 C X W (n - USize.ofNat 1) word' count' pos' ring' (opos + jU) iCount lCount
+              lRow pairBase iRow iFb dRow s0 C X W word' count' pos' ring' (opos + jU) iCount lCount
               dCount d01 d23 code ilen clen lits (m - j) q1 q2 S').1
             (1 + fastLoopW H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase
-              iRow iFb dRow s0 C X W (n - USize.ofNat 1) word' count' pos' ring' (opos + jU) iCount lCount dCount d01 d23
+              iRow iFb dRow s0 C X W word' count' pos' ring' (opos + jU) iCount lCount dCount d01 d23
               code ilen clen lits (m - j) q1 q2 S') := by
         intro j hj1 hjm jU hjU word' count' pos' ring' q1 q2 S'
         have hjN : (m - j).toNat = m.toNat - j.toNat := u64_sub_le hjm
         have hlN : (lits + (m - j)).toNat = lits.toNat + (m.toNat - j.toNat) := by
           rw [u64_add_small (by omega), hjN]
-        refine FW.lit (ih (n - USize.ofNat 1) hnN word' count' pos' ring' (opos + jU) iCount lCount dCount d01 d23 code
-          ilen clen lits (m - j) q1 q2 S' (N0.adv hk (n := jU) (by omega) (by rw [hlN, hjU]; omega))
+        refine FW.lit (ih _ (by rw [← hL, hjN]; omega) word' count' pos' ring' (opos + jU) iCount lCount dCount d01 d23
+          code ilen clen lits (m - j) q1 q2 S' hI rfl (N0.adv hk (n := jU) (by omega) (by rw [hlN, hjU]; omega))
           (by rw [hjN]; omega) (by rw [hjN]; omega) hcl) ?_ hj1 hjm
         rw [fastAdd (by omega), hjU]
       by_cases hp : 2 ≤ m ∧ pairBase ≠ USize.ofNat 4294967295
@@ -206,7 +201,7 @@ theorem fastLoop_work {H : Hdr} {kk : USize} {a : ByteArray} {stop : USize} {hs 
     have hm : m = 0 := Decidable.of_not_not hm0
     subst hm
     by_cases hl : lits ≠ 0
-    · rw [ite_eq_left hl, ite_eq_left hl]
+    · rw [dite_eq_left hl, dite_eq_left hl]
       by_cases hcl' : lCount = 0 ∨ posLim < pos
       · rw [dite_eq_left hcl', dite_eq_left hcl']
         exact FW.exit rfl (Nat.le_trans (Nat.le_add_right _ _) N0.ahead)
@@ -226,12 +221,12 @@ theorem fastLoop_work {H : Hdr} {kk : USize} {a : ByteArray} {stop : USize} {hs 
           rw [hmv] at this
           have : (0 : UInt64).toNat = 0 := rfl
           omega
-        exact FW.seg (ih (n - USize.ofNat 1) hnN word count pos ring opos iCount
-          (lCount - umin (umin lits lCount) 16) dCount d01 d23 code ilen clen (lits - umin (umin lits lCount) 16)
-          (umin (umin lits lCount) 16) p1 p2 _
+        exact FW.seg (ih _ (by rw [← hL, e2]; have : (0 : UInt64).toNat = 0 := rfl; omega) word count pos ring opos
+          iCount (lCount - umin (umin lits lCount) 16) dCount d01 d23 code ilen clen (lits - umin (umin lits lCount) 16)
+          (umin (umin lits lCount) 16) p1 p2 _ hI rfl
           (by rw [UInt64.sub_add_cancel]; rw [UInt64.add_zero] at N0; exact N0)
           (by rw [e1]; have := lCount.toNat_lt; omega) (by rw [e2]; have : (0 : UInt64).toNat = 0 := rfl; omega) hcl) hm'
-    · rw [ite_eq_right hl, ite_eq_right hl]
+    · rw [dite_eq_right hl, dite_eq_right hl]
       have hl0 : lits = 0 := Decidable.of_not_not hl
       subst hl0
       rw [UInt64.add_zero] at N0
@@ -257,9 +252,9 @@ theorem fastLoop_work {H : Hdr} {kk : USize} {a : ByteArray} {stop : USize} {hs 
           exact FW.exit rfl (Nat.le_trans (Nat.le_add_right _ _) N0.ahead)
         · rw [dite_eq_right hbad, dite_eq_right hbad]
           by_cases hi : iCount = 0
-          · rw [ite_eq_left hi, ite_eq_left hi]
+          · rw [dite_eq_left hi, dite_eq_left hi]
             exact FW.copyExit rfl hoN (by omega)
-          · rw [ite_eq_right hi, ite_eq_right hi]
+          · rw [dite_eq_right hi, dite_eq_right hi]
             refine fillK_rel (R := fun r w => FW pB bEnd opos 0 (Subtype.val r) w) ?_
             intro word3 count3 pos3 hf3
             rw [icK_fb, icK_fb]
@@ -298,8 +293,8 @@ theorem fastLoop_work {H : Hdr} {kk : USize} {a : ByteArray} {stop : USize} {hs 
                 rw [← (copyRow_fields hcv).2] at hb
                 rw [u64_add_small (by omega)]
                 omega
-              refine FW.copy (ih (n - USize.ofNat 1) hnN _ _ pos3 _ (opos + clen.toUSize) (iCount - 1) lCount _ _ _ _ _ _ _
-                0 _ _ _ (N0.adv hk (n := clen.toUSize) (by rw [hcU]; omega) (by rw [hcU, UInt64.add_zero]; omega))
+              refine FW.copy (ihI _ (by rw [← hI]; exact icount_dec hi) _ _ _ pos3 _ (opos + clen.toUSize) (iCount - 1)
+                lCount _ _ _ _ _ _ _ 0 _ _ _ rfl rfl (N0.adv hk (n := clen.toUSize) (by rw [hcU]; omega) (by rw [hcU, UInt64.add_zero]; omega))
                 (by rw [h0]; have := lCount.toNat_lt; omega) (by rw [h0]; omega) hcl2) hoN hcl
 
 end Brotli.Decoder
