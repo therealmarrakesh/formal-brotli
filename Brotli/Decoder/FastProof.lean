@@ -2145,6 +2145,76 @@ theorem lit2_round {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHea
   rw [usize_add_two, e2, e3] at m
   exact m
 
+/-! ### The two-literal table -/
+
+/-- A two-literal entry whose count field is 2: both code words fit 8 bits together, and the entry holds their bits and
+both literals. -/
+theorem pairEntry_two {v1 v2 e : UInt64} (he : e.toNat = (pairEntryU v1 v2).toNat % 2 ^ 32)
+    (h2 : (e >>> 8) &&& 255 = 2) :
+    v1 &&& 15 ≤ 8 ∧ (v1 &&& 15) + (v2 &&& 15) ≤ 8 ∧ e &&& 15 = (v1 &&& 15) + (v2 &&& 15) ∧
+      (e >>> 16).toUInt8 = (v1 >>> 4).toUInt8 ∧ (e >>> 24).toUInt8 = (v2 >>> 4).toUInt8 := by
+  have g8 : ∀ x : UInt64, ((x >>> 8) &&& 255).toNat = x.toNat / 256 % 256 := fun x => by
+    rw [UInt64.toNat_and, UInt64.toNat_shiftRight]
+    show x.toNat >>> 8 &&& (2 ^ 8 - 1) = _
+    rw [Nat.and_two_pow_sub_one_eq_mod, Nat.shiftRight_eq_div_pow]
+  have g15 : ∀ x : UInt64, (x &&& 15).toNat = x.toNat % 16 := fun x => by
+    rw [UInt64.toNat_and]
+    show x.toNat &&& (2 ^ 4 - 1) = _
+    rw [Nat.and_two_pow_sub_one_eq_mod]
+  have g255 : ∀ x : UInt64, (x &&& 255).toNat = x.toNat % 256 := fun x => by
+    rw [UInt64.toNat_and]
+    show x.toNat &&& (2 ^ 8 - 1) = _
+    rw [Nat.and_two_pow_sub_one_eq_mod]
+  have gs : ∀ (x : UInt64) (s : Nat), s < 64 → (x >>> UInt64.ofNat s).toUInt8.toNat = x.toNat / 2 ^ s % 256 :=
+    fun x s hs => by
+      rw [UInt64.toNat_toUInt8, UInt64.toNat_shiftRight, UInt64.toNat_ofNat', Nat.mod_eq_of_lt (by omega : s < 2 ^ 64),
+        Nat.mod_eq_of_lt hs, Nat.shiftRight_eq_div_pow]
+  have g2 : e.toNat / 256 % 256 = 2 := by
+    have := congrArg UInt64.toNat h2
+    rw [g8] at this
+    exact this
+  have hl1 := and15_lt v1
+  have hl2 := and15_lt v2
+  have hb1 := and255 (v1 >>> 4)
+  have hb2 := and255 (v2 >>> 4)
+  unfold pairEntryU at he
+  dsimp only at he
+  by_cases c1 : v1 &&& 15 ≤ 8
+  · rw [ite_eq_left c1] at he
+    by_cases c2 : (v1 &&& 15) + (v2 &&& 15) ≤ 8
+    · rw [ite_eq_left c2] at he
+      have hs : ((v1 &&& 15) + (v2 &&& 15)).toNat = (v1 &&& 15).toNat + (v2 &&& 15).toNat := u64_add_small (by omega)
+      have c2' : ((v1 &&& 15) + (v2 &&& 15)).toNat ≤ 8 := UInt64.le_iff_toNat_le.mp c2
+      rw [hs] at c2'
+      have e1 := or_shl_toNat (a := (v1 &&& 15) + (v2 &&& 15)) (b := 2) (s := 8) (P := 256) rfl (by decide) rfl
+        (by omega) (by decide)
+      have e2 := or_shl_toNat (a := ((v1 &&& (15 : UInt64)) + (v2 &&& (15 : UInt64))) ||| ((2 : UInt64) <<< 8))
+        (b := (v1 >>> 4) &&& (255 : UInt64))
+        (s := 16) (P := 65536) rfl (by decide) rfl (by rw [e1]; show _ + 256 * 2 < _; omega) (by omega)
+      have e3 := or_shl_toNat
+        (a := ((v1 &&& (15 : UInt64)) + (v2 &&& (15 : UInt64))) ||| ((2 : UInt64) <<< 8) |||
+          (((v1 >>> 4) &&& (255 : UInt64)) <<< 16))
+        (b := (v2 >>> 4) &&& (255 : UInt64)) (s := 24) (P := 16777216) rfl (by decide) rfl
+        (by rw [e2, e1]; show _ + 256 * 2 + _ < _; omega) (by omega)
+      rw [e3, e2, e1, hs, show (2 : UInt64).toNat = 2 from rfl, Nat.mod_eq_of_lt (by omega)] at he
+      refine ⟨c1, c2, UInt64.toNat_inj.mp (by rw [g15, he, hs]; omega), UInt8.toNat_inj.mp ?_,
+        UInt8.toNat_inj.mp ?_⟩
+      · rw [show (16 : UInt64) = UInt64.ofNat 16 from rfl, gs _ 16 (by decide), he, UInt64.toNat_toUInt8, ← g255]
+        omega
+      · rw [show (24 : UInt64) = UInt64.ofNat 24 from rfl, gs _ 24 (by decide), he, UInt64.toNat_toUInt8, ← g255]
+        omega
+    · rw [ite_eq_right c2] at he
+      have e1 := or_shl_toNat (a := v1 &&& 15) (b := 1) (s := 8) (P := 256) rfl (by decide) rfl (by omega) (by decide)
+      have e2 := or_shl_toNat (a := (v1 &&& (15 : UInt64)) ||| ((1 : UInt64) <<< 8))
+        (b := (v1 >>> 4) &&& (255 : UInt64)) (s := 16)
+        (P := 65536) rfl (by decide) rfl (by rw [e1]; show _ + 256 * 1 < _; omega) (by omega)
+      rw [e2, e1, show (1 : UInt64).toNat = 1 from rfl, Nat.mod_eq_of_lt (by omega)] at he
+      rw [he] at g2
+      omega
+  · rw [ite_eq_right c1] at he
+    rw [he] at g2
+    exact absurd g2 (by decide)
+
 /-! ### A command's distance -/
 
 /-- The state at a command's copy, in the loop's terms: what remains less the copy, and the copy's length and distance.
