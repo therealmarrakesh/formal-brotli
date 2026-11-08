@@ -925,13 +925,61 @@ theorem imtfRun_size (m out : ByteArray) (i s k : UInt64) (h : RunPre m out i s 
     obtain ⟨m1, hm1⟩ := R3
     exact ho1.trans ho0
 
-/-- A run, with the size of its transformed values. -/
-@[inline] def imtfRunS (m out : ByteArray) (i s k : UInt64) (h : RunPre m out i s k) :
-    { p : ByteArray × ByteArray // p.2.size = out.size } :=
-  ⟨imtfRun m out i s k h, imtfRun_size m out i s k h⟩
+/-- `imtfRun` handing its list and its outputs to `kk`, with the outputs' size, so that no pair is built: the branches
+meet in a join point that takes the two arrays. -/
+@[inline] def imtfRunK {α : Type} (m out : ByteArray) (i s k : UInt64) (h : RunPre m out i s k)
+    (kk : (m1 x1 : ByteArray) → x1.size = out.size → α) : α :=
+  if hks : k ≤ s then
+    match revOutS m out i s 0 k (run_rev1 h hks) with
+    | ⟨out1, h1⟩ =>
+      match shiftByS m s k (s + 1 - k) (run_shift h hks) with
+      | ⟨m1, h2⟩ => kk (rotFrom out1 m1 i 0 (k - 1) k (run_rot1 h hks h1 h2)) out1 h1
+  else
+    match revOutS m out i s 0 (s + 1) (run_rev2 h hks) with
+    | ⟨out0, h0⟩ =>
+      match copyPeriodS out0 (i + (s + 1)) (k - (s + 1)) (s + 1) (run_copy h hks h0) with
+      | ⟨out1, h1⟩ =>
+        match rotFromS out1 m i 0 ((k - (s + 1)) % (s + 1) - 1) ((k - (s + 1)) % (s + 1)) (run_rot2 h hks (h1.trans h0)) with
+        | ⟨m1, h2⟩ =>
+          kk (rotFrom out1 m1 i ((k - (s + 1)) % (s + 1)) s (s + 1 - (k - (s + 1)) % (s + 1)) (run_rot3 h hks (h1.trans h0) h2))
+            out1 (h1.trans h0)
 
-theorem imtfRunS_val {m out : ByteArray} {i s k : UInt64} {h : RunPre m out i s k} :
-    (imtfRunS m out i s k h).1 = imtfRun m out i s k h := rfl
+theorem imtfRunK_gen {α : Type} {m out : ByteArray} {i s k : UInt64} {h : RunPre m out i s k}
+    {kk : (m1 x1 : ByteArray) → x1.size = out.size → α} :
+    ∀ (p : ByteArray × ByteArray), imtfRun m out i s k h = p → ∀ e, imtfRunK m out i s k h kk = kk p.1 p.2 e := by
+  intro p hp e
+  unfold imtfRunK
+  unfold imtfRun at hp
+  split
+  · rename_i hks
+    rw [dite_eq_left hks] at hp
+    generalize revOutS m out i s 0 k (run_rev1 h hks) = R1 at hp ⊢
+    obtain ⟨out1, h1⟩ := R1
+    dsimp only at hp ⊢
+    generalize shiftByS m s k (s + 1 - k) (run_shift h hks) = R2 at hp ⊢
+    obtain ⟨m1, h2⟩ := R2
+    dsimp only at hp ⊢
+    subst hp
+    rfl
+  · rename_i hks
+    rw [dite_eq_right hks] at hp
+    generalize revOutS m out i s 0 (s + 1) (run_rev2 h hks) = R1 at hp ⊢
+    obtain ⟨out0, h0⟩ := R1
+    dsimp only at hp ⊢
+    generalize copyPeriodS out0 (i + (s + 1)) (k - (s + 1)) (s + 1) (run_copy h hks h0) = R2 at hp ⊢
+    obtain ⟨out1, h1⟩ := R2
+    dsimp only at hp ⊢
+    generalize rotFromS out1 m i 0 ((k - (s + 1)) % (s + 1) - 1) ((k - (s + 1)) % (s + 1)) (run_rot2 h hks (h1.trans h0)) = R3
+      at hp ⊢
+    obtain ⟨m1, h2⟩ := R3
+    dsimp only at hp ⊢
+    subst hp
+    rfl
+
+theorem imtfRunK_eq {α : Type} {m out : ByteArray} {i s k : UInt64} {h : RunPre m out i s k}
+    {kk : (m1 x1 : ByteArray) → x1.size = out.size → α} :
+    imtfRunK m out i s k h kk = kk (imtfRun m out i s k h).1 (imtfRun m out i s k h).2 (imtfRun_size m out i s k h) :=
+  imtfRunK_gen _ rfl _
 
 /-- Marks the values of `n` bytes from `i`. -/
 def markAll (map flags : ByteArray) (i n : UInt64) (h : MarkPre map flags i n) : ByteArray :=
@@ -1298,27 +1346,24 @@ def stepHVals (st : Hd) (pos : USize) (h : ∃ g p, HRel st g p) (ht : st.tag = 
         let st0 := clearMap st
         if r.count = st.count then
           -- A code that gives a value without reading gives it for every value left.
-          match imtfRunS m xf idx v left (pre_runA (vals_sizes h ht) (hr hs).1 h0) with
-          | ⟨q, hq⟩ =>
+          imtfRunK m xf idx v left (pre_runA (vals_sizes h ht) (hr hs).1 h0) fun m1 x1 hq =>
           { st0 with
             pos := pos, status := .next, idx := idx + left, left := 0
             fill := if v = 0 then fill else fillVals fill idx left v.toUInt8 (pre_fillA (vals_sizes h ht))
-            xf := q.2, mtf := q.1, seenR := sr.uset v.toUSize 1 (pre_sr (vals_sizes h ht) (hr hs).1)
-            seenX := markAll q.2 sx idx (if left ≤ v then left else v + 1) (pre_markA (vals_sizes h ht) (hr hs).1 hq) }
+            xf := x1, mtf := m1, seenR := sr.uset v.toUSize 1 (pre_sr (vals_sizes h ht) (hr hs).1)
+            seenX := markAll x1 sx idx (if left ≤ v then left else v + 1) (pre_markA (vals_sizes h ht) (hr hs).1 hq) }
         else if v = 0 then
-          match imtfRunS m xf idx v run (pre_runB (vals_sizes h ht) (hr hs) hb) with
-          | ⟨q, hq⟩ =>
+          imtfRunK m xf idx v run (pre_runB (vals_sizes h ht) (hr hs) hb) fun m1 x1 hq =>
           { st0 with
             word := r.word, count := r.count, pos := pos, status := .next, idx := idx + run, left := left - run
-            fill := fill, xf := q.2, mtf := q.1, seenR := sr.uset v.toUSize 1 (pre_sr (vals_sizes h ht) (hr hs).1)
-            seenX := markAll q.2 sx idx 1 (pre_markB (vals_sizes h ht) (hr hs) hb hq) }
+            fill := fill, xf := x1, mtf := m1, seenR := sr.uset v.toUSize 1 (pre_sr (vals_sizes h ht) (hr hs).1)
+            seenX := markAll x1 sx idx 1 (pre_markB (vals_sizes h ht) (hr hs) hb hq) }
         else
-          match imtfRunS m xf idx v run (pre_runB (vals_sizes h ht) (hr hs) hb) with
-          | ⟨q, hq⟩ =>
+          imtfRunK m xf idx v run (pre_runB (vals_sizes h ht) (hr hs) hb) fun m1 x1 hq =>
           { st0 with
             word := r.word, count := r.count, pos := pos, status := .next, idx := idx + run, left := left - run
-            fill := fill.uset idx.toUSize v.toUInt8 (pre_fillB (vals_sizes h ht) (hr hs) hb), xf := q.2, mtf := q.1
-            seenR := sr.uset v.toUSize 1 (pre_sr (vals_sizes h ht) (hr hs).1), seenX := markAll q.2 sx idx 1 (pre_markB (vals_sizes h ht) (hr hs) hb hq) }
+            fill := fill.uset idx.toUSize v.toUInt8 (pre_fillB (vals_sizes h ht) (hr hs) hb), xf := x1, mtf := m1
+            seenR := sr.uset v.toUSize 1 (pre_sr (vals_sizes h ht) (hr hs).1), seenX := markAll x1 sx idx 1 (pre_markB (vals_sizes h ht) (hr hs) hb hq) }
 
 section
 variable {α : Type} {K : HK α} {a : ByteArray} {stop : USize}
@@ -1432,11 +1477,8 @@ theorem stepHVals_ok {isL : Bool} {ntrees rlemax : Nat} {code : PrefixCode} {don
         exact Nat.mod_eq_of_lt (by omega)
       have hlen3 : (done ++ List.replicate left r.a.toNat).length = done.length + left := by simp
       have hz0 : (0 : UInt64).toNat = 0 := rfl
-      generalize hQ : imtfRunS st.mtf st.xf st.idx r.a st.left (pre_runA hS (hrr hsr).1 h0) = QQ
-      obtain ⟨q, hq⟩ := QQ
-      have eq : q = imtfRun st.mtf st.xf st.idx r.a st.left (pre_runA hS (hrr hsr).1 h0) := by rw [← imtfRunS_val, hQ]
-      subst eq
-      dsimp only
+      rw [imtfRunK_eq]
+      have hq := imtfRun_size st.mtf st.xf st.idx r.a st.left (pre_runA hS (hrr hsr).1 h0)
       have hx' := hx.step (n := st.left) (v := r.a) (idx := st.idx) (c := if st.left ≤ r.a then st.left else r.a + 1)
         hleft hidx (by omega) (by omega) (by omega) hv256 (by rw [min_run hv256, hleft])
         (hr := pre_runA hS (hrr hsr).1 h0) (hm := pre_markA hS (hrr hsr).1 hq) (hb := pre_sr hS (hrr hsr).1)
@@ -1538,11 +1580,8 @@ theorem stepHVals_ok {isL : Bool} {ntrees rlemax : Nat} {code : PrefixCode} {don
     by_cases hz : r.a = 0
     · rw [ite_eq_left hz]
       have hz' : r.a.toNat = 0 := by rw [hz]; rfl
-      generalize hQ : imtfRunS st.mtf st.xf st.idx r.a r.b (pre_runB hS (hrr hsr) hbig) = QQ
-      obtain ⟨q, hq⟩ := QQ
-      have eq : q = imtfRun st.mtf st.xf st.idx r.a r.b (pre_runB hS (hrr hsr) hbig) := by rw [← imtfRunS_val, hQ]
-      subst eq
-      dsimp only
+      rw [imtfRunK_eq]
+      have hq := imtfRun_size st.mtf st.xf st.idx r.a r.b (pre_runB hS (hrr hsr) hbig)
       have hx' := hx.step (n := r.b) (v := r.a) (idx := st.idx) (c := 1) rfl hidx hr1 (by omega) (by omega) hv256 hone
         (hr := pre_runB hS (hrr hsr) hbig) (hm := pre_markB hS (hrr hsr) hbig hq) (hb := pre_sr hS (hrr hsr).1)
       have hwork := hx'.work hmle
@@ -1583,11 +1622,8 @@ theorem stepHVals_ok {isL : Bool} {ntrees rlemax : Nat} {code : PrefixCode} {don
       have hbyte : r.a.toUInt8.toNat = r.a.toNat := by
         rw [UInt64.toNat_toUInt8]
         omega
-      generalize hQ : imtfRunS st.mtf st.xf st.idx r.a r.b (pre_runB hS (hrr hsr) hbig) = QQ
-      obtain ⟨q, hq⟩ := QQ
-      have eq : q = imtfRun st.mtf st.xf st.idx r.a r.b (pre_runB hS (hrr hsr) hbig) := by rw [← imtfRunS_val, hQ]
-      subst eq
-      dsimp only
+      rw [imtfRunK_eq]
+      have hq := imtfRun_size st.mtf st.xf st.idx r.a r.b (pre_runB hS (hrr hsr) hbig)
       have hx' := hx.step (n := r.b) (v := r.a) (idx := st.idx) (c := 1) rfl hidx hr1 (by omega) (by omega) hv256 hone
         (hr := pre_runB hS (hrr hsr) hbig) (hm := pre_markB hS (hrr hsr) hbig hq) (hb := pre_sr hS (hrr hsr).1)
       have hwork := hx'.work hmle

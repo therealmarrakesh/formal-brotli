@@ -261,6 +261,7 @@ theorem stepHVals_pos (st : Hd) (p : USize) (h : ∃ g p, HRel st g p) (ht : st.
   have e : mapSymFastT { st with pos := 0 } (hrel_pos0 h) ht = mapSymFastT st h ht := rfl
   unfold stepHVals
   rw [e]
+  simp only [imtfRunK_eq]
   generalize mapSymFastT st h ht = rr
   obtain ⟨⟨rs, rw, rc, ra, rb, rcc, rd, re⟩, hr⟩ := rr
   cases st

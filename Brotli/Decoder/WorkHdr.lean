@@ -1255,6 +1255,7 @@ theorem valsW_stop (st : Hd) (pos : USize) {hH : ∃ g p, HRel st g p} {hT : st.
     (h : (stepHVals st pos hH hT).status ≠ .next) : stepHValsW st ≤ 1 := by
   unfold stepHValsW
   unfold stepHVals at h
+  simp only [imtfRunK_eq] at h
   dsimp only at h ⊢
   by_cases hl : st.left = 0
   · rw [dite_eq_left hl] at h

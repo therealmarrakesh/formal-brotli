@@ -208,6 +208,7 @@ theorem stepHVals_lim (h1 : ∃ g p, HRel (hdSet st a) g p) (h2 : ∃ g p, HRel 
   have e : mapSymFastT { st with d := { st.d with arenaMax := a } } h1 ht = mapSymFastT st h2 ht := rfl
   unfold stepHVals
   rw [e]
+  simp only [imtfRunK_eq]
   generalize mapSymFastT st h2 ht = rr
   obtain ⟨⟨rs, rw, rc, ra, rb, rcc, rd, re⟩, hr⟩ := rr
   cases rs <;> (try simp only [markH, clearMap]) <;> lim_tac
