@@ -187,7 +187,7 @@ def cmdsEnd : Nat := 84 + 1 + 1 + roundCost
 
 /-- What a header's end costs beyond its potential: the command loop's header with its shared table bases and first
 state, the loop's round, and what the commands' start holds. Its last step is within its place's potential. -/
-def hdrEnd : Nat := 770 + trivRounds + 1 + 100 + cmdsEnd
+def hdrEnd : Nat := 770 + trivRounds + 1 + 104 + cmdsEnd
 
 /-- What a metadata block's or an uncompressed block's end costs: its last step and the loop's round, and a round of the
 call at the next meta-block's start. -/

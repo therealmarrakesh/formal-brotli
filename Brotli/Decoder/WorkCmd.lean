@@ -959,15 +959,17 @@ theorem cStep_rank {w : Nat} {m : MetaBlockHeader} (hm : m.ndirect ≤ 120) {p q
 next command's steps from a copy's end are paid for by the copy's bytes, at least two, or a word's, at least four when
 no bit was read. -/
 def cred : Phase → Nat
-  | .copy _ _ n => if n = 0 then 0 else 103 - 26 * n
-  | .word _ pending => if pending = [] then 0 else 103 - 26 * pending.length
+  | .copy _ _ n => if n = 0 then 0 else 107 - 26 * n
+  | .word _ pending => if pending = [] then 0 else 104 - 26 * pending.length
   -- the other places are listed rather than matched by `_`, whose equation lemma took 4 s to generate
   | .command .. | .insertCopy .. | .copyLength .. | .literals .. | .literalSymbol .. | .distance .. | .distanceSymbol .. =>
     0
 
-/-- The potential of a command's place: three for each rank, a dictionary word's building where one may begin, and what
-a copy or a word holds. -/
-def cpot (p : Phase) : Nat := 3 * crank p + (if 2 ≤ crank p then 79 else 0) + cred p
+/-- The potential of a command's place: three for each rank, and five for the copy length's and the literals' (so that
+the steps from them into the literals and into the distance leave two over, for an entry into the fast loop there), a
+dictionary word's building where one may begin, and what a copy or a word holds. -/
+def cpot (p : Phase) : Nat :=
+  3 * crank p + 2 * min (crank p - 3) 2 + (if 2 ≤ crank p then 79 else 0) + cred p
 
 /-- Whether a place is a dictionary word's. -/
 def isWordP : Phase → Bool
@@ -1444,12 +1446,12 @@ theorem word_crank {p : Phase} (h : isWordP p = true) : crank p = 1 ∨ crank p 
 
 /-- A state at a command's start has the potential of a command's place. -/
 theorem cpot_command {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {p : Phase} (h : Rel w k m st p) (ht : st.tag = .command) :
-    cpot p ≤ 100 := by
+    cpot p ≤ 104 := by
   cases p with
   | command s => by_cases h0 : s.remaining = 0 <;> simp [cpot, crank, cstage, cred, h0]
   | _ => first | exact False.elim h | exact absurd (ht.symm.trans h.2.1) (fun e => by cases e)
 
-theorem cpot_le (p : Phase) : cpot p ≤ 103 := by
+theorem cpot_le (p : Phase) : cpot p ≤ 107 := by
   have := crank_le p
   by_cases hc : cred p = 0
   · unfold cpot
@@ -1473,11 +1475,28 @@ theorem cpot_le (p : Phase) : cpot p ≤ 103 := by
         omega
     | _ => simp [cred] at hc
 
-/-- A run of the commands read in order that reads and produces nothing goes down in potential by three, and by a word's
-building when it ends at a word. -/
+/-- Whether a place is a command's literals or its distance, where the fast loop may be entered. -/
+def isLD : Phase → Bool
+  | .literals .. | .distance .. => true
+  -- listed rather than matched by `_`, as in `cred`
+  | .command .. | .insertCopy .. | .copyLength .. | .literalSymbol .. | .distanceSymbol .. | .copy .. | .word .. => false
+
+/-- What a place where the fast loop may be entered holds for an entry that writes nothing. -/
+def alw (p : Phase) : Nat := if isLD p then 2 else 0
+
+theorem alw_le (p : Phase) : alw p ≤ 2 := by
+  unfold alw
+  split <;> omega
+
+/-- A command's literals and its distance: ranks 4 and 3. -/
+theorem isLD_crank {p : Phase} (h : isLD p = true) : (crank p = 4 ∨ crank p = 3) ∧ cred p = 0 := by
+  cases p <;> simp [isLD, crank, cstage, cred] at h ⊢
+
+/-- A run of the commands read in order that reads and produces nothing goes down in potential by three, two more when
+it ends at a command's literals or its distance, and by a word's building when it ends at a word. -/
 theorem cpot_down {w : Nat} {m : MetaBlockHeader} (hm : m.ndirect ≤ 120) {n : Nat} {p q : Phase} {bs c : List Bool}
     (hr : ReachN (cStep w m) n p bs q c) (hci : CInv w p) (hn : 1 ≤ n) (hb : bs.length ≤ c.length)
-    (ho : q.out.length ≤ p.out.length) : cpot q + 3 + (if isWordP q then 79 else 0) ≤ cpot p := by
+    (ho : q.out.length ≤ p.out.length) : cpot q + 3 + alw q + (if isWordP q then 79 else 0) ≤ cpot p := by
   obtain ⟨-, c1, c2, c3, c4⟩ := creach hm hr hci
   have hp1 := c4 hn
   have hlt : crank q + n ≤ crank p := by omega
@@ -1488,14 +1507,14 @@ theorem cpot_down {w : Nat} {m : MetaBlockHeader} (hm : m.ndirect ≤ 120) {n : 
     have h85 : 85 ≤ cpot p := by rw [ite_eq_left hp2] at hpot; omega
     rcases crank_one hq1 with ⟨s, d, k, rfl⟩ | ⟨s, x, r, rfl⟩
     · have h2 := reach_copy_two hm hr hci hn hb ho s d (k + 1) rfl
-      have e : cpot (.copy s d (k + 1)) = 3 + (103 - 26 * (k + 1)) := by simp [cpot, cred, crank, cstage]
+      have e : cpot (.copy s d (k + 1)) = 3 + (107 - 26 * (k + 1)) := by simp [cpot, cred, crank, cstage]
       rw [e]
-      simp only [isWordP, Bool.false_eq_true, ↓reduceIte]
+      simp only [isWordP, alw, isLD, Bool.false_eq_true, ↓reduceIte]
       omega
     · have h4 := reach_word_four hm hr hci hn hb ho s (x :: r) rfl
-      have e : cpot (.word s (x :: r)) = 3 + (103 - 26 * (x :: r).length) := by simp [cpot, cred, crank, cstage]
+      have e : cpot (.word s (x :: r)) = 3 + (104 - 26 * (x :: r).length) := by simp [cpot, cred, crank, cstage]
       rw [e]
-      simp only [isWordP, ↓reduceIte]
+      simp only [isWordP, alw, isLD, Bool.false_eq_true, ↓reduceIte]
       simp only [List.length_cons] at h4 ⊢
       omega
   · have hc0 : cred q = 0 := Classical.byContradiction fun h => hq1 (cred_crank h)
@@ -1505,10 +1524,55 @@ theorem cpot_down {w : Nat} {m : MetaBlockHeader} (hm : m.ndirect ≤ 120) {n : 
       · rcases word_crank e with h | h <;> omega
     rw [hw]
     simp only [Bool.false_eq_true, ↓reduceIte]
+    have hld : alw q = 0 ∨ (alw q = 2 ∧ (crank q = 4 ∨ crank q = 3)) := by
+      unfold alw
+      by_cases h : isLD q = true
+      · rw [ite_eq_left h]
+        exact Or.inr ⟨rfl, (isLD_crank h).1⟩
+      · rw [ite_eq_right h]
+        exact Or.inl rfl
     unfold cpot
     rw [hc0]
-    repeat' split
+    rcases hld with h | ⟨h, h'⟩ <;> rw [h] <;> repeat' split
     all_goals omega
+
+/-- A copy's step stays at the copy or ends at a command. -/
+theorem stepCmd_tag_copy {H : Hdr} {k : USize} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {st : Cmd}
+    {pos : USize} (ht : st.tag = .copy) :
+    (stepCmd H k a stop hs st pos).tag = .copy ∨ (stepCmd H k a stop hs st pos).tag = .command := by
+  unfold stepCmd
+  split
+  · unfold stepAt
+    dsimp only
+    rw [ht]
+    unfold stepCopy finishCopy markStep clearRing
+    dsimp only
+    repeat' split
+    all_goals first | exact Or.inl rfl | exact Or.inr rfl | exact Or.inl ht
+  · exact Or.inl ht
+
+/-- A word's step stays at the word or ends at a command. -/
+theorem stepCmd_tag_word {H : Hdr} {k : USize} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {st : Cmd}
+    {pos : USize} (ht : st.tag = .word) :
+    (stepCmd H k a stop hs st pos).tag = .word ∨ (stepCmd H k a stop hs st pos).tag = .command := by
+  unfold stepCmd
+  split
+  · unfold stepAt
+    dsimp only
+    rw [ht]
+    unfold stepWord finishWord markStep clearRing
+    dsimp only
+    repeat' split
+    all_goals first | exact Or.inl rfl | exact Or.inr rfl | exact Or.inl ht
+  · exact Or.inl ht
+
+/-- A state at neither literals nor a distance stands for a place that holds nothing for an entry into the fast loop. -/
+theorem Rel.alw_zero {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {p : Phase} (h : Rel w k m st p)
+    (h1 : st.tag ≠ .literals) (h2 : st.tag ≠ .distance) : alw p = 0 := by
+  cases p with
+  | literals => exact absurd h.2.1 h1
+  | distance => exact absurd h.2.1 h2
+  | _ => rfl
 
 /-- What a command loop round pays, any way it ends but a rejection: its work, and the potential where it ends, are paid
 for by the potential, 200 for each bit it reads, 30 for each byte it adds, a round for each byte its refills take, and 84
@@ -1521,9 +1585,15 @@ theorem round_pay {w : Nat} {m : MetaBlockHeader} {H : Hdr} {k : USize} {a : Byt
     (hL : (stepCmd H k a stop hs st pos).pend.toNat = st.pend.toNat + L) (hci : CInv w p)
     (hr : ReachN (cStep w m) c0 p bs q c) (hlo : q.out.length = L + p.out.length)
     (hc0 : (stepCmd H k a stop hs st pos).status = .next → 1 ≤ c0) :
-    stepCmdW H k a stop hs st pos + 1 + cpot q + 200 * c.length + (stop.toNat - (stepCmd H k a stop hs st pos).pos.toNat) ≤
+    stepCmdW H k a stop hs st pos + 1 + cpot q + (if (stepCmd H k a stop hs st pos).status = .next then alw q else 0) +
+        200 * c.length + (stop.toNat - (stepCmd H k a stop hs st pos).pos.toNat) ≤
       cpot p + 200 * bs.length + (stop.toNat - pos.toNat) + 30 * L +
         (if (stepCmd H k a stop hs st pos).status = .next then 0 else 84) := by
+  have hal := alw_le q
+  generalize hA2 : (if (stepCmd H k a stop hs st pos).status = .next then alw q else 0) = A2
+  have hA2le : A2 ≤ 2 := by rw [← hA2]; split <;> omega
+  have hA2n : (stepCmd H k a stop hs st pos).status ≠ .next → A2 = 0 := fun h => by rw [← hA2, ite_eq_right h]
+  have hA2y : (stepCmd H k a stop hs st pos).status = .next → A2 = alw q := fun h => by rw [← hA2, ite_eq_left h]
   have hW := stepCmdW_kind (H := H) (a := a) (hs := hs) (st := st) hk hp hrel.wf
   have hA : addedW st.pend (stepCmd H k a stop hs st pos) = L := by
     unfold addedW
@@ -1557,11 +1627,13 @@ theorem round_pay {w : Nat} {m : MetaBlockHeader} {H : Hdr} {k : USize} {a : Byt
       obtain ⟨e1, e2⟩ := reachN_zero hr
       subst e1
       rw [ite_eq_right hn0] at hkw0 ⊢
+      have := hA2n hn0
       omega
     | succ c0 =>
       have hd := cpot_down hm hr hci (by omega) hbb (by omega)
       by_cases hnx : (stepCmd H k a stop hs st pos).status = .next
-      · rw [ite_eq_left hnx] at hkw0 ⊢
+      · have := hA2y hnx
+        rw [ite_eq_left hnx] at hkw0 ⊢
         have hwq : wcost st.pend st.tag (stepCmd H k a stop hs st pos) - 1 ≤ if isWordP q then 79 else 0 := by
           unfold wcost wordCost
           rw [ite_eq_left hpe]
@@ -1576,6 +1648,7 @@ theorem round_pay {w : Nat} {m : MetaBlockHeader} {H : Hdr} {k : USize} {a : Byt
         · rw [ite_eq_right hiw] at hd hwq
           omega
       · rw [ite_eq_right hnx] at hkw0 ⊢
+        have := hA2n hnx
         split at hd <;> omega
   · have hpne : (stepCmd H k a stop hs st pos).pend ≠ st.pend := fun e => by
       rw [e] at hL
@@ -1587,47 +1660,59 @@ theorem round_pay {w : Nat} {m : MetaBlockHeader} {H : Hdr} {k : USize} {a : Byt
     have hext : 0 ≤ (if (stepCmd H k a stop hs st pos).status = .next then 0 else 84) := Nat.zero_le _
     by_cases hlit : st.tag = .literals
     · obtain ⟨hr4, hc4⟩ := hrel.lit_of hlit
-      have e : cpot p = 91 := by unfold cpot; rw [hr4, hc4]; rfl
+      have e : cpot p = 93 := by unfold cpot; rw [hr4, hc4]; rfl
       omega
     by_cases hcp : st.tag = .copy
-    · obtain ⟨s, d, n, rfl⟩ := hrel.copy_of hcp
+    · have hA0 : A2 = 0 := by
+        have := hrq.alw_zero (by rcases stepCmd_tag_copy (hs := hs) (pos := pos) hcp with h | h <;> rw [h] <;> decide)
+          (by rcases stepCmd_tag_copy (hs := hs) (pos := pos) hcp with h | h <;> rw [h] <;> decide)
+        rw [← hA2, this]
+        split <;> rfl
+      obtain ⟨s, d, n, rfl⟩ := hrel.copy_of hcp
       have hkc : kindW st.tag (stepCmd H k a stop hs st pos) L = L := by rw [hcp]; rfl
       rw [hkc] at hW
       cases n with
       | zero =>
-        have e : cpot (.copy s d 0) = 103 := rfl
+        have e : cpot (.copy s d 0) = 107 := rfl
         omega
       | succ n =>
-        have e : cpot (.copy s d (n + 1)) = 3 + (103 - 26 * (n + 1)) := by simp [cpot, cred, crank, cstage]
+        have e : cpot (.copy s d (n + 1)) = 3 + (107 - 26 * (n + 1)) := by simp [cpot, cred, crank, cstage]
         by_cases hlt : L < n + 1
         · obtain ⟨s', e'⟩ := reach_copy_left hm hr hci s d (n + 1) rfl (by omega)
           have hsub : n + 1 - (q.out.length - (Phase.copy s d (n + 1)).out.length) = n + 1 - L := by omega
           rw [hsub] at e'
           subst e'
-          have eq : cpot (.copy s' d (n + 1 - L)) = 3 + (103 - 26 * (n + 1 - L)) := by
+          have eq : cpot (.copy s' d (n + 1 - L)) = 3 + (107 - 26 * (n + 1 - L)) := by
             obtain ⟨j, hj⟩ : ∃ j, n + 1 - L = j + 1 := ⟨n - L, by omega⟩
             rw [hj]
             simp [cpot, cred, crank, cstage]
+          have : A2 = 0 := by rw [← hA2]; split <;> rfl
           omega
         · omega
     by_cases hwd : st.tag = .word
-    · obtain ⟨s, pending, rfl⟩ := hrel.word_of hwd
+    · have hA0 : A2 = 0 := by
+        have := hrq.alw_zero (by rcases stepCmd_tag_word (hs := hs) (pos := pos) hwd with h | h <;> rw [h] <;> decide)
+          (by rcases stepCmd_tag_word (hs := hs) (pos := pos) hwd with h | h <;> rw [h] <;> decide)
+        rw [← hA2, this]
+        split <;> rfl
+      obtain ⟨s, pending, rfl⟩ := hrel.word_of hwd
       have hkc : kindW st.tag (stepCmd H k a stop hs st pos) L = L := by rw [hwd]; rfl
       rw [hkc] at hW
       cases pending with
       | nil =>
-        have e : cpot (.word s []) = 103 := rfl
+        have e : cpot (.word s []) = 107 := rfl
         omega
       | cons x r =>
-        have e : cpot (.word s (x :: r)) = 3 + (103 - 26 * (r.length + 1)) := by simp [cpot, cred, crank, cstage]
+        have e : cpot (.word s (x :: r)) = 3 + (104 - 26 * (r.length + 1)) := by simp [cpot, cred, crank, cstage]
         by_cases hlt : L < r.length + 1
         · obtain ⟨s', r', e', hr'⟩ := reach_word_left hm hr hci s (x :: r) rfl (by simp; omega)
           subst e'
           simp only [List.length_cons] at hr'
+          have : A2 = 0 := by rw [← hA2]; split <;> rfl
           cases r' with
           | nil => simp at hr'; omega
           | cons y r'' =>
-            have eq : cpot (.word s' (y :: r'')) = 3 + (103 - 26 * (r''.length + 1)) := by simp [cpot, cred, crank, cstage]
+            have eq : cpot (.word s' (y :: r'')) = 3 + (104 - 26 * (r''.length + 1)) := by simp [cpot, cred, crank, cstage]
             simp only [List.length_cons] at hr'
             omega
         · omega
@@ -1656,7 +1741,7 @@ theorem stepCmd_pot {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader} {a : B
   have hlo : p'.out.length = l.length + p.out.length := by rw [hl1, List.length_append]
   have hb : (stepCmd H k a stop hs st pos).status ≠ .bad := by rw [hn]; exact fun e => StepStatus.noConfusion e
   have := round_pay hm hrel.k24 hp hrel hR hb h1 h2 hl2 hci hr hlo (fun _ => hn1)
-  rw [ite_eq_left hn] at this
+  simp only [hn, ↓reduceIte] at this
   have hx : p'.out.length - p.out.length = l.length := by omega
   rw [hx]
   omega
@@ -1674,8 +1759,8 @@ theorem stopRound_pay {w : Nat} {m : MetaBlockHeader} {H : Hdr} {k : USize} {a :
     stepCmdW H k a stop hs st pos + 1 + cpot q + 200 * c.length + (stop.toNat - (stepCmd H k a stop hs st pos).pos.toNat) ≤
       cpot p + 200 * bs.length + (stop.toNat - pos.toNat) + 30 * L + 84 := by
   have := round_pay hm hrel.k24 hp hrel hrq hnb hq1 hq2 hL hci hr hlo (fun e => absurd e hnx)
-  rw [ite_eq_right hnx] at this
-  exact this
+  simp only [hnx, ↓reduceIte] at this
+  omega
 
 /-- A round that rejects: its refill's bytes are not counted as taken, so it costs the refill's eight rounds. -/
 theorem badRound_pay {H : Hdr} {k : USize} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {st : Cmd} {pos : USize}

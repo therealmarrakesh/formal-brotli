@@ -72,6 +72,8 @@ public import Brotli.Decoder.Cost
 public import Brotli.Decoder.CostHeader
 public import Brotli.Decoder.WorkHdr
 public import Brotli.Decoder.WorkCmd
+public import Brotli.Decoder.FastWork
+public import Brotli.Decoder.FastPay
 public import Brotli.Decoder.WorkStream
 public import Brotli.Decoder.WorkRun
 public import Brotli.Decoder.WorkCall
