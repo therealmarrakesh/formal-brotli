@@ -2,6 +2,7 @@ module
 
 public import Brotli.Decoder.WorkCmd
 public import Brotli.Decoder.FastCount
+public import Brotli.Decoder.CostTab
 
 @[expose] public section
 
@@ -101,11 +102,15 @@ def stepDRawW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : D
 def trivRounds : Nat := 257
 
 /-- The work of `stepDHdr`: the header step, and at a header's end the command loop's header, made with no check but for
-its literal block types' shared table bases, and its first state, its block type flags copied from the shared ones. -/
+its literal block types' shared table bases, its derived tables (`mkHdrW`), and its first state, its block type flags
+copied from the shared ones. -/
 def stepDHdrW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize)
     (hH : D.tag = .hdr → HIn D.hd) (hp : pos.toNat ≤ stop.toNat) : Nat :=
   stepHW a stop hs D.hd pos +
-    if ht : D.tag = .hdr then (if (stepH a stop hs D.hd pos (hH ht) hp).status = .ready then 770 + trivRounds else 0)
+    if ht : D.tag = .hdr then
+      (if hst : (stepH a stop hs D.hd pos (hH ht) hp).status = .ready then
+        770 + trivRounds + mkHdrW (stepH a stop hs D.hd pos (hH ht) hp).d D.left (stepH_upto (hH ht) hp hst)
+      else 0)
     else 0
 
 /-- The work of `stepDCmds`: the command loop, and at the commands' end the check that every block type occurred. -/

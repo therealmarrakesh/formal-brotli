@@ -338,6 +338,57 @@ def psize : HPhase → Nat
   | .syms _ n .. => n
   | _ => 0
 
+/-! ### The derived tables' share
+
+The tables the header's end derives for the fast command loop (`mkHdrW_le`) cost by the numbers of block types. The places
+carry that cost as the fields it depends on are read, so that their bits pay for it at the header's rate: 330 for each
+literal type as its context mode's two bits are read, 2310 for each insert-and-copy code as its first bits are read, and 22
+for each distance type as their number is read. What the header's end needs besides is a constant (`hdrEnd`). -/
+
+/-- The distance types' share at a category's places. -/
+def dPart : Cat → Nat → Nat
+  | .L, _ => 0
+  | .I, _ => 0
+  | .D, n => 22 * n
+
+/-- The literal and distance types' share once the context modes are read. -/
+def lmPart (g : Gh) : Nat := 330 * g.m.contextModes.length + 22 * g.m.distance.n
+
+/-- The share at a code's places, before its first bits. -/
+def ownerTab (g : Gh) : Owner → Nat
+  | .type i n => dPart i n
+  | .count i n _ => dPart i n
+  | .map _ _ _ => lmPart g
+  | .codes .L _ _ => lmPart g
+  | .codes .I done _ => lmPart g + 2310 * done.length
+  | .codes .D _ _ => lmPart g + 2310 * g.m.insertCopyCodes.length
+
+/-- What a code's first bits add to the share: an insert-and-copy code's. -/
+def ownerRise : Owner → Nat
+  | .type .. => 0
+  | .count .. => 0
+  | .map .. => 0
+  | .codes .L _ _ => 0
+  | .codes .I _ _ => 2310
+  | .codes .D _ _ => 0
+
+/-- The derived tables' share a header's place carries. -/
+def tabPot (g : Gh) : HPhase → Nat
+  | .cat _ => 0
+  | .code o _ => ownerTab g o
+  | .clens o .. => ownerTab g o + ownerRise o
+  | .syms o .. => ownerTab g o + ownerRise o
+  | .first i n _ _ => dPart i n
+  | .np => 22 * g.m.distance.n
+  | .modes done _ => 330 * done.length + 22 * g.m.distance.n
+  | .trees _ => lmPart g
+  | .rlemax .. => lmPart g
+  | .vals .. => lmPart g
+  | .imtf .. => lmPart g
+  | .codes .L _ _ => lmPart g
+  | .codes .I done _ => lmPart g + 2310 * done.length
+  | .codes .D _ _ => lmPart g + 2310 * g.m.insertCopyCodes.length
+
 /-! ### What reads pay -/
 
 theorem hdrRate_eq : hdrRate = 2980 := rfl
@@ -398,10 +449,10 @@ private theorem max_sub (a b : Nat) : max 3 (a - b) ≤ 3 ∨ max 3 (a - b) + b 
 
 /-- A number of two trees or more, in `4 + k` bits, pays for the map's code's share of the values it may give without
 reading. -/
-private theorem trees_pay {S Z v Fn A0 Av P K C B M : Nat} (hS : S ≤ 16384) (hZ : Z = S + 1)
+private theorem trees_pay {S Z v Fn A0 Av P K C B M L : Nat} (hS : S ≤ 16384) (hZ : Z = S + 1)
     (hA : Av ≤ A0 + 8 * v) (hvk : v ≤ P) (hkey : 11 * P + 11898 ≤ K) (hm : B = C + K)
     (hM : M ≤ 3 ∨ M + 6 * 2980 ≤ 2 * S + 2 * v + 859) :
-    3 + (770 + Z + Z + ((v + 4 + Fn + Av) + M)) + C ≤ 2 * S + 4628 + Fn + A0 + B := by
+    3 + (770 + Z + Z + ((v + 4 + Fn + Av) + M)) + L + C ≤ 2 * S + 4628 + Fn + A0 + L + B := by
   omega
 
 /-- A code length code's length fills at most four of its 32 for each bit it takes, and takes two bits or more. -/
@@ -527,8 +578,8 @@ theorem run_pay {f B : Nat} (hf : f ≤ 16384) (hr : f < 2 ^ (B + 1)) (hB : 1 �
     omega
   · omega
 
-/-- A code's first two bits pay for the start of its code length code. -/
-theorem clensPot_start {n k : Nat} (hn : n ≤ 704) (hk : k < 4) : 22 + clensPot n (codeLengthOrder.drop k) 0 ≤ 2980 * 2 := by
+/-- A code's first two bits pay for the start of its code length code, and for an insert-and-copy code's share. -/
+theorem clensPot_start {n k : Nat} (hn : n ≤ 704) (hk : k < 4) : 22 + 2310 + clensPot n (codeLengthOrder.drop k) 0 ≤ 2980 * 2 := by
   have hl : (codeLengthOrder.drop k).length = 18 - k := by rw [List.length_drop]; rfl
   unfold clensPot clMulti clSingle symsTable clDone hdrRate
   rw [hl]
@@ -635,8 +686,29 @@ theorem lenSym_takes {L : List Nat} {bs r : List Bool} {v : Nat × Nat} (h : len
       rw [← h'.2]
       omega
 
-theorem catPot_le (g : Gh) (i : Cat) (v : Nat) : catPot g i v ≤ catPot g i 0 + 128 * v := by
-  cases i <;> simp only [catPot, beforeMaps, afterL, afterD, mapPre, zb] <;> omega
+theorem catPot_le (g : Gh) (i : Cat) (v : Nat) : catPot g i v + dPart i v ≤ catPot g i 0 + 128 * v := by
+  cases i <;> simp only [catPot, dPart, beforeMaps, afterL, afterD, mapPre, zb] <;> omega
+
+theorem tabPot_catNext (g : Gh) (i : Cat) (c : BlockCategory) : tabPot (g.setCat i c) (catNextPhase i) = dPart i c.n := by
+  cases i <;> rfl
+
+theorem tabPot_mapNext (g : Gh) (isL : Bool) (t : Nat) (m : List Nat) :
+    tabPot (g.setMap isL t m) (mapNextPhase (g.setMap isL t m) isL) = lmPart g := by
+  cases isL <;> rfl
+
+theorem tabPot_ownerPlace (g : Gh) (o : Owner) (c : PrefixCode) :
+    tabPot g (ownerPlace g o c) = ownerTab g o + ownerRise o := by
+  cases o with
+  | type i n => rfl
+  | count i n tc => rfl
+  | map isL t r => rfl
+  | codes k done left =>
+    cases k <;> simp only [ownerPlace, tabPot, ownerTab, ownerRise, List.length_append, List.length_singleton] <;> omega
+
+theorem ownerRise_le (o : Owner) : ownerRise o ≤ 2310 := by
+  cases o with
+  | codes k _ _ => cases k <;> simp only [ownerRise] <;> omega
+  | _ => simp only [ownerRise]; omega
 
 theorem mapAfter_le (g : Gh) (isL : Bool) (v : Nat) : mapAfter g isL v ≤ mapAfter g isL 0 + 8 * v := by
   cases isL <;> simp only [mapAfter, afterL, afterD, zb, Bool.false_eq_true, ↓reduceIte] <;> omega
@@ -743,7 +815,7 @@ theorem hpay {g : Gh} {p : HPhase} {bs c : List Bool} {g' : Gh} {p' : HPhase} (h
     (hcl : ∀ o n order acc sum, p = .clens o n order acc sum → lengthSum (acc.map (·.2)) = 1024 * sum)
     (hmn : ∀ isL t r n, p = .code (.map isL t r) n → 2 ≤ n)
     (h : hStepP (g, p) bs = .next (g', p') c) :
-    hcost g p p' + hpot g' p' + hdrRate * c.length ≤ hpot g p + hdrRate * bs.length := by
+    hcost g p p' + hpot g' p' + tabPot g' p' + hdrRate * c.length ≤ hpot g p + tabPot g p + hdrRate * bs.length := by
   rw [hdrRate_eq]
   cases p with
   | cat i =>
@@ -752,59 +824,66 @@ theorem hpay {g : Gh} {p : HPhase} {bs c : List Bool} {g' : Gh} {p' : HPhase} (h
     rw [hdrRate_eq] at hpay
     have hle := catPot_le g i v
     split at e2 <;> cases e2
-    · rw [hpot_catNext]
-      show 3 + catPot g i v + _ ≤ catPot g i 0 + _
+    · rw [hpot_catNext, tabPot_catNext]
+      show 3 + catPot g i v + dPart i v + _ ≤ catPot g i 0 + 0 + _
       omega
-    · show 3 + (0 + catPot g i v) + _ ≤ catPot g i 0 + _
+    · show 3 + (0 + catPot g i v) + dPart i v + _ ≤ catPot g i 0 + 0 + _
       omega
   | code o n =>
     obtain ⟨hv, b, e1, e2⟩ := readIn_next' (show hStep g (.code o n) bs = _ from h)
     have l1 := readInt_length _ _ _ _ e1
     have hn : n ≤ 704 := hsz
     have e0 : hpot g (.code o n) = ownerX g o + ownerPot g o := rfl
-    rw [e0]
+    have t0 : tabPot g (.code o n) = ownerTab g o := rfl
+    rw [e0, t0]
     have hv4 : hv < 4 := by simpa using readInt_lt 2 bs hv b e1
     split at e2
     · obtain ⟨cd, b', e3, e4⟩ := readIn_next' e2
       have l2 := simpleChain_takes e3
       cases e4
-      rw [hcost_code_owner]
+      rw [hcost_code_owner, tabPot_ownerPlace]
       cases o with
       | map isL t r =>
         have hab := alphabetBits_pos (hmn isL t r n rfl)
         have hle := hpot_owner_map g isL t r cd
         rw [hdrRate_eq] at hle
-        show 833 + ownerX g (.map isL t r) + hpot g (ownerPlace g (.map isL t r) cd) + _ ≤
-          ownerX g (.map isL t r) + mapOwner g isL t + _
+        show 833 + ownerX g (.map isL t r) + hpot g (ownerPlace g (.map isL t r) cd) + (ownerTab g (.map isL t r) + 0) + _ ≤
+          ownerX g (.map isL t r) + mapOwner g isL t + ownerTab g (.map isL t r) + _
         omega
       | type i k =>
         have hle := hpot_owner_le g (.type i k) cd (fun _ _ _ e => Owner.noConfusion e)
+        simp only [ownerRise, Nat.add_zero]
         omega
       | count i k tc =>
         have hle := hpot_owner_le g (.count i k tc) cd (fun _ _ _ e => Owner.noConfusion e)
+        simp only [ownerRise, Nat.add_zero]
         omega
       | codes k done left =>
         have hle := hpot_owner_le g (.codes k done left) cd (fun _ _ _ e => Owner.noConfusion e)
-        omega
+        cases k <;> simp only [ownerRise, Nat.add_zero] <;> omega
     · cases e2
       have hs := clensPot_start hn hv4
-      show 22 + (clensPot n (codeLengthOrder.drop hv) 0 + ownerX g o + ownerPot g o) + _ ≤ _
+      have hr := ownerRise_le o
+      show 22 + (clensPot n (codeLengthOrder.drop hv) 0 + ownerX g o + ownerPot g o) + (ownerTab g o + ownerRise o) + _ ≤
+        ownerX g o + ownerPot g o + ownerTab g o + _
       omega
   | clens o n order acc sum =>
     have e0 : hpot g (.clens o n order acc sum) = clensPot n order sum + ownerX g o + ownerPot g o := rfl
     have es : ∀ clc, hpot g (.syms o n clc ⟨[], 8, none⟩) = symsPre clc n 0 + symsTable n + ownerX g o + ownerPot g o :=
       fun _ => rfl
     have hsum := hcl o n order acc sum rfl
-    rw [e0]
+    have ts : ∀ clc' ls', tabPot g (.syms o n clc' ls') = ownerTab g o + ownerRise o := fun _ _ => rfl
+    have tc : ∀ order' acc' sum', tabPot g (.clens o n order' acc' sum') = ownerTab g o + ownerRise o := fun _ _ _ => rfl
+    rw [e0, tc]
     cases order with
     | nil =>
       have h' : (if (acc.filter (·.2 != 0)).length = 1 then ORes.next (g, HPhase.syms o n (codeLengthCode acc) ⟨[], 8, none⟩) bs
           else .bad) = .next (g', p') c := h
       split at h' <;> cases h'
-      rw [es]
+      rw [es, ts]
       have := symsPre_le (codeLengthCode acc) n 0
       have := clensPot_nil (n := n) (sum := sum)
-      show clDone + _ + _ ≤ _
+      show clDone + _ + _ + _ ≤ _
       omega
     | cons x rest =>
       obtain ⟨v, b, e1, e2⟩ := readIn_next' (show hStep g (.clens o n (x :: rest) acc sum) bs = _ from h)
@@ -818,7 +897,8 @@ theorem hpay {g : Gh} {p : HPhase} {bs c : List Bool} {g' : Gh} {p' : HPhase} (h
       split at e2
       · cases e2
         have := clensPot_step (n := n) (x := x) (rest := rest) (sum := sum) (f := 0) hB (Nat.zero_le _)
-        show 3 + (clensPot n rest sum + ownerX g o + ownerPot g o) + _ ≤ _
+        rw [tc]
+        show 3 + (clensPot n rest sum + ownerX g o + ownerPot g o) + _ + _ ≤ _
         rw [Nat.add_zero] at this
         omega
       · rename_i hv0
@@ -826,23 +906,25 @@ theorem hpay {g : Gh} {p : HPhase} {bs c : List Bool} {g' : Gh} {p' : HPhase} (h
         split at e2
         · cases e2
           rename_i hfull
-          rw [es]
+          rw [es, ts]
           obtain ⟨L, hL⟩ := codeLengthCode_canon hsum hv0 hfull
           have hpre : symsPre (codeLengthCode (acc ++ [(x, v)])) n 0 = 0 := by rw [hL]; rfl
           have := clensPot_fin (n := n) (x := x) (rest := rest) (sum := sum) (show 32 - sum ≤ 4 * B by omega)
-          show clDone + _ + _ ≤ _
+          show clDone + _ + _ + _ ≤ _
           rw [hpre]
           omega
         · split at e2
           · cases e2
           · cases e2
             have := clensPot_step (n := n) (x := x) (rest := rest) (sum := sum) (f := 32 >>> v) hB hf
-            show 3 + (clensPot n rest (sum + (32 >>> v)) + ownerX g o + ownerPot g o) + _ ≤ _
+            rw [tc]
+            show 3 + (clensPot n rest (sum + (32 >>> v)) + ownerX g o + ownerPot g o) + _ + _ ≤ _
             omega
   | syms o n clc ls =>
     have e0 : hpot g (.syms o n clc ls) = symsPre clc n ls.lens.length + symsTable n + ownerX g o + ownerPot g o := rfl
     have hn : n ≤ 704 := hsz
-    rw [e0]
+    have ts : ∀ clc' ls', tabPot g (.syms o n clc' ls') = ownerTab g o + ownerRise o := fun _ _ => rfl
+    rw [e0, ts]
     have h' : (if n < ls.lens.length then ORes.bad
         else if lengthSum ls.lens = 32768 then
           .next (g, ownerPlace g o (.canonical (ls.lens ++ List.replicate (n - ls.lens.length) 0))) bs
@@ -856,7 +938,7 @@ theorem hpay {g : Gh} {p : HPhase} {bs c : List Bool} {g' : Gh} {p' : HPhase} (h
     · split at h'
       · cases h'
         have hle := hpot_owner_canon g o (ls.lens ++ List.replicate (n - ls.lens.length) 0)
-        rw [hcost_syms_owner]
+        rw [hcost_syms_owner, tabPot_ownerPlace]
         omega
       · split at h'
         · cases h'
@@ -869,9 +951,10 @@ theorem hpay {g : Gh} {p : HPhase} {bs c : List Bool} {g' : Gh} {p' : HPhase} (h
             · cases e2
               rename_i hle _
               obtain ⟨l, hl, hl1⟩ := applyCodeLength_grow ls v.1 v.2
+              rw [ts]
               show (if (applyCodeLength ls v.1 v.2).rep.map (·.1) = some 16 then
                   (applyCodeLength ls v.1 v.2).lens.length - ls.lens.length + 3 else 3) +
-                (symsPre clc n (applyCodeLength ls v.1 v.2).lens.length + symsTable n + ownerX g o + ownerPot g o) + _ ≤ _
+                (symsPre clc n (applyCodeLength ls v.1 v.2).lens.length + symsTable n + ownerX g o + ownerPot g o) + _ + _ ≤ _
               by_cases h16 : (applyCodeLength ls v.1 v.2).rep.map (·.1) = some 16
               · have l2 := lenSym_16 e1 (applyCodeLength_rep16 h16)
                 rw [ite_eq_left h16]
@@ -900,8 +983,8 @@ theorem hpay {g : Gh} {p : HPhase} {bs c : List Bool} {g' : Gh} {p' : HPhase} (h
       · exact absurd hm (Nat.not_lt.mpr hs)
     obtain ⟨v, b, e1, e2⟩ := readIn_next' (show hStep g (.first i n tc cc) bs = _ from h)
     cases e2
-    rw [hpot_catNext]
-    show 3 + catPot g i n + _ ≤ catPot g i n + _
+    rw [hpot_catNext, tabPot_catNext]
+    show 3 + catPot g i n + dPart i n + _ ≤ catPot g i n + dPart i n + _
     omega
   | np =>
     obtain ⟨v, b, e1, e2⟩ := readIn_next' (show hStep g .np bs = _ from h)
@@ -922,13 +1005,15 @@ theorem hpay {g : Gh} {p : HPhase} {bs c : List Bool} {g' : Gh} {p' : HPhase} (h
           have := readInt_length _ _ _ _ h2
           omega
     cases e2
-    show 260 + beforeMaps g.m.literal.n g.m.insertCopy.n g.m.distance.n + _ ≤ beforeMaps g.m.literal.n g.m.insertCopy.n g.m.distance.n + _
+    show 260 + beforeMaps g.m.literal.n g.m.insertCopy.n g.m.distance.n + (330 * 0 + 22 * g.m.distance.n) + _ ≤
+      beforeMaps g.m.literal.n g.m.insertCopy.n g.m.distance.n + 22 * g.m.distance.n + _
     omega
   | modes done left =>
     cases left with
     | zero =>
       cases h
-      show 3 + (mapPre (64 * g.m.literal.n) + 1 + mapAfter _ true 0) + _ ≤ beforeMaps _ _ _ + _
+      show 3 + (mapPre (64 * g.m.literal.n) + 1 + mapAfter _ true 0) + (330 * done.length + 22 * g.m.distance.n) + _ ≤
+        beforeMaps _ _ _ + (330 * done.length + 22 * g.m.distance.n) + _
       unfold beforeMaps mapAfter
       simp only [↓reduceIte]
       omega
@@ -936,7 +1021,9 @@ theorem hpay {g : Gh} {p : HPhase} {bs c : List Bool} {g' : Gh} {p' : HPhase} (h
       obtain ⟨v, b, e1, e2⟩ := readIn_next' (show hStep g (.modes done (n + 1)) bs = _ from h)
       have hl := takes_one (faith_readInt 2) rfl e1
       cases e2
-      show 3 + beforeMaps _ _ _ + _ ≤ beforeMaps _ _ _ + _
+      show 3 + beforeMaps _ _ _ + (330 * (done ++ [v]).length + 22 * g.m.distance.n) + _ ≤
+        beforeMaps _ _ _ + (330 * done.length + 22 * g.m.distance.n) + _
+      rw [List.length_append, List.length_singleton]
       omega
   | trees isL =>
     obtain ⟨v, b, e1, e2⟩ := readIn_next' (show hStep g (.trees isL) bs = _ from h)
@@ -946,13 +1033,14 @@ theorem hpay {g : Gh} {p : HPhase} {bs c : List Bool} {g' : Gh} {p' : HPhase} (h
     have hS := hts isL rfl
     have hS0 : mapSize g isL / 65536 = 0 := Nat.div_eq_of_lt (by omega)
     have e0 : hpot g (.trees isL) = mapPre (mapSize g isL) + mapFin g isL + mapAfter g isL 0 := rfl
-    rw [e0]
+    have t0 : tabPot g (.trees isL) = lmPart g := rfl
+    rw [e0, t0]
     unfold mapPre
     split at e2 <;> cases e2
     · have e := hpot_mapNext g isL v (List.replicate (mapSize g isL) 0)
       have hc : hcost g (.trees isL) (mapNextPhase (g.setMap isL v (List.replicate (mapSize g isL) 0)) isL) =
           3 + zb (mapSize g isL) + mapFin g isL := by cases isL <;> rfl
-      rw [hc, e]
+      rw [hc, e, tabPot_mapNext]
       unfold zb
       omega
     · rename_i hv2
@@ -964,7 +1052,7 @@ theorem hpay {g : Gh} {p : HPhase} {bs c : List Bool} {g' : Gh} {p' : HPhase} (h
         congr 1
         omega
       show 3 + (770 + zb (mapSize g isL) + zb (mapSize g isL) +
-        ((v + 4 + mapFin g isL + mapAfter g isL v) + max 3 (2 * mapSize g isL + 2 * v + 859 - 6 * hdrRate))) + _ ≤ _
+        ((v + 4 + mapFin g isL + mapAfter g isL v) + max 3 (2 * mapSize g isL + 2 * v + 859 - 6 * hdrRate))) + lmPart g + _ ≤ _
       have hZ : zb (mapSize g isL) = mapSize g isL + 1 := by
         unfold zb
         omega
@@ -975,18 +1063,18 @@ theorem hpay {g : Gh} {p : HPhase} {bs c : List Bool} {g' : Gh} {p' : HPhase} (h
     obtain ⟨v, b, e1, e2⟩ := readIn_next' (show hStep g (.rlemax isL t) bs = _ from h)
     have hl := takes_one faith_readRLEMAX rfl e1
     cases e2
-    show 3 + (770 + zb (mapSize g isL) + zb (mapSize g isL) + mapOwner g isL t) + _ ≤
-      770 + zb (mapSize g isL) + zb (mapSize g isL) + mapOwnerR g isL t + _
+    show 3 + (770 + zb (mapSize g isL) + zb (mapSize g isL) + mapOwner g isL t) + lmPart g + _ ≤
+      770 + zb (mapSize g isL) + zb (mapSize g isL) + mapOwnerR g isL t + lmPart g + _
     unfold mapOwner mapOwnerR hdrRate
     omega
   | vals isL t r code done left =>
     have hvl' : left ≤ 16384 := hvl
     rcases hStep_vals_next h with ⟨h0, e, rfl⟩ | ⟨h0, v, hr, e, rfl⟩ | ⟨h0, hr, h'⟩
     · cases e
-      simp only [hcost, hpot, h0, ↓reduceIte]
+      simp only [hcost, hpot, tabPot, h0, ↓reduceIte]
       omega
     · cases e
-      simp only [hcost, hpot, h0, hr, ↓reduceIte]
+      simp only [hcost, hpot, tabPot, h0, hr, ↓reduceIte]
       omega
     · obtain ⟨v, b, e1, e2⟩ := readIn_next' h'
       have l1 := faith_le (faith_mapSym r code) e1
@@ -1005,7 +1093,7 @@ theorem hpay {g : Gh} {p : HPhase} {bs c : List Bool} {g' : Gh} {p' : HPhase} (h
       · cases e2
       · rename_i hle
         cases e2
-        simp only [hcost, hpot, h0, hr, ↓reduceIte]
+        simp only [hcost, hpot, tabPot, h0, hr, ↓reduceIte]
         split <;> omega
   | imtf isL t vals =>
     obtain ⟨v, b, e1, e2⟩ := readIn_next' (show hStep g (.imtf isL t vals) bs = _ from h)
@@ -1013,8 +1101,8 @@ theorem hpay {g : Gh} {p : HPhase} {bs c : List Bool} {g' : Gh} {p' : HPhase} (h
     generalize (if v = 0 then vals else inverseMoveToFront vals) = fin at e2
     split at e2
     · cases e2
-      rw [hpot_mapNext]
-      show t + 4 + mapFin g isL + mapAfter g isL t + _ ≤ t + 4 + mapFin g isL + mapAfter g isL t + _
+      rw [hpot_mapNext, tabPot_mapNext]
+      show t + 4 + mapFin g isL + mapAfter g isL t + lmPart g + _ ≤ t + 4 + mapFin g isL + mapAfter g isL t + lmPart g + _
       omega
     · cases e2
   | codes k done left =>
@@ -1023,27 +1111,29 @@ theorem hpay {g : Gh} {p : HPhase} {bs c : List Bool} {g' : Gh} {p' : HPhase} (h
       cases h
       dsimp only
       cases k
-      · show 3 + (0 + afterD _ n _) + _ ≤ afterD _ (n + 1) _ + _
+      · show 3 + (0 + afterD _ n _) + lmPart g + _ ≤ afterD _ (n + 1) _ + lmPart g + _
         unfold afterD
         omega
-      · show 3 + (0 + (3 * n + zb (4 * g.treesD) + 8 + 3 * g.treesD)) + _ ≤
-          3 * (n + 1) + zb (4 * g.treesD) + 8 + 3 * g.treesD + _
+      · show 3 + (0 + (3 * n + zb (4 * g.treesD) + 8 + 3 * g.treesD)) + (lmPart g + 2310 * done.length) + _ ≤
+          3 * (n + 1) + zb (4 * g.treesD) + 8 + 3 * g.treesD + (lmPart g + 2310 * done.length) + _
         omega
-      · show 3 + (0 + (3 * n + 4)) + _ ≤ 3 * (n + 1) + 4 + _
+      · show 3 + (0 + (3 * n + 4)) + (lmPart g + 2310 * g.m.insertCopyCodes.length) + _ ≤
+          3 * (n + 1) + 4 + (lmPart g + 2310 * g.m.insertCopyCodes.length) + _
         omega
     | zero =>
       cases k with
       | L =>
         cases h
         dsimp only
-        show zb (4 * g.m.insertCopy.n) + 4 + (3 * g.m.insertCopy.n + zb (4 * g.treesD) + 8 + 3 * g.treesD) + _ ≤
-          afterD g.m.insertCopy.n 0 g.treesD + _
+        show zb (4 * g.m.insertCopy.n) + 4 + (3 * g.m.insertCopy.n + zb (4 * g.treesD) + 8 + 3 * g.treesD) +
+            (lmPart g + 2310 * 0) + _ ≤ afterD g.m.insertCopy.n 0 g.treesD + lmPart g + _
         unfold afterD
         omega
       | I =>
         cases h
         dsimp only
-        show zb (4 * g.treesD) + 4 + (3 * g.treesD + 4) + _ ≤ 3 * 0 + zb (4 * g.treesD) + 8 + 3 * g.treesD + _
+        show zb (4 * g.treesD) + 4 + (3 * g.treesD + 4) + (lmPart g + 2310 * done.length) + _ ≤
+          3 * 0 + zb (4 * g.treesD) + 8 + 3 * g.treesD + (lmPart g + 2310 * done.length) + _
         omega
       | D => cases h
 
@@ -2538,5 +2628,118 @@ theorem hpot_le {st : Hd} {g : Gh} {p : HPhase} (hrel : HRel st g p) (hg : GOk g
       show 7 ≤ ckIdx k + 7
       omega
     exact Nat.le_trans (codesPot_le (by omega) (hI (by omega)) (hD (by omega))) (by omega)
+
+/-! ### The derived tables' share, at most and at the end -/
+
+theorem lmPart_le {d : Done} {g : Gh} {n : Nat} (hu : Upto d g n) (hn : 4 < n) (hg : GOk g) : lmPart g ≤ 90112 := by
+  have := (hu.modes hn).length
+  have := hg.1
+  have := hg.2.1
+  unfold lmPart
+  omega
+
+theorem iccLen_le {d : Done} {g : Gh} {n : Nat} (hu : Upto d g n) (hn : 8 < n) : g.m.insertCopyCodes.length ≤ 256 := by
+  have h1 : g.m.insertCopy.n = g.m.insertCopyCodes.length := (hu.codes .I hn).1
+  have h2 : g.m.insertCopy.n ≤ 256 := (hu.cat .I (by show 1 < n; omega)).wf.2.1
+  omega
+
+theorem mapIdx_gt (isL : Bool) : 4 < mapIdx isL := by
+  unfold mapIdx
+  split <;> omega
+
+/-- The most a code's places hold for the derived tables. -/
+theorem ownerTab_le {st : Hd} {g : Gh} {n : Nat} {o : Owner} (ho : OwnerRel st g n o) (hu : Upto st.d g (ownerStage o))
+    (hg : GOk g) (hk : OOk o) : ownerTab g o + ownerRise o ≤ 681472 := by
+  cases o with
+  | type i k =>
+    have : k ≤ 256 := hk
+    cases i <;> simp only [ownerTab, ownerRise, dPart] <;> omega
+  | count i k tc =>
+    have : k ≤ 256 := hk
+    cases i <;> simp only [ownerTab, ownerRise, dPart] <;> omega
+  | map isL t r =>
+    have := lmPart_le hu (mapIdx_gt isL) hg
+    simp only [ownerTab, ownerRise]
+    omega
+  | codes k done left =>
+    obtain ⟨_, _, _, _, _, hl, hc, _⟩ := ho
+    have hL := lmPart_le hu (show 4 < ckIdx k + 7 by omega) hg
+    cases k with
+    | L => simp only [ownerTab, ownerRise]; omega
+    | I =>
+      have : done.length ≤ 255 := by simp only [Gh.ckCount] at hl hc; omega
+      simp only [ownerTab, ownerRise]
+      omega
+    | D =>
+      have := iccLen_le hu (show 8 < ckIdx .D + 7 by decide)
+      simp only [ownerTab, ownerRise]
+      omega
+
+/-- The most a header's place holds for the derived tables: 330 for each of 256 literal types, 22 for each of 256
+distance types and 2310 for each of 256 insert-and-copy codes. -/
+theorem tabPot_le {st : Hd} {g : Gh} {p : HPhase} (hrel : HRel st g p) (hg : GOk g) (hp : HOk p) : tabPot g p ≤ 681472 := by
+  obtain ⟨_, hu, hm⟩ := hrel
+  have hD := hg.2.1
+  cases p with
+  | cat i => exact Nat.zero_le _
+  | code o n =>
+    obtain ⟨_, _, ho⟩ := hm
+    have := ownerTab_le ho hu hg hp.2
+    show ownerTab g o ≤ _
+    omega
+  | clens o n order acc sum =>
+    obtain ⟨_, _, ho, _⟩ := hm
+    exact ownerTab_le ho hu hg hp.2
+  | syms o n clc ls =>
+    obtain ⟨_, _, ho, _⟩ := hm
+    exact ownerTab_le ho hu hg hp.2
+  | first i n tc cc =>
+    have : n ≤ 256 := hp
+    show dPart i n ≤ _
+    cases i <;> simp only [dPart] <;> omega
+  | np =>
+    show 22 * g.m.distance.n ≤ _
+    omega
+  | modes done left =>
+    obtain ⟨_, _, _, hlen, _⟩ := hm
+    have := hg.1
+    show 330 * done.length + 22 * g.m.distance.n ≤ _
+    omega
+  | trees isL => exact Nat.le_trans (lmPart_le hu (mapIdx_gt isL) hg) (by omega)
+  | rlemax isL t => exact Nat.le_trans (lmPart_le hu (mapIdx_gt isL) hg) (by omega)
+  | vals isL t r code done left => exact Nat.le_trans (lmPart_le hu (mapIdx_gt isL) hg) (by omega)
+  | imtf isL t vals => exact Nat.le_trans (lmPart_le hu (mapIdx_gt isL) hg) (by omega)
+  | codes k done left =>
+    obtain ⟨_, _, _, _, hl, hc, _⟩ := hm
+    have hL := lmPart_le hu (show 4 < ckIdx k + 7 by omega) hg
+    cases k with
+    | L => exact Nat.le_trans hL (by omega)
+    | I =>
+      have : done.length ≤ 256 := by simp only [Gh.ckCount] at hl hc; omega
+      show lmPart g + 2310 * done.length ≤ _
+      omega
+    | D =>
+      have := iccLen_le hu (show 8 < ckIdx .D + 7 by decide)
+      show lmPart g + 2310 * g.m.insertCopyCodes.length ≤ _
+      omega
+
+/-- At a header's end, its place holds the derived tables' share of its numbers of block types. -/
+theorem tabPot_exit {g g' : Gh} {p : HPhase} {bs b : List Bool} {m : MetaBlockHeader} {d : Done}
+    (h : hStepP (g, p) bs = .exit m b) (hu : Upto d g' 10) (hm : g'.m = m) :
+    2310 * d.nI.toNat + 330 * d.nL.toNat + 22 * d.nD.toNat ≤ tabPot g p := by
+  obtain ⟨done, rfl, rfl⟩ := hStep_exit h
+  have hL : d.nL.toNat = g'.m.literal.n := (hu.cat .L (by decide)).n
+  have hI : d.nI.toNat = g'.m.insertCopy.n := (hu.cat .I (by decide)).n
+  have hD : d.nD.toNat = g'.m.distance.n := (hu.cat .D (by decide)).n
+  have hmo : g'.m.contextModes.length = g'.m.literal.n := (hu.modes (by decide)).length
+  have hc : g'.m.insertCopy.n = g'.m.insertCopyCodes.length := (hu.codes .I (by decide)).1
+  have e1 : g'.m.contextModes = g.m.contextModes := by rw [hm]; rfl
+  have e2 : g'.m.insertCopyCodes = g.m.insertCopyCodes := by rw [hm]; rfl
+  have e3 : g'.m.distance.n = g.m.distance.n := by rw [hm]; rfl
+  rw [e1] at hmo
+  rw [e2] at hc
+  rw [e3] at hD
+  show _ ≤ 330 * g.m.contextModes.length + 22 * g.m.distance.n + 2310 * g.m.insertCopyCodes.length
+  omega
 
 end Brotli.Decoder

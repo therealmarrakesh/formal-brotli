@@ -187,8 +187,10 @@ meta-block's start. -/
 def cmdsEnd : Nat := 84 + 3 + 1 + 1 + roundCost
 
 /-- What a header's end costs beyond its potential: the command loop's header with its shared table bases and first
-state, the loop's round, and what the commands' start holds. Its last step is within its place's potential. -/
-def hdrEnd : Nat := 770 + trivRounds + 1 + 106 + cmdsEnd
+state, its derived tables' constant part (`tabCost`), the loop's round, and what the commands' start holds. Its last step
+is within its place's potential, and its derived tables' share by the numbers of block types within its place's
+`tabPot`. -/
+def hdrEnd : Nat := 770 + trivRounds + 13300 + 1 + 106 + cmdsEnd
 
 /-- What a metadata block's or an uncompressed block's end costs: its last step and the loop's round, and a round of the
 call at the next meta-block's start. -/
@@ -200,7 +202,7 @@ def spot : SPhase → Nat
   | .mblock .. => 0
   | .skip .. => tailEnd
   | .raw .. => tailEnd
-  | .hdr _ _ _ _ g p => hpot g p + hdrEnd
+  | .hdr _ _ _ _ g p => hpot g p + tabPot g p + hdrEnd
   | .cmds _ _ _ p => cpot p + cmdsEnd
   | .ended _ => 0
 
@@ -399,6 +401,13 @@ theorem hpot_start {x y z : UInt64} {g : Gh} {p : HPhase} (h : HRel (hdStart x y
     | D => cases hc
   | _ => cases ht
 
+/-- A header's start holds no share of the derived tables. -/
+theorem tabPot_start {x y z : UInt64} {g : Gh} {p : HPhase} (h : HRel (hdStart x y z) g p) : tabPot g p = 0 := by
+  have ht := h.tag_eq
+  cases p with
+  | cat i => rfl
+  | _ => cases ht
+
 /-- The window a window's first state holds. -/
 theorem winStart_size {c : Cmd} {word count need : UInt64} (h : need.toNat < 2 ^ 32) :
     (winStart c word count need).ring.size = need.toNat :=
@@ -589,11 +598,11 @@ theorem pay_mblock {w : Nat} {st : StreamState} {a : ByteArray} {stop : USize} {
       have h19 := hb19 w' st' l mlen g hp' rfl
       obtain ⟨x, y, z, hx⟩ := stepDMeta_hd hrel.1 hR'.1
       have hrh : HRel (hdStart x y z) g hp' := by rw [← hx]; exact hR'.2.2.2.2.2.2.1
-      have : dpot (.hdr w' st' l mlen g hp') (stepDMeta a stop hs D pos) = hpot g hp' + hdrEnd := by
+      have : dpot (.hdr w' st' l mlen g hp') (stepDMeta a stop hs D pos) = hpot g hp' + tabPot g hp' + hdrEnd := by
         unfold dpot spot
         dsimp only
         omega
-      rw [this, hpot_start hrh]
+      rw [this, hpot_start hrh, tabPot_start hrh]
       unfold hdrEnd cmdsEnd roundCost trivRounds
       omega
     | _ => exact absurd hsd id
@@ -686,7 +695,8 @@ theorem pay_hdr {w : Nat} {st : StreamState} {last : Bool} {mlen : Nat} {g : Gh}
   have hstep := stepH_ok (K := hdrK w (specSem.after w last) st mlen) (a := a) (hs := hs) (h := hH) hR hp hb
   have hsz := psize_le hR
   have eW : stepDHdrW a stop hs ⟨.hdr, cmd, hd, H, k, last', left, limit, pos', status⟩ pos (fun _ => hH) hp =
-      stepHW a stop hs hd pos + (if (stepH a stop hs hd pos hH hp).status = .ready then 770 + trivRounds else 0) := rfl
+      stepHW a stop hs hd pos + (if hst : (stepH a stop hs hd pos hH hp).status = .ready then
+        770 + trivRounds + mkHdrW (stepH a stop hs hd pos hH hp).d left (stepH_upto hH hp hst) else 0) := rfl
   rw [eW]
   unfold stepDHdr takeHd at hok ⊢
   dsimp only at hok ⊢
@@ -697,9 +707,13 @@ theorem pay_hdr {w : Nat} {st : StreamState} {last : Bool} {mlen : Nat} {g : Gh}
   unfold hdrNext at hok ⊢
   dsimp only at hok ⊢
   by_cases hrd : (stepH a stop hs hd pos hH hp).status = .ready
-  · rw [ite_eq_left hrd]
+  · rw [dite_eq_left hrd]
     split at hok <;> rename_i hst' <;> (try exact absurd (hrd.symm.trans hst') (fun e => HStatus.noConfusion e))
     have hW := stepHW_stop hR hb hp (by rw [hrd]; exact fun e => HStatus.noConfusion e)
+    obtain ⟨g'', hu'', _, _, _, _, _, _, _, _, hx⟩ := hstep.ready hrd
+    have hT := tabPot_exit (hx []) hu'' rfl
+    have hM := mkHdrW_le (d := (stepH a stop hs hd pos hH hp).d) (mlen := left) (h := stepH_upto hH hp hrd)
+    unfold tabCost at hM
     refine ⟨fun _ => ?_, fun e => DStatus.noConfusion e, fun e => by rcases e with e | e <;> exact DStatus.noConfusion e⟩
     obtain ⟨p', hR'', h1', h2', _, _, hout, hj⟩ := hok.next rfl
     refine ⟨p', hR'', hout, h1', h2', fun hi => sinv_of_sreach (hj []) hi, fun t => ?_⟩
@@ -713,7 +727,7 @@ theorem pay_hdr {w : Nat} {st : StreamState} {last : Bool} {mlen : Nat} {g : Gh}
       rw [hdrRate_eq]
       omega
     | _ => exact absurd hR''.1 (fun e => DTag.noConfusion e)
-  rw [ite_eq_right hrd]
+  rw [dite_eq_right hrd]
   split <;> rename_i hst
   · obtain ⟨g', p', oc, hR', h1, h2, _, _, hmv, h5⟩ := hstep.next hst
     have hW := stepHW_cost hR hp hst hR' h5
@@ -1519,7 +1533,7 @@ theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
           exact absurd rfl hne0
         | _ => exact absurd hsd id
     · have := n3 h
-      have hd : dpot (.hdr w st last mlen g q) D = hpot g q + hdrEnd := rfl
+      have hd : dpot (.hdr w st last mlen g q) D = hpot g q + tabPot g q + hdrEnd := rfl
       have h0 : D.cmd.pend.toNat = 0 := by rw [hrel.2.2.2.2.2.2.2.1]; rfl
       exact ⟨0, by omega, fun hm => by rw [stepDHdr_memPend hm]; exact h0,
         fun t => by have := rate_chunk D hs (hpos h) (bits t); have := hpos2 h; omega⟩

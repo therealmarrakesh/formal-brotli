@@ -193,13 +193,14 @@ theorem work_inv {limit : Nat} {x : List UInt8} {R : Run DState} {W n : Nat} (h 
       rw [hrd, em]
       exact run_stop hW hc hpn hwq
 
-/-- The most a state's place holds: a header's place, with what its end costs. -/
-theorem dpot_le {D : Dec} {p : SPhase} (hrel : DRel D p) (hsi : SInv p) : dpot p D ≤ 80123 := by
+/-- The most a state's place holds: a header's place, with its derived tables' share and what its end costs. -/
+theorem dpot_le {D : Dec} {p : SPhase} (hrel : DRel D p) (hsi : SInv p) : dpot p D ≤ 774895 := by
   cases p with
   | hdr w st last mlen g q =>
     obtain ⟨_, _, _, _, _, _, hh, _⟩ := hrel
     have := hpot_le hh hsi.2.1 hsi.2.2
-    show hpot g q + hdrEnd + 0 ≤ _
+    have := tabPot_le hh hsi.2.1 hsi.2.2
+    show hpot g q + tabPot g q + hdrEnd + 0 ≤ _
     unfold hdrEnd cmdsEnd roundCost trivRounds
     omega
   | cmds w last m q =>
@@ -216,7 +217,7 @@ theorem dpot_le {D : Dec} {p : SPhase} (hrel : DRel D p) (hsi : SInv p) : dpot p
   | ended => simp [dpot, spot]
 
 /-- The most a call can leave for the next to use: the potential of where it pauses, and 2980 for each bit it holds. -/
-def psiMax : Nat := 270843
+def psiMax : Nat := 965615
 
 theorem Reaches.withWork {limit : Nat} {x : List UInt8} {R : Run DState} (h : Reaches decoder limit x R) :
     ∃ W n, ReachesW limit x R W n := by
