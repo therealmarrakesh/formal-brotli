@@ -190,7 +190,7 @@ def cmdsEnd : Nat := 84 + 3 + 1 + 1 + roundCost
 state, its derived tables' constant part (`tabCost`), the loop's round, and what the commands' start holds. Its last step
 is within its place's potential, and its derived tables' share by the numbers of block types within its place's
 `tabPot`. -/
-def hdrEnd : Nat := 770 + trivRounds + 13300 + 1 + 106 + cmdsEnd
+def hdrEnd : Nat := 770 + trivRounds + 900 + 1 + 106 + cmdsEnd
 
 /-- What a metadata block's or an uncompressed block's end costs: its last step and the loop's round, and a round of the
 call at the next meta-block's start. -/

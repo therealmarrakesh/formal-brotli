@@ -341,8 +341,8 @@ def psize : HPhase → Nat
 /-! ### The derived tables' share
 
 The tables the header's end derives for the fast command loop (`mkHdrW_le`) cost by the numbers of block types. The places
-carry that cost as the fields it depends on are read, so that their bits pay for it at the header's rate: 330 for each
-literal type as its context mode's two bits are read, 2310 for each insert-and-copy code as its first bits are read, and 22
+carry that cost as the fields it depends on are read, so that their bits pay for it at the header's rate: 1870 for each
+literal type (its map, position, root slots examined and pair table) as its context mode's two bits are read, 2310 for each insert-and-copy code as its first bits are read, and 22
 for each distance type as their number is read. What the header's end needs besides is a constant (`hdrEnd`). -/
 
 /-- The distance types' share at a category's places. -/
@@ -352,7 +352,7 @@ def dPart : Cat → Nat → Nat
   | .D, n => 22 * n
 
 /-- The literal and distance types' share once the context modes are read. -/
-def lmPart (g : Gh) : Nat := 330 * g.m.contextModes.length + 22 * g.m.distance.n
+def lmPart (g : Gh) : Nat := 1870 * g.m.contextModes.length + 22 * g.m.distance.n
 
 /-- The share at a code's places, before its first bits. -/
 def ownerTab (g : Gh) : Owner → Nat
@@ -380,7 +380,7 @@ def tabPot (g : Gh) : HPhase → Nat
   | .syms o .. => ownerTab g o + ownerRise o
   | .first i n _ _ => dPart i n
   | .np => 22 * g.m.distance.n
-  | .modes done _ => 330 * done.length + 22 * g.m.distance.n
+  | .modes done _ => 1870 * done.length + 22 * g.m.distance.n
   | .trees _ => lmPart g
   | .rlemax .. => lmPart g
   | .vals .. => lmPart g
@@ -1005,15 +1005,15 @@ theorem hpay {g : Gh} {p : HPhase} {bs c : List Bool} {g' : Gh} {p' : HPhase} (h
           have := readInt_length _ _ _ _ h2
           omega
     cases e2
-    show 260 + beforeMaps g.m.literal.n g.m.insertCopy.n g.m.distance.n + (330 * 0 + 22 * g.m.distance.n) + _ ≤
+    show 260 + beforeMaps g.m.literal.n g.m.insertCopy.n g.m.distance.n + (1870 * 0 + 22 * g.m.distance.n) + _ ≤
       beforeMaps g.m.literal.n g.m.insertCopy.n g.m.distance.n + 22 * g.m.distance.n + _
     omega
   | modes done left =>
     cases left with
     | zero =>
       cases h
-      show 3 + (mapPre (64 * g.m.literal.n) + 1 + mapAfter _ true 0) + (330 * done.length + 22 * g.m.distance.n) + _ ≤
-        beforeMaps _ _ _ + (330 * done.length + 22 * g.m.distance.n) + _
+      show 3 + (mapPre (64 * g.m.literal.n) + 1 + mapAfter _ true 0) + (1870 * done.length + 22 * g.m.distance.n) + _ ≤
+        beforeMaps _ _ _ + (1870 * done.length + 22 * g.m.distance.n) + _
       unfold beforeMaps mapAfter
       simp only [↓reduceIte]
       omega
@@ -1021,8 +1021,8 @@ theorem hpay {g : Gh} {p : HPhase} {bs c : List Bool} {g' : Gh} {p' : HPhase} (h
       obtain ⟨v, b, e1, e2⟩ := readIn_next' (show hStep g (.modes done (n + 1)) bs = _ from h)
       have hl := takes_one (faith_readInt 2) rfl e1
       cases e2
-      show 3 + beforeMaps _ _ _ + (330 * (done ++ [v]).length + 22 * g.m.distance.n) + _ ≤
-        beforeMaps _ _ _ + (330 * done.length + 22 * g.m.distance.n) + _
+      show 3 + beforeMaps _ _ _ + (1870 * (done ++ [v]).length + 22 * g.m.distance.n) + _ ≤
+        beforeMaps _ _ _ + (1870 * done.length + 22 * g.m.distance.n) + _
       rw [List.length_append, List.length_singleton]
       omega
   | trees isL =>
@@ -2631,7 +2631,7 @@ theorem hpot_le {st : Hd} {g : Gh} {p : HPhase} (hrel : HRel st g p) (hg : GOk g
 
 /-! ### The derived tables' share, at most and at the end -/
 
-theorem lmPart_le {d : Done} {g : Gh} {n : Nat} (hu : Upto d g n) (hn : 4 < n) (hg : GOk g) : lmPart g ≤ 90112 := by
+theorem lmPart_le {d : Done} {g : Gh} {n : Nat} (hu : Upto d g n) (hn : 4 < n) (hg : GOk g) : lmPart g ≤ 484352 := by
   have := (hu.modes hn).length
   have := hg.1
   have := hg.2.1
@@ -2649,7 +2649,7 @@ theorem mapIdx_gt (isL : Bool) : 4 < mapIdx isL := by
 
 /-- The most a code's places hold for the derived tables. -/
 theorem ownerTab_le {st : Hd} {g : Gh} {n : Nat} {o : Owner} (ho : OwnerRel st g n o) (hu : Upto st.d g (ownerStage o))
-    (hg : GOk g) (hk : OOk o) : ownerTab g o + ownerRise o ≤ 681472 := by
+    (hg : GOk g) (hk : OOk o) : ownerTab g o + ownerRise o ≤ 1075712 := by
   cases o with
   | type i k =>
     have : k ≤ 256 := hk
@@ -2675,9 +2675,9 @@ theorem ownerTab_le {st : Hd} {g : Gh} {n : Nat} {o : Owner} (ho : OwnerRel st g
       simp only [ownerTab, ownerRise]
       omega
 
-/-- The most a header's place holds for the derived tables: 330 for each of 256 literal types, 22 for each of 256
+/-- The most a header's place holds for the derived tables: 1870 for each of 256 literal types, 22 for each of 256
 distance types and 2310 for each of 256 insert-and-copy codes. -/
-theorem tabPot_le {st : Hd} {g : Gh} {p : HPhase} (hrel : HRel st g p) (hg : GOk g) (hp : HOk p) : tabPot g p ≤ 681472 := by
+theorem tabPot_le {st : Hd} {g : Gh} {p : HPhase} (hrel : HRel st g p) (hg : GOk g) (hp : HOk p) : tabPot g p ≤ 1075712 := by
   obtain ⟨_, hu, hm⟩ := hrel
   have hD := hg.2.1
   cases p with
@@ -2703,7 +2703,7 @@ theorem tabPot_le {st : Hd} {g : Gh} {p : HPhase} (hrel : HRel st g p) (hg : GOk
   | modes done left =>
     obtain ⟨_, _, _, hlen, _⟩ := hm
     have := hg.1
-    show 330 * done.length + 22 * g.m.distance.n ≤ _
+    show 1870 * done.length + 22 * g.m.distance.n ≤ _
     omega
   | trees isL => exact Nat.le_trans (lmPart_le hu (mapIdx_gt isL) hg) (by omega)
   | rlemax isL t => exact Nat.le_trans (lmPart_le hu (mapIdx_gt isL) hg) (by omega)
@@ -2726,7 +2726,7 @@ theorem tabPot_le {st : Hd} {g : Gh} {p : HPhase} (hrel : HRel st g p) (hg : GOk
 /-- At a header's end, its place holds the derived tables' share of its numbers of block types. -/
 theorem tabPot_exit {g g' : Gh} {p : HPhase} {bs b : List Bool} {m : MetaBlockHeader} {d : Done}
     (h : hStepP (g, p) bs = .exit m b) (hu : Upto d g' 10) (hm : g'.m = m) :
-    2310 * d.nI.toNat + 330 * d.nL.toNat + 22 * d.nD.toNat ≤ tabPot g p := by
+    2310 * d.nI.toNat + 1870 * d.nL.toNat + 22 * d.nD.toNat ≤ tabPot g p := by
   obtain ⟨done, rfl, rfl⟩ := hStep_exit h
   have hL : d.nL.toNat = g'.m.literal.n := (hu.cat .L (by decide)).n
   have hI : d.nI.toNat = g'.m.insertCopy.n := (hu.cat .I (by decide)).n
@@ -2739,7 +2739,7 @@ theorem tabPot_exit {g g' : Gh} {p : HPhase} {bs b : List Bool} {m : MetaBlockHe
   rw [e1] at hmo
   rw [e2] at hc
   rw [e3] at hD
-  show _ ≤ 330 * g.m.contextModes.length + 22 * g.m.distance.n + 2310 * g.m.insertCopyCodes.length
+  show _ ≤ 1870 * g.m.contextModes.length + 22 * g.m.distance.n + 2310 * g.m.insertCopyCodes.length
   omega
 
 end Brotli.Decoder
