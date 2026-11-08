@@ -2063,6 +2063,88 @@ theorem lit_round {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHead
   rw [he, ← ringWrite_wput hk hmN hsz _ (by omega), ← e]
   exact e'
 
+/-! ### Two literals -/
+
+/-- A refill that finds the bits at hand enough takes nothing. -/
+theorem FillOk.self {a : ByteArray} {stop : USize} {word count : UInt64} {pos : USize} {thr : Nat}
+    (hw : (BitBuffer.mk word count).Wf) (ht : thr ≤ count.toNat) (hp : pos.toNat ≤ stop.toNat) :
+    FillOk a stop word count pos thr word count pos :=
+  ⟨hw, ht, Nat.le_refl _, hp, rfl, rfl⟩
+
+/-- The loop's numbers one byte on. -/
+theorem FNum.succ {opos pB wB : USize} {rEnd bEnd : UInt64} {k ahead : Nat} (N : FNum opos pB wB rEnd bEnd k ahead)
+    (hk : k ≤ 24) (ha : 1 ≤ ahead) : FNum (opos + USize.ofNat 1) pB wB rEnd bEnd k (ahead - 1) := by
+  have hR : 2 ^ k ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
+  have h1 := N.ahead
+  have h2 := N.small
+  have h3 := N.pend
+  have h4 := N.wr
+  have e1 : (opos + USize.ofNat 1).toNat = opos.toNat + 1 := fastIdx_add (by omega)
+  have e2 : (opos + USize.ofNat 1 + pB).toNat = (opos + pB).toNat + 1 := by
+    rw [← usize_add_one_comm, fastIdx_add (by omega)]
+  have e3 : (opos + USize.ofNat 1 + wB).toNat = (opos + wB).toNat + 1 := by
+    rw [← usize_add_one_comm, fastIdx_add (by omega)]
+  exact ⟨by rw [e1]; omega, N.bEndLe, h2, by rw [e2, e1]; omega, by rw [e3, e1]; omega⟩
+
+theorem u64_sub2 (x a b : UInt64) : x - (a + b) = x - a - b := by
+  have hy : x - a - b + b + a = x := by rw [UInt64.sub_add_cancel, UInt64.sub_add_cancel]
+  have hr : x - a - b + b + a = x - a - b + (a + b) := by rw [UInt64.add_assoc, UInt64.add_comm b a]
+  conv => lhs; rw [← hy, hr, UInt64.add_sub_cancel]
+
+theorem usize_add_two (x : USize) : x + USize.ofNat 1 + USize.ofNat 1 = x + USize.ofNat 2 := by
+  rw [USize.add_assoc]
+  congr 1
+  exact USize.toNat_inj.mp (by rw [fastIdx_add (by rw [fastLit (by decide)]; decide), fastLit (by decide),
+    fastLit (by decide)])
+
+/-- Two literals of the fast loop after one refill to 30 bits: the first read at the context's tree, the second at the
+tree for the context it makes. -/
+theorem lit2_round {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader}
+    {K : CommandState → List Bool → Option α} {a : ByteArray} {stop : USize} {s : CommandState} {ic : BlockState}
+    {c ilen clen n : Nat} {lit : BlockState} {out : List Nat} {word count : UInt64} {ring : ByteArray}
+    {opos mask pB cap cap16 wB : USize} {rEnd bEnd : UInt64} {iCount LC dCount : UInt64} {flags : Flags} {x : CmdExt}
+    {d01 d23 code ilen' clen' : UInt64} {p1 p2 : UInt8} {L : UInt64} {pos : USize} {T : ByteArray} {tb : UInt64}
+    {modeOff lRow iRow iFb dRow s0 : USize} (C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow s0)
+    (hH : HdrRel H m)
+    (hrel : Rel w k.toNat m (fexit word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code
+      ilen' clen' p1 p2 .literals L pos) (.literals s ic c ilen clen n lit out))
+    (hk : k.toNat ≤ 24) (h16 : 16 ≤ 2 ^ k.toNat) (hmk : mask = ringMask k) (hmN : mask.toNat = 2 ^ k.toNat - 1)
+    (hcap : cap16 = ringSize k - USize.ofNat 16) {ahead : Nat} (N : FNum opos pB wB rEnd bEnd k.toNat ahead)
+    (ha : 2 ≤ ahead) (hL : 2 ≤ L.toNat) (hLC : 2 ≤ LC.toNat) {word' count' : UInt64} {pos' : USize}
+    (hf : FillOk a stop word count pos 30 word' count' pos') (hs : stop.toNat ≤ a.size)
+    (hsz : ring.size = 2 ^ k.toNat) :
+    ∃ p', MoveOk w k.toNat m K a stop (.literals s ic c ilen clen n lit out)
+      (fexit word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code ilen' clen' p1 p2
+        .literals L pos) pos p'
+      (fexit ((word' >>> (litT C p1 p2 word' &&& 15)) >>>
+          (litT C (litT C p1 p2 word' >>> 4).toUInt8 p1 (word' >>> (litT C p1 p2 word' &&& 15)) &&& 15))
+        (count' - (litT C p1 p2 word' &&& (15 : UInt64)) -
+          (litT C (litT C p1 p2 word' >>> 4).toUInt8 p1 (word' >>> (litT C p1 p2 word' &&& 15)) &&& (15 : UInt64)))
+        (wput (wput ring opos mask hk hmN hsz (litT C p1 p2 word' >>> 4).toUInt8) (opos + USize.ofNat 1) mask hk hmN
+          (wput_size _ _ _ hk hmN hsz _)
+          (litT C (litT C p1 p2 word' >>> 4).toUInt8 p1 (word' >>> (litT C p1 p2 word' &&& 15)) >>> 4).toUInt8)
+        (opos + USize.ofNat 2) mask pB cap cap16 wB rEnd iCount (LC - 2) dCount flags x d01 d23 code ilen' clen'
+        (litT C (litT C p1 p2 word' >>> 4).toUInt8 p1 (word' >>> (litT C p1 p2 word' &&& 15)) >>> 4).toUInt8
+        (litT C p1 p2 word' >>> 4).toUInt8 .literals (L - 2) pos') := by
+  have hf15 : FillOk a stop word count pos 15 word' count' pos' :=
+    ⟨hf.wf, by have := hf.enough; omega, hf.posLe, hf.posStop, hf.bits, hf.acct⟩
+  obtain ⟨p', m1⟩ := lit_round (K := K) C hH hrel hk h16 hmk hmN hcap N (by omega) (by omega) (by omega) hf15 hs hsz
+  obtain ⟨_, _, _, _, _, _, _, _, rfl⟩ := m1.rel.literals_of rfl
+  have hl1 := and15_lt (litT C p1 p2 word')
+  have hc30 := hf.enough
+  have e1 : (count' - (litT C p1 p2 word' &&& (15 : UInt64))).toNat =
+      count'.toNat - (litT C p1 p2 word' &&& (15 : UInt64)).toNat := u64_sub_le (by omega)
+  have h1 : (1 : UInt64).toNat = 1 := rfl
+  obtain ⟨p'', m2⟩ := lit_round (K := K) (stop := stop) C hH m1.rel hk h16 hmk hmN hcap (N.succ hk (by omega))
+    (by omega) (by rw [u64_sub_le (by rw [h1]; omega), h1]; omega) (by rw [u64_sub_le (by rw [h1]; omega), h1]; omega)
+    (FillOk.self (drop1_wf hf.wf (by omega) (by omega)) (by rw [e1]; omega) hf.posStop) hs (wput_size _ _ _ hk hmN hsz _)
+  refine ⟨p'', ?_⟩
+  have e2 : LC - 1 - 1 = LC - 2 := by rw [← u64_sub2]; rfl
+  have e3 : L - 1 - 1 = L - 2 := by rw [← u64_sub2]; rfl
+  have m := m1.trans m2
+  rw [usize_add_two, e2, e3] at m
+  exact m
+
 /-! ### A command's distance -/
 
 /-- The state at a command's copy, in the loop's terms: what remains less the copy, and the copy's length and distance.
