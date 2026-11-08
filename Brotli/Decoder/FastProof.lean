@@ -2091,6 +2091,22 @@ theorem FNum.succ {opos pB wB : USize} {rEnd bEnd : UInt64} {k ahead : Nat} (N :
     rw [← usize_add_one_comm, fastIdx_add (by omega)]
   exact ⟨by rw [e1]; omega, N.bEndLe, h2, by rw [e2, e1]; omega, by rw [e3, e1]; omega⟩
 
+/-- The loop's numbers `n` bytes on, for what is then ahead. -/
+theorem FNum.adv {opos pB wB : USize} {rEnd bEnd : UInt64} {k ahead : Nat} (N : FNum opos pB wB rEnd bEnd k ahead)
+    (hk : k ≤ 24) {n : USize} (hn : n.toNat ≤ bEnd.toNat - opos.toNat) {ahead' : Nat}
+    (ha : opos.toNat + n.toNat + ahead' ≤ bEnd.toNat) : FNum (opos + n) pB wB rEnd bEnd k ahead' := by
+  have hR : 2 ^ k ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
+  have h1 := N.ahead
+  have h2 := N.small
+  have h3 := N.pend
+  have h4 := N.wr
+  have e1 : (opos + n).toNat = opos.toNat + n.toNat := fastAdd (by omega)
+  have e2 : (opos + n + pB).toNat = (opos + pB).toNat + n.toNat := by
+    rw [USize.add_assoc, USize.add_comm n pB, ← USize.add_assoc, fastAdd (by omega)]
+  have e3 : (opos + n + wB).toNat = (opos + wB).toNat + n.toNat := by
+    rw [USize.add_assoc, USize.add_comm n wB, ← USize.add_assoc, fastAdd (by omega)]
+  exact ⟨by rw [e1]; omega, N.bEndLe, h2, by rw [e2, e1]; omega, by rw [e3, e1]; omega⟩
+
 theorem u64_sub2 (x a b : UInt64) : x - (a + b) = x - a - b := by
   have hy : x - a - b + b + a = x := by rw [UInt64.sub_add_cancel, UInt64.sub_add_cancel]
   have hr : x - a - b + b + a = x - a - b + (a + b) := by rw [UInt64.add_assoc, UInt64.add_comm b a]
@@ -2395,12 +2411,13 @@ theorem to_fabs {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeader
     {K : CommandState → List Bool → Option α} {a : ByteArray} {stop : USize} {word count : UInt64} {ring : ByteArray}
     {opos mask pB cap cap16 wB : USize} {rEnd : UInt64} {iCount lCount dCount : UInt64} {flags : Flags} {x : CmdExt}
     {d01 d23 code ilen clen lits mm : UInt64} {p1 p2 : UInt8} {pos : USize} {p : Phase} {st : Cmd} {pos0 : USize}
-    {p' : Phase} (hH : HdrRel H m) (hs : stop.toNat ≤ a.size)
+    {p' : Phase} (hH : HdrRel H m) (hs : stop.toNat ≤ a.size) {LC L : UInt64}
     (h : MoveOk w k.toNat m K a stop p st pos0 p' (fexit word count ring opos mask pB cap cap16 wB rEnd iCount
-      (lCount + mm) dCount flags x d01 d23 code ilen clen p1 p2 .literals (lits + mm) pos)) :
+      LC dCount flags x d01 d23 code ilen clen p1 p2 .literals L pos)) (hLC : LC = lCount + mm) (hL : L = lits + mm) :
     ∃ p'', MoveOk w k.toNat m K a stop p st pos0 p''
       (fabs word count ring opos mask pB cap cap16 wB rEnd iCount lCount dCount flags x d01 d23 code ilen clen lits mm
         p1 p2 pos) := by
+  subst hLC hL
   by_cases hz : mm = 0 ∧ lits = 0
   · obtain ⟨_, _, _, _, _, _, _, _, rfl⟩ := h.rel.literals_of rfl
     obtain ⟨p'', h2⟩ := litEnd_move (K := K) (stop := stop) (pos := pos) hH h.rel
