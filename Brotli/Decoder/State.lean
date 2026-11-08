@@ -346,16 +346,16 @@ def Rel (w k : Nat) (m : MetaBlockHeader) (st : Cmd) : Phase → Prop
       s.produced = s.output.length
   | .copyLength s ic c ilen copyBits copyBase =>
     Core w k m st s.output s.remaining s.distances ic s.literal s.distance ∧ st.tag = .copyLength ∧
-      s.produced = s.output.length ∧ st.code.toNat = c ∧ st.ilen.toNat = ilen ∧ st.copyBits.toNat = copyBits ∧
+      s.produced = s.output.length ∧ (st.code.toNat < 128 ↔ c < 128) ∧ st.ilen.toNat = ilen ∧ st.copyBits.toNat = copyBits ∧
       st.copyBase.toNat = copyBase ∧ copyBits ≤ 24 ∧ copyBase ≤ 2118
   | .literals s ic c ilen clen n lit out =>
     Core w k m st out (s.remaining - (ilen - n)) s.distances ic lit s.distance ∧ st.tag = .literals ∧
-      s.produced = s.output.length ∧ st.code.toNat = c ∧ st.ilen.toNat = ilen ∧ st.clen.toNat = clen ∧
+      s.produced = s.output.length ∧ (st.code.toNat < 128 ↔ c < 128) ∧ st.ilen.toNat = ilen ∧ st.clen.toNat = clen ∧
       st.left.toNat = n ∧ n ≤ ilen ∧ ilen ≤ s.remaining ∧ out.length + n = s.output.length + ilen
   | .literalSymbol .. => False
   | .distance s c clen =>
     Core w k m st s.output s.remaining s.distances s.insertCopy s.literal s.distance ∧ st.tag = .distance ∧
-      s.produced = s.output.length ∧ st.code.toNat = c ∧ st.clen.toNat = clen
+      s.produced = s.output.length ∧ (st.code.toNat < 128 ↔ c < 128) ∧ st.clen.toNat = clen
   | .distanceSymbol s clen dist =>
     Core w k m st s.output s.remaining s.distances s.insertCopy s.literal dist ∧ st.tag = .distanceSymbol ∧
       s.produced = s.output.length ∧ st.clen.toNat = clen

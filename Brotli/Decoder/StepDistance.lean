@@ -295,8 +295,7 @@ theorem stepDistance_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} 
       have himpN := UInt64.lt_iff_toNat_lt.mp himp
       have hc : implicitZeroDistance c = true := by
         unfold implicitZeroDistance
-        rw [← hcode]
-        exact decide_eq_true himpN
+        exact decide_eq_true (hcode.mp himpN)
       by_cases hz : st.d0 = 0
       · rw [ite_eq_left hz]
         refine StepOk.ofBad rfl fun F => ?_
@@ -313,8 +312,7 @@ theorem stepDistance_ok {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} 
     · rename_i himp
       have hc : implicitZeroDistance c = false := by
         unfold implicitZeroDistance
-        rw [← hcode]
-        exact decide_eq_false fun e => himp (UInt64.lt_iff_toNat_lt.mpr e)
+        exact decide_eq_false fun e => himp (UInt64.lt_iff_toNat_lt.mpr (hcode.mpr e))
       split
       rotate_left
       · rename_i hcnt

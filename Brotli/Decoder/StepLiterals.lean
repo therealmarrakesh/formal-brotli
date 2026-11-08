@@ -218,7 +218,7 @@ theorem literals_after {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeader} {
     {a : ByteArray} {stop : USize} {s : CommandState} {ic : BlockState} {c ilen clen n : Nat} {lit : BlockState}
     {out : List Nat} {st : Cmd} {pos : USize}
     (hC : Core w k.toNat m st out (s.remaining - (ilen - n)) s.distances ic lit s.distance) (htag : st.tag = .literals)
-    (hprod : s.produced = s.output.length) (hcode : st.code.toNat = c) (hilen : st.ilen.toNat = ilen)
+    (hprod : s.produced = s.output.length) (hcode : st.code.toNat < 128 ↔ c < 128) (hilen : st.ilen.toNat = ilen)
     (hclen : st.clen.toNat = clen) (hleft : st.left.toNat = n) (hnle : n ≤ ilen) (hirem : ilen ≤ s.remaining)
     (hlen : out.length + n = s.output.length + ilen) (hp : pos.toNat ≤ stop.toNat) (r : LitRun) {run : USize}
     (hrun0 : run.toNat ≠ 0) (hrunL : run.toNat ≤ n) (hrunC : run.toNat ≤ st.lCount.toNat) (hrunR : run.toNat + st.pend.toNat + 16 ≤ 2 ^ k.toNat)

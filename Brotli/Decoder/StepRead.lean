@@ -372,7 +372,8 @@ private theorem insertCopy_next {α : Type} {w k : Nat} {m : MetaBlockHeader} {K
         ext := { st.ext with code := code, ilen := ilen, copyBits := copyBits, copyBase := copyBase }
         tag := .copyLength, pos := pos, status := .next } :=
   StepOk.ofNext (p' := .copyLength s ic sym ilenN copyBitsN copyBaseN) rfl
-    ⟨{ hC with wf := hw, cbase1 := by show 1 ≤ copyBase.toNat; omega }, rfl, hprod, h1, h2, h3, h4, h5, h6⟩
+    ⟨{ hC with wf := hw, cbase1 := by show 1 ≤ copyBase.toNat; omega }, rfl, hprod, (by show code.toNat < 128 ↔ _; rw [h1]),
+      h2, h3, h4, h5, h6⟩
     (Nat.le_refl _) hp hrest (fun F => Reach.one (hj F))
 
 /-- The element's step does its job. -/
