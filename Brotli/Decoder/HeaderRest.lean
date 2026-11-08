@@ -1,6 +1,7 @@
 module
 
 public import Brotli.Decoder.SmallRead
+public import Brotli.Decoder.FastEq
 
 @[expose] public section
 
@@ -29,12 +30,16 @@ inductive Cat where
   | D
   deriving DecidableEq
 
+fast_deceq Cat [L, I, D]
+
 /-- A group of prefix codes. -/
 inductive CK where
   | L
   | I
   | D
   deriving DecidableEq
+
+fast_deceq CK [L, I, D]
 
 /-- What a header's reading goes on to, and what the groups of codes do to it once both context maps, and so every group's
 number of trees, are read. For the spec's own reading, the second does nothing. For the memory demand, it adds what the

@@ -3,6 +3,7 @@ module
 public import Brotli.Decoder.Reader
 public import Brotli.Decoder.CmdLut
 public import Brotli.Spec.Stream
+public import Brotli.Decoder.FastEq
 
 @[expose] public section
 
@@ -31,6 +32,8 @@ inductive ReadStatus where
   /-- The spec rejects, whatever bits follow. -/
   | bad
   deriving DecidableEq
+
+fast_deceq ReadStatus [ok, short, bad]
 
 /-- A block switch's result: the new buffer, block type and count, flat. -/
 structure Switched where

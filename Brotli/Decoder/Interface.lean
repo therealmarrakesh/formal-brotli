@@ -1,6 +1,7 @@
 module
 
 public import Brotli.Spec.Stream
+public import Brotli.Decoder.FastEq
 
 @[expose] public section
 
@@ -23,6 +24,8 @@ inductive Status where
   | rejected
   | memoryLimit
   deriving DecidableEq
+
+fast_deceq Status [needsInput, needsOutput, done, rejected, memoryLimit]
 
 /-- A stopped decoder takes no more calls. -/
 def Status.stopped : Status → Bool

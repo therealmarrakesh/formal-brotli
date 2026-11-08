@@ -2,6 +2,7 @@ module
 
 public import Brotli.Decoder.Literals
 public import Brotli.Decoder.FastTab
+public import Brotli.Decoder.FastEq
 
 @[expose] public section
 
@@ -29,6 +30,8 @@ inductive Tag where
   | word
   deriving DecidableEq
 
+fast_deceq Tag [command, insertCopy, copyLength, literals, distance, distanceSymbol, copy, word]
+
 /-- How a step ended. -/
 inductive StepStatus where
   /-- It moved on, to another place or further through the same one. -/
@@ -42,6 +45,8 @@ inductive StepStatus where
   /-- The spec rejects, whatever bits follow. -/
   | bad
   deriving DecidableEq
+
+fast_deceq StepStatus [next, needsInput, needsOutput, done, bad]
 
 /-- The block types that occurred, four words per category: type `t`'s flag is bit `t % 64` of word `t / 64`. They are
 held apart from the loop's state, which a block switch alone changes, so that every other step's state stays small. -/

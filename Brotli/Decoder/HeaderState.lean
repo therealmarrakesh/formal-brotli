@@ -6,6 +6,7 @@ public import Brotli.Decoder.FastTab
 public import Brotli.Decoder.TableSize
 public import Brotli.Decoder.State
 public import Brotli.Decoder.Step
+public import Brotli.Decoder.FastEq
 
 @[expose] public section
 
@@ -51,6 +52,8 @@ inductive Role where
   | codes
   deriving DecidableEq
 
+fast_deceq Role [type, count, map, codes]
+
 /-- Which place in the header a state is at. -/
 inductive HTag where
   | cat
@@ -68,6 +71,8 @@ inductive HTag where
   | ready
   deriving DecidableEq
 
+fast_deceq HTag [cat, code, clens, syms, first, np, modes, trees, rlemax, vals, imtf, codes, ready]
+
 /-- How a header step ended. -/
 inductive HStatus where
   | next
@@ -77,6 +82,8 @@ inductive HStatus where
   | memory
   | ready
   deriving DecidableEq
+
+fast_deceq HStatus [next, needsInput, bad, memory, ready]
 
 /-- What the header has settled so far. -/
 structure Done where

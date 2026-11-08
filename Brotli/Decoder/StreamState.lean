@@ -2,6 +2,7 @@ module
 
 public import Brotli.Decoder.StreamRaw
 public import Brotli.Decoder.Progress
+public import Brotli.Decoder.FastEq
 
 @[expose] public section
 
@@ -98,6 +99,8 @@ inductive DTag where
   | ended
   deriving DecidableEq
 
+fast_deceq DTag [wbits, mblock, skip, raw, hdr, cmds, ended]
+
 /-- How a stream step ended. -/
 inductive DStatus where
   | next
@@ -106,6 +109,8 @@ inductive DStatus where
   | memory
   | bad
   deriving DecidableEq
+
+fast_deceq DStatus [next, needsInput, needsOutput, memory, bad]
 
 /-- A dummy header, between meta-blocks. -/
 def Hdr.none : Hdr where
