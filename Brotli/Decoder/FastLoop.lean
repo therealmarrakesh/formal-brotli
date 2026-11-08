@@ -84,8 +84,8 @@ theorem u8_shl2 (x : UInt8) : (x.toUSize <<< USize.ofNat 2).toNat = 4 * x.toNat 
 /-- What the loop knows of the values fixed while it runs: the header matches a spec header, the arena `T` is the
 header's, the block types are in range, and each row offset points at its type's row of the derived tables (`TabOk`):
 `lRow` the resolved literal map, `iRow` the fused insert-and-copy entries, `iFb` (in 4-byte units) the insert-and-copy
-tree's base, `dRow` the resolved distance map, `s0` the shared distance table. -/
-structure FCtx (H : Hdr) (T : ByteArray) (lCur iCur dCur tb : UInt64) (modeOff lRow iRow iFb dRow s0 : USize) : Prop where
+tree's base, `dRow` the resolved distance map. The shared distance table is at the arena's fixed offset 256. -/
+structure FCtx (H : Hdr) (T : ByteArray) (lCur iCur dCur tb : UInt64) (modeOff lRow iRow iFb dRow : USize) : Prop where
   hdr : ∃ m, HdrRel H m
   arena : T = H.arena
   hl : lCur.toNat < H.nL.toNat
@@ -97,26 +97,25 @@ structure FCtx (H : Hdr) (T : ByteArray) (lCur iCur dCur tb : UInt64) (modeOff l
   iRow : iRow.toNat = H.tabF0.toNat + 2048 * iCur.toNat
   iFb : 4 * iFb.toNat = H.tabF0.toNat + 2048 * H.nI.toNat + 256 * H.nL.toNat + 16 * H.nD.toNat + 4 * iCur.toNat
   dRow : dRow.toNat = H.tabF0.toNat + 2048 * H.nI.toNat + 256 * H.nL.toNat + 16 * dCur.toNat
-  s0 : s0.toNat = 256
 
 section
-variable {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow s0 : USize}
+variable {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow : USize}
 
-theorem FCtx.tab (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) :
+theorem FCtx.tab (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) :
     TabOk T H.litBase H.lMap H.icBase H.dBase H.dMap H.lTriv H.nL.toNat H.nI.toNat H.nD.toNat H.treesL.toNat
       H.treesD.toNat H.npostfix H.ndirect H.tabF0.toNat := by
   obtain ⟨m, hm⟩ := C.hdr
   rw [C.arena]
   exact hm.tab
 
-theorem FCtx.size32 (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) : T.size < 2 ^ 32 := C.tab.size32
+theorem FCtx.size32 (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) : T.size < 2 ^ 32 := C.tab.size32
 
-theorem FCtx.sizeOk (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) :
+theorem FCtx.sizeOk (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) :
     H.tabF0.toNat + 2048 * H.nI.toNat + 256 * H.nL.toNat + 16 * H.nD.toNat + 4 * H.nI.toNat + 4 * H.nL.toNat ≤
       T.size := C.tab.sizeOk
 
 /-- Every table lies within `tabF0 - 8`, and 6 bytes follow it: what `lookupT` needs. -/
-theorem FCtx.lim (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) : H.tabF0.toNat - 8 + 6 ≤ T.size := by
+theorem FCtx.lim (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) : H.tabF0.toNat - 8 + 6 ≤ T.size := by
   have := C.sizeOk
   have := C.tab.f0Ok
   omega
@@ -130,7 +129,7 @@ theorem tree_byteN (H : Hdr) {J : Nat} (hJ : J < H.lMap.size) : byteN H.lMap J <
   exact this
 
 /-- A resolved literal map's entry: the base of the context's tree, and that tree's table. -/
-theorem FCtx.litIn (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) {cid : Nat} (hc : cid < 64) :
+theorem FCtx.litIn (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) {cid : Nat} (hc : cid < 64) :
     leAt T (lRow.toNat + 4 * cid) 4 = u32At H.litBase (byteN H.lMap (64 * lCur.toNat + cid)) ∧
       TableIn T (u32At H.litBase (byteN H.lMap (64 * lCur.toNat + cid))) (H.tabF0.toNat - 8) := by
   have hl := C.hl
@@ -141,7 +140,7 @@ theorem FCtx.litIn (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0
   exact ⟨e, C.tab.lFit _ (tree_byteN H hJ)⟩
 
 /-- The block type's context mode. -/
-theorem FCtx.modeLt (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) :
+theorem FCtx.modeLt (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) :
     (H.modes.data[lCur.toNat]?.getD 0).toNat < 4 := by
   have hl := C.hl
   have h32 := H.lit.map32
@@ -151,12 +150,12 @@ theorem FCtx.modeLt (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s
   rw [uget_toNat, hu] at this
   exact this
 
-theorem FCtx.hm (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) : modeOff.toNat + 512 ≤ 2048 := by
+theorem FCtx.hm (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) : modeOff.toNat + 512 ≤ 2048 := by
   have := C.modeLt
   rw [C.mode]
   omega
 
-theorem FCtx.hm512 (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) : modeOff.toNat % 512 = 0 := by
+theorem FCtx.hm512 (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) : modeOff.toNat % 512 = 0 := by
   rw [C.mode]
   omega
 
@@ -166,7 +165,7 @@ theorem trivBase_toNat {H : Hdr} {t : UInt64} (ht : t.toNat < H.nL.toNat) :
   unfold trivBase
   rw [slotWord_toNat, cur_usize ht]
 
-theorem FCtx.tbIn (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) (h : ¬ tb = 4294967295) :
+theorem FCtx.tbIn (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) (h : ¬ tb = 4294967295) :
     TableIn T tb.toUSize.toNat (H.tabF0.toNat - 8) := by
   have hv : tb.toNat = u32At H.lTriv lCur.toNat := by rw [C.tbEq, trivBase_toNat]
   have hne : u32At H.lTriv lCur.toNat ≠ 4294967295 := fun e => h (UInt64.toNat_inj.mp (by rw [hv, e]; rfl))
@@ -174,7 +173,7 @@ theorem FCtx.tbIn (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0)
   exact C.tab.trivFit _ C.hl hne
 
 /-- The position of a context's entry in the resolved literal map. -/
-theorem FCtx.litIdx (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) (cid : UInt8) (hc : cid.toNat < 64) :
+theorem FCtx.litIdx (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) (cid : UInt8) (hc : cid.toNat < 64) :
     (lRow + (cid.toUSize <<< USize.ofNat 2)).toNat = lRow.toNat + 4 * cid.toNat ∧
       lRow.toNat + 4 * cid.toNat + 4 ≤ T.size := by
   have := C.sizeOk
@@ -190,7 +189,7 @@ theorem FCtx.litIdx (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s
     (h32 : T.size < 2 ^ 32) (hd : modeOff.toNat % 512 = 0) : USize :=
   (load32 T (lRow + ((cidFast modeOff p1 p2 hm).toUSize <<< USize.ofNat 2)) (h _ (cid_lt hm hd)) h32).toUSize
 
-theorem FCtx.rowIn (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) (p1 p2 : UInt8) :
+theorem FCtx.rowIn (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) (p1 p2 : UInt8) :
     TableIn T (litRowBase T lRow modeOff p1 p2 C.hm (fun cid hc => by rw [(C.litIdx cid hc).1]; exact (C.litIdx cid hc).2)
       C.size32 C.hm512).toNat (H.tabF0.toNat - 8) := by
   have hc := cid_lt (p1 := p1) (p2 := p2) C.hm C.hm512
@@ -200,7 +199,7 @@ theorem FCtx.rowIn (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0
   exact (C.litIn hc).2
 
 /-- A literal's lookup: at the block type's shared base, or at its context's tree. -/
-@[inline] def litT (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) (p1 p2 : UInt8) (w : UInt64) :
+@[inline] def litT (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) (p1 p2 : UInt8) (w : UInt64) :
     UInt64 :=
   if h : tb = 4294967295 then
     lookupT T (litRowBase T lRow modeOff p1 p2 C.hm
@@ -282,21 +281,21 @@ theorem maskB_eq_maskT {T : ByteArray} {h : 256 ≤ T.size} {h32 : T.size < 2 ^ 
       omega) h32
 
 section
-variable {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow s0 : USize}
+variable {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow : USize}
 
-theorem FCtx.big (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) : 256 ≤ T.size := by
+theorem FCtx.big (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) : 256 ≤ T.size := by
   have := C.sizeOk
   have := C.tab.f0Ok
   omega
 
-theorem FCtx.iRowLe (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) : iRow.toNat + 2048 ≤ T.size := by
+theorem FCtx.iRowLe (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) : iRow.toNat + 2048 ≤ T.size := by
   have := C.sizeOk
   have := C.hi
   rw [C.iRow]
   omega
 
 /-- The position of a distance context's entry in the resolved distance map. -/
-theorem FCtx.dIdx (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) (clen : UInt64) :
+theorem FCtx.dIdx (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) (clen : UInt64) :
     (dRow + ((distCid clen).toUSize <<< USize.ofNat 2)).toNat = dRow.toNat + 4 * distanceContextId clen.toNat ∧
       dRow.toNat + 4 * distanceContextId clen.toNat + 4 ≤ T.size := by
   have := C.sizeOk
@@ -309,7 +308,7 @@ theorem FCtx.dIdx (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0)
   exact ⟨by omega, by omega⟩
 
 /-- The table base of the distance tree for the copy length's context, from the resolved distance map. -/
-@[inline] def dRowBase (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) (clen : UInt64) : USize :=
+@[inline] def dRowBase (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) (clen : UInt64) : USize :=
   (load32 T (dRow + ((distCid clen).toUSize <<< USize.ofNat 2))
     (by rw [(C.dIdx clen).1]; exact (C.dIdx clen).2) C.size32).toUSize
 
@@ -321,7 +320,7 @@ theorem tree_dMap (H : Hdr) {J : Nat} (hJ : J < H.dMap.size) : byteN H.dMap J < 
   rw [uget_toNat, hJu] at this
   exact this
 
-theorem FCtx.dRowBase_toNat (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) (clen : UInt64) :
+theorem FCtx.dRowBase_toNat (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) (clen : UInt64) :
     (dRowBase C clen).toNat = u32At H.dBase (byteN H.dMap (4 * dCur.toNat + distanceContextId clen.toNat)) := by
   have hc := distanceContextId_lt clen.toNat
   have hd := C.hd
@@ -333,7 +332,7 @@ theorem FCtx.dRowBase_toNat (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iF
   congr 1
   omega
 
-theorem FCtx.dIn (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) (clen : UInt64) :
+theorem FCtx.dIn (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) (clen : UInt64) :
     TableIn T (dRowBase C clen).toNat (H.tabF0.toNat - 8) := by
   have hc := distanceContextId_lt clen.toNat
   have hd := C.hd
@@ -342,7 +341,7 @@ theorem FCtx.dIn (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) 
   exact C.tab.dFit _ (tree_dMap H hJ)
 
 /-- A distance symbol from the tree is in the distance alphabet, so below 520. -/
-theorem FCtx.dSym (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) (clen w : UInt64) :
+theorem FCtx.dSym (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) (clen w : UInt64) :
     (wordSym (lookupT T (dRowBase C clen) w (C.dIn clen) C.lim C.size32)).toNat < 520 := by
   have hc := distanceContextId_lt clen.toNat
   have hd := C.hd
@@ -354,7 +353,7 @@ theorem FCtx.dSym (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0)
   rw [← hm.npostfix, ← hm.ndirect] at this
   exact Nat.lt_of_lt_of_le this (distAlpha_le H.npLe H.ndLe)
 
-theorem FCtx.s0Le (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) : 4416 ≤ T.size := by
+theorem FCtx.s0Le (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) : 4416 ≤ T.size := by
   have := C.sizeOk
   have := C.tab.f0Ok
   omega
@@ -367,29 +366,29 @@ base distance. -/
     (by rw [fastAdd (by rw [u64_shl (by decide) (by omega), fastLit (by decide)]; omega), u64_shl (by decide) (by omega),
       fastLit (by decide)]; omega) h32
 
-theorem FCtx.fbLe (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) : 4 * iFb.toNat + 4 ≤ T.size := by
+theorem FCtx.fbLe (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) : 4 * iFb.toNat + 4 ≤ T.size := by
   have := C.sizeOk
   have := C.hi
   rw [C.iFb]
   omega
 
 /-- The insert-and-copy tree's base, for a code word the fused entries don't hold. -/
-@[inline] def icFbBase (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) : USize :=
+@[inline] def icFbBase (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) : USize :=
   (slotWord T iFb C.fbLe C.size32).toUSize
 
-theorem FCtx.icFbBase_toNat (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) :
+theorem FCtx.icFbBase_toNat (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) :
     (icFbBase C).toNat = u32At H.icBase iCur.toNat := by
   unfold icFbBase
   rw [word_toUSize (by rw [slotWord_toNat]; exact u32At_lt _ _), slotWord_toNat, ← leAt_u32, C.iFb]
   exact C.tab.ires _ C.hi
 
-theorem FCtx.icIn (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) :
+theorem FCtx.icIn (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) :
     TableIn T (icFbBase C).toNat (H.tabF0.toNat - 8) := by
   rw [C.icFbBase_toNat]
   exact C.tab.iFit _ C.hi
 
 /-- An insert-and-copy symbol from the tree is below 704. -/
-theorem FCtx.icSym (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) (w : UInt64) :
+theorem FCtx.icSym (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) (w : UInt64) :
     (wordSym (lookupT T (icFbBase C) w C.icIn C.lim C.size32)).toNat < 704 := by
   obtain ⟨m, hm⟩ := C.hdr
   obtain ⟨code, _, hok, hC, hS⟩ := hm.ic _ C.hi
@@ -674,11 +673,11 @@ or past the bytes written, and the loop leaves at either. -/
   base + (((0x6051426051423333 : UInt64) >>> (dcode <<< 2)) &&& 15) - 3
 
 section
-variable {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow s0 : USize}
+variable {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow : USize}
 
 /-- Head 2's explicit distance: the tree for the copy length's context, the symbol, and the distance, by the short
 codes or by the shared table and the extra bits; with whether the buffer held the bits. -/
-@[inline] def distK {α : Type} (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) (np : UInt64)
+@[inline] def distK {α : Type} (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) (np : UInt64)
     (word count clen d0 d1 d2 d3 : UInt64) (hw : (BitBuffer.mk word count).Wf)
     (k : (ok : Bool) → (w c dcode d : UInt64) → (ok = true → (BitBuffer.mk w c).Wf) → α) : α :=
   let v := lookupT T (dRowBase C clen) word (C.dIn clen) C.lim C.size32
@@ -894,7 +893,7 @@ theorem icEntryOf_split {l sym j : UInt64} (hs : sym.toNat < 704) (hl : l.toNat 
     · exact UInt64.toNat_inj.mp (by rw [f48, e5]; omega)
 
 /-- The fused entry the loop loads is the block type's entry for the next 8 bits. -/
-theorem FCtx.row64_eq (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) (w : UInt64) :
+theorem FCtx.row64_eq (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) (w : UInt64) :
     row64 T iRow C.iRowLe C.size32 w =
       icEntryU (UInt64.ofNat (slotNum T (u32At H.icBase iCur.toNat + w.toNat % 256))) (UInt64.ofNat (w.toNat % 256)) := by
   have h32 := C.size32
@@ -912,7 +911,7 @@ theorem FCtx.row64_eq (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow
 
 /-- A fused entry's bits taken are at most 8 and its extra bits at most 24 each: so the loop reads them as whole bytes
 and indexes the masks with them unmasked. -/
-theorem FCtx.icBytes (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) (w : UInt64)
+theorem FCtx.icBytes (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) (w : UInt64)
     (hne : ¬ row64 T iRow C.iRowLe C.size32 w &&& 255 = 255) :
     (row64 T iRow C.iRowLe C.size32 w &&& 255).toNat ≤ 8 ∧
       ((row64 T iRow C.iRowLe C.size32 w >>> 16) &&& 255).toNat ≤ 24 ∧
@@ -942,7 +941,7 @@ theorem FCtx.icBytes (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow 
 /-- Head 1: the insert-and-copy symbol and both lengths, from the fused entry (one 8-byte load, each field a whole
 byte, the masks indexed unmasked) or, for a code word longer than 8 bits, from the tree; with whether the buffer held
 the bits. -/
-@[inline] def icK {α : Type} (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) (word count : UInt64)
+@[inline] def icK {α : Type} (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) (word count : UInt64)
     (hw : (BitBuffer.mk word count).Wf)
     (k : (ok : Bool) → (w c code ilen clen : UInt64) → (ok = true → (BitBuffer.mk w c).Wf) → α) : α :=
   let e := row64 T iRow C.iRowLe C.size32 word
@@ -1038,7 +1037,7 @@ abbrev FOut (H : Hdr) (kk stop : USize) : Type :=
 /-- `fexit`, with what the compiled step machine needs of the state it leaves (`CmdInv`), at a place among the
 literals, a distance or a command. -/
 @[inline] def fexitP {H : Hdr} {T : ByteArray} {kk stop mask size cap16 posLim pairBase : USize} {np tb : UInt64}
-    {x : CmdExt} {modeOff lRow iRow iFb dRow s0 : USize} (C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow s0)
+    {x : CmdExt} {modeOff lRow iRow iFb dRow : USize} (C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow)
     (X : XInv H x) (W : FWin H T kk mask size cap16 posLim stop pairBase np)
     (word count : UInt64) (ring : ByteArray) (opos pB cap wB : USize) (rEnd : UInt64) (iCount lCount dCount : UInt64)
     (flags : Flags) (d01 d23 code ilen clen : UInt64) (p1 p2 : UInt8) (tag : Tag) (left : UInt64) (pos : USize)
@@ -1117,8 +1116,8 @@ meta-block or the room would end inside the next command, a distance is past the
 too long for the bits at hand. -/
 def fastLoop (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (cap : USize)
     (T : ByteArray) (np : UInt64) (x : CmdExt) (flags : Flags) (mask size cap16 pB wB posLim : USize)
-    (rEnd bEnd tb : UInt64) (modeOff lRow pairBase iRow iFb dRow s0 : USize)
-    (C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow s0) (X : XInv H x)
+    (rEnd bEnd tb : UInt64) (modeOff lRow pairBase iRow iFb dRow : USize)
+    (C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow) (X : XInv H x)
     (W : FWin H T kk mask size cap16 posLim stop pairBase np)
     (word count : UInt64) (pos : USize) (ring : ByteArray) (opos : USize)
     (iCount lCount dCount d01 d23 code ilen clen lits m : UInt64) (p1 p2 : UInt8)
@@ -1146,7 +1145,7 @@ def fastLoop (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.to
         let r1 := wput ring opos mask hk hmk S.size b1
         let r2 := wput r1 (opos + USize.ofNat 1) mask hk hmk (wput_size ring opos mask hk hmk S.size b1) b2
         fastLoop H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase iRow iFb
-          dRow s0 C X W (word' >>> l) (count' - l) pos' r2 (opos + USize.ofNat 2) iCount lCount dCount
+          dRow C X W (word' >>> l) (count' - l) pos' r2 (opos + USize.ofNat 2) iCount lCount dCount
           d01 d23 code ilen clen lits (m - 2) b2 b1
           ⟨drop1_wf hf.wf (by omega) (by omega), hf.posStop, wput_size _ _ _ hk hmk _ _,
             lit_margin (j := 2) S.margin hm2 (by decide) hf.acct (by show l.toNat ≤ 15 * 2; omega) (by omega)⟩
@@ -1157,7 +1156,7 @@ def fastLoop (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.to
         have hc15 : 15 ≤ count'.toNat := hf.enough
         let b := (v >>> 4).toUInt8
         fastLoop H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase iRow iFb
-          dRow s0 C X W (word' >>> l) (count' - l) pos' (wput ring opos mask hk hmk S.size b)
+          dRow C X W (word' >>> l) (count' - l) pos' (wput ring opos mask hk hmk S.size b)
           (opos + USize.ofNat 1) iCount lCount dCount d01 d23 code ilen clen lits (m - 1) b p1
           ⟨drop1_wf hf.wf (by omega) (by omega), hf.posStop, wput_size _ _ _ hk hmk _ _,
             lit_margin (j := 1) S.margin hm1 (by decide) hf.acct (by show l.toNat ≤ 15 * 1; omega) (by omega)⟩
@@ -1179,7 +1178,7 @@ def fastLoop (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.to
       let r1 := wput ring opos mask hk hmk S.size b1
       let r2 := wput r1 (opos + USize.ofNat 1) mask hk hmk (wput_size ring opos mask hk hmk S.size b1) b2
       fastLoop H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase iRow iFb
-        dRow s0 C X W (w1 >>> l2) (count' - l - l2) pos' r2 (opos + USize.ofNat 2) iCount lCount dCount
+        dRow C X W (w1 >>> l2) (count' - l - l2) pos' r2 (opos + USize.ofNat 2) iCount lCount dCount
         d01 d23 code ilen clen lits (m - 2) b2 b1
         ⟨drop2_wf (a := l) (b := l2) hf.wf (by omega) (by omega) (by omega), hf.posStop, wput_size _ _ _ hk hmk _ _, by
           intro _
@@ -1201,7 +1200,7 @@ def fastLoop (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.to
       have hc15 : 15 ≤ count'.toNat := hf.enough
       let b := (v >>> 4).toUInt8
       fastLoop H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase iRow iFb
-        dRow s0 C X W (word' >>> l) (count' - l) pos' (wput ring opos mask hk hmk S.size b)
+        dRow C X W (word' >>> l) (count' - l) pos' (wput ring opos mask hk hmk S.size b)
         (opos + USize.ofNat 1) iCount lCount dCount d01 d23 code ilen clen lits (m - 1) b p1
         ⟨drop1_wf hf.wf (by omega) (by omega), hf.posStop, wput_size _ _ _ hk hmk _ _,
           lit_margin (j := 1) S.margin hm1 (by decide) hf.acct (by show l.toNat ≤ 15 * 1; omega) (by omega)⟩
@@ -1220,7 +1219,7 @@ def fastLoop (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.to
         seg_dec (by rw [Decidable.of_not_not hm0]; rfl) (fun e => hl (UInt64.toNat_inj.mp (by rw [e]; rfl)))
           (fun e => hcl (Or.inl (UInt64.toNat_inj.mp (by rw [e]; rfl))))
       fastLoop H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase iRow iFb
-        dRow s0 C X W word count pos ring opos iCount (lCount - m') dCount d01 d23 code ilen clen
+        dRow C X W word count pos ring opos iCount (lCount - m') dCount d01 d23 code ilen clen
         (lits - m') m' (wget ring (opos - USize.ofNat 1) mask hmk S.size) (wget ring (opos - USize.ofNat 2) mask hmk S.size)
         ⟨S.wf, S.posStop, S.size, fun _ => by omega⟩
   else
@@ -1299,7 +1298,7 @@ def fastLoop (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.to
     else
       -- no segment is open: the context bytes are read from the window when the next one starts
       fastLoop H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase iRow iFb
-        dRow s0 C X W word4 count4 pos3 ring' opos' (iCount - 1) lCount dCount' n01 n23 code' ilen'
+        dRow C X W word4 count4 pos3 ring' opos' (iCount - 1) lCount dCount' n01 n23 code' ilen'
         clen' ilen' 0 0 0
         ⟨hok1 (by cases h : ok1 with
           | false => exact absurd (Or.inl h) h1
@@ -1440,10 +1439,9 @@ place, computed once. `bEnd` is where the room or the meta-block ends, which the
   fastLoop H kk a stop hs cap H.arena H.npostfix x flags (ringMask kk) (ringSize kk) (ringSize kk - USize.ofNat 16)
     (pend - wpos) (written - wpos) (stop - USize.ofNat 40) (remaining + wpos.toUInt64) bEnd (trivBase H x.lCur hinv.lCur)
     modeOff (l0 + (x.lCur.toUSize <<< USize.ofNat 8)) pairBase (H.tabF0 + (x.iCur.toUSize <<< USize.ofNat 11))
-    ((r0 >>> USize.ofNat 2) + x.iCur.toUSize) (d0 + (x.dCur.toUSize <<< USize.ofNat 4)) (USize.ofNat 256)
+    ((r0 >>> USize.ofNat 2) + x.iCur.toUSize) (d0 + (x.dCur.toUSize <<< USize.ofNat 4))
     ⟨hinv.hdr, rfl, hinv.lCur, hinv.iCur, hinv.dCur, rfl,
-      by rw [modeOff_toNat (H.modesLt _ hmodes), uget_toNat, cur_usize hinv.lCur], hr.1, hr.2.1, hr.2.2.1, hr.2.2.2,
-      fastLit (by decide)⟩
+      by rw [modeOff_toNat (H.modesLt _ hmodes), uget_toNat, cur_usize hinv.lCur], hr.1, hr.2.1, hr.2.2.1, hr.2.2.2⟩
     ⟨hinv.iPrev, hinv.lPrev, hinv.dPrev⟩
     ⟨hinv.k24, hinv.k16, ringMask_toNat hinv.k24, ringSize_toNat hinv.k24,
       by rw [USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr (by rw [h16, ringSize_toNat hinv.k24]; exact hinv.k16)),

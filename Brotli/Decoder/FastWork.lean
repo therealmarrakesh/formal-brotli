@@ -21,8 +21,8 @@ open Brotli.Spec
 /-- The work of `fastLoop`: a round each, and a copy's bytes. -/
 def fastLoopW (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (cap : USize)
     (T : ByteArray) (np : UInt64) (x : CmdExt) (flags : Flags) (mask size cap16 pB wB posLim : USize)
-    (rEnd bEnd tb : UInt64) (modeOff lRow pairBase iRow iFb dRow s0 : USize)
-    (C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow s0) (X : XInv H x)
+    (rEnd bEnd tb : UInt64) (modeOff lRow pairBase iRow iFb dRow : USize)
+    (C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow) (X : XInv H x)
     (W : FWin H T kk mask size cap16 posLim stop pairBase np)
     (word count : UInt64) (pos : USize) (ring : ByteArray) (opos : USize)
     (iCount lCount dCount d01 d23 code ilen clen lits m : UInt64) (p1 p2 : UInt8)
@@ -49,7 +49,7 @@ def fastLoopW (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.t
         let r1 := wput ring opos mask hk hmk S.size b1
         let r2 := wput r1 (opos + USize.ofNat 1) mask hk hmk (wput_size ring opos mask hk hmk S.size b1) b2
         1 + fastLoopW H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase iRow
-          iFb dRow s0 C X W (word' >>> l) (count' - l) pos' r2 (opos + USize.ofNat 2) iCount lCount
+          iFb dRow C X W (word' >>> l) (count' - l) pos' r2 (opos + USize.ofNat 2) iCount lCount
           dCount d01 d23 code ilen clen lits (m - 2) b2 b1
           ⟨drop1_wf hf.wf (by omega) (by omega), hf.posStop, wput_size _ _ _ hk hmk _ _,
             lit_margin (j := 2) S.margin hm2 (by decide) hf.acct (by show l.toNat ≤ 15 * 2; omega) (by omega)⟩
@@ -60,7 +60,7 @@ def fastLoopW (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.t
         have hc15 : 15 ≤ count'.toNat := hf.enough
         let b := (v >>> 4).toUInt8
         1 + fastLoopW H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase iRow
-          iFb dRow s0 C X W (word' >>> l) (count' - l) pos' (wput ring opos mask hk hmk S.size b)
+          iFb dRow C X W (word' >>> l) (count' - l) pos' (wput ring opos mask hk hmk S.size b)
           (opos + USize.ofNat 1) iCount lCount dCount d01 d23 code ilen clen lits (m - 1) b p1
           ⟨drop1_wf hf.wf (by omega) (by omega), hf.posStop, wput_size _ _ _ hk hmk _ _,
             lit_margin (j := 1) S.margin hm1 (by decide) hf.acct (by show l.toNat ≤ 15 * 1; omega) (by omega)⟩
@@ -82,7 +82,7 @@ def fastLoopW (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.t
       let r1 := wput ring opos mask hk hmk S.size b1
       let r2 := wput r1 (opos + USize.ofNat 1) mask hk hmk (wput_size ring opos mask hk hmk S.size b1) b2
       1 + fastLoopW H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase iRow
-        iFb dRow s0 C X W (w1 >>> l2) (count' - l - l2) pos' r2 (opos + USize.ofNat 2) iCount lCount
+        iFb dRow C X W (w1 >>> l2) (count' - l - l2) pos' r2 (opos + USize.ofNat 2) iCount lCount
         dCount d01 d23 code ilen clen lits (m - 2) b2 b1
         ⟨drop2_wf (a := l) (b := l2) hf.wf (by omega) (by omega) (by omega), hf.posStop, wput_size _ _ _ hk hmk _ _, by
           intro _
@@ -104,7 +104,7 @@ def fastLoopW (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.t
       have hc15 : 15 ≤ count'.toNat := hf.enough
       let b := (v >>> 4).toUInt8
       1 + fastLoopW H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase iRow
-        iFb dRow s0 C X W (word' >>> l) (count' - l) pos' (wput ring opos mask hk hmk S.size b)
+        iFb dRow C X W (word' >>> l) (count' - l) pos' (wput ring opos mask hk hmk S.size b)
         (opos + USize.ofNat 1) iCount lCount dCount d01 d23 code ilen clen lits (m - 1) b p1
         ⟨drop1_wf hf.wf (by omega) (by omega), hf.posStop, wput_size _ _ _ hk hmk _ _,
           lit_margin (j := 1) S.margin hm1 (by decide) hf.acct (by show l.toNat ≤ 15 * 1; omega) (by omega)⟩
@@ -120,7 +120,7 @@ def fastLoopW (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.t
         seg_dec (by rw [Decidable.of_not_not hm0]; rfl) (fun e => hl (UInt64.toNat_inj.mp (by rw [e]; rfl)))
           (fun e => hcl (Or.inl (UInt64.toNat_inj.mp (by rw [e]; rfl))))
       1 + fastLoopW H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase iRow
-        iFb dRow s0 C X W word count pos ring opos iCount (lCount - m') dCount d01 d23 code ilen clen
+        iFb dRow C X W word count pos ring opos iCount (lCount - m') dCount d01 d23 code ilen clen
         (lits - m') m' (wget ring (opos - USize.ofNat 1) mask hmk S.size) (wget ring (opos - USize.ofNat 2) mask hmk S.size)
         ⟨S.wf, S.posStop, S.size, fun _ => by omega⟩
   else
@@ -181,7 +181,7 @@ def fastLoopW (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.t
     if h1 : ok1 = false ∨ bEnd < opos'.toUInt64 + ilen' + clen' then 1 + clen.toNat
     else
       1 + clen.toNat + fastLoopW H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow
-        pairBase iRow iFb dRow s0 C X W word4 count4 pos3 ring' opos' (iCount - 1) lCount dCount' n01
+        pairBase iRow iFb dRow C X W word4 count4 pos3 ring' opos' (iCount - 1) lCount dCount' n01
         n23 code' ilen' clen' ilen' 0 0 0
         ⟨hok1 (by cases h : ok1 with
           | false => exact absurd (Or.inl h) h1
@@ -246,10 +246,9 @@ def fastEnterW (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.
   fastLoopW H kk a stop hs cap H.arena H.npostfix x flags (ringMask kk) (ringSize kk) (ringSize kk - USize.ofNat 16)
     (pend - wpos) (written - wpos) (stop - USize.ofNat 40) (remaining + wpos.toUInt64) bEnd (trivBase H x.lCur hinv.lCur)
     modeOff (l0 + (x.lCur.toUSize <<< USize.ofNat 8)) pairBase (H.tabF0 + (x.iCur.toUSize <<< USize.ofNat 11))
-    ((r0 >>> USize.ofNat 2) + x.iCur.toUSize) (d0 + (x.dCur.toUSize <<< USize.ofNat 4)) (USize.ofNat 256)
+    ((r0 >>> USize.ofNat 2) + x.iCur.toUSize) (d0 + (x.dCur.toUSize <<< USize.ofNat 4))
     ⟨hinv.hdr, rfl, hinv.lCur, hinv.iCur, hinv.dCur, rfl,
-      by rw [modeOff_toNat (H.modesLt _ hmodes), uget_toNat, cur_usize hinv.lCur], hr.1, hr.2.1, hr.2.2.1, hr.2.2.2,
-      fastLit (by decide)⟩
+      by rw [modeOff_toNat (H.modesLt _ hmodes), uget_toNat, cur_usize hinv.lCur], hr.1, hr.2.1, hr.2.2.1, hr.2.2.2⟩
     ⟨hinv.iPrev, hinv.lPrev, hinv.dPrev⟩
     ⟨hinv.k24, hinv.k16, ringMask_toNat hinv.k24, ringSize_toNat hinv.k24,
       by rw [USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr (by rw [h16, ringSize_toNat hinv.k24]; exact hinv.k16)),

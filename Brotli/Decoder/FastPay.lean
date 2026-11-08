@@ -31,9 +31,9 @@ theorem fillK_rel {α β : Type} {R : α → β → Prop} {a : ByteArray} {stop 
   · exact h _ _ _ _
 
 section
-variable {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow s0 : USize}
+variable {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow : USize}
 
-theorem distK_rel {α β : Type} {R : α → β → Prop} (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0)
+theorem distK_rel {α β : Type} {R : α → β → Prop} (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow)
     {np word count clen d0 d1 d2 d3 : UInt64} {hw hw' : (BitBuffer.mk word count).Wf}
     {k1 : (ok : Bool) → (w c dcode d : UInt64) → (ok = true → (BitBuffer.mk w c).Wf) → α}
     {k2 : (ok : Bool) → (w c dcode d : UInt64) → (ok = true → (BitBuffer.mk w c).Wf) → β}
@@ -43,7 +43,7 @@ theorem distK_rel {α β : Type} {R : α → β → Prop} (C : FCtx H T lCur iCu
   dsimp only
   split <;> exact h _ _ _ _ _ _ _
 
-theorem icFb_rel {α β : Type} {R : α → β → Prop} (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0)
+theorem icFb_rel {α β : Type} {R : α → β → Prop} (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow)
     {word count : UInt64} {hw hw' : (BitBuffer.mk word count).Wf}
     {k1 : (ok : Bool) → (w c code ilen clen : UInt64) → (ok = true → (BitBuffer.mk w c).Wf) → α}
     {k2 : (ok : Bool) → (w c code ilen clen : UInt64) → (ok = true → (BitBuffer.mk w c).Wf) → β}
@@ -110,8 +110,8 @@ theorem FW.copy {pB : USize} {bEnd : UInt64} {opos opos' : USize} {c : Nat} {m :
   split <;> omega
 
 /-- A length's extra bits are below `2 ^ 24`. -/
-theorem extra_lt {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow s0 : USize}
-    (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) {x a b : UInt64} (ha : a.toNat < 64)
+theorem extra_lt {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow : USize}
+    (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) {x a b : UInt64} (ha : a.toNat < 64)
     (hb : b.toNat ≤ 24) : ((x >>> a) &&& maskT T C.big C.size32 b).toNat < 16777216 := by
   have h24 : (2 : Nat) ^ 24 = 16777216 := rfl
   rw [C.maskT_eq (by omega), shr_mask_toNat _ _ _ ha (by omega)]
@@ -128,8 +128,8 @@ set_option maxHeartbeats 4000000 in
 /-- The fast loop's work is paid for by the bytes it writes. -/
 theorem fastLoop_work {H : Hdr} {kk : USize} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {cap : USize}
     {T : ByteArray} {np : UInt64} {x : CmdExt} {flags : Flags} {mask size cap16 pB wB posLim : USize}
-    {rEnd bEnd tb : UInt64} {modeOff lRow pairBase iRow iFb dRow s0 : USize}
-    {C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow s0} {X : XInv H x}
+    {rEnd bEnd tb : UInt64} {modeOff lRow pairBase iRow iFb dRow : USize}
+    {C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow} {X : XInv H x}
     {W : FWin H T kk mask size cap16 posLim stop pairBase np} :
     ∀ (I L : Nat) (word count : UInt64) (pos : USize) (ring : ByteArray) (opos : USize)
       (iCount lCount dCount d01 d23 code ilen clen lits m : UInt64) (p1 p2 : UInt8)
@@ -137,10 +137,10 @@ theorem fastLoop_work {H : Hdr} {kk : USize} {a : ByteArray} {stop : USize} {hs 
       FNum opos pB wB rEnd bEnd kk.toNat ((lits + m).toNat + clen.toNat) →
       lCount.toNat + m.toNat < 2 ^ 64 → lits.toNat + m.toNat < 2 ^ 30 → 1 ≤ clen.toNat →
       FW pB bEnd opos m (fastLoop H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow
-          pairBase iRow iFb dRow s0 C X W word count pos ring opos iCount lCount dCount d01 d23 code ilen clen lits m p1 p2
+          pairBase iRow iFb dRow C X W word count pos ring opos iCount lCount dCount d01 d23 code ilen clen lits m p1 p2
           S).1
         (fastLoopW H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase iRow
-          iFb dRow s0 C X W word count pos ring opos iCount lCount dCount d01 d23 code ilen clen lits m p1 p2 S) := by
+          iFb dRow C X W word count pos ring opos iCount lCount dCount d01 d23 code ilen clen lits m p1 p2 S) := by
   intro I
   induction I using Nat.strongRecOn with
   | ind I ihI =>
@@ -163,10 +163,10 @@ theorem fastLoop_work {H : Hdr} {kk : USize} {a : ByteArray} {stop : USize} {hs 
           ∀ (word' count' : UInt64) (pos' : USize) (ring' : ByteArray) (q1 q2 : UInt8)
           (S' : FSt kk stop posLim word' count' pos' ring' (m - j)),
           FW pB bEnd opos m (fastLoop H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff
-              lRow pairBase iRow iFb dRow s0 C X W word' count' pos' ring' (opos + jU) iCount lCount
+              lRow pairBase iRow iFb dRow C X W word' count' pos' ring' (opos + jU) iCount lCount
               dCount d01 d23 code ilen clen lits (m - j) q1 q2 S').1
             (1 + fastLoopW H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase
-              iRow iFb dRow s0 C X W word' count' pos' ring' (opos + jU) iCount lCount dCount d01 d23
+              iRow iFb dRow C X W word' count' pos' ring' (opos + jU) iCount lCount dCount d01 d23
               code ilen clen lits (m - j) q1 q2 S') := by
         intro j hj1 hjm jU hjU word' count' pos' ring' q1 q2 S'
         have hjN : (m - j).toNat = m.toNat - j.toNat := u64_sub_le hjm

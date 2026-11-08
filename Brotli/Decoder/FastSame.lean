@@ -55,8 +55,8 @@ set_option maxHeartbeats 4000000 in
 /-- The fast loop depends only on the unread bytes. -/
 theorem fastLoop_same {H : Hdr} {kk : USize} {a1 a2 : ByteArray} {e1 e2 : USize} {hs1 : e1.toNat ≤ a1.size}
     {hs2 : e2.toNat ≤ a2.size} {cap : USize} {T : ByteArray} {np : UInt64} {x : CmdExt} {flags : Flags}
-    {mask size cap16 pB wB l1 l2 : USize} {rEnd bEnd tb : UInt64} {modeOff lRow pairBase iRow iFb dRow s0 : USize}
-    {C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow s0} {X : XInv H x}
+    {mask size cap16 pB wB l1 l2 : USize} {rEnd bEnd tb : UInt64} {modeOff lRow pairBase iRow iFb dRow : USize}
+    {C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow} {X : XInv H x}
     {W1 : FWin H T kk mask size cap16 l1 e1 pairBase np} {W2 : FWin H T kk mask size cap16 l2 e2 pairBase np} :
     ∀ (I L : Nat) (word count : UInt64) (p1 p2 : USize) (ring : ByteArray) (opos : USize)
       (iCount lCount dCount d01 d23 code ilen clen lits m : UInt64) (b1 b2 : UInt8)
@@ -64,9 +64,9 @@ theorem fastLoop_same {H : Hdr} {kk : USize} {a1 a2 : ByteArray} {e1 e2 : USize}
       iCount.toNat = I → 17 * lits.toNat + m.toNat = L → Same a1 e1 a2 e2 p1 p2 →
       FSame a1 e1 a2 e2
         (fastLoop H kk a1 e1 hs1 cap T np x flags mask size cap16 pB wB l1 rEnd bEnd tb modeOff lRow pairBase iRow iFb
-          dRow s0 C X W1 word count p1 ring opos iCount lCount dCount d01 d23 code ilen clen lits m b1 b2 S1).1
+          dRow C X W1 word count p1 ring opos iCount lCount dCount d01 d23 code ilen clen lits m b1 b2 S1).1
         (fastLoop H kk a2 e2 hs2 cap T np x flags mask size cap16 pB wB l2 rEnd bEnd tb modeOff lRow pairBase iRow iFb
-          dRow s0 C X W2 word count p2 ring opos iCount lCount dCount d01 d23 code ilen clen lits m b1 b2 S2).1 := by
+          dRow C X W2 word count p2 ring opos iCount lCount dCount d01 d23 code ilen clen lits m b1 b2 S2).1 := by
   intro I
   induction I using Nat.strongRecOn with
   | ind I ihI =>

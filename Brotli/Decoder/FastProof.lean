@@ -342,8 +342,8 @@ theorem lit_move {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHeade
 
 /-- The fast loop's literal read is the lookup at the context's tree: through the resolved literal map, or at the block
 type's shared base. -/
-theorem FCtx.litT_lookup {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow s0 : USize}
-    (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) (p1 p2 : UInt8) (w : UInt64) :
+theorem FCtx.litT_lookup {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow : USize}
+    (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) (p1 p2 : UInt8) (w : UInt64) :
     ∃ (base : USize) (hfit : TableFits H.arena base.toNat),
       u32At H.litBase (byteN H.lMap (64 * lCur.toNat + (cidFast modeOff p1 p2 C.hm).toNat)) = base.toNat ∧
       litT C p1 p2 w = lookup H.arena base w hfit H.lit.arena32 := by
@@ -1330,10 +1330,10 @@ theorem distCount_move {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader}
 /-! ### A distance's symbol -/
 
 section
-variable {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow s0 : USize}
+variable {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow : USize}
 
 /-- The arena's mask for `n` bits, below 32, is `2 ^ n - 1`. -/
-theorem FCtx.maskT_eq (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) {n : UInt64} (hn : n.toNat < 32) :
+theorem FCtx.maskT_eq (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) {n : UInt64} (hn : n.toNat < 32) :
     maskT T C.big C.size32 n = ((1 : UInt64) <<< n) - 1 := by
   have h31 : (n &&& 31).toNat = n.toNat := by
     rw [UInt64.toNat_and, show (31 : UInt64).toNat = 2 ^ 5 - 1 from rfl, Nat.and_two_pow_sub_one_eq_mod,
@@ -1350,7 +1350,7 @@ theorem FCtx.maskT_eq (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow
   rfl
 
 /-- The shared distance table's entry for a symbol is `dEntry`. -/
-theorem FCtx.dshT_eq (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) {dc : UInt64} (hd : dc.toNat < 520) :
+theorem FCtx.dshT_eq (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) {dc : UInt64} (hd : dc.toNat < 520) :
     dshT T C.s0Le C.size32 dc hd = dEntry H.npostfix H.ndirect dc := by
   have := C.s0Le
   have := C.size32
@@ -1361,7 +1361,7 @@ theorem FCtx.dshT_eq (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow 
     show dc.toNat * 2 ^ 3 = 8 * dc.toNat by rw [Nat.mul_comm], h256, C.tab.dsh _ hd, UInt64.ofNat_toNat]
 
 /-- A distance symbol from the context's tree is in the header's distance alphabet. -/
-theorem FCtx.dAlpha (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) {m : MetaBlockHeader}
+theorem FCtx.dAlpha (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) {m : MetaBlockHeader}
     (hH : HdrRel H m) (clen w : UInt64) :
     (wordSym (lookupT T (dRowBase C clen) w (C.dIn clen) C.lim C.size32)).toNat <
       distanceAlphabetSize H.npostfix.toNat H.ndirect.toNat := by
@@ -1383,7 +1383,7 @@ theorem lookup_base_congr {t : ByteArray} {b1 b2 : USize} {w : UInt64} {h1 : Tab
 
 /-- The step machine's distance symbol reads at the fast loop's table base for the copy length's context. -/
 theorem stepDistanceSymbol_fast {H : Hdr} {T : ByteArray} {lCur iCur tb : UInt64}
-    {modeOff lRow iRow iFb dRow s0 : USize} {st : Cmd} (C : FCtx H T lCur iCur st.dCur tb modeOff lRow iRow iFb dRow s0)
+    {modeOff lRow iRow iFb dRow : USize} {st : Cmd} (C : FCtx H T lCur iCur st.dCur tb modeOff lRow iRow iFb dRow)
     (pos : USize) :
     stepDistanceSymbol H st pos =
       distanceStep H st pos (lookupT T (dRowBase C st.clen) st.word (C.dIn st.clen) C.lim C.size32) := by
@@ -1426,8 +1426,8 @@ theorem u64_zero_le (x : UInt64) : 0 ≤ x := UInt64.le_iff_toNat_le.mpr (Nat.ze
 code word's bits dropped. -/
 theorem distShort_move {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
     {a : ByteArray} {stop : USize} {s : CommandState} {clen : Nat} {dist : BlockState} {st : Cmd} {pos : USize}
-    {T : ByteArray} {lCur iCur tb : UInt64} {modeOff lRow iRow iFb dRow s0 : USize}
-    (C : FCtx H T lCur iCur st.dCur tb modeOff lRow iRow iFb dRow s0) (hH : HdrRel H m)
+    {T : ByteArray} {lCur iCur tb : UInt64} {modeOff lRow iRow iFb dRow : USize}
+    (C : FCtx H T lCur iCur st.dCur tb modeOff lRow iRow iFb dRow) (hH : HdrRel H m)
     (hrel : Rel w k m st (.distanceSymbol s clen dist)) (hp : pos.toNat ≤ stop.toNat) {v : UInt64}
     (hv : v = lookupT T (dRowBase C st.clen) st.word (C.dIn st.clen) C.lim C.size32) (hl : wordBits v ≤ st.count)
     (h16 : wordSym v < 16) (hd0 : shortFast st.d0 st.d1 st.d2 st.d3 (wordSym v) ≠ 0)
@@ -1473,8 +1473,8 @@ theorem distShort_move {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {
 NPOSTFIX. As a move, to `applyDistance` with the code word's and the extra bits dropped. -/
 theorem distLong_move {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
     {a : ByteArray} {stop : USize} {s : CommandState} {clen : Nat} {dist : BlockState} {st : Cmd} {pos : USize}
-    {T : ByteArray} {lCur iCur tb : UInt64} {modeOff lRow iRow iFb dRow s0 : USize}
-    (C : FCtx H T lCur iCur st.dCur tb modeOff lRow iRow iFb dRow s0) (hH : HdrRel H m)
+    {T : ByteArray} {lCur iCur tb : UInt64} {modeOff lRow iRow iFb dRow : USize}
+    (C : FCtx H T lCur iCur st.dCur tb modeOff lRow iRow iFb dRow) (hH : HdrRel H m)
     (hrel : Rel w k m st (.distanceSymbol s clen dist)) (hp : pos.toNat ≤ stop.toNat) {v E D : UInt64}
     (hv : v = lookupT T (dRowBase C st.clen) st.word (C.dIn st.clen) C.lim C.size32) (h16 : ¬ wordSym v < 16)
     (hE : E = dEntry H.npostfix H.ndirect (wordSym v))
@@ -1539,8 +1539,8 @@ theorem distLong_move {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {K
 /-! ### The insert-and-copy element -/
 
 /-- The step machine's insert-and-copy symbol reads at the fast loop's tree base. -/
-theorem stepInsertCopy_fast {H : Hdr} {T : ByteArray} {lCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow s0 : USize}
-    {st : Cmd} (C : FCtx H T lCur st.iCur dCur tb modeOff lRow iRow iFb dRow s0) (pos : USize) :
+theorem stepInsertCopy_fast {H : Hdr} {T : ByteArray} {lCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow : USize}
+    {st : Cmd} (C : FCtx H T lCur st.iCur dCur tb modeOff lRow iRow iFb dRow) (pos : USize) :
     stepInsertCopy H st pos = insertStep st pos (lookupT T (icFbBase C) st.word C.icIn C.lim C.size32) := by
   have hi := C.hi
   unfold stepInsertCopy
@@ -1559,8 +1559,8 @@ hand and its insert length within the meta-block: as a move, the step machine's 
 command's literals. -/
 theorem ic_move {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
     {a : ByteArray} {stop : USize} {s : CommandState} {ic : BlockState} {st : Cmd} {pos : USize}
-    {T : ByteArray} {lCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow s0 : USize}
-    (C : FCtx H T lCur st.iCur dCur tb modeOff lRow iRow iFb dRow s0) (hH : HdrRel H m)
+    {T : ByteArray} {lCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow : USize}
+    (C : FCtx H T lCur st.iCur dCur tb modeOff lRow iRow iFb dRow) (hH : HdrRel H m)
     (hrel : Rel w k m st (.insertCopy s ic)) (hp : pos.toNat ≤ stop.toNat) {v ib cb ibase cbase IL : UInt64}
     (hv : v = lookupT T (icFbBase C) st.word C.icIn C.lim C.size32) (hc : (wordSym v).toNat < 704)
     (hib : ib = rowBits (insertRow (wordSym v) hc)) (hcb : cb = rowBits (copyRow (wordSym v) hc))
@@ -1666,10 +1666,10 @@ theorem lookupT_short {t : ByteArray} {base : USize} {w : UInt64} {lim : Nat} (h
   rw [dite_eq_left h8]
 
 section
-variable {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow s0 : USize}
+variable {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow : USize}
 
 /-- The fast loop's insert-and-copy read through the tree, for any code word: `icK`'s second branch. -/
-@[inline] def icFb {α : Type} (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) (word count : UInt64)
+@[inline] def icFb {α : Type} (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) (word count : UInt64)
     (hw : (BitBuffer.mk word count).Wf)
     (k : (ok : Bool) → (w c code ilen clen : UInt64) → (ok = true → (BitBuffer.mk w c).Wf) → α) : α :=
   let v := lookupT T (icFbBase C) word C.icIn C.lim C.size32
@@ -1714,8 +1714,8 @@ theorem copyRow_congr {c c' : UInt64} {h : c.toNat < 704} {h' : c'.toNat < 704} 
   rfl
 
 /-- The fused entries give what the tree gives: `icK` is its read through the tree. -/
-theorem icK_fb {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow s0 : USize}
-    {α : Type} (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) (word count : UInt64)
+theorem icK_fb {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow : USize}
+    {α : Type} (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) (word count : UInt64)
     (hw : (BitBuffer.mk word count).Wf)
     (k : (ok : Bool) → (w c code ilen clen : UInt64) → (ok = true → (BitBuffer.mk w c).Wf) → α) :
     icK C word count hw k = icFb C word count hw k := by
@@ -1886,7 +1886,7 @@ theorem lit_round {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHead
     {c ilen clen n : Nat} {lit : BlockState} {out : List Nat} {word count : UInt64} {ring : ByteArray}
     {opos mask pB cap cap16 wB : USize} {rEnd bEnd : UInt64} {iCount LC dCount : UInt64} {flags : Flags} {x : CmdExt}
     {d01 d23 code ilen' clen' : UInt64} {p1 p2 : UInt8} {L : UInt64} {pos : USize} {T : ByteArray} {tb : UInt64}
-    {modeOff lRow iRow iFb dRow s0 : USize} (C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow s0)
+    {modeOff lRow iRow iFb dRow : USize} (C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow)
     (hH : HdrRel H m)
     (hrel : Rel w k.toNat m (fexit word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code
       ilen' clen' p1 p2 .literals L pos) (.literals s ic c ilen clen n lit out))
@@ -1991,7 +1991,7 @@ theorem lit2_round {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHea
     {c ilen clen n : Nat} {lit : BlockState} {out : List Nat} {word count : UInt64} {ring : ByteArray}
     {opos mask pB cap cap16 wB : USize} {rEnd bEnd : UInt64} {iCount LC dCount : UInt64} {flags : Flags} {x : CmdExt}
     {d01 d23 code ilen' clen' : UInt64} {p1 p2 : UInt8} {L : UInt64} {pos : USize} {T : ByteArray} {tb : UInt64}
-    {modeOff lRow iRow iFb dRow s0 : USize} (C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow s0)
+    {modeOff lRow iRow iFb dRow : USize} (C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow)
     (hH : HdrRel H m)
     (hrel : Rel w k.toNat m (fexit word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code
       ilen' clen' p1 p2 .literals L pos) (.literals s ic c ilen clen n lit out))
@@ -2138,11 +2138,11 @@ theorem lookupW_bits (t : ByteArray) (b x : Nat) : (lookupW t b x &&& 15).toNat 
   omega
 
 section
-variable {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow s0 : USize}
+variable {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow : USize}
 
 /-- A two-literal entry with count 2, for a block type whose contexts share one tree: its bits are the two code words',
 and its literals the two lookups', the second at the bits after the first, in any context. -/
-theorem FCtx.pair_lits (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) {m : MetaBlockHeader}
+theorem FCtx.pair_lits (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) {m : MetaBlockHeader}
     (hH : HdrRel H m) {pairBase : USize}
     (hpair : pairBase ≠ USize.ofNat 4294967295 → u32At H.lTriv lCur.toNat ≠ 4294967295 ∧
       ∀ j, j < 256 → leAt T (pairBase.toNat + 4 * j) 4 = (pairAt T (u32At H.lTriv lCur.toNat) j).toNat % 2 ^ 32)
@@ -2215,7 +2215,7 @@ theorem pair_round {α : Type} {w : Nat} {k : USize} {H : Hdr} {m : MetaBlockHea
     {c ilen clen n : Nat} {lit : BlockState} {out : List Nat} {word count : UInt64} {ring : ByteArray}
     {opos mask pB cap cap16 wB : USize} {rEnd bEnd : UInt64} {iCount LC dCount : UInt64} {flags : Flags} {x : CmdExt}
     {d01 d23 code ilen' clen' : UInt64} {p1 p2 : UInt8} {L : UInt64} {pos : USize} {T : ByteArray} {tb : UInt64}
-    {modeOff lRow iRow iFb dRow s0 : USize} (C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow s0)
+    {modeOff lRow iRow iFb dRow : USize} (C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow)
     (hH : HdrRel H m)
     (hrel : Rel w k.toNat m (fexit word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code
       ilen' clen' p1 p2 .literals L pos) (.literals s ic c ilen clen n lit out))
@@ -2458,8 +2458,8 @@ theorem dist_small {st : Cmd} {out : List Nat} {rem : Nat} {ds : Distances} {ic 
 
 /-- A distance's short code (one of the last distances, adjusted): from the distance, a refill to 40 bits, the block
 count, the symbol, then the copy. -/
-theorem dShort_move {T : ByteArray} {tb : UInt64} {modeOff lRow iRow iFb dRow s0 : USize}
-    (C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow s0) (hH : HdrRel H m)
+theorem dShort_move {T : ByteArray} {tb : UInt64} {modeOff lRow iRow iFb dRow : USize}
+    (C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow) (hH : HdrRel H m)
     (hrel : Rel w k.toNat m (fexit word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code
       ilen clen p1 p2 .distance 0 pos) (.distance s c cl))
     {word1 count1 : UInt64} {pos1 : USize} (hf : FillOk a stop word count pos 40 word1 count1 pos1)
@@ -2488,8 +2488,8 @@ theorem dShort_move {T : ByteArray} {tb : UInt64} {modeOff lRow iRow iFb dRow s0
 
 /-- A distance's code from 16 on: from the distance, a refill to 40 bits, the block count, the symbol and its extra
 bits, then the copy. -/
-theorem dLong_move {T : ByteArray} {tb : UInt64} {modeOff lRow iRow iFb dRow s0 : USize}
-    (C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow s0) (hH : HdrRel H m)
+theorem dLong_move {T : ByteArray} {tb : UInt64} {modeOff lRow iRow iFb dRow : USize}
+    (C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow) (hH : HdrRel H m)
     (hrel : Rel w k.toNat m (fexit word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code
       ilen clen p1 p2 .distance 0 pos) (.distance s c cl))
     {word1 count1 : UInt64} {pos1 : USize} (hf : FillOk a stop word count pos 40 word1 count1 pos1)
@@ -2567,8 +2567,8 @@ theorem fcopy_move {s : CommandState} {dd nn : Nat} {d : UInt64}
 
 /-- A command's start within its block, then its insert-and-copy element read through the tree (`icFb`, which the
 fused entries equal): from a refill to 40 bits, the command's literals, in the loop's record. -/
-theorem ic_round {T : ByteArray} {tb : UInt64} {modeOff lRow iRow iFb dRow s0 : USize}
-    (C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow s0)
+theorem ic_round {T : ByteArray} {tb : UInt64} {modeOff lRow iRow iFb dRow : USize}
+    (C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow)
     (hK : ∀ s bs, s.remaining ≠ 0 → K s bs = readCommand w m s bs >>= fun (s1, b) => K s1 b) (hH : HdrRel H m)
     {s : CommandState}
     (hrel : Rel w k.toNat m (fexit word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code
@@ -2630,8 +2630,8 @@ end
 /-! ### The loop -/
 
 /-- `distK` passes its continuation the distance's reads, whichever they are. -/
-theorem distK_spec {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow s0 : USize}
-    {α : Type} {P : α → Prop} (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) (np : UInt64)
+theorem distK_spec {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow : USize}
+    {α : Type} {P : α → Prop} (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) (np : UInt64)
     (word count clen d0 d1 d2 d3 : UInt64) (hw : (BitBuffer.mk word count).Wf)
     (k : (ok : Bool) → (w c dcode d : UInt64) → (ok = true → (BitBuffer.mk w c).Wf) → α)
     (h : ∀ ok w c dcode d hk, P (k ok w c dcode d hk)) : P (distK C np word count clen d0 d1 d2 d3 hw k) := by
@@ -2640,8 +2640,8 @@ theorem distK_spec {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeO
   split <;> exact h _ _ _ _ _ _
 
 /-- `distK`'s two cases: a short code, or a code from 16 on through the shared table. -/
-theorem distK_cases {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow s0 : USize}
-    {α : Type} {P : α → Prop} (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) (np : UInt64)
+theorem distK_cases {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow : USize}
+    {α : Type} {P : α → Prop} (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) (np : UInt64)
     (word count clen d0 d1 d2 d3 : UInt64) (hw : (BitBuffer.mk word count).Wf)
     (k : (ok : Bool) → (w c dcode d : UInt64) → (ok = true → (BitBuffer.mk w c).Wf) → α)
     (h1 : ∀ v, v = lookupT T (dRowBase C clen) word (C.dIn clen) C.lim C.size32 → wordSym v < 16 → ∀ hk,
@@ -2660,8 +2660,8 @@ theorem distK_cases {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {mode
   · exact h2 _ _ rfl ‹_› (C.dshT_eq _) _
 
 /-- `icFb` passes its continuation the element's reads through the tree. -/
-theorem icFb_spec {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow s0 : USize}
-    {α : Type} {P : α → Prop} (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) (word count : UInt64)
+theorem icFb_spec {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow : USize}
+    {α : Type} {P : α → Prop} (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) (word count : UInt64)
     (hw : (BitBuffer.mk word count).Wf)
     (k : (ok : Bool) → (w c code ilen clen : UInt64) → (ok = true → (BitBuffer.mk w c).Wf) → α)
     (h : ∀ (v : UInt64) (hc : (wordSym v).toNat < 704)
@@ -2681,8 +2681,8 @@ theorem icFb_spec {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOf
   h _ (C.icSym word) _ rfl
 
 /-- A length from a row's base and its extra bits is below `2 ^ 25`. -/
-theorem len_bound {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow s0 : USize}
-    (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow s0) {x a b base : UInt64} (ha : a.toNat < 64)
+theorem len_bound {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOff lRow iRow iFb dRow : USize}
+    (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow) {x a b base : UInt64} (ha : a.toNat < 64)
     (hb : b.toNat ≤ 24) (hbase : base.toNat ≤ 22594) :
     (base + ((x >>> a) &&& maskT T C.big C.size32 b)).toNat ≤ 22594 + 16777216 := by
   have h24 : (2 : Nat) ^ 24 = 16777216 := rfl
@@ -2728,8 +2728,8 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
     (hK : ∀ s bs, s.remaining ≠ 0 → K s bs = readCommand w mH s bs >>= fun (s1, b) => K s1 b)
     {H : Hdr} {kk : USize} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {cap : USize}
     {T : ByteArray} {np : UInt64} {x : CmdExt} {flags : Flags} {mask size cap16 pB wB posLim : USize}
-    {rEnd bEnd tb : UInt64} {modeOff lRow pairBase iRow iFb dRow s0 : USize}
-    {C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow s0} {X : XInv H x}
+    {rEnd bEnd tb : UInt64} {modeOff lRow pairBase iRow iFb dRow : USize}
+    {C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow} {X : XInv H x}
     {W : FWin H T kk mask size cap16 posLim stop pairBase np}
     (hH : HdrRel H mH) (hmk : mask = ringMask kk) (hcap : cap16 = ringSize kk - USize.ofNat 16)
     (hpair : pairBase ≠ USize.ofNat 4294967295 → u32At H.lTriv x.lCur.toNat ≠ 4294967295 ∧
@@ -2744,9 +2744,9 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
       ∃ p', MoveOk w kk.toNat mH K a stop p (fabs word count ring opos mask pB cap cap16 wB rEnd iCount lCount dCount
         flags x d01 d23 code ilen clen lits m p1 p2 pos) pos p'
         (fastLoop H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase iRow
-          iFb dRow s0 C X W word count pos ring opos iCount lCount dCount d01 d23 code ilen clen lits m p1 p2 S).1 ∧
+          iFb dRow C X W word count pos ring opos iCount lCount dCount d01 d23 code ilen clen lits m p1 p2 S).1 ∧
         FFrame cap pB bEnd opos (fastLoop H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb
-          modeOff lRow pairBase iRow iFb dRow s0 C X W word count pos ring opos iCount lCount dCount d01 d23 code ilen
+          modeOff lRow pairBase iRow iFb dRow C X W word count pos ring opos iCount lCount dCount d01 d23 code ilen
           clen lits m p1 p2 S).1 := by
   intro I
   induction I using Nat.strongRecOn with
@@ -2790,10 +2790,10 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
             pB cap cap16 wB rEnd iCount
             (lCount + m) dCount flags x d01 d23 code ilen clen p1 p2 .literals (lits + m) pos) pos p'
             (fastLoop H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase
-              iRow iFb dRow s0 C X W word' count' pos' ring' opos' iCount lCount dCount d01 d23 code
+              iRow iFb dRow C X W word' count' pos' ring' opos' iCount lCount dCount d01 d23 code
               ilen clen lits (m - j) q1 q2 S').val ∧
             FFrame cap pB bEnd opos (fastLoop H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb
-              modeOff lRow pairBase iRow iFb dRow s0 C X W word' count' pos' ring' opos' iCount lCount
+              modeOff lRow pairBase iRow iFb dRow C X W word' count' pos' ring' opos' iCount lCount
               dCount d01 d23 code ilen clen lits (m - j) q1 q2 S').val := by
         intro j hj1 hjm jU hjU word' count' pos' ring' q1 q2 S' p' opos' ho mv
         have hjN := hsub j hjm
