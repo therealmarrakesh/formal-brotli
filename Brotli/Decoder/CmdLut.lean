@@ -17,6 +17,22 @@ namespace Brotli.Decoder
 
 open Brotli.Spec
 
+/-- What a command's state keeps of its insert-and-copy symbol: whether its distance is implicit (`Rel` asks no more),
+as 0 below 128 and 128 from there, one byte that a table entry can hold. -/
+@[inline] def codeClass (c : UInt64) : UInt64 := if c < 128 then 0 else 128
+
+theorem codeClass_lt (c : UInt64) : (codeClass c).toNat < 128 ↔ c.toNat < 128 := by
+  unfold codeClass
+  by_cases h : c < 128
+  · rw [ite_eq_left h]
+    exact ⟨fun _ => UInt64.lt_iff_toNat_lt.mp h, fun _ => by decide⟩
+  · rw [ite_eq_right h]
+    exact ⟨fun e => absurd e (by decide), fun e => absurd (UInt64.lt_iff_toNat_lt.mpr e) h⟩
+
+theorem codeClass_le (c : UInt64) : (codeClass c).toNat ≤ 128 := by
+  unfold codeClass
+  split <;> decide
+
 /-- A symbol's insert extra bits, lowest insert length, copy extra bits and lowest copy length. -/
 def cmdRow (c : Nat) : Nat × Nat × Nat × Nat :=
   match insertCopyCodes c with

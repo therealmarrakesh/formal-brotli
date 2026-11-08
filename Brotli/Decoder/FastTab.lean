@@ -460,19 +460,19 @@ theorem slot16_eq {t : ByteArray} {i : USize} (h : 2 * i.toNat + 2 ≤ t.size) (
 
 From `f0`, for each insert-and-copy tree, 256 entries of 8 bytes indexed by the next 8 bits. -/
 
-/-- The fused entry of a code word of `l ≤ 8` bits for symbol `sym`, at root index `j`: the bits taken in the low byte
-and the symbol in bits 8–17; then, when the code word and both extra bits fit the 8 bits, the insert and copy lengths in
-the two high 16-bit fields, and otherwise the extra bits in bits 18–23 and 24–29 and the lengths' lowest values in the
-high fields. -/
+/-- The fused entry of a code word of `l ≤ 8` bits for symbol `sym`, at root index `j`, every field whole bytes, so
+that each is one plain load: byte 0 the bits taken, byte 1 the symbol's class (`codeClass`, the state's `code`); then,
+when the code word and both extra bits fit the 8 bits, the insert and copy lengths in bytes 4–5 and 6–7, and otherwise
+the extra bits in bytes 2 and 3 and the lengths' lowest values in bytes 4–5 and 6–7. -/
 @[inline] def icEntryOf (l sym j : UInt64) (hs : sym.toNat < 704) : UInt64 :=
   let ib := rowBits (insertRow sym hs)
   let cb := rowBits (copyRow sym hs)
   let ibase := rowBase (insertRow sym hs)
   let cbase := rowBase (copyRow sym hs)
   if l + ib + cb ≤ 8 then
-    (l + ib + cb) ||| (sym <<< 8) ||| ((ibase + ((j >>> l) &&& (((1 : UInt64) <<< ib) - 1))) <<< 32) |||
+    (l + ib + cb) ||| (codeClass sym <<< 8) ||| ((ibase + ((j >>> l) &&& (((1 : UInt64) <<< ib) - 1))) <<< 32) |||
       ((cbase + ((j >>> (l + ib)) &&& (((1 : UInt64) <<< cb) - 1))) <<< 48)
-  else l ||| (sym <<< 8) ||| (ib <<< 18) ||| (cb <<< 24) ||| (ibase <<< 32) ||| (cbase <<< 48)
+  else l ||| (codeClass sym <<< 8) ||| (ib <<< 16) ||| (cb <<< 24) ||| (ibase <<< 32) ||| (cbase <<< 48)
 
 /-- The fused entry for root index `j` of an insert-and-copy code whose root slot there holds the word `v`, or 255 when
 its code word is longer than 8 bits. -/

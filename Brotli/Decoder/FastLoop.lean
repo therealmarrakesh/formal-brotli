@@ -692,10 +692,10 @@ longer than 8 bits, from the tree; with whether the buffer held the bits. -/
   if e &&& 255 = 255 then
     let v := lookupT T (icFbBase C) word C.icIn C.lim C.size32
     let l := v &&& 15
-    let code := wordSym v
-    have hc : code.toNat < 704 := C.icSym word
-    let row := insertRow code hc
-    let cr := copyRow code hc
+    let sym := wordSym v
+    have hc : sym.toNat < 704 := C.icSym word
+    let row := insertRow sym hc
+    let cr := copyRow sym hc
     let ib := rowBits row
     let cb := rowBits cr
     let w1 := word >>> l
@@ -705,14 +705,14 @@ longer than 8 bits, from the tree; with whether the buffer held the bits. -/
     have hl : l.toNat < 16 := and15_lt v
     have hib : ib.toNat < 64 := insertRow_bits hc
     have hcb : cb.toNat ≤ 24 := copyRow_bits hc
-    k (decide (l + ib + cb ≤ count)) (w2 >>> cb) (count - l - ib - cb) code ilen clen
+    k (decide (l + ib + cb ≤ count)) (w2 >>> cb) (count - l - ib - cb) (codeClass sym) ilen clen
       (fun h => by
         have h1 := UInt64.le_iff_toNat_le.mp (of_decide_eq_true h)
         rw [u64_add_small (by rw [u64_add_small (by omega)]; omega), u64_add_small (by omega)] at h1
         exact drop3_wf hw (by omega) (by omega) (by omega) h1)
   else
     let l := e &&& 15
-    let ib := (e >>> 18) &&& 63
+    let ib := (e >>> 16) &&& 63
     let cb := (e >>> 24) &&& 63
     let w1 := word >>> l
     let ilen := ((e >>> 32) &&& 0xFFFF) + (w1 &&& maskT T C.big C.size32 ib)
@@ -721,7 +721,7 @@ longer than 8 bits, from the tree; with whether the buffer held the bits. -/
     have hl : l.toNat < 16 := and15_lt e
     have hib : ib.toNat < 64 := and63_lt _
     have hcb : cb.toNat < 64 := and63_lt _
-    k (decide (l + ib + cb ≤ count)) (w2 >>> cb) (count - l - ib - cb) ((e >>> 8) &&& 1023) ilen clen
+    k (decide (l + ib + cb ≤ count)) (w2 >>> cb) (count - l - ib - cb) ((e >>> 8) &&& 255) ilen clen
       (fun h => by
         have h1 := UInt64.le_iff_toNat_le.mp (of_decide_eq_true h)
         rw [u64_add_small (by rw [u64_add_small (by omega)]; omega), u64_add_small (by omega)] at h1

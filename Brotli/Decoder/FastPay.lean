@@ -50,14 +50,16 @@ theorem icFb_rel {α β : Type} {R : α → β → Prop} (C : FCtx H T lCur iCur
     (h : ∀ (v : UInt64) (hc : (wordSym v).toNat < 704) hk hk', v = lookupT T (icFbBase C) word C.icIn C.lim C.size32 →
       R (k1 (decide (wordBits v + rowBits (insertRow (wordSym v) hc) + rowBits (copyRow (wordSym v) hc) ≤ count))
           (((word >>> wordBits v) >>> rowBits (insertRow (wordSym v) hc)) >>> rowBits (copyRow (wordSym v) hc))
-          (count - wordBits v - rowBits (insertRow (wordSym v) hc) - rowBits (copyRow (wordSym v) hc)) (wordSym v)
+          (count - wordBits v - rowBits (insertRow (wordSym v) hc) - rowBits (copyRow (wordSym v) hc))
+          (codeClass (wordSym v))
           (rowBase (insertRow (wordSym v) hc) +
             ((word >>> wordBits v) &&& maskT T C.big C.size32 (rowBits (insertRow (wordSym v) hc))))
           (rowBase (copyRow (wordSym v) hc) + (((word >>> wordBits v) >>> rowBits (insertRow (wordSym v) hc)) &&&
             maskT T C.big C.size32 (rowBits (copyRow (wordSym v) hc)))) hk)
         (k2 (decide (wordBits v + rowBits (insertRow (wordSym v) hc) + rowBits (copyRow (wordSym v) hc) ≤ count))
           (((word >>> wordBits v) >>> rowBits (insertRow (wordSym v) hc)) >>> rowBits (copyRow (wordSym v) hc))
-          (count - wordBits v - rowBits (insertRow (wordSym v) hc) - rowBits (copyRow (wordSym v) hc)) (wordSym v)
+          (count - wordBits v - rowBits (insertRow (wordSym v) hc) - rowBits (copyRow (wordSym v) hc))
+          (codeClass (wordSym v))
           (rowBase (insertRow (wordSym v) hc) +
             ((word >>> wordBits v) &&& maskT T C.big C.size32 (rowBits (insertRow (wordSym v) hc))))
           (rowBase (copyRow (wordSym v) hc) + (((word >>> wordBits v) >>> rowBits (insertRow (wordSym v) hc)) &&&

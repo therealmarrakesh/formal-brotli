@@ -400,7 +400,7 @@ public abbrev KContC (H : Hdr) (k stop : USize) (α : Type) : Type := RunOut →
           let b2 := b1.drop (rowBits row)
           let cr := copyRow (wordSym v) (lt704 hc)
           cont b2.word b2.count ring wpos pend cap written p1 p2 remaining iCount lCount dCount flags iCur iPrev lCur
-            lPrev dCur dPrev d0 d1 d2 d3 (wordSym v) (rowBase row + b1.peek (rowBits row)) clen (rowBits cr)
+            lPrev dCur dPrev d0 d1 d2 d3 (codeClass (wordSym v)) (rowBase row + b1.peek (rowBits row)) clen (rowBits cr)
             (rowBase cr) dist wordBuf wordPos .copyLength left p
             ((hr.drop (wordBits_lt v) hwb hr.tagged).drop (insertRow_bits (lt704 hc)) hrb
               (copyRow_bits (lt704 hc)))

@@ -1574,7 +1574,7 @@ theorem ic_move {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {K : Com
       { st with
         word := ((st.word >>> wordBits v) >>> ib) >>> cb, count := st.count - wordBits v - ib - cb, left := IL
         ext := { st.ext with
-          code := wordSym v, ilen := IL, copyBits := cb, copyBase := cbase
+          code := codeClass (wordSym v), ilen := IL, copyBits := cb, copyBase := cbase
           clen := cbase + (((st.word >>> wordBits v) >>> ib) &&& maskT T C.big C.size32 cb) }
         tag := .literals, pos := pos, status := .next } := by
   have hrel0 := hrel
@@ -1597,7 +1597,7 @@ theorem ic_move {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {K : Com
   have e1 : insertStep st pos v =
       { st with
         word := (st.word >>> wordBits v) >>> ib, count := st.count - wordBits v - ib
-        ext := { st.ext with code := wordSym v, ilen := IL, copyBits := cb, copyBase := cbase }
+        ext := { st.ext with code := codeClass (wordSym v), ilen := IL, copyBits := cb, copyBase := cbase }
         tag := .copyLength, pos := pos, status := .next } := by
     unfold insertStep
     rw [ite_eq_left hl, dite_eq_left hc704]
@@ -1614,12 +1614,12 @@ theorem ic_move {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {K : Com
   have e2 : stepCopyLength
       { st with
         word := (st.word >>> wordBits v) >>> ib, count := st.count - wordBits v - ib
-        ext := { st.ext with code := wordSym v, ilen := IL, copyBits := cb, copyBase := cbase }
+        ext := { st.ext with code := codeClass (wordSym v), ilen := IL, copyBits := cb, copyBase := cbase }
         tag := .copyLength, pos := pos, status := .next } pos =
       { st with
         word := ((st.word >>> wordBits v) >>> ib) >>> cb, count := st.count - wordBits v - ib - cb, left := IL
         ext := { st.ext with
-          code := wordSym v, ilen := IL, copyBits := cb, copyBase := cbase
+          code := codeClass (wordSym v), ilen := IL, copyBits := cb, copyBase := cbase
           clen := cbase + (((st.word >>> wordBits v) >>> ib) &&& maskT T C.big C.size32 cb) }
         tag := .literals, pos := pos, status := .next } := by
     unfold stepCopyLength
@@ -1679,19 +1679,19 @@ theorem icEntryU_fused {v j : UInt64} (h : icEntryU v j &&& 255 ≠ 255) :
     rw [dite_eq_right hc] at h
     exact absurd (by decide) h
 
-/-- The fields of a fused entry: the symbol, and either the bits taken with both lengths, or the code word's bits, both
-extra bits and both lengths' lowest values. -/
+/-- The fields of a fused entry: the symbol's class, and either the bits taken with both lengths, or the code word's
+bits, both extra bits and both lengths' lowest values. -/
 theorem icEntryOf_split {l sym j : UInt64} (hs : sym.toNat < 704) (hl : l.toNat ≤ 8) (hj : j.toNat < 256) :
-    (icEntryOf l sym j hs >>> 8) &&& 1023 = sym ∧
+    (icEntryOf l sym j hs >>> 8) &&& 255 = codeClass sym ∧
     (l + rowBits (insertRow sym hs) + rowBits (copyRow sym hs) ≤ 8 →
       icEntryOf l sym j hs &&& 15 = l + rowBits (insertRow sym hs) + rowBits (copyRow sym hs) ∧
-      (icEntryOf l sym j hs >>> 18) &&& 63 = 0 ∧ (icEntryOf l sym j hs >>> 24) &&& 63 = 0 ∧
+      (icEntryOf l sym j hs >>> 16) &&& 63 = 0 ∧ (icEntryOf l sym j hs >>> 24) &&& 63 = 0 ∧
       (icEntryOf l sym j hs >>> 32) &&& 0xFFFF =
         rowBase (insertRow sym hs) + ((j >>> l) &&& (((1 : UInt64) <<< rowBits (insertRow sym hs)) - 1)) ∧
       icEntryOf l sym j hs >>> 48 = rowBase (copyRow sym hs) +
         ((j >>> (l + rowBits (insertRow sym hs))) &&& (((1 : UInt64) <<< rowBits (copyRow sym hs)) - 1))) ∧
     (¬ l + rowBits (insertRow sym hs) + rowBits (copyRow sym hs) ≤ 8 →
-      icEntryOf l sym j hs &&& 15 = l ∧ (icEntryOf l sym j hs >>> 18) &&& 63 = rowBits (insertRow sym hs) ∧
+      icEntryOf l sym j hs &&& 15 = l ∧ (icEntryOf l sym j hs >>> 16) &&& 63 = rowBits (insertRow sym hs) ∧
       (icEntryOf l sym j hs >>> 24) &&& 63 = rowBits (copyRow sym hs) ∧
       (icEntryOf l sym j hs >>> 32) &&& 0xFFFF = rowBase (insertRow sym hs) ∧
       icEntryOf l sym j hs >>> 48 = rowBase (copyRow sym hs)) := by
@@ -1707,13 +1707,15 @@ theorem icEntryOf_split {l sym j : UInt64} (hs : sym.toNat < 704) (hl : l.toNat 
   generalize rowBits (copyRow sym hs) = cb at *
   generalize rowBase (insertRow sym hs) = ibase at *
   generalize rowBase (copyRow sym hs) = cbase at *
-  have f8 : ∀ e : UInt64, ((e >>> 8) &&& 1023).toNat = e.toNat / 256 % 1024 := fun e => by
+  have hcc := codeClass_le sym
+  generalize codeClass sym = cc at *
+  have f8 : ∀ e : UInt64, ((e >>> 8) &&& 255).toNat = e.toNat / 256 % 256 := fun e => by
     rw [UInt64.toNat_and, UInt64.toNat_shiftRight]
-    show e.toNat >>> 8 &&& (2 ^ 10 - 1) = _
+    show e.toNat >>> 8 &&& (2 ^ 8 - 1) = _
     rw [Nat.and_two_pow_sub_one_eq_mod, Nat.shiftRight_eq_div_pow]
-  have f18 : ∀ e : UInt64, ((e >>> 18) &&& 63).toNat = e.toNat / 262144 % 64 := fun e => by
+  have f18 : ∀ e : UInt64, ((e >>> 16) &&& 63).toNat = e.toNat / 65536 % 64 := fun e => by
     rw [UInt64.toNat_and, UInt64.toNat_shiftRight]
-    show e.toNat >>> 18 &&& (2 ^ 6 - 1) = _
+    show e.toNat >>> 16 &&& (2 ^ 6 - 1) = _
     rw [Nat.and_two_pow_sub_one_eq_mod, Nat.shiftRight_eq_div_pow]
   have f24 : ∀ e : UInt64, ((e >>> 24) &&& 63).toNat = e.toNat / 16777216 % 64 := fun e => by
     rw [UInt64.toNat_and, UInt64.toNat_shiftRight]
@@ -1752,11 +1754,11 @@ theorem icEntryOf_split {l sym j : UInt64} (hs : sym.toNat < 704) (hl : l.toNat 
     generalize (j >>> (l + ib)) &&& (((1 : UInt64) <<< cb) - 1) = M2 at *
     have hX : (ibase + M1).toNat = ibase.toNat + M1.toNat := u64_add_small (by omega)
     have hY : (cbase + M2).toNat = cbase.toNat + M2.toNat := u64_add_small (by omega)
-    have e1 := or_shl_toNat (a := l + ib + cb) (b := sym) (s := 8) (P := 256) rfl (by decide) rfl (by omega)
+    have e1 := or_shl_toNat (a := l + ib + cb) (b := cc) (s := 8) (P := 256) rfl (by decide) rfl (by omega)
       (by omega)
-    have e2 := or_shl_toNat (a := (l + ib + cb) ||| (sym <<< 8)) (b := ibase + M1) (s := 32) (P := 4294967296) rfl
+    have e2 := or_shl_toNat (a := (l + ib + cb) ||| (cc <<< 8)) (b := ibase + M1) (s := 32) (P := 4294967296) rfl
       (by decide) rfl (by rw [e1]; omega) (by omega)
-    have e3 := or_shl_toNat (a := (l + ib + cb) ||| (sym <<< 8) ||| ((ibase + M1) <<< 32)) (b := cbase + M2) (s := 48)
+    have e3 := or_shl_toNat (a := (l + ib + cb) ||| (cc <<< 8) ||| ((ibase + M1) <<< 32)) (b := cbase + M2) (s := 48)
       (P := 281474976710656) rfl (by decide) rfl (by rw [e2, e1]; omega) (by omega)
     rw [e2, e1, hA, hX, hY] at e3
     refine ⟨UInt64.toNat_inj.mp (by rw [f8, e3]; omega), fun _ => ⟨?_, ?_, ?_, ?_, ?_⟩,
@@ -1767,14 +1769,14 @@ theorem icEntryOf_split {l sym j : UInt64} (hs : sym.toNat < 704) (hl : l.toNat 
     · exact UInt64.toNat_inj.mp (by rw [f32, e3]; omega)
     · exact UInt64.toNat_inj.mp (by rw [f48, e3]; omega)
   · rw [ite_eq_right hr]
-    have e1 := or_shl_toNat (a := l) (b := sym) (s := 8) (P := 256) rfl (by decide) rfl (by omega) (by omega)
-    have e2 := or_shl_toNat (a := l ||| (sym <<< 8)) (b := ib) (s := 18) (P := 262144) rfl (by decide) rfl
+    have e1 := or_shl_toNat (a := l) (b := cc) (s := 8) (P := 256) rfl (by decide) rfl (by omega) (by omega)
+    have e2 := or_shl_toNat (a := l ||| (cc <<< 8)) (b := ib) (s := 16) (P := 65536) rfl (by decide) rfl
       (by rw [e1]; omega) (by omega)
-    have e3 := or_shl_toNat (a := l ||| (sym <<< 8) ||| (ib <<< 18)) (b := cb) (s := 24) (P := 16777216) rfl
+    have e3 := or_shl_toNat (a := l ||| (cc <<< 8) ||| (ib <<< 16)) (b := cb) (s := 24) (P := 16777216) rfl
       (by decide) rfl (by rw [e2, e1]; omega) (by omega)
-    have e4 := or_shl_toNat (a := l ||| (sym <<< 8) ||| (ib <<< 18) ||| (cb <<< 24)) (b := ibase) (s := 32)
+    have e4 := or_shl_toNat (a := l ||| (cc <<< 8) ||| (ib <<< 16) ||| (cb <<< 24)) (b := ibase) (s := 32)
       (P := 4294967296) rfl (by decide) rfl (by rw [e3, e2, e1]; omega) (by omega)
-    have e5 := or_shl_toNat (a := l ||| (sym <<< 8) ||| (ib <<< 18) ||| (cb <<< 24) ||| (ibase <<< 32)) (b := cbase)
+    have e5 := or_shl_toNat (a := l ||| (cc <<< 8) ||| (ib <<< 16) ||| (cb <<< 24) ||| (ibase <<< 32)) (b := cbase)
       (s := 48) (P := 281474976710656) rfl (by decide) rfl (by rw [e4, e3, e2, e1]; omega) (by omega)
     rw [e4, e3, e2, e1] at e5
     refine ⟨UInt64.toNat_inj.mp (by rw [f8, e5]; omega), fun h => absurd h hr, fun _ => ⟨?_, ?_, ?_, ?_, ?_⟩⟩
@@ -1821,10 +1823,10 @@ theorem FCtx.row64_eq (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow
     (k : (ok : Bool) → (w c code ilen clen : UInt64) → (ok = true → (BitBuffer.mk w c).Wf) → α) : α :=
   let v := lookupT T (icFbBase C) word C.icIn C.lim C.size32
   let l := v &&& 15
-  let code := wordSym v
-  have hc : code.toNat < 704 := C.icSym word
-  let row := insertRow code hc
-  let cr := copyRow code hc
+  let sym := wordSym v
+  have hc : sym.toNat < 704 := C.icSym word
+  let row := insertRow sym hc
+  let cr := copyRow sym hc
   let ib := rowBits row
   let cb := rowBits cr
   let w1 := word >>> l
@@ -1834,7 +1836,7 @@ theorem FCtx.row64_eq (C : FCtx H T lCur iCur dCur tb modeOff lRow iRow iFb dRow
   have hl : l.toNat < 16 := and15_lt v
   have hib : ib.toNat < 64 := insertRow_bits hc
   have hcb : cb.toNat ≤ 24 := copyRow_bits hc
-  k (decide (l + ib + cb ≤ count)) (w2 >>> cb) (count - l - ib - cb) code ilen clen
+  k (decide (l + ib + cb ≤ count)) (w2 >>> cb) (count - l - ib - cb) (codeClass sym) ilen clen
     (fun h => by
       have h1 := UInt64.le_iff_toNat_le.mp (of_decide_eq_true h)
       rw [u64_add_small (by rw [u64_add_small (by omega)]; omega), u64_add_small (by omega)] at h1
@@ -2662,7 +2664,7 @@ theorem ic_round {T : ByteArray} {tb : UInt64} {modeOff lRow iRow iFb dRow s0 : 
         .command 0 pos) pos p'
       (fexit (((word3 >>> wordBits v) >>> rowBits (insertRow (wordSym v) hc)) >>> rowBits (copyRow (wordSym v) hc))
         (count3 - wordBits v - rowBits (insertRow (wordSym v) hc) - rowBits (copyRow (wordSym v) hc)) ring opos mask pB
-        cap cap16 wB rEnd (iCount - 1) LC dCount flags x d01 d23 (wordSym v)
+        cap cap16 wB rEnd (iCount - 1) LC dCount flags x d01 d23 (codeClass (wordSym v))
         (rowBase (insertRow (wordSym v) hc) +
           ((word3 >>> wordBits v) &&& maskT T C.big C.size32 (rowBits (insertRow (wordSym v) hc))))
         (rowBase (copyRow (wordSym v) hc) + (((word3 >>> wordBits v) >>> rowBits (insertRow (wordSym v) hc)) &&&
@@ -2747,7 +2749,8 @@ theorem icFb_spec {H : Hdr} {T : ByteArray} {lCur iCur dCur tb : UInt64} {modeOf
       v = lookupT T (icFbBase C) word C.icIn C.lim C.size32 →
       P (k (decide (wordBits v + rowBits (insertRow (wordSym v) hc) + rowBits (copyRow (wordSym v) hc) ≤ count))
         (((word >>> wordBits v) >>> rowBits (insertRow (wordSym v) hc)) >>> rowBits (copyRow (wordSym v) hc))
-        (count - wordBits v - rowBits (insertRow (wordSym v) hc) - rowBits (copyRow (wordSym v) hc)) (wordSym v)
+        (count - wordBits v - rowBits (insertRow (wordSym v) hc) - rowBits (copyRow (wordSym v) hc))
+        (codeClass (wordSym v))
         (rowBase (insertRow (wordSym v) hc) +
           ((word >>> wordBits v) &&& maskT T C.big C.size32 (rowBits (insertRow (wordSym v) hc))))
         (rowBase (copyRow (wordSym v) hc) + (((word >>> wordBits v) >>> rowBits (insertRow (wordSym v) hc)) &&&
@@ -3064,7 +3067,7 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
                     ((word3 >>> wordBits v) &&& maskT T C.big C.size32 (rowBits (insertRow (wordSym v) hcv))))
                   (mm := 0) hH hs ((ma.trans mb).trans mc) (UInt64.add_zero _).symm (UInt64.add_zero _).symm
                 obtain ⟨pe, me, fe⟩ := ih (n - USize.ofNat 1) hnN _ _ pos3 _ (opos + clen.toUSize) (iCount - 1) lCount
-                  dCount d01 d23 (wordSym v) _ _ _ 0 _ _ _
+                  dCount d01 d23 (codeClass (wordSym v)) _ _ _ 0 _ _ _
                   (N0.adv hk (n := clen.toUSize) (by rw [hcU]; omega)
                     (by rw [hcU, UInt64.add_zero]; omega))
                   (by rw [h0]; have := lCount.toNat_lt; omega) (by rw [h0]; omega) pd md.rel
@@ -3186,7 +3189,7 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
                       ((word3 >>> wordBits vi) &&& maskT T C.big C.size32 (rowBits (insertRow (wordSym vi) hcv))))
                     (mm := 0) hH hs ((ma.trans mb).trans mc) (UInt64.add_zero _).symm (UInt64.add_zero _).symm
                   obtain ⟨pe, me, fe⟩ := ih (n - USize.ofNat 1) hnN _ _ pos3 _ (opos + clen.toUSize) (iCount - 1) lCount
-                    (dCount - 1) _ _ (wordSym vi) _ _ _ 0 _ _ _
+                    (dCount - 1) _ _ (codeClass (wordSym vi)) _ _ _ 0 _ _ _
                     (N0.adv hk (n := clen.toUSize) (by rw [hcU]; omega)
                       (by rw [hcU, UInt64.add_zero]; omega))
                     (by rw [h0]; have := lCount.toNat_lt; omega) (by rw [h0]; omega) pd md.rel
@@ -3306,7 +3309,7 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
                       ((word3 >>> wordBits vi) &&& maskT T C.big C.size32 (rowBits (insertRow (wordSym vi) hcv))))
                     (mm := 0) hH hs ((ma.trans mb).trans mc) (UInt64.add_zero _).symm (UInt64.add_zero _).symm
                   obtain ⟨pe, me, fe⟩ := ih (n - USize.ofNat 1) hnN _ _ pos3 _ (opos + clen.toUSize) (iCount - 1) lCount
-                    (dCount - 1) _ _ (wordSym vi) _ _ _ 0 _ _ _
+                    (dCount - 1) _ _ (codeClass (wordSym vi)) _ _ _ 0 _ _ _
                     (N0.adv hk (n := clen.toUSize) (by rw [hcU]; omega)
                       (by rw [hcU, UInt64.add_zero]; omega))
                     (by rw [h0]; have := lCount.toNat_lt; omega) (by rw [h0]; omega) pd md.rel
