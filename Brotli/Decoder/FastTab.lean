@@ -77,6 +77,13 @@ theorem fastIdx_add {i : USize} {k : Nat} (h : i.toNat + k < 2 ^ 32) : (i + USiz
   rw [USize.toNat_add, hk]
   exact Nat.mod_eq_of_lt (by omega)
 
+/-- A position given as a number below `2 ^ 32` is that number. -/
+theorem fastLit {n : Nat} (h : n < 2 ^ 32) : (USize.ofNat n).toNat = n := by
+  have hs := USize.le_size
+  rw [USize.size_eq_two_pow] at hs
+  rw [USize.toNat_ofNat']
+  exact Nat.mod_eq_of_lt (by omega)
+
 /-- A position below another moves on by one without wrapping. -/
 theorem fastIdx_succ {j n : USize} (h : j < n) : (j + USize.ofNat 1).toNat = j.toNat + 1 := by
   have hj := USize.lt_iff_toNat_lt.mp h
@@ -286,22 +293,97 @@ theorem lookup_extend {t t' : ByteArray} {base : USize} {w : UInt64} (hf : Table
   rw [← Nat.div_add_mod (lookup t' base w hf' h32').toNat 16, ← Nat.div_add_mod (lookup t base w hf h32).toNat 16,
     a1, a2, b1, b2]
 
-/-! ### Appending entries in a loop -/
+/-! ### Writing entries in a loop
+
+A pass that appends entries makes room for all of them at once (`zeroExtend`, which writes in place into an array with
+room) and then writes each in place. Appending a byte at a time checked the array's room and its exclusivity once per
+byte, through a call. -/
 
 theorem mul_step {w a b : Nat} (h : a < b) : w + w * (b - (a + 1)) = w * (b - a) := by
   rw [show b - a = (b - (a + 1)) + 1 by omega, Nat.mul_succ]
   omega
 
-/-- Appends `w`-byte little-endian entries, `f t h _ j _` for each `j` from `j` below `n`, each computed from the array
-so far. `P` holds of every array on the way, so that `f` can read the array without checks, and the array stays below
-`2 ^ 32` bytes. -/
-@[specialize] def pushLoop (P : ByteArray → Prop) (w : Nat) (hP : ∀ t v, P t → P (pushLE t v w)) (n : USize)
-    (f : (t : ByteArray) → P t → t.size < 2 ^ 32 → (j : USize) → j < n → UInt64)
-    (t : ByteArray) (h : P t) (j : USize) (hc : t.size + w * (n.toNat - j.toNat) < 2 ^ 32) : ByteArray :=
+/-- `putLE` of 4 bytes written out, with no loop over the count. -/
+@[inline] def tput4 (t : ByteArray) (i : USize) (v : UInt64) (h : i.toNat + 4 ≤ t.size) (h32 : t.size < 2 ^ 32) :
+    ByteArray :=
+  have e1 : (i + USize.ofNat 1).toNat = i.toNat + 1 := fastIdx_add (by omega)
+  have e2 : (i + USize.ofNat 1 + USize.ofNat 1).toNat = i.toNat + 2 := by
+    rw [fastIdx_add (i := i + USize.ofNat 1) (k := 1) (by omega), e1]
+  have e3 : (i + USize.ofNat 1 + USize.ofNat 1 + USize.ofNat 1).toNat = i.toNat + 3 := by
+    rw [fastIdx_add (i := i + USize.ofNat 1 + USize.ofNat 1) (k := 1) (by omega), e2]
+  (((t.uset i v.toUInt8 (by omega)).uset (i + USize.ofNat 1) (v >>> 8).toUInt8 (by rw [size_uset', e1]; omega)).uset
+    (i + USize.ofNat 1 + USize.ofNat 1) (v >>> 8 >>> 8).toUInt8 (by rw [size_uset', size_uset', e2]; omega)).uset
+    (i + USize.ofNat 1 + USize.ofNat 1 + USize.ofNat 1) (v >>> 8 >>> 8 >>> 8).toUInt8
+    (by rw [size_uset', size_uset', size_uset', e3]; omega)
+
+theorem tput4_eq (t : ByteArray) (i : USize) (v : UInt64) (h : i.toNat + 4 ≤ t.size) (h32 : t.size < 2 ^ 32) :
+    tput4 t i v h h32 = putLE t i v 4 h h32 := rfl
+
+/-- `putLE` of 8 bytes written out, with no loop over the count. -/
+@[inline] def tput8 (t : ByteArray) (i : USize) (v : UInt64) (h : i.toNat + 8 ≤ t.size) (h32 : t.size < 2 ^ 32) :
+    ByteArray :=
+  have e1 : (i + USize.ofNat 1).toNat = i.toNat + 1 := fastIdx_add (by omega)
+  have e2 : (i + USize.ofNat 1 + USize.ofNat 1).toNat = i.toNat + 2 := by
+    rw [fastIdx_add (i := i + USize.ofNat 1) (k := 1) (by omega), e1]
+  have e3 : (i + USize.ofNat 1 + USize.ofNat 1 + USize.ofNat 1).toNat = i.toNat + 3 := by
+    rw [fastIdx_add (i := i + USize.ofNat 1 + USize.ofNat 1) (k := 1) (by omega), e2]
+  have e4 : (i + USize.ofNat 1 + USize.ofNat 1 + USize.ofNat 1 + USize.ofNat 1).toNat = i.toNat + 4 := by
+    rw [fastIdx_add (i := i + USize.ofNat 1 + USize.ofNat 1 + USize.ofNat 1) (k := 1) (by omega), e3]
+  tput4 (tput4 t i v (by omega) h32) (i + USize.ofNat 1 + USize.ofNat 1 + USize.ofNat 1 + USize.ofNat 1)
+    (v >>> 8 >>> 8 >>> 8 >>> 8) (by rw [tput4_eq, size_putLE, e4]; omega) (by rw [tput4_eq, size_putLE]; exact h32)
+
+theorem tput8_eq (t : ByteArray) (i : USize) (v : UInt64) (h : i.toNat + 8 ≤ t.size) (h32 : t.size < 2 ^ 32) :
+    tput8 t i v h h32 = putLE t i v 8 h h32 := rfl
+
+/-- `putLE`, written out for the widths the tables use. -/
+@[inline] def putW (t : ByteArray) (i : USize) (v : UInt64) (n : Nat) (h : i.toNat + n ≤ t.size) (h32 : t.size < 2 ^ 32) :
+    ByteArray :=
+  if h4 : n = 4 then tput4 t i v (h4 ▸ h) h32
+  else if h8 : n = 8 then tput8 t i v (h8 ▸ h) h32
+  else putLE t i v n h h32
+
+theorem putW_eq (t : ByteArray) (i : USize) (v : UInt64) (n : Nat) (h : i.toNat + n ≤ t.size) (h32 : t.size < 2 ^ 32) :
+    putW t i v n h h32 = putLE t i v n h h32 := by
+  unfold putW
+  split
+  · rename_i h4
+    subst h4
+    exact tput4_eq t i v h h32
+  · split
+    · rename_i h8
+      subst h8
+      exact tput8_eq t i v h h32
+    · rfl
+
+/-- A whole entry written reads back, cut to its width. -/
+theorem leAt_putLE' (n : Nat) (t : ByteArray) (i : USize) (v : UInt64) (h : i.toNat + n ≤ t.size) (h32 : t.size < 2 ^ 32) :
+    leAt (putLE t i v n h h32) i.toNat n = v.toNat % 256 ^ n :=
+  leAt_digits fun j hj => by rw [putLE_in n t i v h h32 _ (by omega) (by omega), Nat.add_sub_cancel_left]
+
+/-- An array grown by zeros begins with the array. -/
+theorem Extends.zeroExtend (t : ByteArray) (k : Nat) : Extends t (zeroExtend t k) := by
+  refine ⟨by rw [size_zeroExtend]; omega, fun q hq => ?_⟩
+  rw [zeroExtend_data, Array.getElem?_append_left (by exact hq)]
+
+/-- Writing past an array's beginning keeps it. -/
+theorem Extends.putLE {t0 t : ByteArray} (he : Extends t0 t) {i : USize} {v : UInt64} {n : Nat}
+    (h : i.toNat + n ≤ t.size) (h32 : t.size < 2 ^ 32) (hi : t0.size ≤ i.toNat) : Extends t0 (putLE t i v n h h32) :=
+  ⟨by rw [size_putLE]; exact he.1, fun q hq => by rw [putLE_out n t i v h h32 q (Or.inl (by omega))]; exact he.2 q hq⟩
+
+/-- Writes `w`-byte little-endian entries in place from `o`, `f t h _ j _` for each `j` from `j` below `n`, each computed
+from the array so far. The array begins with `t0`, which `P` holds of, and the entries go after it, so that `P` holds of
+the array on the way and `f` can read it without checks. -/
+@[specialize] def fillLoop (P : ByteArray → Prop) (w : Nat) (hP : ∀ t t', P t → Extends t t' → P t') (n : USize)
+    (f : (t : ByteArray) → P t → t.size < 2 ^ 32 → (j : USize) → j < n → UInt64) (t0 : ByteArray) (h0 : P t0)
+    (t : ByteArray) (he : Extends t0 t) (h32 : t.size < 2 ^ 32) (o j : USize) (hi : t0.size ≤ o.toNat)
+    (ho : o.toNat + w * (n.toNat - j.toNat) ≤ t.size) : ByteArray :=
   if hj : j < n then
-    pushLoop P w hP n f (pushLE t (f t h (by omega) j hj) w) (hP _ _ h) (j + USize.ofNat 1) (by
-      rw [size_pushLE, fastIdx_succ hj, Nat.add_assoc, mul_step (USize.lt_iff_toNat_lt.mp hj)]
-      exact hc)
+    have hm := mul_step (w := w) (USize.lt_iff_toNat_lt.mp hj)
+    have hw : o.toNat + w ≤ t.size := by omega
+    fillLoop P w hP n f t0 h0 (putW t o (f t (hP t0 t h0 he) h32 j hj) w hw h32)
+      (by rw [putW_eq]; exact he.putLE hw h32 hi) (by rw [putW_eq, size_putLE]; exact h32) (o + USize.ofNat w)
+      (j + USize.ofNat 1) (by rw [fastIdx_add (by omega)]; omega)
+      (by rw [putW_eq, size_putLE, fastIdx_add (by omega), fastIdx_succ hj]; omega)
   else t
 termination_by n.toNat - j.toNat
 decreasing_by
@@ -309,8 +391,73 @@ decreasing_by
   rw [fastIdx_succ hj]
   omega
 
+/-- What the writing loop leaves: the size and the bytes before `o` as they were, and each entry from `o` on, when each
+entry depends only on the bytes there were. -/
+theorem fillLoop_spec {P : ByteArray → Prop} {w : Nat} {hP : ∀ t t', P t → Extends t t' → P t'} {n : USize}
+    {f : (t : ByteArray) → P t → t.size < 2 ^ 32 → (j : USize) → j < n → UInt64} {t0 : ByteArray} {h0 : P t0}
+    (hf : ∀ t t' h h' s s' j hj, Extends t t' → f t' h' s' j hj = f t h s j hj) :
+    ∀ (N : Nat) (t : ByteArray) (he : Extends t0 t) (h32 : t.size < 2 ^ 32) (o j : USize) (hi : t0.size ≤ o.toNat)
+      (ho : o.toNat + w * (n.toNat - j.toNat) ≤ t.size), n.toNat - j.toNat = N →
+      (fillLoop P w hP n f t0 h0 t he h32 o j hi ho).size = t.size ∧
+      (∀ q, q < o.toNat → (fillLoop P w hP n f t0 h0 t he h32 o j hi ho).data[q]? = t.data[q]?) ∧
+      ∀ (k : USize) (hk : k < n), j ≤ k →
+        leAt (fillLoop P w hP n f t0 h0 t he h32 o j hi ho) (o.toNat + w * (k.toNat - j.toNat)) w =
+          (f t0 h0 (Nat.lt_of_le_of_lt he.1 h32) k hk).toNat % 256 ^ w := by
+  intro N
+  induction N with
+  | zero =>
+    intro t he h32 o j hi ho hN
+    have hj : ¬ j < n := fun e => by have := USize.lt_iff_toNat_lt.mp e; omega
+    rw [fillLoop, dite_eq_right hj]
+    refine ⟨rfl, fun _ _ => rfl, fun k h2 h1 => ?_⟩
+    have := USize.le_iff_toNat_le.mp h1
+    have := USize.lt_iff_toNat_lt.mp h2
+    omega
+  | succ N ih =>
+    intro t he h32 o j hi ho hN
+    have hj : j < n := USize.lt_iff_toNat_lt.mpr (by omega)
+    have hjn := USize.lt_iff_toNat_lt.mp hj
+    have hs := fastIdx_succ hj
+    have hm := mul_step (w := w) hjn
+    have hw : o.toNat + w ≤ t.size := by omega
+    have ho1 : (o + USize.ofNat w).toNat = o.toNat + w := fastIdx_add (by omega)
+    rw [fillLoop, dite_eq_left hj]
+    dsimp only
+    have hv0 := hf t0 t h0 (hP t0 t h0 he) (Nat.lt_of_le_of_lt he.1 h32) h32 j hj he
+    have hsz : (putW t o (f t (hP t0 t h0 he) h32 j hj) w hw h32).size = t.size := by rw [putW_eq, size_putLE]
+    obtain ⟨i1, i2, i3⟩ := ih (putW t o (f t (hP t0 t h0 he) h32 j hj) w hw h32)
+      (by rw [putW_eq]; exact he.putLE hw h32 hi) (by rw [hsz]; exact h32) (o + USize.ofNat w) (j + USize.ofNat 1)
+      (by rw [ho1]; omega) (by rw [hsz, ho1, hs]; omega) (by rw [hs]; omega)
+    generalize fillLoop P w hP n f t0 h0 (putW t o (f t (hP t0 t h0 he) h32 j hj) w hw h32) _ _ (o + USize.ofNat w)
+      (j + USize.ofNat 1) _ _ = r at i1 i2 i3
+    refine ⟨by rw [i1, hsz], fun q hq => ?_, fun k h2 h1 => ?_⟩
+    · rw [i2 q (by rw [ho1]; omega), putW_eq, putLE_out w t o _ hw h32 q (Or.inl hq)]
+    · have hk1 := USize.le_iff_toNat_le.mp h1
+      by_cases hk : k = j
+      · subst hk
+        rw [Nat.sub_self, Nat.mul_zero, Nat.add_zero,
+          leAt_congr (fun q h3 h4 => i2 q (by rw [ho1]; omega)), putW_eq, leAt_putLE', hv0]
+      · have hk2 : j.toNat + 1 ≤ k.toNat := by
+          have : j.toNat ≠ k.toNat := fun e => hk (USize.toNat_inj.mp e).symm
+          omega
+        have e := i3 k h2 (USize.le_iff_toNat_le.mpr (by rw [hs]; exact hk2))
+        rw [ho1, hs] at e
+        rw [show o.toNat + w * (k.toNat - j.toNat) = o.toNat + w + w * (k.toNat - (j.toNat + 1)) by
+          rw [Nat.add_assoc, mul_step (show j.toNat < k.toNat by omega)]]
+        exact e
+
+/-- Appends `w`-byte little-endian entries, `f t h _ j _` for each `j` from `j` below `n`, each computed from the array
+so far: room for all of them at once, then each written in place. `P` holds of every array on the way, so that `f` can
+read the array without checks, and the array stays below `2 ^ 32` bytes. -/
+@[specialize] def pushLoop (P : ByteArray → Prop) (w : Nat) (hP : ∀ t t', P t → Extends t t' → P t') (n : USize)
+    (f : (t : ByteArray) → P t → t.size < 2 ^ 32 → (j : USize) → j < n → UInt64)
+    (t : ByteArray) (h : P t) (j : USize) (hc : t.size + w * (n.toNat - j.toNat) < 2 ^ 32) : ByteArray :=
+  fillLoop P w hP n f t h (zeroExtend t (w * (n.toNat - j.toNat))) (Extends.zeroExtend t _)
+    (by rw [size_zeroExtend]; exact hc) (USize.ofNat t.size) j (by rw [fastLit (by omega)]; exact Nat.le_refl _)
+    (by rw [fastLit (by omega), size_zeroExtend]; exact Nat.le_refl _)
+
 /-- What the loop leaves: the array so far, then each entry, when each entry depends only on the bytes there were. -/
-theorem pushLoop_spec {P : ByteArray → Prop} {w : Nat} {hP : ∀ t v, P t → P (pushLE t v w)} {n : USize}
+theorem pushLoop_spec {P : ByteArray → Prop} {w : Nat} {hP : ∀ t t', P t → Extends t t' → P t'} {n : USize}
     {f : (t : ByteArray) → P t → t.size < 2 ^ 32 → (j : USize) → j < n → UInt64}
     (hf : ∀ t t' h h' s s' j hj, Extends t t' → f t' h' s' j hj = f t h s j hj) :
     ∀ (N : Nat) (t : ByteArray) (h : P t) (j : USize) (hc : t.size + w * (n.toNat - j.toNat) < 2 ^ 32),
@@ -320,43 +467,21 @@ theorem pushLoop_spec {P : ByteArray → Prop} {w : Nat} {hP : ∀ t v, P t → 
       ∀ (k : USize) (hk : k < n), j ≤ k →
         leAt (pushLoop P w hP n f t h j hc) (t.size + w * (k.toNat - j.toNat)) w =
           (f t h (by omega) k hk).toNat % 256 ^ w := by
-  intro N
-  induction N with
-  | zero =>
-    intro t h j hc hN
-    have hj : ¬ j < n := fun e => by have := USize.lt_iff_toNat_lt.mp e; omega
-    rw [pushLoop, dite_eq_right hj]
-    refine ⟨by rw [hN, Nat.mul_zero, Nat.add_zero], Extends.refl t, fun k h2 h1 => ?_⟩
-    have := USize.le_iff_toNat_le.mp h1
-    have := USize.lt_iff_toNat_lt.mp h2
-    omega
-  | succ N ih =>
-    intro t h j hc hN
-    have hj : j < n := USize.lt_iff_toNat_lt.mpr (by omega)
-    have hjn := USize.lt_iff_toNat_lt.mp hj
-    have hs := fastIdx_succ hj
-    rw [pushLoop, dite_eq_left hj]
-    have hsz1 := size_pushLE w t (f t h (by omega) j hj)
-    have hc1 : (pushLE t (f t h (by omega) j hj) w).size + w * (n.toNat - (j + USize.ofNat 1).toNat) < 2 ^ 32 := by
-      rw [size_pushLE, hs, Nat.add_assoc, mul_step hjn]
-      exact hc
-    obtain ⟨i1, i2, i3⟩ := ih (pushLE t (f t h (by omega) j hj) w) (hP _ _ h) (j + USize.ofNat 1) hc1 (by rw [hs]; omega)
-    generalize pushLoop P w hP n f (pushLE t (f t h (by omega) j hj) w) (hP _ _ h) (j + USize.ofNat 1) _ = r at i1 i2 i3
-    have he1 := Extends.pushLE t (f t h (by omega) j hj) w
-    refine ⟨?_, he1.trans i2, fun k h2 h1 => ?_⟩
-    · rw [i1, hsz1, hs, Nat.add_assoc, mul_step hjn]
-    · have hk1 := USize.le_iff_toNat_le.mp h1
-      by_cases hk : k = j
-      · subst hk
-        rw [Nat.sub_self, Nat.mul_zero, Nat.add_zero, i2.leAt (Nat.le_of_eq hsz1.symm), leAt_pushLE]
-      · have hk2 : j.toNat + 1 ≤ k.toNat := by
-          have : j.toNat ≠ k.toNat := fun e => hk (USize.toNat_inj.mp e).symm
-          omega
-        have e := i3 k h2 (USize.le_iff_toNat_le.mpr (by rw [hs]; exact hk2))
-        rw [hsz1, hs, hf t _ h _ _ _ k h2 he1] at e
-        rw [show t.size + w * (k.toNat - j.toNat) = t.size + w + w * (k.toNat - (j.toNat + 1)) by
-          rw [Nat.add_assoc, mul_step (show j.toNat < k.toNat by omega)]]
-        exact e
+  intro N t h j hc hN
+  have h32 : t.size < 2 ^ 32 := by omega
+  have hz := size_zeroExtend t (w * (n.toNat - j.toNat))
+  have hT : (USize.ofNat t.size).toNat = t.size := fastLit h32
+  unfold pushLoop
+  obtain ⟨i1, i2, i3⟩ := fillLoop_spec (P := P) (w := w) (hP := hP) (n := n) (f := f) (t0 := t) (h0 := h) hf N
+    (zeroExtend t (w * (n.toNat - j.toNat))) (Extends.zeroExtend t _) (by rw [hz]; exact hc) (USize.ofNat t.size) j
+    (by rw [hT]; exact Nat.le_refl _) (by rw [hT, hz]; exact Nat.le_refl _) hN
+  refine ⟨by rw [i1, hz], ⟨by rw [i1, hz]; omega, fun q hq => ?_⟩, fun k hk h1 => ?_⟩
+  · rw [i2 q (by rw [hT]; exact hq)]
+    exact (Extends.zeroExtend t _).2 q hq
+  · have e := i3 k hk h1
+    have hpos : (USize.ofNat t.size).toNat + w * (k.toNat - j.toNat) = t.size + w * (k.toNat - j.toNat) := by rw [hT]
+    rw [hpos] at e
+    exact e
 
 /-! ### The masks
 
@@ -368,18 +493,11 @@ made, before any table. -/
     UInt64 :=
   ((1 : UInt64) <<< j.toUInt64) - 1
 
-/-- A position given as a number below `2 ^ 32` is that number. -/
-theorem fastLit {n : Nat} (h : n < 2 ^ 32) : (USize.ofNat n).toNat = n := by
-  have hs := USize.le_size
-  rw [USize.size_eq_two_pow] at hs
-  rw [USize.toNat_ofNat']
-  exact Nat.mod_eq_of_lt (by omega)
-
 theorem usize32 : (USize.ofNat 32).toNat = 32 := fastLit (by decide)
 
 /-- Appends the 32 masks. -/
 def writeMasks (t : ByteArray) (h : t.size + 256 < 2 ^ 32) : ByteArray :=
-  pushLoop (fun _ => True) 8 (fun _ _ _ => trivial) (USize.ofNat 32) maskEntry t trivial 0 (by
+  pushLoop (fun _ => True) 8 (fun _ _ _ _ => trivial) (USize.ofNat 32) maskEntry t trivial 0 (by
     rw [usize32]
     exact h)
 
@@ -398,7 +516,7 @@ theorem writeMasks_spec (t : ByteArray) (h : t.size + 256 < 2 ^ 32) :
       ∀ n, n < 32 → leAt (writeMasks t h) (t.size + 8 * n) 8 = 2 ^ n - 1 := by
   have h0 : (0 : USize).toNat = 0 := rfl
   unfold writeMasks
-  obtain ⟨s1, s2, s3⟩ := pushLoop_spec (P := fun _ => True) (w := 8) (hP := fun _ _ _ => trivial)
+  obtain ⟨s1, s2, s3⟩ := pushLoop_spec (P := fun _ => True) (w := 8) (hP := fun _ _ _ _ => trivial)
     (n := USize.ofNat 32) (f := maskEntry) (fun _ _ _ _ _ _ _ _ _ => rfl) 32 t trivial 0
     (by rw [usize32, h0]; exact h) (by rw [usize32, h0])
   refine ⟨by rw [s1, usize32, h0], s2, fun n hn => ?_⟩
@@ -528,7 +646,7 @@ theorem icStep_eq {icBase : ByteArray} {nI : Nat} {hn : nI ≤ 256} {hb : icBase
 /-- The fused entries of every insert-and-copy tree, appended. -/
 def pushIC (icBase : ByteArray) (nI : Nat) (hn : nI ≤ 256) (hb : icBase.size = 4 * nI) (hb32 : icBase.size < 2 ^ 32)
     (t : ByteArray) (h : ICReady icBase nI t) (hc : t.size + 2048 * nI < 2 ^ 32) : ByteArray :=
-  pushLoop (ICReady icBase nI) 8 (fun _ _ hr => hr.extend (Extends.pushLE _ _ _)) (USize.ofNat (256 * nI))
+  pushLoop (ICReady icBase nI) 8 (fun _ _ hr he => hr.extend he) (USize.ofNat (256 * nI))
     (icStep icBase nI hn hb hb32) t h 0
     (show t.size + 8 * ((USize.ofNat (256 * nI)).toNat - (0 : USize).toNat) < 2 ^ 32 by
       rw [fastLit (by omega), show (0 : USize).toNat = 0 from rfl, Nat.sub_zero]
@@ -585,7 +703,7 @@ theorem mapStep_toNat {base map : ByteArray} {nT : Nat} {hb : base.size = 4 * nT
 def pushMap (base map : ByteArray) (nT : Nat) (hb : base.size = 4 * nT) (hb32 : base.size < 2 ^ 32)
     (hm32 : map.size < 2 ^ 32) (hlt : ∀ p : USize, ∀ h : p.toNat < map.size, (map.uget p h).toNat < nT) (t : ByteArray)
     (hc : t.size + 4 * map.size < 2 ^ 32) : ByteArray :=
-  pushLoop (fun _ => True) 4 (fun _ _ _ => trivial) (USize.ofNat map.size) (mapStep base map nT hb hb32 hm32 hlt) t trivial 0
+  pushLoop (fun _ => True) 4 (fun _ _ _ _ => trivial) (USize.ofNat map.size) (mapStep base map nT hb hb32 hm32 hlt) t trivial 0
     (by rw [fastLit hm32, show (0 : USize).toNat = 0 from rfl, Nat.sub_zero]; exact hc)
 
 theorem pushMap_spec {base map : ByteArray} {nT : Nat} {hb : base.size = 4 * nT} {hb32 : base.size < 2 ^ 32}
@@ -596,7 +714,7 @@ theorem pushMap_spec {base map : ByteArray} {nT : Nat} {hb : base.size = 4 * nT}
   have h0 : (0 : USize).toNat = 0 := rfl
   have hN : (USize.ofNat map.size).toNat = map.size := fastLit hm32
   unfold pushMap
-  obtain ⟨s1, s2, s3⟩ := pushLoop_spec (P := fun _ => True) (w := 4) (hP := fun _ _ _ => trivial)
+  obtain ⟨s1, s2, s3⟩ := pushLoop_spec (P := fun _ => True) (w := 4) (hP := fun _ _ _ _ => trivial)
     (f := mapStep base map nT hb hb32 hm32 hlt) (fun _ _ _ _ _ _ _ _ _ => rfl) _ t trivial 0
     (by rw [hN, h0, Nat.sub_zero]; exact hc) rfl
   refine ⟨by rw [s1, hN, h0, Nat.sub_zero], s2, fun J hJ => ?_⟩
@@ -621,7 +739,7 @@ bytes the distance before its extra bits, which add to it shifted by NPOSTFIX. -
 
 /-- The shared distance table, appended. -/
 def pushDsh (np nd : UInt64) (t : ByteArray) (hc : t.size + 4160 < 2 ^ 32) : ByteArray :=
-  pushLoop (fun _ => True) 8 (fun _ _ _ => trivial) (USize.ofNat 520) (dStep np nd) t trivial 0
+  pushLoop (fun _ => True) 8 (fun _ _ _ _ => trivial) (USize.ofNat 520) (dStep np nd) t trivial 0
     (show t.size + 8 * ((USize.ofNat 520).toNat - (0 : USize).toNat) < 2 ^ 32 by
       rw [fastLit (by decide), show (0 : USize).toNat = 0 from rfl]; exact hc)
 
@@ -631,7 +749,7 @@ theorem pushDsh_spec {np nd : UInt64} {t : ByteArray} {hc : t.size + 4160 < 2 ^ 
   have h0 : (0 : USize).toNat = 0 := rfl
   have hN : (USize.ofNat 520).toNat = 520 := fastLit (by decide)
   unfold pushDsh
-  obtain ⟨s1, s2, s3⟩ := pushLoop_spec (P := fun _ => True) (w := 8) (hP := fun _ _ _ => trivial) (f := dStep np nd)
+  obtain ⟨s1, s2, s3⟩ := pushLoop_spec (P := fun _ => True) (w := 8) (hP := fun _ _ _ _ => trivial) (f := dStep np nd)
     (fun _ _ _ _ _ _ _ _ _ => rfl) _ t trivial 0 (by rw [hN, h0]; exact hc) rfl
   refine ⟨by rw [s1, hN, h0], s2, fun dc hdc => ?_⟩
   have hk : (USize.ofNat dc).toNat = dc := fastLit (by omega)
@@ -802,7 +920,7 @@ theorem cntOn_succ (fl : Nat → Bool) (a len : Nat) :
 
 /-- One literal type's table, appended. -/
 def pushPair (tb : USize) (t : ByteArray) (hf : TableFits t tb.toNat) (hc : t.size + 1024 < 2 ^ 32) : ByteArray :=
-  pushLoop (fun t => TableFits t tb.toNat) 4 (fun _ _ h => h.extend (Extends.pushLE _ _ _)) (USize.ofNat 256)
+  pushLoop (fun t => TableFits t tb.toNat) 4 (fun _ _ h he => h.extend he) (USize.ofNat 256)
     (pairStep tb) t hf 0
     (show t.size + 4 * ((USize.ofNat 256).toNat - (0 : USize).toNat) < 2 ^ 32 by
       rw [fastLit (by decide), show (0 : USize).toNat = 0 from rfl]; exact hc)
