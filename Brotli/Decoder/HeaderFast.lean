@@ -83,6 +83,11 @@ theorem noHead_size : noHead.size = 32 := by simp [noHead, ByteArray.size]
 
 theorem noNext_size : noNext.size = 1408 := by simp [noNext, ByteArray.size]
 
+/-- The code length code's lengths of the right size for a state whose own are held elsewhere; never written. -/
+def noLens : ByteArray := ⟨Array.replicate 18 0⟩
+
+theorem noLens_size : noLens.size = 18 := by simp [noLens, ByteArray.size]
+
 /-- The state without its code's lists, while a run on its fields holds them, so that they are held once and written
 in place; `SymsS.put` writes them back. Not inlined, so that the state is let go of here. -/
 @[noinline] def SymsS.drop (st : Hd) : Hd :=
@@ -241,5 +246,131 @@ theorem stepH_symsPlain {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.si
     (st := { st with word := (refill st.word st.count a pos stop hs hp).word
                      count := (refill st.word st.count a pos stop hs hp).count })
     hsz hln hs'
+
+/-! ### The code length code's lengths on scalars
+
+The same for the code length code's lengths (`.clens`): `clensPlain` is `stepHClens`'s step on the fields it changes
+(`ClensS`), for its plain cases, a zero and a length that leaves the sum below 32; the code finished, an overflow and a
+short or bad read are left to `stepHClens`. -/
+
+/-- What a step at the code length code's lengths changes of the header state, apart from its status. -/
+structure ClensS where
+  word : UInt64
+  count : UInt64
+  pos : USize
+  lens : ByteArray
+  idx : UInt64
+  sum : UInt64
+  nz : UInt64
+  sym : UInt64
+  lensSz : lens.size = 18
+
+/-- The header state with a step's fields written back, moving on. -/
+@[inline] def ClensS.put (st : Hd) (s : ClensS) : Hd :=
+  { st with word := s.word, count := s.count, pos := s.pos, status := .next, clLens := s.lens, clIdx := s.idx,
+            clSum := s.sum, clNz := s.nz, clSym := s.sym }
+
+theorem ClensS.put_put (st : Hd) (s s' : ClensS) : ClensS.put (ClensS.put st s) s' = ClensS.put st s' := rfl
+
+/-- Writing back over a state without its lengths is writing back over the state. -/
+theorem ClensS.put_clear (st : Hd) (s : ClensS) : ClensS.put (clearClLens st) s = ClensS.put st s := rfl
+
+/-- The bounds the code length code's lengths are read within. -/
+theorem clens_bounds {st : Hd} (h : ∃ g p, HRel st g p) (ht : st.tag = .clens) :
+    st.clIdx.toNat ≤ 18 ∧ st.clLens.size = 18 := by
+  obtain ⟨_, _, _, _, _, _, hrel⟩ := clens_ex h ht
+  exact ⟨hrel.2.2.2.2.2.le, hrel.2.2.2.2.2.size⟩
+
+/-- An index below 18, from one at most 18 that isn't 18. -/
+theorem idx_lt18 {i : UInt64} (hi : i.toNat ≤ 18) (h18 : ¬ i = 18) : i.toNat < 18 := by
+  have : i.toNat ≠ 18 := fun e => h18 (UInt64.toNat_inj.mp e)
+  omega
+
+theorem idx_succ_le {i : UInt64} (hi : i.toNat ≤ 18) (h18 : ¬ i = 18) : (i + 1).toNat ≤ 18 := by
+  have := idx_lt18 hi h18
+  rw [UInt64.toNat_add, show (1 : UInt64).toNat = 1 from rfl, Nat.mod_eq_of_lt (by omega)]
+  omega
+
+/-- A code length code length symbol read (its status `ys`, the buffer it leaves `yw`/`yc`, its value `ya`) applied to
+the fields at the position `pos`: the new fields for `stepHClens`'s plain cases, `none` for every other case. -/
+@[inline] def clensPlainR (ys : ReadStatus) (yw yc ya : UInt64) (pos : USize) (s : ClensS) (hi : s.idx.toNat ≤ 18) :
+    Option { s' : ClensS // s'.idx.toNat ≤ 18 } :=
+  if h18 : s.idx = 18 then none
+  else if ys = .ok then
+    if ya = 0 then some ⟨{ s with word := yw, count := yc, pos := pos, idx := s.idx + 1 }, idx_succ_le hi h18⟩
+    else if s.sum + ((32 : UInt64) >>> ya) = 32 then none
+    else
+      let sym := clOrderAt s.idx (idx_lt18 hi h18)
+      let sum := s.sum + ((32 : UInt64) >>> ya)
+      if 32 < sum then none
+      else
+        have hb : sym.toUSize.toNat < s.lens.size := by rw [s.lensSz]; exact clOrderAt_lt _
+        some ⟨{
+          word := yw
+          count := yc
+          pos := pos
+          lens := setLenU s.lens sym ya hb
+          idx := s.idx + 1
+          sum := sum
+          nz := s.nz + 1
+          sym := sym
+          lensSz := by rw [setLenU, size_uset']; exact s.lensSz }, idx_succ_le hi h18⟩
+  else none
+
+/-- A code length code length symbol read from the buffer `word`/`count`, refilled, and applied to the fields at the
+position `pos`: `clensPlainR` on the read's result. -/
+@[inline] def clensPlain (word count : UInt64) (pos : USize) (s : ClensS) (hi : s.idx.toNat ≤ 18) :
+    Option { s' : ClensS // s'.idx.toNat ≤ 18 } :=
+  clensPlainR (cclFastS ⟨word, count⟩).1.status (cclFastS ⟨word, count⟩).1.word (cclFastS ⟨word, count⟩).1.count
+    (cclFastS ⟨word, count⟩).1.a pos s hi
+
+/-- A plain step at the code length code's lengths is `stepH`: the same refill and read, and the fields it writes are
+those `stepH`'s step writes into the state. -/
+theorem stepH_clensPlain {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {st : Hd} {pos : USize} {h : HIn st}
+    {hp : pos.toNat ≤ stop.toNat} (ht : st.tag = .clens) (hi : st.clIdx.toNat ≤ 18) (hz : st.clLens.size = 18)
+    {s' : { s' : ClensS // s'.idx.toNat ≤ 18 }}
+    (hs' : clensPlain (refill st.word st.count a pos stop hs hp).word (refill st.word st.count a pos stop hs hp).count
+      (refill st.word st.count a pos stop hs hp).pos
+      ⟨st.word, st.count, st.pos, st.clLens, st.clIdx, st.clSum, st.clNz, st.clSym, hz⟩ hi = some s') :
+    stepH a stop hs st pos h hp = ClensS.put st s'.1 := by
+  unfold stepH
+  dsimp only [refillH]
+  rw [stepAtH_clens (by exact ht)]
+  unfold stepHClens
+  unfold clensPlain clensPlainR at hs'
+  dsimp only at hs' ⊢
+  split
+  · rename_i h18
+    simp [h18] at hs'
+  rename_i h18
+  simp only [h18, ↓reduceDIte] at hs'
+  split
+  · rename_i hq
+    rw [hq, ite_eq_right (fun e => ReadStatus.noConfusion e)] at hs'
+    cases hs'
+  · rename_i hq
+    rw [hq, ite_eq_right (fun e => ReadStatus.noConfusion e)] at hs'
+    cases hs'
+  rename_i hq
+  rw [hq, ite_eq_left rfl] at hs'
+  split
+  · rename_i h0
+    simp only [h0, ↓reduceIte] at hs'
+    cases hs'
+    rfl
+  rename_i h0
+  simp only [h0, ↓reduceIte] at hs'
+  split
+  · rename_i h32
+    simp [h32] at hs'
+  rename_i h32
+  simp only [h32, ↓reduceIte] at hs'
+  split
+  · rename_i hov
+    simp [hov] at hs'
+  rename_i hov
+  simp only [hov, ↓reduceIte] at hs'
+  cases hs'
+  rfl
 
 end Brotli.Decoder

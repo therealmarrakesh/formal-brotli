@@ -149,21 +149,59 @@ theorem hdrRun_spec (c : Cmd) (left : UInt64) (D0 : Dec) :
 the fields they change where they're plain (`symsPlain`, `HeaderFast.lean`), so that the header state isn't built
 between them. -/
 
-/-- The state a run of `hdrRunF` stands for: in scalar mode `st` with the fields written back, else `st`. -/
-@[inline] def curH (st : Hd) (sc : Bool) (s : SymsS) : Hd := if sc then SymsS.put st s else st
+/-- The state a run of `hdrRunF` stands for: in a scalar mode (`sc` at a code's lengths, `cl` at the code length code's)
+`st` with the fields written back, else `st`. -/
+@[inline] def curH (st : Hd) (sc cl : Bool) (s : SymsS) (c : ClensS) : Hd :=
+  if sc then SymsS.put st s else if cl then ClensS.put st c else st
 
-/-- The position a run of `hdrRunF` steps from: in scalar mode the fields', else `pos`. -/
-@[inline] def curP (sc : Bool) (s : SymsS) (pos : USize) : USize := if sc then s.pos else pos
+/-- The position a run of `hdrRunF` steps from: in a scalar mode the fields', else `pos`. -/
+@[inline] def curP (sc cl : Bool) (s : SymsS) (c : ClensS) (pos : USize) : USize :=
+  if sc then s.pos else if cl then c.pos else pos
 
-/-- What `hdrRunF` carries: the state it stands for in a header, its position in the chunk, and in scalar mode a state
-at a code's lengths within its bounds. -/
-def FInv (stop : USize) (st : Hd) (sc : Bool) (s : SymsS) (pos : USize) : Prop :=
-  HIn (curH st sc s) ∧ (curP sc s pos).toNat ≤ stop.toNat ∧
-    (sc = true → st.tag = .syms ∧ st.size.toNat ≤ 704 ∧ s.ln.toNat ≤ st.size.toNat)
+/-- What `hdrRunF` carries: the state it stands for in a header, its position in the chunk, and in a scalar mode a
+state at that place within its bounds. -/
+def FInv (stop : USize) (st : Hd) (sc cl : Bool) (s : SymsS) (c : ClensS) (pos : USize) : Prop :=
+  HIn (curH st sc cl s c) ∧ (curP sc cl s c pos).toNat ≤ stop.toNat ∧
+    (sc = true → st.tag = .syms ∧ st.size.toNat ≤ 704 ∧ s.ln.toNat ≤ st.size.toNat) ∧
+    (cl = true → sc = false ∧ st.tag = .clens ∧ c.idx.toNat ≤ 18)
 
-/-- The state a run goes on with from a state a step moved on to: at a code's lengths without its lists, which the run
-holds as fields. -/
-@[inline] def enterH (r : Hd) : Hd := if r.tag == .syms then SymsS.drop r else r
+/-- The state a run goes on with from a state a step moved on to: in a scalar mode without the arrays the run holds as
+fields. -/
+@[inline] def enterH (r : Hd) : Hd :=
+  if r.tag == .syms then SymsS.drop r else if r.tag == .clens then clearClLens r else r
+
+/-- The code length code's lengths a run holds from a state a step moved on to: the state's own at that place, else a
+constant. -/
+@[inline] def clLensOf (r : Hd) : ByteArray := if r.tag == .clens then r.clLens else noLens
+
+theorem clLensOf_size (r : Hd) (h : (r.tag == .clens) = true → r.clLens.size = 18) : (clLensOf r).size = 18 := by
+  unfold clLensOf
+  split
+  · rename_i hc
+    exact h hc
+  · exact noLens_size
+
+/-- In a header at the code length code's lengths, there are eighteen of them. -/
+theorem HIn.lensSz {r : Hd} (h : HIn r) (ht : (r.tag == .clens) = true) : r.clLens.size = 18 :=
+  (clens_bounds h.rel (by simpa using ht)).2
+
+/-- The code length code's fields a run holds from a state a step moved on to. -/
+@[inline] def enterC (r : Hd) (h : (r.tag == .clens) = true → r.clLens.size = 18) : ClensS :=
+  ⟨r.word, r.count, r.pos, clLensOf r, r.clIdx, r.clSum, r.clNz, r.clSym, clLensOf_size r h⟩
+
+/-- Fields equal but for their lengths are equal when their lengths are. -/
+theorem ClensS.mk_lens {w c ix su nz sy : UInt64} {p : USize} {lz lz' : ByteArray} {hz : lz.size = 18}
+    {hz' : lz'.size = 18} (e : lz = lz') :
+    (⟨w, c, p, lz, ix, su, nz, sy, hz⟩ : ClensS) = ⟨w, c, p, lz', ix, su, nz, sy, hz'⟩ := by
+  subst e
+  rfl
+
+/-- Writing a state's own fields back changes only its status. -/
+theorem ClensS.put_self (r : Hd) (hn : r.status = .next) (hz : r.clLens.size = 18) :
+    ClensS.put r ⟨r.word, r.count, r.pos, r.clLens, r.clIdx, r.clSum, r.clNz, r.clSym, hz⟩ = r := by
+  cases r
+  cases hn
+  rfl
 
 /-- The lists a run holds from a state a step moved on to: the state's own at a code's lengths, else constants, so that
 the state's own lists are held once either way. -/
@@ -201,22 +239,33 @@ theorem enterS_syms {r : Hd} (h : (r.tag == .syms) = true) : enterS r = SymsS.of
   SymsS.mk_lists (by unfold headOf; rw [ite_eq_left h]) (by unfold nextOf; rw [ite_eq_left h])
 
 /-- The state a run stands for, from a state a step moved on to, is that state. -/
-theorem curH_enter (r : Hd) (hn : r.status = .next) : curH (enterH r) (r.tag == .syms) (enterS r) = r := by
-  by_cases h : (r.tag == .syms) = true
+theorem curH_enter (r : Hd) (hn : r.status = .next) (h : (r.tag == .clens) = true → r.clLens.size = 18) :
+    curH (enterH r) (r.tag == .syms) (r.tag == .clens) (enterS r) (enterC r h) = r := by
+  by_cases hs : (r.tag == .syms) = true
   · unfold curH enterH
-    rw [ite_eq_left h, ite_eq_left h, SymsS.put_drop, enterS_syms h]
+    rw [ite_eq_left hs, ite_eq_left hs, SymsS.put_drop, enterS_syms hs]
     exact SymsS.put_of r hn
-  · unfold curH enterH
-    rw [ite_eq_right h, ite_eq_right h]
+  · by_cases hc : (r.tag == .clens) = true
+    · unfold curH enterH
+      rw [ite_eq_right hs, ite_eq_right hs, ite_eq_left hc, ite_eq_left hc, ClensS.put_clear]
+      have e : enterC r h = ⟨r.word, r.count, r.pos, r.clLens, r.clIdx, r.clSum, r.clNz, r.clSym, h hc⟩ :=
+        ClensS.mk_lens (by unfold clLensOf; rw [ite_eq_left hc])
+      rw [e]
+      exact ClensS.put_self r hn (h hc)
+    · unfold curH enterH
+      rw [ite_eq_right hs, ite_eq_right hs, ite_eq_right hc, ite_eq_right hc]
 
-theorem curP_enter (r : Hd) : curP (r.tag == .syms) (enterS r) r.pos = r.pos := by
+theorem curP_enter (r : Hd) (h : (r.tag == .clens) = true → r.clLens.size = 18) :
+    curP (r.tag == .syms) (r.tag == .clens) (enterS r) (enterC r h) r.pos = r.pos := by
   unfold curP
-  split <;> rfl
+  split
+  · rfl
+  · split <;> rfl
 
 /-- The invariant at a state a step moved on to, the mode chosen by its place. -/
 theorem FInv.enter {stop : USize} {r : Hd} (h : HIn r) (hn : r.status = .next) (hp : r.pos.toNat ≤ stop.toNat) :
-    FInv stop (enterH r) (r.tag == .syms) (enterS r) r.pos := by
-  refine ⟨?_, ?_, ?_⟩
+    FInv stop (enterH r) (r.tag == .syms) (r.tag == .clens) (enterS r) (enterC r h.lensSz) r.pos := by
+  refine ⟨?_, ?_, ?_, ?_⟩
   · rw [curH_enter r hn]
     exact h
   · rw [curP_enter r]
@@ -227,45 +276,85 @@ theorem FInv.enter {stop : USize} {r : Hd} (h : HIn r) (hn : r.status = .next) (
     have hb := syms_bounds h.rel ht'
     rw [e]
     exact ⟨ht', hb⟩
+  · intro hc
+    have ht' : r.tag = .clens := by simpa using hc
+    have hs : ¬ (r.tag == .syms) = true := by rw [ht']; decide
+    have e : enterH r = clearClLens r := by unfold enterH; rw [ite_eq_right hs, ite_eq_left hc]
+    have hb := clens_bounds h.rel ht'
+    rw [e]
+    exact ⟨by simpa using hs, ht', hb.1⟩
 
-/-- A plain scalar step keeps the invariant. -/
-theorem FInv.plain {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {st : Hd} {s : SymsS} {pos : USize}
-    (I : FInv stop st true s pos) {qw qc : UInt64} {qp : USize}
+/-- A plain scalar step at a code's lengths keeps the invariant. -/
+theorem FInv.plain {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {st : Hd} {cl : Bool} {s : SymsS}
+    {c : ClensS} {pos : USize} (I : FInv stop st true cl s c pos) {qw qc : UInt64} {qp : USize}
     (he : qw = (refill s.word s.count a s.pos stop hs I.2.1).word ∧
       qc = (refill s.word s.count a s.pos stop hs I.2.1).count ∧ qp = (refill s.word s.count a s.pos stop hs I.2.1).pos)
     {s' : { s' : SymsS // s'.ln.toNat ≤ st.size.toNat }}
-    (hq : symsPlain st.clt st.size (I.2.2 rfl).2.1 qw qc qp s (I.2.2 rfl).2.2 = some s') :
-    FInv stop st true s'.1 s'.1.pos := by
+    (hq : symsPlain st.clt st.size (I.2.2.1 rfl).2.1 qw qc qp s (I.2.2.1 rfl).2.2 = some s') :
+    FInv stop st true false s'.1 c s'.1.pos := by
   obtain ⟨e1, e2, e3⟩ := he
   subst e1 e2 e3
   have hin : HIn (SymsS.put st s) := I.1
   have hp : s.pos.toNat ≤ stop.toNat := I.2.1
   have heq := stepH_symsPlain (a := a) (hs := hs) (st := SymsS.put st s) (pos := s.pos) (h := hin) (hp := hp)
-    (I.2.2 rfl).1 (I.2.2 rfl).2.1 (I.2.2 rfl).2.2 (s' := s') hq
+    (I.2.2.1 rfl).1 (I.2.2.1 rfl).2.1 (I.2.2.1 rfl).2.2 (s' := s') hq
   rw [SymsS.put_put] at heq
   have hn : (stepH a stop hs (SymsS.put st s) s.pos hin hp).status = .next := by rw [heq]; rfl
   have hstep := stepH_in hin hp hn
   rw [heq] at hstep
-  exact ⟨hstep.1, hstep.2, fun _ => ⟨(I.2.2 rfl).1, (I.2.2 rfl).2.1, s'.2⟩⟩
+  exact ⟨hstep.1, hstep.2, fun _ => ⟨(I.2.2.1 rfl).1, (I.2.2.1 rfl).2.1, s'.2⟩, fun e => Bool.noConfusion e⟩
+
+/-- A plain scalar step at the code length code's lengths keeps the invariant. -/
+theorem FInv.plainC {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {st : Hd} {s : SymsS} {c : ClensS}
+    {pos : USize} (I : FInv stop st false true s c pos) {qw qc : UInt64} {qp : USize}
+    (he : qw = (refill c.word c.count a c.pos stop hs I.2.1).word ∧
+      qc = (refill c.word c.count a c.pos stop hs I.2.1).count ∧ qp = (refill c.word c.count a c.pos stop hs I.2.1).pos)
+    {ys : ReadStatus} {yw yc ya : UInt64}
+    (he2 : ys = (cclFast ⟨qw, qc⟩).status ∧ yw = (cclFast ⟨qw, qc⟩).word ∧ yc = (cclFast ⟨qw, qc⟩).count ∧
+      ya = (cclFast ⟨qw, qc⟩).a)
+    {c' : { c' : ClensS // c'.idx.toNat ≤ 18 }}
+    (hq0 : clensPlainR ys yw yc ya qp c (I.2.2.2 rfl).2.2 = some c') :
+    FInv stop st false true s c'.1 c'.1.pos := by
+  obtain ⟨f1, f2, f3, f4⟩ := he2
+  subst f1 f2 f3 f4
+  obtain ⟨e1, e2, e3⟩ := he
+  subst e1 e2 e3
+  have hq : clensPlain (refill c.word c.count a c.pos stop hs I.2.1).word (refill c.word c.count a c.pos stop hs I.2.1).count
+      (refill c.word c.count a c.pos stop hs I.2.1).pos c (I.2.2.2 rfl).2.2 = some c' := hq0
+  have hin : HIn (ClensS.put st c) := I.1
+  have hp : c.pos.toNat ≤ stop.toNat := I.2.1
+  have heq := stepH_clensPlain (a := a) (hs := hs) (st := ClensS.put st c) (pos := c.pos) (h := hin) (hp := hp)
+    (I.2.2.2 rfl).2.1 (I.2.2.2 rfl).2.2 c.lensSz (s' := c') hq
+  rw [ClensS.put_put] at heq
+  have hn : (stepH a stop hs (ClensS.put st c) c.pos hin hp).status = .next := by rw [heq]; rfl
+  have hstep := stepH_in hin hp hn
+  rw [heq] at hstep
+  exact ⟨hstep.1, hstep.2, fun e => Bool.noConfusion e, fun _ => ⟨rfl, (I.2.2.2 rfl).2.1, c'.2⟩⟩
 
 /-- `hdrRun` with the steps at a code's lengths taken on scalars where they're plain: a step is still one refill and
 one symbol as `stepH` takes it, but the header state isn't built between them. The scalar fields are separate
 arguments, so that a step allocates nothing. -/
 def hdrRunF (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (c : Cmd) (left : UInt64) (D0 : Dec) :
-    (fuel : Nat) → (st : Hd) → (sc : Bool) → (w cn : UInt64) → (p : USize) → (hd nx : ByteArray) →
-    (ln pl rs rc ss : UInt64) → (hh : hd.size = 32) → (hn : nx.size = 1408) → (pos : USize) →
-    FInv stop st sc ⟨w, cn, p, hd, nx, ln, pl, rs, rc, ss, hh, hn⟩ pos → Dec
-  | 0, st, sc, w, cn, p, hd, nx, ln, pl, rs, rc, ss, hh, hn, pos, I =>
-    hdrNext c left D0 (stepHR a stop hs (curH st sc ⟨w, cn, p, hd, nx, ln, pl, rs, rc, ss, hh, hn⟩)
-      (curP sc ⟨w, cn, p, hd, nx, ln, pl, rs, rc, ss, hh, hn⟩ pos) I.1 I.2.1)
-  | f + 1, st, sc, w, cn, p, hd, nx, ln, pl, rs, rc, ss, hh, hn, pos, I =>
+    (fuel : Nat) → (st : Hd) → (sc cl : Bool) → (w cn : UInt64) → (p : USize) → (hd nx : ByteArray) →
+    (ln pl rs rc ss : UInt64) → (hh : hd.size = 32) → (hn : nx.size = 1408) → (lz : ByteArray) →
+    (ix su nz sy : UInt64) → (hz : lz.size = 18) → (pos : USize) →
+    FInv stop st sc cl ⟨w, cn, p, hd, nx, ln, pl, rs, rc, ss, hh, hn⟩ ⟨w, cn, p, lz, ix, su, nz, sy, hz⟩ pos → Dec
+  | 0, st, sc, cl, w, cn, p, hd, nx, ln, pl, rs, rc, ss, hh, hn, lz, ix, su, nz, sy, hz, pos, I =>
+    hdrNext c left D0 (stepHR a stop hs
+      (curH st sc cl ⟨w, cn, p, hd, nx, ln, pl, rs, rc, ss, hh, hn⟩ ⟨w, cn, p, lz, ix, su, nz, sy, hz⟩)
+      (curP sc cl ⟨w, cn, p, hd, nx, ln, pl, rs, rc, ss, hh, hn⟩ ⟨w, cn, p, lz, ix, su, nz, sy, hz⟩ pos) I.1 I.2.1)
+  | f + 1, st, sc, cl, w, cn, p, hd, nx, ln, pl, rs, rc, ss, hh, hn, lz, ix, su, nz, sy, hz, pos, I =>
     let s : SymsS := ⟨w, cn, p, hd, nx, ln, pl, rs, rc, ss, hh, hn⟩
-    let next (r : { r : Hd // r.status = .ready → ∃ g, Upto r.d g 10 }) (hr : HIn r.1 → r.1.status = .next →
-        r.1.pos.toNat ≤ stop.toNat → FInv stop (enterH r.1) (r.1.tag == .syms) (enterS r.1) r.1.pos) (hin : HIn r.1 ∧
-        r.1.pos.toNat ≤ stop.toNat ∨ r.1.status ≠ .next) : Dec :=
+    let k : ClensS := ⟨w, cn, p, lz, ix, su, nz, sy, hz⟩
+    let next (r : { r : Hd // r.status = .ready → ∃ g, Upto r.d g 10 }) (hr : (hH : HIn r.1) → r.1.status = .next →
+        r.1.pos.toNat ≤ stop.toNat →
+        FInv stop (enterH r.1) (r.1.tag == .syms) (r.1.tag == .clens) (enterS r.1) (enterC r.1 hH.lensSz) r.1.pos)
+        (hin : HIn r.1 ∧ r.1.pos.toNat ≤ stop.toNat ∨ r.1.status ≠ .next) : Dec :=
       if hnx : r.1.status = .next then
-        -- the fields first, then the state without its lists, so that it is let go of there and reused
+        have hH := hin.resolve_right (by simpa using hnx)
+        -- the fields first, then the state without the arrays the run holds, so that it is let go of there and reused
         let sc' := r.1.tag == .syms
+        let cl' := r.1.tag == .clens
         let w' := r.1.word
         let cn' := r.1.count
         let p' := r.1.pos
@@ -276,26 +365,47 @@ def hdrRunF (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (c : Cmd
         let rs' := r.1.repSym
         let rc' := r.1.repCount
         let ss' := r.1.symSum
-        hdrRunF a stop hs c left D0 f (enterH r.1) sc' w' cn' p' hd' nx' ln' pl' rs' rc' ss' (headOf_size r.1)
-          (nextOf_size r.1) p' (hr (hin.resolve_right (by simpa using hnx)).1 hnx (hin.resolve_right (by simpa using hnx)).2)
+        let lz' := clLensOf r.1
+        let ix' := r.1.clIdx
+        let su' := r.1.clSum
+        let nz' := r.1.clNz
+        let sy' := r.1.clSym
+        hdrRunF a stop hs c left D0 f (enterH r.1) sc' cl' w' cn' p' hd' nx' ln' pl' rs' rc' ss' (headOf_size r.1)
+          (nextOf_size r.1) lz' ix' su' nz' sy' (clLensOf_size r.1 hH.1.lensSz) p' (hr hH.1 hnx hH.2)
       else hdrNext c left D0 r
     if hsc : sc = true then
-      have I' : FInv stop st true s pos := by rw [← hsc]; exact I
+      have I' : FInv stop st true cl s k pos := by rw [← hsc]; exact I
       -- the refill hands its values on in each branch, so that no record of them is built
       -- (its position's bound typed as `p`'s, not through `curP`, so that its equation lemma matches)
       refillK w cn a p stop hs (Nat.le_trans (Nat.le_refl p.toNat) I'.2.1) fun qw qc qp he =>
-      match hq : symsPlain st.clt st.size (I'.2.2 rfl).2.1 qw qc qp s (I'.2.2 rfl).2.2 with
+      match hq : symsPlain st.clt st.size (I'.2.2.1 rfl).2.1 qw qc qp s (I'.2.2.1 rfl).2.2 with
       | some s' =>
         have I2 := FInv.plain I' he hq
-        hdrRunF a stop hs c left D0 f st true s'.1.word s'.1.count s'.1.pos s'.1.head s'.1.next s'.1.ln s'.1.prevLen
-          s'.1.repSym s'.1.repCount s'.1.symSum s'.1.headSz s'.1.nextSz s'.1.pos I2
+        hdrRunF a stop hs c left D0 f st true false s'.1.word s'.1.count s'.1.pos s'.1.head s'.1.next s'.1.ln
+          s'.1.prevLen s'.1.repSym s'.1.repCount s'.1.symSum s'.1.headSz s'.1.nextSz lz ix su nz sy hz s'.1.pos I2
       | none =>
         let r := stepHR a stop hs (SymsS.put st s) p I'.1 I'.2.1
         next r (fun h hn hp => FInv.enter h hn hp)
           (if hnx : r.1.status = .next then Or.inl (stepH_in I'.1 I'.2.1 hnx) else Or.inr hnx)
+    else if hcl : cl = true then
+      have I' : FInv stop st false true s k pos := by
+        rw [show sc = false by simpa using hsc, hcl] at I
+        exact I
+      refillK w cn a p stop hs (Nat.le_trans (Nat.le_refl p.toNat) I'.2.1) fun qw qc qp he =>
+      -- the read likewise hands its result on in each branch
+      cclK ⟨qw, qc⟩ fun ys yw yc ya he2 =>
+      match hq : clensPlainR ys yw yc ya qp k (I'.2.2.2 rfl).2.2 with
+      | some k' =>
+        have I2 := FInv.plainC I' he he2 hq
+        hdrRunF a stop hs c left D0 f st false true k'.1.word k'.1.count k'.1.pos hd nx ln pl rs rc ss hh hn k'.1.lens
+          k'.1.idx k'.1.sum k'.1.nz k'.1.sym k'.1.lensSz k'.1.pos I2
+      | none =>
+        let r := stepHR a stop hs (ClensS.put st k) p I'.1 I'.2.1
+        next r (fun h hn hp => FInv.enter h hn hp)
+          (if hnx : r.1.status = .next then Or.inl (stepH_in I'.1 I'.2.1 hnx) else Or.inr hnx)
     else
-      have I' : FInv stop st false s pos := by
-        rw [show sc = false by simpa using hsc] at I
+      have I' : FInv stop st false false s k pos := by
+        rw [show sc = false by simpa using hsc, show cl = false by simpa using hcl] at I
         exact I
       let r := stepHR a stop hs st pos I'.1 I'.2.1
       next r (fun h hn hp => FInv.enter h hn hp)
@@ -309,29 +419,63 @@ theorem hdrRun_congr {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size}
   subst e1 e2
   rfl
 
+/-- A header step that moved on leaves a state in a header. -/
+theorem stepHR_in {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {st : Hd} {pos : USize} {h : HIn st}
+    {hp : pos.toNat ≤ stop.toNat} (hn : (stepHR a stop hs st pos h hp).1.status = .next) :
+    HIn (stepHR a stop hs st pos h hp).1 := by
+  rw [stepHR_val] at hn ⊢
+  exact (stepH_in h hp hn).1
+
 /-- The runner is `hdrRun` from the state it stands for. -/
 theorem hdrRunF_eq {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} (c : Cmd) (left : UInt64) (D0 : Dec) :
-    ∀ (fuel : Nat) (st : Hd) (sc : Bool) (w cn : UInt64) (p : USize) (hd nx : ByteArray) (ln pl rs rc ss : UInt64)
-      (hh : hd.size = 32) (hn : nx.size = 1408) (pos : USize)
-      (I : FInv stop st sc ⟨w, cn, p, hd, nx, ln, pl, rs, rc, ss, hh, hn⟩ pos),
-      hdrRunF a stop hs c left D0 fuel st sc w cn p hd nx ln pl rs rc ss hh hn pos I =
-        hdrRun a stop hs c left D0 fuel (curH st sc ⟨w, cn, p, hd, nx, ln, pl, rs, rc, ss, hh, hn⟩)
-          (curP sc ⟨w, cn, p, hd, nx, ln, pl, rs, rc, ss, hh, hn⟩ pos) I.1 I.2.1 := by
+    ∀ (fuel : Nat) (st : Hd) (sc cl : Bool) (w cn : UInt64) (p : USize) (hd nx : ByteArray) (ln pl rs rc ss : UInt64)
+      (hh : hd.size = 32) (hn : nx.size = 1408) (lz : ByteArray) (ix su nz sy : UInt64) (hz : lz.size = 18)
+      (pos : USize)
+      (I : FInv stop st sc cl ⟨w, cn, p, hd, nx, ln, pl, rs, rc, ss, hh, hn⟩ ⟨w, cn, p, lz, ix, su, nz, sy, hz⟩ pos),
+      hdrRunF a stop hs c left D0 fuel st sc cl w cn p hd nx ln pl rs rc ss hh hn lz ix su nz sy hz pos I =
+        hdrRun a stop hs c left D0 fuel
+          (curH st sc cl ⟨w, cn, p, hd, nx, ln, pl, rs, rc, ss, hh, hn⟩ ⟨w, cn, p, lz, ix, su, nz, sy, hz⟩)
+          (curP sc cl ⟨w, cn, p, hd, nx, ln, pl, rs, rc, ss, hh, hn⟩ ⟨w, cn, p, lz, ix, su, nz, sy, hz⟩ pos)
+          I.1 I.2.1 := by
   intro fuel
   induction fuel with
   | zero =>
-    intro st sc w cn p hd nx ln pl rs rc ss hh hn pos I
+    intro st sc cl w cn p hd nx ln pl rs rc ss hh hn lz ix su nz sy hz pos I
     rw [hdrRunF, hdrRun]
   | succ f ih =>
-    intro st sc w cn p hd nx ln pl rs rc ss hh hn pos I
+    intro st sc cl w cn p hd nx ln pl rs rc ss hh hn lz ix su nz sy hz pos I
     rw [hdrRunF, hdrRun]
     cases sc
-    · -- plain mode: one `stepH`, then the mode the next place chooses
-      simp only [curH, curP, Bool.false_eq_true, ↓reduceIte, ↓reduceDIte]
-      split
-      · rename_i hc
-        exact (ih _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _).trans (hdrRun_congr (curH_enter _ hc) (curP_enter _))
-      · rfl
+    · cases cl
+      · -- plain mode: one `stepH`, then the mode the next place chooses
+        simp only [curH, curP, Bool.false_eq_true, ↓reduceIte, ↓reduceDIte]
+        split
+        · rename_i hc
+          exact (ih _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _).trans
+            (hdrRun_congr (curH_enter _ hc (stepHR_in hc).lensSz) (curP_enter _ (stepHR_in hc).lensSz))
+        · rfl
+      · -- at the code length code's lengths
+        have hin : HIn (ClensS.put st ⟨w, cn, p, lz, ix, su, nz, sy, hz⟩) := I.1
+        have hp : p.toNat ≤ stop.toNat := I.2.1
+        simp only [curH, curP, Bool.false_eq_true, ↓reduceIte, ↓reduceDIte]
+        rw [refillK_eq, cclK_eq]
+        split
+        · -- a plain scalar step: `stepH` on the state written back, by `stepH_clensPlain`
+          rename_i k' hq
+          have heq := stepH_clensPlain (a := a) (hs := hs) (pos := p) (h := hin) (hp := hp)
+            (I.2.2.2 rfl).2.1 (I.2.2.2 rfl).2.2 hz (s' := k') hq
+          rw [ClensS.put_put] at heq
+          have hnx : (stepHR a stop hs (ClensS.put st ⟨w, cn, p, lz, ix, su, nz, sy, hz⟩) p hin hp).1.status =
+              .next := by rw [stepHR_val, heq]; rfl
+          rw [dite_eq_left hnx]
+          exact (ih _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _).trans
+            (hdrRun_congr (by simp only [curH, Bool.false_eq_true, ↓reduceIte, stepHR_val, heq])
+              (by simp only [curP, Bool.false_eq_true, ↓reduceIte, stepHR_val, heq]; rfl))
+        · split
+          · rename_i hc
+            exact (ih _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _).trans
+              (hdrRun_congr (curH_enter _ hc (stepHR_in hc).lensSz) (curP_enter _ (stepHR_in hc).lensSz))
+          · rfl
     · have hin : HIn (SymsS.put st ⟨w, cn, p, hd, nx, ln, pl, rs, rc, ss, hh, hn⟩) := I.1
       have hp : p.toNat ≤ stop.toNat := I.2.1
       simp only [curH, curP, ↓reduceIte, ↓reduceDIte]
@@ -340,28 +484,30 @@ theorem hdrRunF_eq {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} (
       · -- a plain scalar step: `stepH` on the state written back, by `stepH_symsPlain`
         rename_i s' hq
         have heq := stepH_symsPlain (a := a) (hs := hs) (pos := p) (h := hin) (hp := hp)
-          (I.2.2 rfl).1 (I.2.2 rfl).2.1 (I.2.2 rfl).2.2 (s' := s') hq
+          (I.2.2.1 rfl).1 (I.2.2.1 rfl).2.1 (I.2.2.1 rfl).2.2 (s' := s') hq
         rw [SymsS.put_put] at heq
         have hnx : (stepHR a stop hs (SymsS.put st ⟨w, cn, p, hd, nx, ln, pl, rs, rc, ss, hh, hn⟩) p hin hp).1.status =
             .next := by rw [stepHR_val, heq]; rfl
         rw [dite_eq_left hnx]
-        exact (ih _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _).trans
+        exact (ih _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _).trans
           (hdrRun_congr (by simp only [curH, ↓reduceIte, stepHR_val, heq]) (by simp only [curP, ↓reduceIte, stepHR_val, heq]; rfl))
       · split
         · rename_i hc
-          exact (ih _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _).trans (hdrRun_congr (curH_enter _ hc) (curP_enter _))
+          exact (ih _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _).trans
+            (hdrRun_congr (curH_enter _ hc (stepHR_in hc).lensSz) (curP_enter _ (stepHR_in hc).lensSz))
         · rfl
 
 /-- `hdrRun` as the compiler runs it: `hdrRunF` from the state in plain mode. -/
 def hdrRunC (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (c : Cmd) (left : UInt64) (D0 : Dec)
     (fuel : Nat) (st : Hd) (pos : USize) (h : HIn st) (hp : pos.toNat ≤ stop.toNat) : Dec :=
-  hdrRunF a stop hs c left D0 fuel st false st.word st.count st.pos noHead noNext st.ln st.prevLen st.repSym
-    st.repCount st.symSum noHead_size noNext_size pos ⟨h, hp, fun e => Bool.noConfusion e⟩
+  hdrRunF a stop hs c left D0 fuel st false false st.word st.count st.pos noHead noNext st.ln st.prevLen st.repSym
+    st.repCount st.symSum noHead_size noNext_size noLens st.clIdx st.clSum st.clNz st.clSym noLens_size pos
+    ⟨h, hp, fun e => Bool.noConfusion e, fun e => Bool.noConfusion e⟩
 
 /-- The compiler runs `hdrRunC` in place of `hdrRun`. -/
 @[csimp] theorem hdrRun_csimp : @hdrRun = @hdrRunC := by
   funext a stop hs c left D0 fuel st pos h hp
-  exact (hdrRunF_eq c left D0 fuel st false _ _ _ _ _ _ _ _ _ _ _ _ pos _).symm
+  exact (hdrRunF_eq c left D0 fuel st false false _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ pos _).symm
 
 /-- The header steps a stream state at a header takes at once. -/
 @[inline] def stepDHdrF (D : Dec) (h : DInv stop D) (ht : D.tag = .hdr) : Dec :=

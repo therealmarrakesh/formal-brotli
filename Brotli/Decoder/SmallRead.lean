@@ -332,6 +332,69 @@ theorem cclFast_le (b0 : BitBuffer) : (cclFast b0).a.toNat ≤ 5 := by
 
 theorem cclFastS_val (b0 : BitBuffer) : (cclFastS b0).1 = cclFast b0 := rfl
 
+/-- `cclFast` with its result's status, buffer and value handed to `k` in each branch, each with its equation, so
+that, where the branches would meet, no record is built. -/
+@[inline] def cclK {α : Type} (b0 : BitBuffer)
+    (k : (s : ReadStatus) → (w c v : UInt64) → s = (cclFast b0).status ∧ w = (cclFast b0).word ∧
+      c = (cclFast b0).count ∧ v = (cclFast b0).a → α) : α :=
+  if h1 : 2 ≤ b0.count then
+    if h2 : b0.peek 2 = 0 then
+      k .ok (b0.drop 2).word (b0.drop 2).count 0
+        (by unfold cclFast; rw [ite_eq_left h1]; dsimp only; rw [ite_eq_left h2]; exact ⟨rfl, rfl, rfl, rfl⟩)
+    else if h3 : b0.peek 2 = 1 then
+      k .ok (b0.drop 2).word (b0.drop 2).count 4
+        (by unfold cclFast; rw [ite_eq_left h1]; dsimp only; rw [ite_eq_right h2, ite_eq_left h3]
+            exact ⟨rfl, rfl, rfl, rfl⟩)
+    else if h4 : b0.peek 2 = 2 then
+      k .ok (b0.drop 2).word (b0.drop 2).count 3
+        (by unfold cclFast; rw [ite_eq_left h1]; dsimp only; rw [ite_eq_right h2, ite_eq_right h3, ite_eq_left h4]
+            exact ⟨rfl, rfl, rfl, rfl⟩)
+    else if h5 : 1 ≤ (b0.drop 2).count then
+      if h6 : (b0.drop 2).peek 1 = 0 then
+        k .ok ((b0.drop 2).drop 1).word ((b0.drop 2).drop 1).count 2
+          (by unfold cclFast; rw [ite_eq_left h1]; dsimp only
+              rw [ite_eq_right h2, ite_eq_right h3, ite_eq_right h4, ite_eq_left h5, ite_eq_left h6]
+              exact ⟨rfl, rfl, rfl, rfl⟩)
+      else if h7 : 1 ≤ ((b0.drop 2).drop 1).count then
+        if h8 : ((b0.drop 2).drop 1).peek 1 = 0 then
+          k .ok (((b0.drop 2).drop 1).drop 1).word (((b0.drop 2).drop 1).drop 1).count 1
+            (by unfold cclFast; rw [ite_eq_left h1]; dsimp only
+                rw [ite_eq_right h2, ite_eq_right h3, ite_eq_right h4, ite_eq_left h5, ite_eq_right h6, ite_eq_left h7,
+                  ite_eq_left h8]
+                exact ⟨rfl, rfl, rfl, rfl⟩)
+        else
+          k .ok (((b0.drop 2).drop 1).drop 1).word (((b0.drop 2).drop 1).drop 1).count 5
+            (by unfold cclFast; rw [ite_eq_left h1]; dsimp only
+                rw [ite_eq_right h2, ite_eq_right h3, ite_eq_right h4, ite_eq_left h5, ite_eq_right h6, ite_eq_left h7,
+                  ite_eq_right h8]
+                exact ⟨rfl, rfl, rfl, rfl⟩)
+      else
+        k .short b0.word b0.count 0
+          (by unfold cclFast; rw [ite_eq_left h1]; dsimp only
+              rw [ite_eq_right h2, ite_eq_right h3, ite_eq_right h4, ite_eq_left h5, ite_eq_right h6, ite_eq_right h7]
+              exact ⟨rfl, rfl, rfl, rfl⟩)
+    else
+      k .short b0.word b0.count 0
+        (by unfold cclFast; rw [ite_eq_left h1]; dsimp only
+            rw [ite_eq_right h2, ite_eq_right h3, ite_eq_right h4, ite_eq_right h5]
+            exact ⟨rfl, rfl, rfl, rfl⟩)
+  else
+    k .short b0.word b0.count 0 (by unfold cclFast; rw [ite_eq_right h1]; exact ⟨rfl, rfl, rfl, rfl⟩)
+
+/-- `cclK` hands `k` the fields of `cclFast`'s result. -/
+theorem cclK_eq {α : Type} {b0 : BitBuffer}
+    (k : (s : ReadStatus) → (w c v : UInt64) → s = (cclFast b0).status ∧ w = (cclFast b0).word ∧
+      c = (cclFast b0).count ∧ v = (cclFast b0).a → α) :
+    cclK b0 k = k (cclFast b0).status (cclFast b0).word (cclFast b0).count (cclFast b0).a ⟨rfl, rfl, rfl, rfl⟩ := by
+  have key : ∀ s w c v e, k s w c v e = k (cclFast b0).status (cclFast b0).word (cclFast b0).count (cclFast b0).a
+      ⟨rfl, rfl, rfl, rfl⟩ := by
+    intro s w c v e
+    obtain ⟨rfl, rfl, rfl, rfl⟩ := e
+    rfl
+  unfold cclK
+  repeat' split
+  all_goals exact key _ _ _ _ _
+
 theorem cclFast_ok {b0 : BitBuffer} (hw : b0.Wf) :
     ROk readCodeLengthCodeLength b0 b0 4 (cclFast b0) (cclFast b0).a.toNat := by
   refine ROk.congr ?_ cclChain_eq
