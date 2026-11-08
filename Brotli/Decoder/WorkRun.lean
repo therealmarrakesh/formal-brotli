@@ -771,14 +771,15 @@ bits and bytes, and the commands' end by what they hold for it. A loop that runs
 enough to pay for its round. -/
 theorem pay_cmds {w : Nat} {last : Bool} {m : MetaBlockHeader} {q0 : Phase} {a : ByteArray} {stop : USize}
     {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize} (hrel : DRel D (.cmds w last m q0)) (hsi : SInv (.cmds w last m q0))
-    (hp : pos.toNat ≤ stop.toNat) :
-    ((stepDCmds a stop hs D pos).status = .next → Pays a stop (.cmds w last m q0) D pos (stepDCmds a stop hs D pos)
-      (stepDCmdsW a stop hs D pos + 1) 0) ∧
-    ((stepDCmds a stop hs D pos).status = .needsInput ∨ (stepDCmds a stop hs D pos).status = .needsOutput →
-      Pays a stop (.cmds w last m q0) D pos (stepDCmds a stop hs D pos) (stepDCmdsW a stop hs D pos + 1) 85) ∧
-    ((stepDCmds a stop hs D pos).status = .bad → ∃ L, D.cmd.pend.toNat + L ≤ (stepDCmds a stop hs D pos).cmd.pend.toNat ∧
-      ∀ t : List UInt8, stepDCmdsW a stop hs D pos + 1 + hdrRate * ((stop.toNat - (stepDCmds a stop hs D pos).pos.toNat) * 8) +
-        (stop.toNat - (stepDCmds a stop hs D pos).pos.toNat) ≤
+    (_hp : pos.toNat ≤ stop.toNat) {h : CmdInv D.H D.k stop D.cmd pos} :
+    ((stepDCmds a stop hs D pos h).status = .next → Pays a stop (.cmds w last m q0) D pos (stepDCmds a stop hs D pos h)
+      (stepDCmdsW a stop hs D pos h + 1) 0) ∧
+    ((stepDCmds a stop hs D pos h).status = .needsInput ∨ (stepDCmds a stop hs D pos h).status = .needsOutput →
+      Pays a stop (.cmds w last m q0) D pos (stepDCmds a stop hs D pos h) (stepDCmdsW a stop hs D pos h + 1) 85) ∧
+    ((stepDCmds a stop hs D pos h).status = .bad → ∃ L, D.cmd.pend.toNat + L ≤ (stepDCmds a stop hs D pos h).cmd.pend.toNat ∧
+      ∀ t : List UInt8, stepDCmdsW a stop hs D pos h + 1 +
+        hdrRate * ((stop.toNat - (stepDCmds a stop hs D pos h).pos.toNat) * 8) +
+        (stop.toNat - (stepDCmds a stop hs D pos h).pos.toNat) ≤
         dpot (.cmds w last m q0) D + hdrRate * (D.bits a pos stop (bits t)).length + (stop.toNat - pos.toNat) + 31 *L + 93) := by
   obtain ⟨tag, cmd, hd, H, k, last', left, limit, pos', status⟩ := D
   obtain ⟨ht, hl, hlim, hH, hR, hlive⟩ := hrel
@@ -788,8 +789,8 @@ theorem pay_cmds {w : Nat} {last : Bool} {m : MetaBlockHeader} {q0 : Phase} {a :
   subst hl0
   obtain ⟨hm, hci⟩ := hsi
   dsimp only at hR
-  obtain ⟨c, q, st', pos'', hq, hciq, o1, l1, g1, g2, hr, g3, g4, gb, g5, g6⟩ :=
-    runCmdW_count (w := w) (k := k) (hs := hs) hm hH _ cmdBudget cmd q0 pos rfl hR hci hp []
+  obtain ⟨c, q, st', pos'', hq, hciq, o1, g1, g2, hr, g3, g4, gb, g5, g6⟩ :=
+    runCmdFW_count (w := w) (k := k) (hs := hs) hm hH cmdBudget hR hci h []
   have hliveq : CLive q := reach_live hr.reach hlive
   obtain ⟨-, c1, c2, c3, c4⟩ := creach hm hr hci
   have hq8 := crank_le q
@@ -800,19 +801,22 @@ theorem pay_cmds {w : Nat} {last : Bool} {m : MetaBlockHeader} {q0 : Phase} {a :
   have hl2' : st'.pend.toNat = cmd.pend.toNat + l.length := hl2
   have hlo : q.out.length - q0.out.length = l.length := by rw [hl1, List.length_append]; omega
   have hRate : hdrRate = 2980 := rfl
-  have eW : stepDCmdsW a stop hs ⟨.cmds, cmd, hd, H, k, last', left, limit, pos', status⟩ pos =
-      runCmdW H k a stop hs cmdBudget cmd pos + (if (runCmd H k a stop hs cmdBudget cmd pos).status = .done then 1 else 0) := rfl
+  have eW : stepDCmdsW a stop hs ⟨.cmds, cmd, hd, H, k, last', left, limit, pos', status⟩ pos h =
+      runCmdFW H k a stop hs cmdBudget cmd pos h +
+        (if (runCmdF H k a stop hs cmdBudget cmd pos h).status = .done then 1 else 0) := rfl
   simp only [stateBits] at g3 c1 c3
   rw [eW]
   unfold stepDCmds takeCmd
   dsimp only
-  generalize runCmd H k a stop hs cmdBudget cmd pos = rc at g3 g4 gb g5 g6 ⊢
+  generalize runCmdFW H k a stop hs cmdBudget cmd pos h = W at g3 ⊢
+  generalize runCmdF H k a stop hs cmdBudget cmd pos h = rc at g3 g4 gb g5 g6 ⊢
   cases hst : rc.status with
   | next =>
     obtain ⟨e1, e2⟩ := g4 (by rw [hst]; decide)
     subst e1
     subst e2
     have hc := g6 hst
+    simp only [Bool.false_eq_true, ↓reduceIte] at hc
     have he : cmdEnd st' = 1 := by unfold cmdEnd; rw [hst]; rfl
     rw [he] at g3
     rw [ite_eq_right (fun e => StepStatus.noConfusion e)]
@@ -1236,8 +1240,9 @@ theorem stopCost_ge (r : Dec) : 2 ≤ stopCost r := by
   unfold stopCost
   split <;> omega
 
-theorem stepDCmds_out_tag {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize} (ht : D.tag = .cmds) :
-    (stepDCmds a stop hs D pos).status = .needsOutput → (stepDCmds a stop hs D pos).tag = .cmds := by
+theorem stepDCmds_out_tag {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize} (ht : D.tag = .cmds)
+    {h : CmdInv D.H D.k stop D.cmd pos} :
+    (stepDCmds a stop hs D pos h).status = .needsOutput → (stepDCmds a stop hs D pos h).tag = .cmds := by
   unfold stepDCmds takeCmd clearCmd
   dsimp only
   repeat' (first | split_all | (intro h; exact absurd h (fun e => DStatus.noConfusion e)) | (intro _; exact ht))
@@ -1399,7 +1404,7 @@ theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
   cases p with
   | wbits =>
     have e1 : stepD a stop hs D hinv = stepDWbits a stop hs D D.pos := stepD_wbits hrel.1
-    have e2 : stepDW a stop hs D hinv = stepDWbitsW a stop hs D D.pos := by unfold stepDW; rw [hrel.1]
+    have e2 : stepDW a stop hs D hinv = stepDWbitsW a stop hs D D.pos := stepDW_wbits hrel.1
     rw [e1, e2]
     rw [e1] at hok hpos
     obtain ⟨n1, n2, n3⟩ := pay_wbits (hs := hs) hrel hp
@@ -1421,7 +1426,7 @@ theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
       rcases hmem (by rw [e1]; exact hm) with ⟨_, h'⟩ | ⟨_, _, _, _, _, _, h'⟩ <;> cases h'
   | mblock w st =>
     have e1 : stepD a stop hs D hinv = stepDMeta a stop hs D D.pos := stepD_mblock hrel.1
-    have e2 : stepDW a stop hs D hinv = stepDMetaW a stop hs D D.pos := by unfold stepDW; rw [hrel.1]
+    have e2 : stepDW a stop hs D hinv = stepDMetaW a stop hs D D.pos := stepDW_mblock hrel.1
     rw [e1, e2]
     obtain ⟨n1, n2, n3, n4⟩ := pay_mblock (hs := hs) hrel hp
     rw [e1] at hok hpos hpos2
@@ -1458,7 +1463,7 @@ theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
       exact (n3 h).mono (Nat.le_of_eq hsc.symm)
   | skip w st last n =>
     have e1 : stepD a stop hs D hinv = stepDSkip stop D D.pos := stepD_skip hrel.1
-    have e2 : stepDW a stop hs D hinv = 1 := by unfold stepDW; rw [hrel.1]
+    have e2 : stepDW a stop hs D hinv = 1 := stepDW_skip hrel.1
     rw [e1, e2]
     obtain ⟨n1, n2, n3⟩ := pay_skip (a := a) (hs := hs) hrel hp
     rw [e1] at hpos
@@ -1474,7 +1479,7 @@ theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
     · exact (n3 h).mono (stopCost_ge _)
   | raw w st last n =>
     have e1 : stepD a stop hs D hinv = stepDRaw a stop hs D D.pos := stepD_raw hrel.1
-    have e2 : stepDW a stop hs D hinv = stepDRawW a stop hs D D.pos := by unfold stepDW; rw [hrel.1]
+    have e2 : stepDW a stop hs D hinv = stepDRawW a stop hs D D.pos := stepDW_raw hrel.1
     rw [e1, e2]
     rw [e1] at hpl hok hpos
     obtain ⟨n1, n2, n3, n4⟩ := pay_raw (hs := hs) hrel hp
@@ -1497,7 +1502,7 @@ theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
       rcases hmem (by rw [e1]; exact hm) with ⟨_, h'⟩ | ⟨_, _, _, _, _, _, h'⟩ <;> cases h'
   | hdr w st last mlen g q =>
     have e1 : stepD a stop hs D hinv = stepDHdr a stop hs D D.pos (hinv.hd hrel.1) hinv.2 := stepD_hdr hrel.1
-    have e2 : stepDW a stop hs D hinv = stepDHdrW a stop hs D D.pos hinv.hd hinv.2 := by unfold stepDW; rw [hrel.1]
+    have e2 : stepDW a stop hs D hinv = stepDHdrW a stop hs D D.pos hinv.hd hinv.2 := stepDW_hdr hrel.1
     rw [e1, e2]
     rw [e1] at hok hpos hpos2
     obtain ⟨n1, n2, n3⟩ := pay_hdr (hs := hs) (hH := hinv.hd hrel.1) hrel hinv.2
@@ -1517,14 +1522,14 @@ theorem pay_stepD {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D
       exact ⟨0, by omega, fun hm => by rw [stepDHdr_memPend hm]; exact h0,
         fun t => by have := rate_chunk D hs (hpos h) (bits t); have := hpos2 h; omega⟩
   | cmds w last m q =>
-    have e1 : stepD a stop hs D hinv = stepDCmds a stop hs D D.pos := stepD_cmds hrel.1
-    have e2 : stepDW a stop hs D hinv = stepDCmdsW a stop hs D D.pos := by unfold stepDW; rw [hrel.1]
+    have e1 : stepD a stop hs D hinv = stepDCmds a stop hs D D.pos (hinv.cmd hrel.1) := stepD_cmds hrel.1
+    have e2 : stepDW a stop hs D hinv = stepDCmdsW a stop hs D D.pos (hinv.cmd hrel.1) := stepDW_cmds hrel.1
     rw [e1, e2]
-    obtain ⟨n1, n2, n3⟩ := pay_cmds (hs := hs) hrel hsi hp
+    obtain ⟨n1, n2, n3⟩ := pay_cmds (hs := hs) (h := hinv.cmd hrel.1) hrel hsi hp
     refine ⟨fun h => (n1 h).mono (Nat.zero_le _), fun h => ?_, fun h => ?_⟩
     · rcases h with h' | h'
       · exact (n2 (Or.inl h')).mono (by rw [stopCost_in h']; omega)
-      · have ht : (stepDCmds a stop hs D D.pos).tag ≠ .mblock := by
+      · have ht : (stepDCmds a stop hs D D.pos (hinv.cmd hrel.1)).tag ≠ .mblock := by
           rw [stepDCmds_out_tag hrel.1 h']
           exact fun e => DTag.noConfusion e
         exact (n2 (Or.inr h')).mono (Nat.le_of_eq (stopCost_out ht).symm)
@@ -1649,9 +1654,15 @@ theorem stepD_room {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {
     dsimp only
     repeat' (first | split_all | (intro h; exact absurd h (fun e => DStatus.noConfusion e)))
   · rw [stepD_cmds ht]
+    obtain ⟨p, hrel⟩ := hinv.1
+    have hf : (runCmdF D.H D.k a stop hs cmdBudget D.cmd D.pos (hinv.cmd ht)).status = .needsOutput →
+        room D.k (runCmdF D.H D.k a stop hs cmdBudget D.cmd D.pos (hinv.cmd ht)).cap ≤
+          (runCmdF D.H D.k a stop hs cmdBudget D.cmd D.pos (hinv.cmd ht)).pend := by
+      cases p with
+      | cmds w last m q => exact runCmdF_full hrel.2.2.2.1 cmdBudget hrel.2.2.2.2.1 (hinv.cmd ht)
+      | _ => exact absurd (hrel.1.symm.trans ht) (fun e => DTag.noConfusion e)
     unfold stepDCmds takeCmd clearCmd
     dsimp only
-    have hf := runCmd_full (H := D.H) (k := D.k) (a := a) (hs := hs) _ cmdBudget D.cmd D.pos rfl
     repeat' (first | split_all | (intro h; exact absurd h (fun e => DStatus.noConfusion e)) |
       (intro _ _; exact hf (by assumption)))
   · exact absurd ht he

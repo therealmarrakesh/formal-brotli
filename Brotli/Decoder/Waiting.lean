@@ -361,12 +361,14 @@ theorem stepDHdr_pendLe (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.si
   unfold PendLeD stepDHdr takeHd clearHd hdrNext takeReady cmdStart
   keepD_tac
 
-theorem stepDCmds_pendLe (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize) :
-    PendLeD D (stepDCmds a stop hs D pos) := by
-  have h := runCmd_pendLe D.H D.k a stop hs _ cmdBudget D.cmd pos rfl
+theorem stepDCmds_pendLe (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize)
+    {w : Nat} {last : Bool} {m : Brotli.Spec.MetaBlockHeader} {q : Phase} (hrel : DRel D (.cmds w last m q))
+    (h : CmdInv D.H D.k stop D.cmd pos) : PendLeD D (stepDCmds a stop hs D pos h) := by
+  have hp := runCmdF_pendLe (hs := hs) hrel.2.2.2.1 cmdBudget hrel.2.2.2.2.1 h
   unfold PendLeD stepDCmds takeCmd clearCmd
   try dsimp only
-  repeat' (first | split_all | exact h)
+  generalize runCmdF D.H D.k a stop hs cmdBudget D.cmd pos h = r at hp ⊢
+  repeat' (first | split_all | exact hp)
 
 theorem stepD_pendLe (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (h : DInv stop D) :
     PendLeD D (stepD a stop hs D h) := by
@@ -376,7 +378,11 @@ theorem stepD_pendLe (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size)
   · rw [stepD_skip ht]; exact stepDSkip_pendLe stop D D.pos
   · rw [stepD_raw ht]; exact stepDRaw_pendLe a stop hs D D.pos
   · rw [stepD_hdr ht]; exact stepDHdr_pendLe a stop hs D D.pos _ _
-  · rw [stepD_cmds ht]; exact stepDCmds_pendLe a stop hs D D.pos
+  · rw [stepD_cmds ht]
+    obtain ⟨⟨p, hrel⟩, _⟩ := h
+    cases p with
+    | cmds w last m q => exact stepDCmds_pendLe a stop hs D D.pos hrel _
+    | _ => exact absurd (hrel.1.symm.trans ht) (fun e => DTag.noConfusion e)
   · rw [stepD_ended ht]; exact PendLe.rfl' _
 
 theorem runD_pendLe (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) :

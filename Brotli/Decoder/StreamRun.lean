@@ -45,7 +45,7 @@ def stepD (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) 
   | .skip => stepDSkip stop D D.pos
   | .raw => stepDRaw a stop hs D D.pos
   | .hdr => stepDHdr a stop hs D D.pos (h.hd ht) h.2
-  | .cmds => stepDCmdsP a stop hs D D.pos (h.cmd ht)
+  | .cmds => stepDCmds a stop hs D D.pos (h.cmd ht)
   | .ended => D
 
 section
@@ -60,7 +60,8 @@ theorem stepD_mblock (ht : D.tag = .mblock) : stepD a stop hs D h = stepDMeta a 
 theorem stepD_skip (ht : D.tag = .skip) : stepD a stop hs D h = stepDSkip stop D D.pos := by stepD_tag ht
 theorem stepD_raw (ht : D.tag = .raw) : stepD a stop hs D h = stepDRaw a stop hs D D.pos := by stepD_tag ht
 theorem stepD_hdr (ht : D.tag = .hdr) : stepD a stop hs D h = stepDHdr a stop hs D D.pos (h.hd ht) h.2 := by stepD_tag ht
-theorem stepD_cmds (ht : D.tag = .cmds) : stepD a stop hs D h = stepDCmds a stop hs D D.pos := by stepD_tag ht
+theorem stepD_cmds (ht : D.tag = .cmds) : stepD a stop hs D h = stepDCmds a stop hs D D.pos (h.cmd ht) := by
+  stepD_tag ht
 theorem stepD_ended (ht : D.tag = .ended) : stepD a stop hs D h = D := by stepD_tag ht
 
 end
@@ -881,19 +882,22 @@ private theorem cmdBudget_ne : cmdBudget ≠ 0 := by
 
 /-- The commands' step lowers the measure. -/
 theorem stepDCmds_down {w : Nat} {last : Bool} {m : MetaBlockHeader} {p : Phase} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec}
-    {pos : USize} (hrel : DRel D (.cmds w last m p)) (hp : pos.toNat ≤ stop.toNat) :
-    DDown a stop (.cmds w last m p) D pos (stepDCmds a stop hs D pos) := by
-  have hok := stepDCmds_ok (S := specSem) (a := a) (hs := hs) hrel hp
+    {pos : USize} (hrel : DRel D (.cmds w last m p)) (hp : pos.toNat ≤ stop.toNat) {h : CmdInv D.H D.k stop D.cmd pos} :
+    DDown a stop (.cmds w last m p) D pos (stepDCmds a stop hs D pos h) := by
+  have hok := stepDCmds_ok (S := specSem) (a := a) (hs := hs) (h := h) hrel hp
   obtain ⟨tag, cmd, hd, H, k, last', left, limit, pos', status⟩ := D
   obtain ⟨ht, hl, hlim, hH, hR, hL⟩ := hrel
   have ht' : tag = .cmds := ht
   subst ht'
   have hl0 : last' = last := hl
   subst hl0
-  have hstep := runCmd_down (last := last') (a := a) (stop := stop) (hs := hs) cmdBudget_ne hH hR hp
+  have hb1 : 1 ≤ cmdBudget.toNat := by
+    have : cmdBudget.toNat = 65536 := usize_ofNat' (by decide)
+    omega
+  have hstep := (runCmdF_meas (last := last') (a := a) (stop := stop) (hs := hs) hH cmdBudget hR h).2 hb1
   unfold stepDCmds takeCmd at hok ⊢
   dsimp only at hok ⊢
-  generalize runCmd H k a stop hs cmdBudget cmd pos = r at hstep hok
+  generalize runCmdF H k a stop hs cmdBudget cmd pos h = r at hstep hok
   cases hst : r.status with
   | next =>
     rw [hst] at hok

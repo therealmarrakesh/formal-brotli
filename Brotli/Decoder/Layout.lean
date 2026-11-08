@@ -611,19 +611,21 @@ theorem stepDHdr_same {s t : Dec} (he : s.er = t.er) {p1 p2 : USize} (h : Same a
   split <;> exact ⟨rfl, hS⟩
 
 include hs1 hs2 in
-theorem stepDCmds_same {s t : Dec} (he : s.er = t.er) {p1 p2 : USize} (h : Same a1 e1 a2 e2 p1 p2) :
-    DecSame a1 e1 a2 e2 (stepDCmds a1 e1 hs1 s p1) (stepDCmds a2 e2 hs2 t p2) := by
-  rw [dec_er he]
-  generalize t.pos = q0
-  generalize t.cmd.pos = q1
-  generalize t.hd.pos = q2
-  obtain ⟨e, hS⟩ := runCmd_same s.H s.k hs1 hs2 _ cmdBudget (s := s.cmd) (t := { s.cmd with pos := q1 }) rfl rfl h
+theorem stepDCmds_same {s t : Dec} (he : s.er = t.er) {p1 p2 : USize} (h : Same a1 e1 a2 e2 p1 p2)
+    {h1 : CmdInv s.H s.k e1 s.cmd p1} {h2 : CmdInv t.H t.k e2 t.cmd p2} :
+    DecSame a1 e1 a2 e2 (stepDCmds a1 e1 hs1 s p1 h1) (stepDCmds a2 e2 hs2 t p2 h2) := by
+  have et := dec_er he
+  generalize t.pos = q0 at et
+  generalize t.cmd.pos = q1 at et
+  generalize t.hd.pos = q2 at et
+  subst et
+  obtain ⟨e, hS⟩ := runCmdF_same s.H s.k hs1 hs2 cmdBudget (s := s.cmd) (t := { s.cmd with pos := q1 }) rfl h h1 h2
   have e' := cmd_er e
   unfold stepDCmds takeCmd clearCmd seenOk
   dsimp only at e' hS ⊢
   rw [e']
-  generalize (runCmd s.H s.k a2 e2 hs2 cmdBudget { s.cmd with pos := q1 } p2).pos = q3 at hS ⊢
-  generalize runCmd s.H s.k a1 e1 hs1 cmdBudget s.cmd p1 = R at hS ⊢
+  generalize (runCmdF s.H s.k a2 e2 hs2 cmdBudget { s.cmd with pos := q1 } p2 h2).pos = q3 at hS ⊢
+  generalize runCmdF s.H s.k a1 e1 hs1 cmdBudget s.cmd p1 h1 = R at hS ⊢
   cases R
   dsimp only at hS ⊢
   repeat' (first | split_all | (refine ⟨rfl, ?_⟩; exact hS))

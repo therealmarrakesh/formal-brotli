@@ -331,11 +331,12 @@ theorem stepDSkip_lim : stepDSkip stop (decSet D l a) pos = decSet (stepDSkip st
   simp only [stepDSkip, moveOn]
   (repeat' split) <;> first | rfl | contradiction | (simp_all [decSet, hdSet]; done)
 
-theorem stepDCmds_lim : stepDCmds ar stop hs (decSet D l a) pos = decSet (stepDCmds ar stop hs D pos) l a := by
-  show stepDCmds ar stop hs { D with limit := l, hd := hdSet D.hd a } pos = _
+theorem stepDCmds_lim (h : CmdInv D.H D.k stop D.cmd pos) :
+    stepDCmds ar stop hs (decSet D l a) pos h = decSet (stepDCmds ar stop hs D pos h) l a := by
+  show stepDCmds ar stop hs { D with limit := l, hd := hdSet D.hd a } pos h = _
   simp only [stepDCmds, takeCmd, clearCmd]
-  (repeat' split) <;> first | rfl | contradiction | (simp_all [decSet, hdSet]; done) |
-    (by_cases hc : seenOk (runCmd D.H D.k ar stop hs cmdBudget D.cmd pos) D.H.nL D.H.nI D.H.nD = true <;>
+  cases (runCmdF D.H D.k ar stop hs cmdBudget D.cmd pos h).status <;>
+    first | rfl | (by_cases hc : seenOk (runCmdF D.H D.k ar stop hs cmdBudget D.cmd pos h) D.H.nL D.H.nI D.H.nD = true <;>
       simp only [hc, ↓reduceIte] <;> rfl)
 
 theorem stepDRaw_lim : stepDRaw ar stop hs (decSet D l a) pos = decSet (stepDRaw ar stop hs D pos) l a := by
@@ -467,7 +468,7 @@ theorem stepD_lim (h1 : DInv stop (decSet D l a)) (h2 : DInv stop D) :
     exact stepDHdr_lim D l a ar stop hs D.pos _ _ h2.2
   | cmds =>
     rw [stepD_cmds (D := decSet D l a) ht, stepD_cmds ht]
-    exact DLim.same (stepDCmds_lim D l a ar stop hs D.pos)
+    exact DLim.same (stepDCmds_lim D l a ar stop hs D.pos (h2.cmd ht))
   | ended =>
     rw [stepD_ended (D := decSet D l a) ht, stepD_ended ht]
     exact DLim.same (l := l) (a := a) rfl

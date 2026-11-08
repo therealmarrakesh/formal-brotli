@@ -774,14 +774,18 @@ theorem stepDRaw_keeps (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.siz
         exact ite_status_ne _
     · exact ⟨rfl, rfl, rfl, rfl, (fun e => DStatus.noConfusion e), fun _ => rfl, h1⟩
 
-theorem stepDCmds_keeps (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize) :
-    (stepDCmds a stop hs D pos).k = D.k ∧ (stepDCmds a stop hs D pos).limit = D.limit ∧ (stepDCmds a stop hs D pos).hd = D.hd ∧
-      (stepDCmds a stop hs D pos).status ≠ .memory ∧ ((stepDCmds a stop hs D pos).status ≠ .next → (stepDCmds a stop hs D pos).tag = D.tag) ∧
-      (((stepDCmds a stop hs D pos).tag = D.tag ∧ (stepDCmds a stop hs D pos).H = D.H) ∨
-        ((stepDCmds a stop hs D pos).tag ≠ .wbits ∧ (stepDCmds a stop hs D pos).tag ≠ .hdr ∧ (stepDCmds a stop hs D pos).tag ≠ .cmds ∧ (stepDCmds a stop hs D pos).H = Hdr.none)) := by
+theorem stepDCmds_keeps (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize)
+    (h : CmdInv D.H D.k stop D.cmd pos) :
+    (stepDCmds a stop hs D pos h).k = D.k ∧ (stepDCmds a stop hs D pos h).limit = D.limit ∧
+      (stepDCmds a stop hs D pos h).hd = D.hd ∧
+      (stepDCmds a stop hs D pos h).status ≠ .memory ∧
+      ((stepDCmds a stop hs D pos h).status ≠ .next → (stepDCmds a stop hs D pos h).tag = D.tag) ∧
+      (((stepDCmds a stop hs D pos h).tag = D.tag ∧ (stepDCmds a stop hs D pos h).H = D.H) ∨
+        ((stepDCmds a stop hs D pos h).tag ≠ .wbits ∧ (stepDCmds a stop hs D pos h).tag ≠ .hdr ∧
+          (stepDCmds a stop hs D pos h).tag ≠ .cmds ∧ (stepDCmds a stop hs D pos h).H = Hdr.none)) := by
   unfold stepDCmds takeCmd
   dsimp only
-  generalize runCmd D.H D.k a stop hs cmdBudget D.cmd pos = r
+  generalize runCmdF D.H D.k a stop hs cmdBudget D.cmd pos h = r
   split
   · exact ⟨rfl, rfl, rfl, (fun e => DStatus.noConfusion e), fun e => absurd rfl e, Or.inl ⟨rfl, rfl⟩⟩
   · exact ⟨rfl, rfl, rfl, (fun e => DStatus.noConfusion e), fun _ => rfl, Or.inl ⟨rfl, rfl⟩⟩
@@ -843,15 +847,17 @@ theorem stepDRaw_ring (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size
 
 /-- The commands' step keeps the window's size. -/
 theorem stepDCmds_ring {w : Nat} {last : Bool} {m : MetaBlockHeader} {p : Phase} {a : ByteArray} {stop : USize}
-    {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize} (hrel : DRel D (.cmds w last m p)) (hp : pos.toNat ≤ stop.toNat) :
-    (stepDCmds a stop hs D pos).status ≠ .bad → (stepDCmds a stop hs D pos).cmd.ring.size = D.cmd.ring.size := by
+    {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize} (hrel : DRel D (.cmds w last m p)) (_hp : pos.toNat ≤ stop.toNat)
+    {h : CmdInv D.H D.k stop D.cmd pos} :
+    (stepDCmds a stop hs D pos h).status ≠ .bad → (stepDCmds a stop hs D pos h).cmd.ring.size = D.cmd.ring.size := by
   obtain ⟨tag, cmd, hd, H, k, last', left, limit, pos', status⟩ := D
   obtain ⟨_, _, _, hH, hR, -⟩ := hrel
-  have hstep := runCmd_ok (hs := hs) (K := cmdK w (specSem.after w last') m) (a := a) (fun s bs h0 => cmdK_step s bs h0) hH _ cmdBudget p cmd pos rfl hR hp
+  have hstep := runCmdF_ok (hs := hs) (K := cmdK w (specSem.after w last') m) (fun s bs h0 => cmdK_step s bs h0) hH
+    cmdBudget hR h
   have h0 : cmd.ring.size = 2 ^ k.toNat := hR.arrays.1
   unfold stepDCmds takeCmd
   dsimp only
-  generalize runCmd H k a stop hs cmdBudget cmd pos = r at hstep
+  generalize runCmdF H k a stop hs cmdBudget cmd pos h = r at hstep
   intro hb
   cases hst : r.status with
   | next =>
@@ -877,18 +883,21 @@ theorem stepDCmds_ring {w : Nat} {last : Bool} {m : MetaBlockHeader} {p : Phase}
 
 /-- The commands' step keeps the window's size, whatever its status. -/
 theorem stepDCmds_ring' {w : Nat} {last : Bool} {m : MetaBlockHeader} {p : Phase} {a : ByteArray} {stop : USize}
-    {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize} (hrel : DRel D (.cmds w last m p)) (hp : pos.toNat ≤ stop.toNat) :
-    (stepDCmds a stop hs D pos).cmd.ring.size = D.cmd.ring.size := by
-  by_cases hb : (stepDCmds a stop hs D pos).status = .bad
+    {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize} (hrel : DRel D (.cmds w last m p)) (hp : pos.toNat ≤ stop.toNat)
+    {h : CmdInv D.H D.k stop D.cmd pos} :
+    (stepDCmds a stop hs D pos h).cmd.ring.size = D.cmd.ring.size := by
+  by_cases hb : (stepDCmds a stop hs D pos h).status = .bad
   · revert hb
     obtain ⟨tag, cmd, hd, H, k, last', left, limit, pos', status⟩ := D
     obtain ⟨_, _, _, hH, hR, -⟩ := hrel
-    have hstep := runCmd_ok (hs := hs) (K := cmdK w (specSem.after w last') m) (a := a) (fun s bs h0 => cmdK_step s bs h0) hH _ cmdBudget p cmd pos rfl hR hp
-    have hbad := runCmd_badWin (hs := hs) (K := cmdK w (specSem.after w last') m) (a := a) (fun s bs h0 => cmdK_step s bs h0) hH _ cmdBudget p cmd pos rfl hR hp
+    have hstep := runCmdF_ok (hs := hs) (K := cmdK w (specSem.after w last') m) (fun s bs h0 => cmdK_step s bs h0) hH
+      cmdBudget hR h
+    have hbad := runCmdF_badWin (hs := hs) (K := cmdK w (specSem.after w last') m) (fun s bs h0 => cmdK_step s bs h0) hH
+      cmdBudget hR h
     have h0 : cmd.ring.size = 2 ^ k.toNat := hR.arrays.1
     unfold stepDCmds takeCmd
     dsimp only
-    generalize runCmd H k a stop hs cmdBudget cmd pos = r at hstep hbad
+    generalize runCmdF H k a stop hs cmdBudget cmd pos h = r at hstep hbad
     cases hst : r.status with
     | bad =>
       intro _
@@ -1448,10 +1457,11 @@ theorem raw_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs
 
 /-- The commands' step. -/
 theorem cmds_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {t : List UInt8}
-    (M : MemD Ws X L D (D.bits a D.pos stop (bits t))) (ht : D.tag = .cmds) (hp : D.pos.toNat ≤ stop.toNat) :
-    StepM Ws X L a stop t (stepDCmds a stop hs D D.pos) := by
+    (M : MemD Ws X L D (D.bits a D.pos stop (bits t))) (ht : D.tag = .cmds) (hp : D.pos.toNat ≤ stop.toNat)
+    {h : CmdInv D.H D.k stop D.cmd D.pos} :
+    StepM Ws X L a stop t (stepDCmds a stop hs D D.pos h) := by
   obtain ⟨p, hrel, hw⟩ := M.place
-  obtain ⟨k1, k2, k3, k4, k5, k6⟩ := stepDCmds_keeps a stop hs D D.pos
+  obtain ⟨k1, k2, k3, k4, k5, k6⟩ := stepDCmds_keeps a stop hs D D.pos h
   cases p with
   | wbits => exact absurd (hrel.1.symm.trans ht) (by decide)
   | mblock => exact absurd (hrel.1.symm.trans ht) (by decide)
@@ -1460,13 +1470,13 @@ theorem cmds_mem {Ws : Option Nat} {X L : Nat} {a : ByteArray} {stop : USize} {h
   | hdr => exact absurd (hrel.1.symm.trans ht) (by decide)
   | ended => exact absurd (hrel.1.symm.trans ht) (by decide)
   | cmds w last m q =>
-    have hD := stepDCmds_ok (S := demandSem) (a := a) (hs := hs) hrel hp
+    have hD := stepDCmds_ok (S := demandSem) (a := a) (hs := hs) (h := h) hrel hp
     have hr0 : D.cmd.ring.size ≠ 0 := by
       have := hrel.2.2.2.2.1.arrays.1
       have := Nat.two_pow_pos D.k.toNat
       omega
-    have kr := stepDCmds_ring (a := a) (hs := hs) hrel hp
-    generalize stepDCmds a stop hs D D.pos = r at hD k1 k2 k3 k4 k5 k6 kr
+    have kr := stepDCmds_ring (a := a) (hs := hs) (h := h) hrel hp
+    generalize stepDCmds a stop hs D D.pos h = r at hD k1 k2 k3 k4 k5 k6 kr
     refine ⟨fun h0 h1 => ?_, fun e => absurd e k4⟩
     obtain ⟨hA, hB⟩ := placed hrel hD hw (fun e => absurd (ht.symm.trans e) (by decide)) h0 h1 k5
     have hwin := M.winKeep (B' := r.bits a r.pos stop (bits t)) hr0 k1 k2 (kr h1)

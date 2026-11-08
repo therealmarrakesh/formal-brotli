@@ -3,6 +3,7 @@ module
 public import Brotli.Decoder.StreamState
 public import Brotli.Decoder.Positions
 public import Brotli.Decoder.LoopK
+public import Brotli.Decoder.FastRun
 
 @[expose] public section
 
@@ -263,44 +264,21 @@ plain `let D0 := clearCmd D` past the step and leave the window held twice while
 /-- Steps the commands take before the outer loop looks at them. -/
 def cmdBudget : USize := USize.ofNat 65536
 
-/-- The place in a meta-block's commands. -/
-def stepDCmds (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize) : Dec :=
-  let H := D.H
-  let k := D.k
-  let last := D.last
-  match takeCmd D with
-  | (c, D0) =>
-  let r := runCmd H k a stop hs cmdBudget c pos
-  let rp := r.pos
-  match r.status with
-  | .next => { D0 with cmd := r, pos := rp, status := .next }
-  | .needsInput => { D0 with cmd := r, pos := rp, status := .needsInput }
-  | .needsOutput => { D0 with cmd := r, pos := rp, status := .needsOutput }
-  | .bad => { D0 with cmd := r, pos := rp, status := .bad }
-  | .done =>
-    if seenOk r H.nL H.nI H.nD then
-      { D0 with cmd := r, pos := rp, status := .next, tag := if last then .ended else .mblock, H := Hdr.none }
-    else { D0 with cmd := r, pos := rp, status := .bad }
-
-/-- `stepDCmds`, for a state the compiled command loop may run from. The compiler runs `stepDCmdsE` in its place. -/
-def stepDCmdsP (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize)
-    (_h : CmdInv D.H D.k stop D.cmd pos) : Dec :=
-  stepDCmds a stop hs D pos
-
 /-- The state a take function hands out is the state's own. -/
 theorem takeCmd_inv {D : Dec} {c : Cmd} {D0 : Dec} {stop pos : USize} (hc : takeCmd D = (c, D0))
     (h : CmdInv D.H D.k stop D.cmd pos) : CmdInv D.H D.k stop c pos :=
   (show D.cmd = c from congrArg Prod.fst hc) ▸ h
 
-/-- `stepDCmds` as the compiler runs it: the same steps, with the command loop given what it may assume. -/
-def stepDCmdsE (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize)
+/-- The place in a meta-block's commands: the command loop with the fast loop (`runCmdF`), given what it may assume of
+the state, and the check at the commands' end. -/
+def stepDCmds (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize)
     (h : CmdInv D.H D.k stop D.cmd pos) : Dec :=
   let H := D.H
   let k := D.k
   let last := D.last
   match hc : takeCmd D with
   | (c, D0) =>
-  let r := runCmdP H k a stop hs cmdBudget c pos (takeCmd_inv hc h)
+  let r := runCmdF H k a stop hs cmdBudget c pos (takeCmd_inv hc h)
   let rp := r.pos
   match r.status with
   | .next => { D0 with cmd := r, pos := rp, status := .next }
@@ -311,11 +289,6 @@ def stepDCmdsE (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : 
     if seenOk r H.nL H.nI H.nD then
       { D0 with cmd := r, pos := rp, status := .next, tag := if last then .ended else .mblock, H := Hdr.none }
     else { D0 with cmd := r, pos := rp, status := .bad }
-
-/-- The compiler runs the commands' step with the compiled loop in place of `stepDCmdsP`. -/
-@[csimp] theorem stepDCmdsP_csimp : @stepDCmdsP = @stepDCmdsE := by
-  funext a stop hs D pos h
-  rfl
 
 /-- The bits of a state outside a header. -/
 theorem Dec.bits_cmd {D : Dec} (h : D.tag ≠ .hdr) (a : ByteArray) (pos stop : USize) (F : List Bool) :
@@ -329,19 +302,19 @@ theorem Dec.held_cmd {D : Dec} (h : D.tag ≠ .hdr) : D.held = (BitBuffer.mk D.c
   cases ht : D.tag <;> first | exact absurd ht h | rfl
 
 theorem stepDCmds_ok {α : Type} {S : Sem α} {w : Nat} {last : Bool} {m : MetaBlockHeader} {p : Phase} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec}
-    {pos : USize} (hrel : DRel D (.cmds w last m p)) (hp : pos.toNat ≤ stop.toNat) :
-    DStepOk S a stop (.cmds w last m p) D pos (stepDCmds a stop hs D pos) := by
+    {pos : USize} (hrel : DRel D (.cmds w last m p)) (_hp : pos.toNat ≤ stop.toNat) {h : CmdInv D.H D.k stop D.cmd pos} :
+    DStepOk S a stop (.cmds w last m p) D pos (stepDCmds a stop hs D pos h) := by
   obtain ⟨tag, cmd, hd, H, k, last', left, limit, pos', status⟩ := D
   obtain ⟨ht, hl, hlim, hH, hR, hL⟩ := hrel
   have ht' : tag = .cmds := ht
   subst ht'
   have hl0 : last' = last := hl
   subst hl0
-  have hstep := runCmd_ok (hs := hs) (K := cmdK w (S.after w last') m) (a := a) (fun s bs h0 => cmdK_step s bs h0) hH _ cmdBudget p cmd pos rfl hR hp
-  have hbad := runCmd_bad (hs := hs) (K := cmdK w (S.after w last') m) (a := a) (fun s bs h0 => cmdK_step s bs h0) hH _ cmdBudget p cmd pos rfl hR hp
+  have hstep := runCmdF_ok (hs := hs) (K := cmdK w (S.after w last') m) (fun s bs h0 => cmdK_step s bs h0) hH cmdBudget hR h
+  have hbad := runCmdF_bad (hs := hs) (K := cmdK w (S.after w last') m) (fun s bs h0 => cmdK_step s bs h0) hH cmdBudget hR h
   unfold stepDCmds takeCmd
   dsimp only
-  generalize runCmd H k a stop hs cmdBudget cmd pos = r at hstep hbad
+  generalize runCmdF H k a stop hs cmdBudget cmd pos h = r at hstep hbad
   cases hst : r.status with
   | next =>
     dsimp only
@@ -438,17 +411,18 @@ theorem WinOk.same {D r : Dec} (h : WinOk D) (hc : r.cmd.WinSame D.cmd) (hk : r.
 
 /-- The commands, when they reject, can hand out their bytes. -/
 theorem stepDCmds_badWin {w : Nat} {last : Bool} {m : MetaBlockHeader} {p : Phase} {a : ByteArray} {stop : USize}
-    {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize} (hrel : DRel D (.cmds w last m p)) (hp : pos.toNat ≤ stop.toNat) :
-    (stepDCmds a stop hs D pos).status = .bad → WinOk (stepDCmds a stop hs D pos) := by
+    {hs : stop.toNat ≤ a.size} {D : Dec} {pos : USize} (hrel : DRel D (.cmds w last m p)) (_hp : pos.toNat ≤ stop.toNat)
+    {h : CmdInv D.H D.k stop D.cmd pos} :
+    (stepDCmds a stop hs D pos h).status = .bad → WinOk (stepDCmds a stop hs D pos h) := by
   obtain ⟨tag, cmd, hd, H, k, last', left, limit, pos', status⟩ := D
   obtain ⟨ht, hl, hlim, hH, hR, -⟩ := hrel
   have ht' : tag = .cmds := ht
   subst ht'
-  have hstep := runCmd_ok (hs := hs) (K := cmdK w (specSem.after w last') m) (a := a) (fun s bs h0 => cmdK_step s bs h0) hH _ cmdBudget p cmd pos rfl hR hp
-  have hbad := runCmd_badWin (hs := hs) (K := cmdK w (specSem.after w last') m) (a := a) (fun s bs h0 => cmdK_step s bs h0) hH _ cmdBudget p cmd pos rfl hR hp
+  have hstep := runCmdF_ok (hs := hs) (K := cmdK w (specSem.after w last') m) (fun s bs h0 => cmdK_step s bs h0) hH cmdBudget hR h
+  have hbad := runCmdF_badWin (hs := hs) (K := cmdK w (specSem.after w last') m) (fun s bs h0 => cmdK_step s bs h0) hH cmdBudget hR h
   unfold stepDCmds takeCmd
   dsimp only
-  generalize runCmd H k a stop hs cmdBudget cmd pos = r at hstep hbad
+  generalize runCmdF H k a stop hs cmdBudget cmd pos h = r at hstep hbad
   cases hst : r.status with
   | bad =>
     intro _

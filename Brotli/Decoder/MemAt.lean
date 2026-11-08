@@ -607,8 +607,8 @@ theorem stepDRaw_x {Ws : Option Nat} {L : Nat} {a : ByteArray} {stop : USize} {h
     fun _ _ e => absurd (ht.symm.trans e) (by decide), fun _ _ _ => Or.inl k2⟩
 
 theorem stepDCmds_x {Ws : Option Nat} {L : Nat} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {t : List UInt8} {D : Dec}
-    (ht : D.tag = .cmds) : StepX Ws L a stop t D (stepDCmds a stop hs D D.pos) := by
-  obtain ⟨_, k2, _, k4, _, k6⟩ := stepDCmds_keeps a stop hs D D.pos
+    (ht : D.tag = .cmds) {h : CmdInv D.H D.k stop D.cmd D.pos} : StepX Ws L a stop t D (stepDCmds a stop hs D D.pos h) := by
+  obtain ⟨_, k2, _, k4, _, k6⟩ := stepDCmds_keeps a stop hs D D.pos h
   refine ⟨fun _ _ e => ?_, fun e => absurd e k4, fun _ _ e => absurd (ht.symm.trans e) (by decide),
     fun _ _ e => absurd (ht.symm.trans e) (by decide), fun _ _ _ => Or.inl k2⟩
   rcases k6 with ⟨t1, _⟩ | ⟨_, t2, _, _⟩

@@ -1,6 +1,7 @@
 module
 
 public import Brotli.Decoder.WorkCmd
+public import Brotli.Decoder.FastCount
 
 @[expose] public section
 
@@ -108,23 +109,41 @@ def stepDHdrW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : D
     else 0
 
 /-- The work of `stepDCmds`: the command loop, and at the commands' end the check that every block type occurred. -/
-def stepDCmdsW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize) : Nat :=
-  runCmdW D.H D.k a stop hs cmdBudget D.cmd pos +
-    if (runCmd D.H D.k a stop hs cmdBudget D.cmd pos).status = .done then 1 else 0
+noncomputable def stepDCmdsW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (pos : USize)
+    (h : CmdInv D.H D.k stop D.cmd pos) : Nat :=
+  runCmdFW D.H D.k a stop hs cmdBudget D.cmd pos h +
+    if (runCmdF D.H D.k a stop hs cmdBudget D.cmd pos h).status = .done then 1 else 0
 
 /-- The work of a step of the whole decoder. -/
-def stepDW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (h : DInv stop D) : Nat :=
-  match D.tag with
+noncomputable def stepDW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (h : DInv stop D) : Nat :=
+  match ht : D.tag with
   | .wbits => stepDWbitsW a stop hs D D.pos
   | .mblock => stepDMetaW a stop hs D D.pos
   | .skip => 1
   | .raw => stepDRawW a stop hs D D.pos
   | .hdr => stepDHdrW a stop hs D D.pos h.hd h.2
-  | .cmds => stepDCmdsW a stop hs D D.pos
+  | .cmds => stepDCmdsW a stop hs D D.pos (h.cmd ht)
   | .ended => 1
 
+section
+variable {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {D : Dec} {h : DInv stop D}
+
+/-- Settles `stepDW`'s tag, given its equation. -/
+macro "stepDW_tag" ht:ident : tactic =>
+  `(tactic| (unfold stepDW; split <;> rename_i e <;> first | rfl | exact absurd (e.symm.trans $ht) (fun x => DTag.noConfusion x)))
+
+theorem stepDW_wbits (ht : D.tag = .wbits) : stepDW a stop hs D h = stepDWbitsW a stop hs D D.pos := by stepDW_tag ht
+theorem stepDW_mblock (ht : D.tag = .mblock) : stepDW a stop hs D h = stepDMetaW a stop hs D D.pos := by stepDW_tag ht
+theorem stepDW_skip (ht : D.tag = .skip) : stepDW a stop hs D h = 1 := by stepDW_tag ht
+theorem stepDW_raw (ht : D.tag = .raw) : stepDW a stop hs D h = stepDRawW a stop hs D D.pos := by stepDW_tag ht
+theorem stepDW_hdr (ht : D.tag = .hdr) : stepDW a stop hs D h = stepDHdrW a stop hs D D.pos h.hd h.2 := by stepDW_tag ht
+theorem stepDW_cmds (ht : D.tag = .cmds) : stepDW a stop hs D h = stepDCmdsW a stop hs D D.pos (h.cmd ht) := by
+  stepDW_tag ht
+
+end
+
 /-- The work of the decoder's loop: its rounds and their steps. -/
-def runDW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (h : DInv stop D) : Nat :=
+noncomputable def runDW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (D : Dec) (h : DInv stop D) : Nat :=
   if he : D.tag = .ended then 1
   else
     let r := stepD a stop hs D h
@@ -152,7 +171,7 @@ def afterRunW (r : Dec) (buf : ByteArray) (space : Nat) : Nat :=
   | _ => 1
 
 /-- The work of a call: its rounds of the loop and of handing bytes out. -/
-def callDW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (final : Bool) (D : Dec) (h : DInv stop D) (buf : ByteArray)
+noncomputable def callDW (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (final : Bool) (D : Dec) (h : DInv stop D) (buf : ByteArray)
     (space : Nat) : Nat :=
   runDW a stop hs (withCap D space) (h.withCap space) + 1 +
     if hO : (runD a stop hs (withCap D space) (h.withCap space)).status = .needsOutput then
