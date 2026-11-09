@@ -1715,13 +1715,14 @@ theorem bigLits_root {A icBase : ByteArray} {nI : Nat} (hic : icBase.size = 4 * 
   rw [word_toUSize (by rw [hv]; exact u32At_lt _ _), hv]
   exact hI 0 hn
 
-/-- Whether the meta-block is expected to hold at least 32 KiB of literals, from the first insert-and-copy tree's root
-slots (P46's gate on the two-literal tables). -/
+/-- Whether the meta-block is expected to hold at least 2 KiB of literals for each of its `nL` literal types, from the
+first insert-and-copy tree's root slots (the gate on the two-literal tables: a type's table pays for itself after about
+600 literals). -/
 def bigLits (A : ByteArray) (s : A.size < 2 ^ 32) (icBase : ByteArray) (nI : Nat) (hic : icBase.size = 4 * nI)
-    (hi32 : icBase.size < 2 ^ 32) (hI : ICReady icBase nI A) (mlen : UInt64) : Bool :=
+    (hi32 : icBase.size < 2 ^ 32) (hI : ICReady icBase nI A) (mlen : UInt64) (nL : Nat) : Bool :=
   if hn : 0 < nI then
     match expLits A s (slotWord icBase 0 (bigLits_idx hic hn) hi32).toUSize (bigLits_root hic hi32 hI hn) 0 0 0 with
-    | (ins, cpy) => ins + cpy != 0 && 32768 ≤ mlen * ins / (ins + cpy)
+    | (ins, cpy) => ins + cpy != 0 && 2048 * UInt64.ofNat nL ≤ mlen * ins / (ins + cpy)
   else false
 
 /-- The flags of the literal types that get two-literal tables, with the arena handed back unchanged, so that it is
@@ -1730,7 +1731,7 @@ read before it grows. Which types are chosen is a policy and changes no claim. -
     (hi32 : icBase.size < 2 ^ 32) (hI : ICReady icBase nI A) (lTriv : ByteArray) (nL : Nat) (ht : lTriv.size = 4 * nL)
     (hn : nL ≤ 256) (hP : PairReady lTriv nL A) (mlen : UInt64) :
     { p : (UInt64 × UInt64 × UInt64 × UInt64) × ByteArray // p.2 = A } :=
-  ⟨(if bigLits A s icBase nI hic hi32 hI mlen then
+  ⟨(if bigLits A s icBase nI hic hi32 hI mlen nL then
       pairFlags A s lTriv nL ht (by omega) hP (USize.ofNat nL) (fastLit (by omega)) 0 0 0 0 0
     else (0, 0, 0, 0), A), rfl⟩
 

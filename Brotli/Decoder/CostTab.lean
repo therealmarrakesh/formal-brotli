@@ -74,7 +74,7 @@ def buildArenaW (A : ByteArray) (d : Done) (lTriv : ByteArray) (mlen : UInt64)
       (by have := h.arrs.icSize; have := h.arrs.nI256; omega) (fun ti hti => (h.icFits ti hti).root) lTriv d.nL.toNat
       h.arrs.trivSize h.arrs.nL256 h.trivFits mlen
   tabPolicyW (bigLits A (by have := h.size; omega) d.icBase d.nI.toNat h.arrs.icSize
-      (by have := h.arrs.icSize; have := h.arrs.nI256; omega) (fun ti hti => (h.icFits ti hti).root) mlen) lTriv
+      (by have := h.arrs.icSize; have := h.arrs.nI256; omega) (fun ti hti => (h.icFits ti hti).root) mlen d.nL.toNat) lTriv
       d.nL.toNat d.nI.toNat +
     buildTabW (padOf A.size) d.nL.toNat d.nI.toNat d.nD.toNat P.1.1.1 P.1.1.2.1 P.1.1.2.2.1 P.1.1.2.2.2 lTriv
 
