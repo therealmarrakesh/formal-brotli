@@ -239,6 +239,23 @@ def store32 (t : ByteArray) (i : USize) (v : UInt64) (_h : i.toNat + 4 ≤ t.siz
 def store64 (t : ByteArray) (i : USize) (v : UInt64) (_h : i.toNat + 8 ≤ t.size) : ByteArray :=
   storeLE t i v 8
 
+/-! ### A strided fill (owner, 2026-11-08) -/
+
+/-- `n` stores of `v`'s low `w` bytes, from byte `i`, every `s` bytes: what the strided fill is. -/
+def fillLE (t : ByteArray) (i s : Nat) (v : UInt64) (w : Nat) : Nat → ByteArray
+  | 0 => t
+  | n + 1 => fillLE ((ByteArray.mk (leList v w).toArray).copySlice 0 t i w) (i + s) s v w n
+
+/-- One store, then none: the stride doesn't matter. -/
+theorem fillLE_one (t : ByteArray) (i s s' : Nat) (v : UInt64) (w : Nat) : fillLE t i s v w 1 = fillLE t i s' v w 1 := rfl
+
+/-- `v`'s low 2 bytes written `n` times from byte `i`, every `s` bytes, little-endian. Compiled as one exclusivity check
+and a loop of 2-byte stores; every store is inside the array by the signature. -/
+@[extern c inline "({ _Static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__, \"little-endian target\"); lean_object * r_ = lean_sarray_ensure_exclusive(#1); uint8_t * p_ = lean_sarray_cptr(r_); uint64_t i_ = (#2), s_ = (#3), n_ = (#4); uint16_t v_ = (uint16_t)(#5); for (uint64_t k_ = 0; k_ < n_; k_++) __builtin_memcpy(p_ + (size_t)(i_ + k_ * s_), &v_, 2); r_; })"]
+def fill16 (t : ByteArray) (i s n v : UInt64) (_h : ∀ k, k < n.toNat → i.toNat + k * s.toNat + 2 ≤ t.size) :
+    ByteArray :=
+  fillLE t i.toNat s.toNat v 2 n.toNat
+
 /-- At a distance of at least its length, the format's copy is `winMove`'s snapshot. -/
 theorem fwdCopy_eq_winMove (w : ByteArray) (d s n : USize)
     (h : d.toNat + n.toNat ≤ w.size ∧ s.toNat + n.toNat ≤ w.size) (hsep : s.toNat + n.toNat ≤ d.toNat) :

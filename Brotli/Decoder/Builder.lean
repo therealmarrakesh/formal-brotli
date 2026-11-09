@@ -629,6 +629,82 @@ theorem fillRun_eq {v : UInt64} {bits val : Nat} (hv : v.toNat = bits + 16 * val
       have e := u64_add' (a := pos) (b := step) (by omega)
       rw [e]
 
+/-- `fillRun` is the strided fill's model, at 2 bytes a slot. -/
+theorem fillRun_fillLE (v step : UInt64) : ∀ (N : Nat) (t : ByteArray) (pos count : UInt64) (h32 : t.size < 2 ^ 32)
+    (h : ∀ k, k < count.toNat → 2 * (pos.toNat + k * step.toNat) + 1 < t.size), count.toNat = N →
+    fillRun v step t pos count h32 h = fillLE t (2 * pos.toNat) (2 * step.toNat) v 2 N := by
+  intro N
+  induction N with
+  | zero =>
+    intro t pos count h32 h hc
+    have hz : count = 0 := UInt64.toNat_inj.mp (by rw [hc]; rfl)
+    rw [fillRun, dite_eq_left hz]
+    rfl
+  | succ N ih =>
+    intro t pos count h32 h hc
+    have hz : count ≠ 0 := fun e => by rw [e] at hc; exact Nat.succ_ne_zero _ hc.symm
+    have hp := h 0 (by omega)
+    have hk1 : (count - 1).toNat = N := by
+      rw [u64_sub' (by rw [show (1 : UInt64).toNat = 1 from rfl]; omega), hc]
+      rfl
+    rw [fillRun, dite_eq_right hz, ih _ _ _ _ _ hk1, putSlot_csimp, fillLE]
+    unfold putSlotF store16 storeLE
+    have e0 := slot2 h32 (show 2 * pos.toNat + 1 < t.size by simpa using hp) (j := 0) (by decide)
+    rw [e0]
+    by_cases hN : N = 0
+    · subst hN
+      rfl
+    · have := h 1 (by omega)
+      rw [Nat.one_mul] at this
+      have e := u64_add' (a := pos) (b := step) (by omega)
+      rw [e, Nat.mul_add]
+      rfl
+
+theorem mul2_toNat {x : UInt64} (h : x.toNat < 2 ^ 63) : (x * 2).toNat = 2 * x.toNat := by
+  rw [UInt64.toNat_mul, show (2 : UInt64).toNat = 2 from rfl, Nat.mod_eq_of_lt (by omega)]
+  omega
+
+/-- A run's slots, as bytes for the strided fill: each slot's two bytes in the array. -/
+theorem fill_bound {t : ByteArray} {pos step count : UInt64} (h32 : t.size < 2 ^ 32)
+    (h : ∀ k, k < count.toNat → 2 * (pos.toNat + k * step.toNat) + 1 < t.size) :
+    ∀ k, k < count.toNat → (pos * 2).toNat + k * (step * 2).toNat + 2 ≤ t.size := by
+  intro k hk
+  have h0 := h 0 (by omega)
+  have hp := mul2_toNat (x := pos) (by omega)
+  by_cases hk0 : k = 0
+  · subst hk0
+    rw [hp]
+    omega
+  · have h1 := h k hk
+    have hle : step.toNat ≤ k * step.toNat := Nat.le_mul_of_pos_left _ (by omega)
+    have hs := mul2_toNat (x := step) (by omega)
+    have e : k * (2 * step.toNat) = 2 * (k * step.toNat) := Nat.mul_left_comm _ _ _
+    rw [hp, hs, e]
+    omega
+
+/-- `fillRun` as one strided fill (`fillRun_csimp`). -/
+@[inline] def fillRunF (v step : UInt64) (t : ByteArray) (pos count : UInt64) (h32 : t.size < 2 ^ 32)
+    (h : ∀ k, k < count.toNat → 2 * (pos.toNat + k * step.toNat) + 1 < t.size) : ByteArray :=
+  fill16 t (pos * 2) (step * 2) count v (fill_bound h32 h)
+
+/-- A run of slots written one by one is the strided fill, so the compiled code makes it one check and a loop of
+2-byte stores. -/
+@[csimp] theorem fillRun_csimp : @fillRun = @fillRunF := by
+  funext v step t pos count h32 h
+  rw [fillRun_fillLE v step count.toNat t pos count h32 h rfl]
+  unfold fillRunF fill16
+  by_cases h0 : count.toNat = 0
+  · rw [h0]
+    rfl
+  · have hp0 := h 0 (by omega)
+    rw [mul2_toNat (x := pos) (by omega)]
+    by_cases h1 : count.toNat = 1
+    · rw [h1]
+      exact fillLE_one _ _ _ _ _ _
+    · have h2 := h 1 (by omega)
+      rw [Nat.one_mul] at h2
+      rw [mul2_toNat (x := step) (by omega)]
+
 /-! ### One code word -/
 
 /-- What a step of the builder needs of the array, for a code word of length `l` and code `c`: room for a sub-table,
