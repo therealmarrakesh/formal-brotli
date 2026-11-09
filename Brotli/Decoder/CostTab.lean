@@ -78,14 +78,18 @@ def buildArenaW (A : ByteArray) (d : Done) (lTriv : ByteArray) (mlen : UInt64)
       d.nL.toNat d.nI.toNat +
     buildTabW (padOf A.size) d.nL.toNat d.nI.toNat d.nD.toNat P.1.1.1 P.1.1.2.1 P.1.1.2.2.1 P.1.1.2.2.2 lTriv
 
-/-- `mkHdrOf`'s derived tables: `buildArena` with the literal types' shared tables. -/
+/-- `implSel`: a round for each insert-and-copy tree with its 64 sampled root slots and the round that ends them, and the
+one that ends it. -/
+def implSelW (nI : Nat) : Nat := nI + 1 + 65 * nI
+
+/-- `mkHdrOf`'s derived tables: `buildArena` with the literal types' shared tables, then the loop's choice. -/
 def mkHdrOfW (A : ByteArray) (d : Done) (mlen : UInt64) (h : ∃ g, Upto { d with arena := A } g 10) : Nat :=
   have hf : HdrSizes { d with arena := A } ∧ HdrProps { d with arena := A } := by
     obtain ⟨g, hu⟩ := h
     exact hdr_facts hu
   buildArenaW A d
     (trivBuild d.lMap d.litBase d.treesL.toNat d.nL hf.1.2.2.2.2.2.2.1 hf.1.2.2.1 hf.1.2.2.2.1 hf.1.2.1 hf.2.treeLt) mlen
-    (by obtain ⟨g, hu⟩ := h; exact tabArgs_of hu trivBuild_spec.1 trivBuild_spec.2)
+    (by obtain ⟨g, hu⟩ := h; exact tabArgs_of hu trivBuild_spec.1 trivBuild_spec.2) + implSelW d.nI.toNat
 
 /-- `mkHdr`'s tables: the shared distance table written into the arena's prefix, then the derived tables. -/
 def mkHdrW (d : Done) (mlen : UInt64) (h : ∃ g, Upto d g 10) : Nat :=
@@ -96,10 +100,11 @@ def mkHdrW (d : Done) (mlen : UInt64) (h : ∃ g, Upto d g 10) : Nat :=
 
 /-! ### The bound -/
 
-/-- The most a header's derived tables take, by its numbers of block types: 2,310 for each insert-and-copy type (its
-fused entries), 1,870 for each literal type (its resolved map and position, its tree's root slots examined and its pair
-table), 22 for each distance type, and 900 for the rest (the shared distance table, the padding, the passes' ends). -/
-def tabCost (nL nI nD : Nat) : Nat := 900 + 2310 * nI + 1870 * nL + 22 * nD
+/-- The most a header's derived tables take, by its numbers of block types: 2,376 for each insert-and-copy type (its
+fused entries, and its tree's sampled root slots for the loop's choice), 1,870 for each literal type (its resolved map
+and position, its tree's root slots examined and its pair table), 22 for each distance type, and 900 for the rest (the
+shared distance table, the padding, the passes' ends). -/
+def tabCost (nL nI nD : Nat) : Nat := 900 + 2376 * nI + 1870 * nL + 22 * nD
 
 theorem buildTabW_le {pad nL nI nD : Nat} {w0 w1 w2 w3 : UInt64} {lTriv : ByteArray} (hp : pad ≤ 15) (hD : nD ≤ 256) :
     buildTabW pad nL nI nD w0 w1 w2 w3 lTriv ≤ 30 + 2310 * nI + 1610 * nL + 22 * nD := by
@@ -137,9 +142,11 @@ theorem buildArenaW_le {A : ByteArray} {d : Done} {lTriv : ByteArray} {mlen : UI
   exact Nat.add_le_add tabPolicyW_le (buildTabW_le (padOf_spec A.size).2.1 h.arrs.nD256)
 
 theorem mkHdrOfW_le {A : ByteArray} {d : Done} {mlen : UInt64} {h : ∃ g, Upto { d with arena := A } g 10} :
-    mkHdrOfW A d mlen h ≤ 289 + 2310 * d.nI.toNat + 1868 * d.nL.toNat + 22 * d.nD.toNat := by
+    mkHdrOfW A d mlen h ≤ 290 + 2376 * d.nI.toNat + 1868 * d.nL.toNat + 22 * d.nD.toNat := by
   unfold mkHdrOfW
-  exact buildArenaW_le
+  dsimp only
+  have hs : implSelW d.nI.toNat ≤ 1 + 66 * d.nI.toNat := by unfold implSelW; omega
+  exact Nat.le_trans (Nat.add_le_add buildArenaW_le hs) (by omega)
 
 /-- The tables a header's end builds take at most `tabCost` of its numbers of block types. -/
 theorem mkHdrW_le {d : Done} {mlen : UInt64} {h : ∃ g, Upto d g 10} :

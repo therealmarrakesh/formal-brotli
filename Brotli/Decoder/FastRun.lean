@@ -193,6 +193,7 @@ theorem fastEnter_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSt
   obtain ⟨p0, m0⟩ := key
   unfold fastEnter
   dsimp only
+  rw [fastLoopS_eq]
   refine exists_move_trans' (Q := FFrame cap (pend - wpos) bEnd wpos)
     (R := fun r => r.cap = cap ∧ r.pend.toNat ≤ max pend.toNat (room kk cap).toNat) m0 ?_ ?_
   · intro ⟨fc, o, g1, g2, g3⟩

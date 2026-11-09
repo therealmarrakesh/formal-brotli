@@ -327,6 +327,59 @@ theorem takeArena_back {d d0 : Done} {A : ByteArray} (h : takeArena d = (A, d0))
   obtain ⟨rfl, rfl⟩ := Prod.mk.inj h
   rfl
 
+theorem implSlots_idx {t : ByteArray} {base j : USize} (hr : 2 * (base.toNat + 256) ≤ t.size) (s : t.size < 2 ^ 32)
+    (hj : j < USize.ofNat 64) : 2 * (base + j * USize.ofNat 4).toNat + 2 ≤ t.size := by
+  have := fastLt (by decide) hj
+  have e : (j * USize.ofNat 4).toNat = 4 * j.toNat := by
+    have hU := USize.le_size
+    rw [USize.size_eq_two_pow] at hU
+    rw [USize.toNat_mul, fastLit (by decide), Nat.mul_comm]
+    exact Nat.mod_eq_of_lt (by omega)
+  rw [fastAdd (by omega), e]
+  omega
+
+/-- Of every fourth of an insert-and-copy tree's root slots, from the `j`-th, how many hold a code word of at most 8 bits
+for a symbol below 128, whose distance is implicit: in 64ths, about the share of commands that reuse the last
+distance. -/
+def implSlots (t : ByteArray) (s : t.size < 2 ^ 32) (base : USize) (hr : 2 * (base.toNat + 256) ≤ t.size) (j : USize)
+    (acc : UInt64) : UInt64 :=
+  if hj : j < USize.ofNat 64 then
+    implSlots t s base hr (j + USize.ofNat 1)
+      (if slot16 t (base + j * USize.ofNat 4) (implSlots_idx hr s hj) s &&& 15 ≤ 8 ∧
+          slot16 t (base + j * USize.ofNat 4) (implSlots_idx hr s hj) s >>> 4 < 128
+        then acc + 1 else acc)
+  else acc
+termination_by 64 - j.toNat
+decreasing_by
+  have := fastLt (by decide) hj
+  rw [fastIdx_succ hj]
+  omega
+
+/-- `implSlots` summed over the insert-and-copy trees from `ti`. -/
+def implTypes (t : ByteArray) (s : t.size < 2 ^ 32) (icBase : ByteArray) (nI : Nat) (hic : icBase.size = 4 * nI)
+    (hi32 : icBase.size < 2 ^ 32) (hI : ICReady icBase nI t) (ti : USize) (acc : UInt64) : UInt64 :=
+  if hti : ti < USize.ofNat nI then
+    have hn : ti.toNat < nI := fastLt (by omega) hti
+    implTypes t s icBase nI hic hi32 hI (ti + USize.ofNat 1)
+      (implSlots t s (slotWord icBase ti (by rw [hic]; omega) hi32).toUSize
+        (by
+          have hv := slotWord_toNat (i := ti) (by rw [hic]; omega) hi32
+          rw [word_toUSize (by rw [hv]; exact u32At_lt _ _), hv]
+          exact hI _ hn) 0 acc)
+  else acc
+termination_by nI - ti.toNat
+decreasing_by
+  have := fastLt (by omega) hti
+  rw [fastIdx_succ hti]
+  omega
+
+/-- The command loop a header's commands run in: the one that decodes a distance only when it is explicit when a quarter
+or more of the insert-and-copy trees' sampled root slots are for implicit distances. A policy: both loops give the same
+result (`fastLoopS_eq`). -/
+def implSel (t : ByteArray) (s : t.size < 2 ^ 32) (icBase : ByteArray) (nI : Nat) (hic : icBase.size = 4 * nI)
+    (hi32 : icBase.size < 2 ^ 32) (hI : ICReady icBase nI t) : Bool :=
+  decide (0 < nI) && 16 * UInt64.ofNat nI ≤ implTypes t s icBase nI hic hi32 hI 0 0
+
 /-- The command loop's header, from a header that was read with its arena `A` taken out of the rest of its record `d`, and
 its arena with the derived tables `R`. -/
 def hdrOfArena (A : ByteArray) (d : Done) (hf : HdrSizes { d with arena := A } ∧ HdrProps { d with arena := A })
@@ -362,7 +415,9 @@ def hdrOfArena (A : ByteArray) (d : Done) (hf : HdrSizes { d with arena := A } �
       lTriv := lTriv
       trivSize := ht
       trivOk := hok
-      tabF0 := USize.ofNat (A.size + padOf A.size) }
+      tabF0 := USize.ofNat (A.size + padOf A.size)
+      dsel := implSel T hT.2.1.size32 d.icBase d.nI.toNat hf.1.2.2.2.2.2.2.2.2.1 hf.1.2.2.2.2.2.2.2.2.2.1
+        (fun ti hti => ((hT.2.1.iFit ti hti).fits (by have := hT.2.1.sizeOk; omega)).root) }
 
 /-- Makes the command loop's header from a header that was read, with its arena `A` taken out of the rest of its record
 `d`: the literal types' shared tables, then the derived tables appended to the arena in place. -/

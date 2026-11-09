@@ -136,9 +136,9 @@ theorem fastLoop_work {H : Hdr} {kk : USize} {a : ByteArray} {stop : USize} {hs 
       (S : FSt kk stop posLim word count pos ring m), iCount.toNat = I → 17 * lits.toNat + m.toNat = L →
       FNum opos pB wB rEnd bEnd kk.toNat ((lits + m).toNat + clen.toNat) →
       lCount.toNat + m.toNat < 2 ^ 64 → lits.toNat + m.toNat < 2 ^ 30 → 1 ≤ clen.toNat →
-      FW pB bEnd opos m (fastLoop H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow
-          pairBase iRow iFb dRow C X W word count pos ring opos iCount lCount dCount d01 d23 code ilen clen lits m p1 p2
-          S).1
+      FW pB bEnd opos m (fastLoop H kk a stop hs cap (fun _ => false) T np x flags mask size cap16 pB wB posLim rEnd bEnd
+          tb modeOff lRow pairBase iRow iFb dRow C X W word count pos ring opos iCount lCount dCount d01 d23 code ilen clen
+          lits m p1 p2 S).1
         (fastLoopW H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase iRow
           iFb dRow C X W word count pos ring opos iCount lCount dCount d01 d23 code ilen clen lits m p1 p2 S) := by
   intro I
@@ -162,8 +162,8 @@ theorem fastLoop_work {H : Hdr} {kk : USize} {a : ByteArray} {stop : USize} {hs 
       have next : ∀ (j : UInt64), 1 ≤ j.toNat → j.toNat ≤ m.toNat → ∀ (jU : USize), jU.toNat = j.toNat →
           ∀ (word' count' : UInt64) (pos' : USize) (ring' : ByteArray) (q1 q2 : UInt8)
           (S' : FSt kk stop posLim word' count' pos' ring' (m - j)),
-          FW pB bEnd opos m (fastLoop H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff
-              lRow pairBase iRow iFb dRow C X W word' count' pos' ring' (opos + jU) iCount lCount
+          FW pB bEnd opos m (fastLoop H kk a stop hs cap (fun _ => false) T np x flags mask size cap16 pB wB posLim rEnd
+              bEnd tb modeOff lRow pairBase iRow iFb dRow C X W word' count' pos' ring' (opos + jU) iCount lCount
               dCount d01 d23 code ilen clen lits (m - j) q1 q2 S').1
             (1 + fastLoopW H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase
               iRow iFb dRow C X W word' count' pos' ring' (opos + jU) iCount lCount dCount d01 d23
@@ -237,6 +237,7 @@ theorem fastLoop_work {H : Hdr} {kk : USize} {a : ByteArray} {stop : USize} {hs 
       · rw [dite_eq_right hd2, dite_eq_right hd2]
         refine fillK_rel (R := fun r w => FW pB bEnd opos 0 (Subtype.val r) w) ?_
         intro word1 count1 pos1 hf1
+        rw [dite_eq_right (show ¬ (false = true) from Bool.false_ne_true)]
         refine distK_rel (R := fun r w => FW pB bEnd opos 0 (Subtype.val r) w) C ?_
         intro ok2 word2x count2x dcode dx hok2 hok2'
         have h0 : (0 : UInt64).toNat = 0 := rfl

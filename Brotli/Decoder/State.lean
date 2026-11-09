@@ -194,6 +194,8 @@ structure Hdr where
     ∀ c, c < 64 → u32At litBase (lMap.data[64 * t + c]?.getD 0).toNat = u32At lTriv t
   /-- Where the fast command loop's derived tables start in the arena (`TabOk`). -/
   tabF0 : USize
+  /-- Which compiled command loop the header's commands run in (`fastLoopS`): a policy, since both give the same result. -/
+  dsel : Bool := false
 
 /-- What a meta-block header gives the lookups that follow it. -/
 structure HeaderOk (m : MetaBlockHeader) : Prop where

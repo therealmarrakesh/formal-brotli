@@ -81,6 +81,8 @@ theorem fastEnter_work {w : Nat} {mH : MetaBlockHeader}
     exact ⟨by rw [hl0]; omega, by rw [e4]; omega, by omega, by rw [e2]; omega, by rw [e3]; omega, by rw [e3]; exact hw2⟩
   unfold fastEnter fastEnterW
   dsimp only
+  rw [fastLoopS_eq]
+  unfold fastLoopF
   obtain ⟨o, g3, g1, g2, gw⟩ := fastLoop_work _ _ word count pos ring wpos iCount lCount dCount _ _ _ _ _ lits 0 p1 p2
     _ rfl rfl N0 (by have := lCount.toNat_lt; omega) (by omega) hc1
   rw [ite_eq_left rfl] at gw

@@ -2774,9 +2774,10 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
         code ilen clen lits m p1 p2 pos) p →
       ∃ p', MoveOk w kk.toNat mH K a stop p (fabs word count ring opos mask pB cap cap16 wB rEnd iCount lCount dCount
         flags x d01 d23 code ilen clen lits m p1 p2 pos) pos p'
-        (fastLoop H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase iRow
-          iFb dRow C X W word count pos ring opos iCount lCount dCount d01 d23 code ilen clen lits m p1 p2 S).1 ∧
-        FFrame cap pB bEnd opos (fastLoop H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb
+        (fastLoop H kk a stop hs cap (fun _ => false) T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow
+          pairBase iRow iFb dRow C X W word count pos ring opos iCount lCount dCount d01 d23 code ilen clen lits m p1 p2
+          S).1 ∧
+        FFrame cap pB bEnd opos (fastLoop H kk a stop hs cap (fun _ => false) T np x flags mask size cap16 pB wB posLim rEnd bEnd tb
           modeOff lRow pairBase iRow iFb dRow C X W word count pos ring opos iCount lCount dCount d01 d23 code ilen
           clen lits m p1 p2 S).1 := by
   intro I
@@ -2791,8 +2792,8 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
     have hk := W.k24
     have h16 := W.k16
     have hmN := W.mask
-    split
-    · rename_i hm0
+    by_cases hm0 : m ≠ 0
+    · rw [dite_eq_left hm0]
       have hm1 : 1 ≤ m.toNat := by
         have : m.toNat ≠ 0 := fun e => hm0 (UInt64.toNat_inj.mp (by rw [e]; rfl))
         omega
@@ -2820,10 +2821,10 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
           ∃ p', MoveOk w kk.toNat mH K a stop (.literals sP icP cP ilP clP nP litP outP) (fexit word count ring opos mask
             pB cap cap16 wB rEnd iCount
             (lCount + m) dCount flags x d01 d23 code ilen clen p1 p2 .literals (lits + m) pos) pos p'
-            (fastLoop H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase
+            (fastLoop H kk a stop hs cap (fun _ => false) T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase
               iRow iFb dRow C X W word' count' pos' ring' opos' iCount lCount dCount d01 d23 code
               ilen clen lits (m - j) q1 q2 S').val ∧
-            FFrame cap pB bEnd opos (fastLoop H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb
+            FFrame cap pB bEnd opos (fastLoop H kk a stop hs cap (fun _ => false) T np x flags mask size cap16 pB wB posLim rEnd bEnd tb
               modeOff lRow pairBase iRow iFb dRow C X W word' count' pos' ring' opos' iCount lCount
               dCount d01 d23 code ilen clen lits (m - j) q1 q2 S').val := by
         intro j hj1 hjm jU hjU word' count' pos' ring' q1 q2 S' p' opos' ho mv
@@ -2871,7 +2872,7 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
           obtain ⟨p', mv⟩ := lit_round (K := K) C hH hrel hk h16 hmk hmN hcap N0 (by omega) (by omega) (by omega) hf
             (UInt64.le_iff_toNat_le.mpr (by have := and15_lt (litT C p1 p2 word'); omega)) hs S.size
           exact next 1 (by decide) hm1 (USize.ofNat 1) (fastLit (by decide)) _ _ _ _ _ _ _ rfl mv
-    rename_i hm0
+    rw [dite_eq_right hm0]
     have hm : m = 0 := Decidable.of_not_not hm0
     subst hm
     by_cases hl : lits ≠ 0
@@ -2942,6 +2943,7 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
         refine fillK_spec (P := fun r => ∃ p', MoveOk w kk.toNat mH K a stop _ _ pos p' (Subtype.val r) ∧
           FFrame cap pB bEnd opos (Subtype.val r)) ?_
         intro word1 count1 pos1 hf1
+        rw [dite_eq_right (show ¬ (false = true) from Bool.false_ne_true)]
         by_cases hc : code < 128
         · refine distK_spec (P := fun r => ∃ p', MoveOk w kk.toNat mH K a stop _ _ pos p' (Subtype.val r) ∧
           FFrame cap pB bEnd opos (Subtype.val r)) C np _ _ _

@@ -63,10 +63,12 @@ theorem fastLoop_same {H : Hdr} {kk : USize} {a1 a2 : ByteArray} {e1 e2 : USize}
       (S1 : FSt kk e1 l1 word count p1 ring m) (S2 : FSt kk e2 l2 word count p2 ring m),
       iCount.toNat = I → 17 * lits.toNat + m.toNat = L → Same a1 e1 a2 e2 p1 p2 →
       FSame a1 e1 a2 e2
-        (fastLoop H kk a1 e1 hs1 cap T np x flags mask size cap16 pB wB l1 rEnd bEnd tb modeOff lRow pairBase iRow iFb
-          dRow C X W1 word count p1 ring opos iCount lCount dCount d01 d23 code ilen clen lits m b1 b2 S1).1
-        (fastLoop H kk a2 e2 hs2 cap T np x flags mask size cap16 pB wB l2 rEnd bEnd tb modeOff lRow pairBase iRow iFb
-          dRow C X W2 word count p2 ring opos iCount lCount dCount d01 d23 code ilen clen lits m b1 b2 S2).1 := by
+        (fastLoop H kk a1 e1 hs1 cap (fun _ => false) T np x flags mask size cap16 pB wB l1 rEnd bEnd tb modeOff lRow
+          pairBase iRow iFb dRow C X W1 word count p1 ring opos iCount lCount dCount d01 d23 code ilen clen lits m b1 b2
+          S1).1
+        (fastLoop H kk a2 e2 hs2 cap (fun _ => false) T np x flags mask size cap16 pB wB l2 rEnd bEnd tb modeOff lRow
+          pairBase iRow iFb dRow C X W2 word count p2 ring opos iCount lCount dCount d01 d23 code ilen clen lits m b1 b2
+          S2).1 := by
   intro I
   induction I using Nat.strongRecOn with
   | ind I ihI =>
@@ -125,6 +127,8 @@ theorem fastLoop_same {H : Hdr} {kk : USize} {a1 a2 : ByteArray} {e1 e2 : USize}
         refine fillK_same (R := fun r1 r2 => FSame a1 e1 a2 e2 (Subtype.val r1) (Subtype.val r2)) h ?_
         intro w1 c1 q1 hf1 w2 c2 q2 hf2 ew ec hS
         subst ew ec
+        rw [dite_eq_right (show ¬ (false = true) from Bool.false_ne_true),
+          dite_eq_right (show ¬ (false = true) from Bool.false_ne_true)]
         refine distK_rel (R := fun r1 r2 => FSame a1 e1 a2 e2 (Subtype.val r1) (Subtype.val r2)) C ?_
         intro ok2 word2x count2x dcode dx hok2 hok2'
         by_cases hbad : (¬ code < 128 ∧ ok2 = false) ∨ (if code < 128 then d01 &&& 0xFFFFFFFF else dx) = 0 ∨
@@ -171,6 +175,7 @@ theorem fastEnter_same {H : Hdr} {kk : USize} {a1 a2 : ByteArray} {e1 e2 : USize
         lits bEnd p2 hinv2 hm2).val := by
   unfold fastEnter
   dsimp only
+  rw [fastLoopS_eq, fastLoopS_eq]
   exact fastLoop_same _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ rfl rfl h
 
 end Brotli.Decoder
