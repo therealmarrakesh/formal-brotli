@@ -1887,7 +1887,310 @@ theorem fastLoopT_eq {H : Hdr} {kk : USize} {a : ByteArray} {stop : USize} {hs :
       dRow C X W word count pos ring opos iCount lCount dCount d01 d23 code ilen clen lits m p1 p2 S :=
   fastLoop_sel (fun _ => true) _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ rfl rfl
 
-/-- The compiled loop a header chose (`Hdr.dsel`): `fastLoopT` when `b`, else `fastLoopF`. -/
+/-- The command loop that decodes a distance only when it is explicit, written out on its own (the body of `fastLoop`
+with `sel` true): `fastLoopT` compiles as a wrapper that hands its 41 arguments on to `fastLoop`'s specialization, and
+this is called directly instead (64 instructions an entry fewer on dll q11, the loop's own count unchanged).
+`fastLoopTV_eq` proves it the second loop. -/
+def fastLoopTV (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (cap : USize)
+    (T : ByteArray) (np : UInt64) (x : CmdExt) (flags : Flags) (mask size cap16 pB wB posLim : USize)
+    (rEnd bEnd tb : UInt64) (modeOff lRow pairBase iRow iFb dRow : USize)
+    (C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow) (X : XInv H x)
+    (W : FWin H T kk mask size cap16 posLim stop pairBase np)
+    (word count : UInt64) (pos : USize) (ring : ByteArray) (opos : USize)
+    (iCount lCount dCount d01 d23 code ilen clen lits m : UInt64) (p1 p2 : UInt8)
+    (S : FSt kk stop posLim word count pos ring m) : FOut H kk stop :=
+  have hk := W.k24
+  have hmk := W.mask
+  if hm0 : m ≠ 0 then
+    have hm1 : 1 ≤ m.toNat := by
+      have : m.toNat ≠ 0 := fun e => hm0 (UInt64.toNat_inj.mp (by rw [e]; rfl))
+      omega
+    have _hd1 : (m - 1).toNat < m.toNat := lit_dec (j := 1) (by decide) hm1
+    if hp : 2 ≤ m ∧ pairBase ≠ USize.ofNat 4294967295 then
+      have hm2 : 2 ≤ m.toNat := UInt64.le_iff_toNat_le.mp hp.1
+      have _hd2 : (m - 2).toNat < m.toNat := lit_dec (j := 2) (by decide) hm2
+      fillK a stop hs word count pos 15 S.wf (by decide) S.posStop (fill_margin W.lim S.margin hm1 (by decide))
+        fun word' count' pos' hf =>
+      let e := row32 T pairBase (W.pair hp.2) C.size32 word'
+      if (e >>> 8) &&& 255 = 2 then
+        -- the low byte is the bit count alone, so it is read whole, with no mask on the decode's chain
+        let l := e &&& 255
+        have hl : l.toNat < 16 := Nat.lt_of_le_of_lt (row32_lo (W.pairLo hp.2) word') (by decide)
+        have hc15 : 15 ≤ count'.toNat := hf.enough
+        let b1 := (e >>> 16).toUInt8
+        let b2 := (e >>> 24).toUInt8
+        let r1 := wput ring opos mask hk hmk S.size b1
+        let r2 := wput r1 (opos + USize.ofNat 1) mask hk hmk (wput_size ring opos mask hk hmk S.size b1) b2
+        fastLoopTV H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase iRow
+          iFb dRow C X W (word' >>> l) (count' - l) pos' r2 (opos + USize.ofNat 2) iCount lCount dCount
+          d01 d23 code ilen clen lits (m - 2) b2 b1
+          ⟨drop1_wf hf.wf (by omega) (by omega), hf.posStop, wput_size _ _ _ hk hmk _ _,
+            lit_margin (j := 2) S.margin hm2 (by decide) hf.acct (by show l.toNat ≤ 15 * 2; omega) (by omega)⟩
+      else
+        let v := litT C p1 p2 word'
+        let l := v &&& 15
+        have hl : l.toNat < 16 := and15_lt v
+        have hc15 : 15 ≤ count'.toNat := hf.enough
+        let b := (v >>> 4).toUInt8
+        fastLoopTV H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase iRow
+          iFb dRow C X W (word' >>> l) (count' - l) pos' (wput ring opos mask hk hmk S.size b)
+          (opos + USize.ofNat 1) iCount lCount dCount d01 d23 code ilen clen lits (m - 1) b p1
+          ⟨drop1_wf hf.wf (by omega) (by omega), hf.posStop, wput_size _ _ _ hk hmk _ _,
+            lit_margin (j := 1) S.margin hm1 (by decide) hf.acct (by show l.toNat ≤ 15 * 1; omega) (by omega)⟩
+    else if hm2' : 2 ≤ m then
+      have hm2 : 2 ≤ m.toNat := UInt64.le_iff_toNat_le.mp hm2'
+      have _hd2 : (m - 2).toNat < m.toNat := lit_dec (j := 2) (by decide) hm2
+      fillK a stop hs word count pos 30 S.wf (by decide) S.posStop (fill_margin W.lim S.margin hm1 (by decide))
+        fun word' count' pos' hf =>
+      let v := litT C p1 p2 word'
+      let l := v &&& 15
+      have hl : l.toNat < 16 := and15_lt v
+      let b1 := (v >>> 4).toUInt8
+      let w1 := word' >>> l
+      let v2 := litT C b1 p1 w1
+      let l2 := v2 &&& 15
+      have hl2 : l2.toNat < 16 := and15_lt v2
+      have hc30 : 30 ≤ count'.toNat := hf.enough
+      let b2 := (v2 >>> 4).toUInt8
+      let r1 := wput ring opos mask hk hmk S.size b1
+      let r2 := wput r1 (opos + USize.ofNat 1) mask hk hmk (wput_size ring opos mask hk hmk S.size b1) b2
+      fastLoopTV H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase iRow iFb
+        dRow C X W (w1 >>> l2) (count' - l - l2) pos' r2 (opos + USize.ofNat 2) iCount lCount dCount
+        d01 d23 code ilen clen lits (m - 2) b2 b1
+        ⟨drop2_wf (a := l) (b := l2) hf.wf (by omega) (by omega) (by omega), hf.posStop, wput_size _ _ _ hk hmk _ _, by
+          intro _
+          have hacct := hf.acct
+          have hmar := S.margin (by omega)
+          have h2 : (2 : UInt64).toNat = 2 := rfl
+          have e1 : (count' - l).toNat = count'.toNat - l.toNat := u64_sub_le (by omega)
+          have e2 : (count' - l - l2).toNat = count'.toNat - l.toNat - l2.toNat := by
+            rw [u64_sub_le (by rw [e1]; omega), e1]
+          have e3 : (m - 2).toNat = m.toNat - 2 := by rw [u64_sub_le (by rw [h2]; omega), h2]
+          rw [e2, e3]
+          omega⟩
+    else
+      fillK a stop hs word count pos 15 S.wf (by decide) S.posStop (fill_margin W.lim S.margin hm1 (by decide))
+        fun word' count' pos' hf =>
+      let v := litT C p1 p2 word'
+      let l := v &&& 15
+      have hl : l.toNat < 16 := and15_lt v
+      have hc15 : 15 ≤ count'.toNat := hf.enough
+      let b := (v >>> 4).toUInt8
+      fastLoopTV H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase iRow iFb
+        dRow C X W (word' >>> l) (count' - l) pos' (wput ring opos mask hk hmk S.size b)
+        (opos + USize.ofNat 1) iCount lCount dCount d01 d23 code ilen clen lits (m - 1) b p1
+        ⟨drop1_wf hf.wf (by omega) (by omega), hf.posStop, wput_size _ _ _ hk hmk _ _,
+          lit_margin (j := 1) S.margin hm1 (by decide) hf.acct (by show l.toNat ≤ 15 * 1; omega) (by omega)⟩
+  else if hl : lits ≠ 0 then
+    if hcl : lCount = 0 ∨ posLim < pos then
+      fexitP C X W word count ring opos pB cap wB rEnd iCount lCount dCount flags d01 d23 code ilen clen
+        (wget ring (opos - USize.ofNat 1) mask hmk S.size) (wget ring (opos - USize.ofNat 2) mask hmk S.size)
+        .literals lits pos S.wf S.posStop S.size (Or.inl rfl)
+    else
+      let m' := umin (umin lits lCount) 16
+      have hm' : m'.toNat ≤ 16 := by
+        rw [umin_toNat, umin_toNat]
+        exact Nat.le_trans (Nat.min_le_right _ _) (by decide)
+      have hpl : pos.toNat ≤ posLim.toNat := Nat.le_of_not_lt fun h => hcl (Or.inr (USize.lt_iff_toNat_lt.mpr h))
+      have _hds : 17 * (lits - m').toNat + m'.toNat < 17 * lits.toNat + m.toNat :=
+        seg_dec (by rw [Decidable.of_not_not hm0]; rfl) (fun e => hl (UInt64.toNat_inj.mp (by rw [e]; rfl)))
+          (fun e => hcl (Or.inl (UInt64.toNat_inj.mp (by rw [e]; rfl))))
+      fastLoopTV H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase iRow iFb
+        dRow C X W word count pos ring opos iCount (lCount - m') dCount d01 d23 code ilen clen
+        (lits - m') m' (wget ring (opos - USize.ofNat 1) mask hmk S.size) (wget ring (opos - USize.ofNat 2) mask hmk S.size)
+        ⟨S.wf, S.posStop, S.size, fun _ => by omega⟩
+  else
+    if hd2 : posLim < pos ∨ (128 ≤ code ∧ dCount = 0) then
+      fexitP C X W word count ring opos pB cap wB rEnd iCount lCount dCount flags d01 d23 code ilen clen
+        (wget ring (opos - USize.ofNat 1) mask hmk S.size) (wget ring (opos - USize.ofNat 2) mask hmk S.size)
+        .distance 0 pos S.wf S.posStop S.size (Or.inr (Or.inl rfl))
+    else
+    have hpl : pos.toNat ≤ posLim.toNat := Nat.le_of_not_lt fun h => hd2 (Or.inl (USize.lt_iff_toNat_lt.mpr h))
+    have hlim := W.lim
+    fillK a stop hs word count pos 40 S.wf (by decide) S.posStop (fun _ => by omega) fun word1 count1 pos1 hf1 =>
+    -- the round: the distance decoded only for an explicit one; the copy and the next command written once, a join
+    -- point for both kinds of distance
+    let after := fun (d word2 count2 dCount' n01 n23 : UInt64) (hw2 : (BitBuffer.mk word2 count2).Wf) =>
+      let written := usmin cap16 (opos + wB)
+      if hbad : d = 0 ∨ written.toUInt64 < d then
+        fexitP C X W word count ring opos pB cap wB rEnd iCount lCount dCount flags d01 d23 code ilen clen
+          (wget ring (opos - USize.ofNat 1) mask hmk S.size) (wget ring (opos - USize.ofNat 2) mask hmk S.size)
+          .distance 0 pos S.wf S.posStop S.size (Or.inr (Or.inl rfl))
+      else
+      have hd : d.toUSize.toNat + 16 ≤ 2 ^ kk.toNat := by
+        have h1 : ¬ written.toUInt64 < d := fun h => hbad (Or.inr h)
+        have h2 : written.toNat ≤ 2 ^ kk.toNat - 16 := by
+          show (usmin cap16 (opos + wB)).toNat ≤ _
+          rw [usmin_toNat, W.cap16]
+          omega
+        have h3 : d.toNat ≤ written.toNat := by
+          have := UInt64.le_iff_toNat_le.mp (UInt64.not_lt.mp h1)
+          rwa [USize.toNat_toUInt64] at this
+        have h16 : 16 ≤ 2 ^ kk.toNat := W.k16
+        have h24 : 2 ^ kk.toNat ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
+        rw [word_toUSize (by omega)]
+        omega
+      let ring' := copyF ring (opos &&& mask) d.toUSize clen.toUSize mask size hk hmk W.size S.size (mask_lt hmk) hd
+      have hsz' : ring'.size = 2 ^ kk.toNat := copyF_size _ _ _ _ _ _ hk hmk W.size S.size _ hd
+      let opos' := opos + clen.toUSize
+      if hi0 : iCount = 0 then
+        fexitP C X W word2 count2 ring' opos' pB cap wB
+          rEnd iCount lCount dCount' flags n01 n23 code ilen clen
+          (wget ring' (opos' - USize.ofNat 1) mask hmk hsz') (wget ring' (opos' - USize.ofNat 2) mask hmk hsz')
+          .command 0 pos1 hw2 hf1.posStop hsz' (Or.inr (Or.inr rfl))
+      else
+      have _hdi : (iCount - 1).toNat < iCount.toNat :=
+        lit_dec (j := 1) (by decide) (by
+          have : iCount.toNat ≠ 0 := fun e => hi0 (UInt64.toNat_inj.mp (by rw [e]; rfl))
+          show 1 ≤ iCount.toNat
+          omega)
+      have hp1 : pos1.toNat + 8 ≤ stop.toNat := by
+        have := hf1.acct
+        have : count1.toNat ≤ 64 := hf1.wf.count_le
+        omega
+      fillK a stop hs word2 count2 pos1 40 hw2
+        (by decide) hf1.posStop (fun _ => hp1) fun word3 count3 pos3 hf3 =>
+      icK C word3 count3 hf3.wf fun ok1 word4 count4 code' ilen' clen' hok1 =>
+      if h1 : ok1 = false ∨ bEnd < opos'.toUInt64 + ilen' + clen' then
+        fexitP C X W word2 count2 ring' opos' pB cap wB
+          rEnd iCount lCount dCount' flags n01 n23 code ilen clen
+          (wget ring' (opos' - USize.ofNat 1) mask hmk hsz') (wget ring' (opos' - USize.ofNat 2) mask hmk hsz')
+          .command 0 pos1 hw2 hf1.posStop hsz' (Or.inr (Or.inr rfl))
+      else
+        fastLoopTV H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase
+          iRow iFb dRow C X W word4 count4 pos3 ring' opos' (iCount - 1) lCount dCount' n01 n23 code' ilen'
+          clen' ilen' 0 0 0
+          ⟨hok1 (by cases h : ok1 with
+            | false => exact absurd (Or.inl h) h1
+            | true => rfl), hf3.posStop, hsz', fun h => absurd rfl h⟩
+    if 128 ≤ code then
+      distK C np word1 count1 clen d01 d23 hf1.wf fun ok2 word2x count2x dcode dx hok2 =>
+      if hok : ok2 = false then
+        fexitP C X W word count ring opos pB cap wB rEnd iCount lCount dCount flags d01 d23 code ilen clen
+          (wget ring (opos - USize.ofNat 1) mask hmk S.size) (wget ring (opos - USize.ofNat 2) mask hmk S.size)
+          .distance 0 pos S.wf S.posStop S.size (Or.inr (Or.inl rfl))
+      else
+        let push := dcode != 0
+        after dx word2x count2x (dCount - 1) (if push then dx ||| (d01 <<< 32) else d01)
+          (if push then (d01 >>> 32) ||| (d23 <<< 32) else d23)
+          (hok2 (by cases h : ok2 with
+            | false => exact absurd h hok
+            | true => rfl))
+    else
+      -- an implicit distance: the last one, no bits read
+      after (d01 &&& 0xFFFFFFFF) word1 count1 dCount d01 d23 hf1.wf
+termination_by (iCount.toNat, 17 * lits.toNat + m.toNat)
+decreasing_by
+  all_goals
+    first
+    | exact Prod.Lex.left _ _ ‹_›
+    | exact Prod.Lex.right _ (by omega)
+
+set_option maxRecDepth 8000 in
+set_option maxHeartbeats 4000000 in
+/-- The second loop written out on its own is the second loop. -/
+theorem fastLoopTV_eq' {H : Hdr} {kk : USize} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {cap : USize}
+    {T : ByteArray} {np : UInt64} {x : CmdExt} {flags : Flags} {mask size cap16 pB wB posLim : USize}
+    {rEnd bEnd tb : UInt64} {modeOff lRow pairBase iRow iFb dRow : USize}
+    {C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow} {X : XInv H x}
+    {W : FWin H T kk mask size cap16 posLim stop pairBase np} :
+    ∀ (I L : Nat) (word count : UInt64) (pos : USize) (ring : ByteArray) (opos : USize)
+      (iCount lCount dCount d01 d23 code ilen clen lits m : UInt64) (p1 p2 : UInt8)
+      (S : FSt kk stop posLim word count pos ring m), iCount.toNat = I → 17 * lits.toNat + m.toNat = L →
+      fastLoopTV H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase iRow
+        iFb dRow C X W word count pos ring opos iCount lCount dCount d01 d23 code ilen clen lits m p1 p2 S =
+      fastLoop H kk a stop hs cap (fun _ => true) T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow
+        pairBase iRow iFb dRow C X W word count pos ring opos iCount lCount dCount d01 d23 code ilen clen lits m p1 p2 S := by
+  intro I
+  induction I using Nat.strongRecOn with
+  | ind I ihI =>
+  intro L
+  induction L using Nat.strongRecOn with
+  | ind L ih =>
+    intro word count pos ring opos iCount lCount dCount d01 d23 code ilen clen lits m p1 p2 S hI hL
+    rw [fastLoopTV, fastLoop]
+    dsimp only
+    by_cases hm0 : m ≠ 0
+    · rw [dite_eq_left hm0, dite_eq_left hm0]
+      by_cases hp : 2 ≤ m ∧ pairBase ≠ USize.ofNat 4294967295
+      · rw [dite_eq_left hp, dite_eq_left hp]
+        refine fillK_congr fun w1 c1 q1 hf1 => ?_
+        by_cases h2 : (row32 T pairBase (W.pair hp.2) C.size32 w1 >>> 8) &&& 255 = 2
+        · rw [ite_eq_left h2, ite_eq_left h2]
+          exact ih _ (by rw [← hL]; exact lit_dec2 _ hp.1) _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ hI rfl
+        · rw [ite_eq_right h2, ite_eq_right h2]
+          exact ih _ (by rw [← hL]; exact lit_dec1 _ hm0) _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ hI rfl
+      · rw [dite_eq_right hp, dite_eq_right hp]
+        by_cases hm2' : 2 ≤ m
+        · rw [dite_eq_left hm2', dite_eq_left hm2']
+          refine fillK_congr fun w1 c1 q1 hf1 => ?_
+          exact ih _ (by rw [← hL]; exact lit_dec2 _ hm2') _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ hI rfl
+        · rw [dite_eq_right hm2', dite_eq_right hm2']
+          refine fillK_congr fun w1 c1 q1 hf1 => ?_
+          exact ih _ (by rw [← hL]; exact lit_dec1 _ hm0) _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ hI rfl
+    rw [dite_eq_right hm0, dite_eq_right hm0]
+    by_cases hl : lits ≠ 0
+    · rw [dite_eq_left hl, dite_eq_left hl]
+      by_cases hcl : lCount = 0 ∨ posLim < pos
+      · rw [dite_eq_left hcl, dite_eq_left hcl]
+      · rw [dite_eq_right hcl, dite_eq_right hcl]
+        exact ih _ (by
+            rw [← hL]
+            exact seg_dec (by rw [Decidable.of_not_not hm0]; rfl) (fun e => hl (UInt64.toNat_inj.mp (by rw [e]; rfl)))
+              (fun e => hcl (Or.inl (UInt64.toNat_inj.mp (by rw [e]; rfl)))))
+          _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ hI rfl
+    · rw [dite_eq_right hl, dite_eq_right hl]
+      by_cases hd2 : posLim < pos ∨ (128 ≤ code ∧ dCount = 0)
+      · rw [dite_eq_left hd2, dite_eq_left hd2]
+      · rw [dite_eq_right hd2, dite_eq_right hd2]
+        refine fillK_congr fun word1 count1 pos1 hf1 => ?_
+        rw [dite_eq_left (show true = true from rfl)]
+        by_cases hc : 128 ≤ code
+        · rw [ite_eq_left hc, ite_eq_left hc]
+          refine distK_congr C np word1 count1 clen d01 d23 hf1.wf fun ok2 word2x count2x dcode dx hok2 => ?_
+          by_cases hok : ok2 = false
+          · rw [dite_eq_left hok, dite_eq_left hok]
+          · rw [dite_eq_right hok, dite_eq_right hok]
+            by_cases hb : dx = 0 ∨ (usmin cap16 (opos + wB)).toUInt64 < dx
+            · rw [dite_eq_left hb, dite_eq_left hb]
+            · rw [dite_eq_right hb, dite_eq_right hb]
+              by_cases hi : iCount = 0
+              · rw [dite_eq_left hi, dite_eq_left hi]
+              · rw [dite_eq_right hi, dite_eq_right hi]
+                refine fillK_congr fun w3 c3 r3 hf3 => icK_congr C _ _ _ fun ok1 w4 c4 code' ilen' clen' hok1 => ?_
+                by_cases h1 : ok1 = false ∨ bEnd < (opos + clen.toUSize).toUInt64 + ilen' + clen'
+                · rw [dite_eq_left h1, dite_eq_left h1]
+                · rw [dite_eq_right h1, dite_eq_right h1]
+                  exact ihI _ (by rw [← hI]; exact icount_dec hi) _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ rfl rfl
+        · rw [ite_eq_right hc, ite_eq_right hc]
+          by_cases hb : d01 &&& 0xFFFFFFFF = 0 ∨ (usmin cap16 (opos + wB)).toUInt64 < d01 &&& 0xFFFFFFFF
+          · rw [dite_eq_left hb, dite_eq_left hb]
+          · rw [dite_eq_right hb, dite_eq_right hb]
+            by_cases hi : iCount = 0
+            · rw [dite_eq_left hi, dite_eq_left hi]
+            · rw [dite_eq_right hi, dite_eq_right hi]
+              refine fillK_congr fun w3 c3 r3 hf3 => icK_congr C _ _ _ fun ok1 w4 c4 code' ilen' clen' hok1 => ?_
+              by_cases h1 : ok1 = false ∨ bEnd < (opos + clen.toUSize).toUInt64 + ilen' + clen'
+              · rw [dite_eq_left h1, dite_eq_left h1]
+              · rw [dite_eq_right h1, dite_eq_right h1]
+                exact ihI _ (by rw [← hI]; exact icount_dec hi) _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ rfl rfl
+
+/-- The second loop written out on its own gives the first compiled loop's result. -/
+theorem fastLoopTV_eq {H : Hdr} {kk : USize} {a : ByteArray} {stop : USize} {hs : stop.toNat ≤ a.size} {cap : USize}
+    {T : ByteArray} {np : UInt64} {x : CmdExt} {flags : Flags} {mask size cap16 pB wB posLim : USize}
+    {rEnd bEnd tb : UInt64} {modeOff lRow pairBase iRow iFb dRow : USize}
+    {C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow} {X : XInv H x}
+    {W : FWin H T kk mask size cap16 posLim stop pairBase np} {word count : UInt64} {pos : USize} {ring : ByteArray}
+    {opos : USize} {iCount lCount dCount d01 d23 code ilen clen lits m : UInt64} {p1 p2 : UInt8}
+    {S : FSt kk stop posLim word count pos ring m} :
+    fastLoopTV H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase iRow iFb
+      dRow C X W word count pos ring opos iCount lCount dCount d01 d23 code ilen clen lits m p1 p2 S =
+    fastLoopF H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase iRow iFb
+      dRow C X W word count pos ring opos iCount lCount dCount d01 d23 code ilen clen lits m p1 p2 S :=
+  (fastLoopTV_eq' _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ rfl rfl).trans
+    (fastLoop_sel (fun _ => true) _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ rfl rfl)
+
+/-- The compiled loop a header chose (`Hdr.dsel`): `fastLoopTV` when `b`, else `fastLoopV`. -/
 @[inline] def fastLoopS (b : Bool) (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size)
     (cap : USize) (T : ByteArray) (np : UInt64) (x : CmdExt) (flags : Flags) (mask size cap16 pB wB posLim : USize)
     (rEnd bEnd tb : UInt64) (modeOff lRow pairBase iRow iFb dRow : USize)
@@ -1897,7 +2200,7 @@ theorem fastLoopT_eq {H : Hdr} {kk : USize} {a : ByteArray} {stop : USize} {hs :
     (iCount lCount dCount d01 d23 code ilen clen lits m : UInt64) (p1 p2 : UInt8)
     (S : FSt kk stop posLim word count pos ring m) : FOut H kk stop :=
   if b then
-    fastLoopT H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase iRow iFb
+    fastLoopTV H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase iRow iFb
       dRow C X W word count pos ring opos iCount lCount dCount d01 d23 code ilen clen lits m p1 p2 S
   else
     fastLoopV H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow pairBase iRow iFb
@@ -1918,7 +2221,7 @@ theorem fastLoopS_eq {b : Bool} {H : Hdr} {kk : USize} {a : ByteArray} {stop : U
   unfold fastLoopS
   cases b
   · exact (ite_eq_right Bool.false_ne_true).trans fastLoopV_eq
-  · exact (ite_eq_left rfl).trans fastLoopT_eq
+  · exact (ite_eq_left rfl).trans fastLoopTV_eq
 
 /-! ### Into the loop -/
 
