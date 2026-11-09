@@ -31,10 +31,7 @@ public import Brotli.Decoder.StepLiterals
 public import Brotli.Decoder.DictBytes
 public import Brotli.Decoder.StepDistance
 public import Brotli.Decoder.Loop
-public import Brotli.Decoder.WinBack
 public import Brotli.Decoder.LoopK
-public import Brotli.Decoder.FastExit
-public import Brotli.Decoder.LoopY
 public import Brotli.Decoder.FastRun
 public import Brotli.Decoder.HeaderRest
 public import Brotli.Decoder.HeaderOrder
