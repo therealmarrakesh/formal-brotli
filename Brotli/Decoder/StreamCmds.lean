@@ -3,6 +3,7 @@ module
 public import Brotli.Decoder.StreamState
 public import Brotli.Decoder.Positions
 public import Brotli.Decoder.LoopK
+public import Brotli.Decoder.LoopY
 public import Brotli.Decoder.FastRun
 
 @[expose] public section
