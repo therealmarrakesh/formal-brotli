@@ -1224,11 +1224,29 @@ theorem ixPass_spec {lTriv : ByteArray} {nL : Nat} {ht : lTriv.size = 4 * nL} {h
 
 /-! ### Which literal types get two-literal tables (a policy, with no claim but its bounds) -/
 
+theorem pairFits_idx {t : ByteArray} {tb j : USize} (hr : 2 * (tb.toNat + 256) ≤ t.size) (s : t.size < 2 ^ 32)
+    (hj : j.toNat < 256) : 2 * (tb + j).toNat + 2 ≤ t.size := by
+  rw [fastAdd (by omega)]
+  omega
+
+theorem shr_le (j x : USize) : (j >>> x).toNat ≤ j.toNat := by
+  rw [USize.toNat_shiftRight]
+  exact Nat.shiftRight_le _ _
+
+/-- Whether root index `j` gives two literals: the first code word's length and the next one's, read from their root
+slots, fit its 8 bits (the test `pairEntryU` makes, without building the entry). -/
+@[inline] def pairFits (t : ByteArray) (tb : USize) (h : TableFits t tb.toNat) (s : t.size < 2 ^ 32) (j : USize)
+    (hj : j < USize.ofNat 256) : Bool :=
+  have hj' := fastLt (by decide) hj
+  let l1 := slot16 t (tb + j) (pairFits_idx h.root s hj') s &&& 15
+  l1 ≤ 8 &&
+    l1 + (slot16 t (tb + (j >>> l1.toUSize)) (pairFits_idx h.root s (Nat.lt_of_le_of_lt (shr_le _ _) hj')) s &&& 15) ≤ 8
+
 /-- How many of a shared table's 256 root indices give two literals, from `j` on. -/
 def pairCount (t : ByteArray) (tb : USize) (h : TableFits t tb.toNat) (s : t.size < 2 ^ 32) (j : USize) (acc : UInt64) :
     UInt64 :=
   if hj : j < USize.ofNat 256 then
-    pairCount t tb h s (j + USize.ofNat 1) (if (pairStep tb t h s j hj >>> 8) &&& 255 == 2 then acc + 1 else acc)
+    pairCount t tb h s (j + USize.ofNat 1) (if pairFits t tb h s j hj then acc + 1 else acc)
   else acc
 termination_by 256 - j.toNat
 decreasing_by
