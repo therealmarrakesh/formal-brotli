@@ -160,9 +160,12 @@ the machine has memory to give.
 - **Plain Lean:** the toolchain's own libraries, no external packages.
 - **Trust:** proofs rest only on the kernel's standard axioms. No `sorry`, `axiom`, `native_decide`, `implemented_by`,
   `partial` or `unsafe` in the finished decoder. `@[csimp]` is allowed, since the kernel checks it.
-- **One exception:** a small set of primitives in one module, each an ordinary Lean definition (its body the model the
-  proofs use) with a C implementation: a load, store, copy or fill of bytes within an array, every range inside the
-  array by the primitive's signature, the array ensured to be held once where it is written.
+- **One exception:** a small set of primitives in one module of the decoder's own, each an ordinary Lean definition
+  (its body the model the proofs use) with a C implementation: a load, store, copy or fill of bytes within an array,
+  every range inside the array by the primitive's signature, the array ensured to be held once where it is written.
+- **Self-contained code:** the decoder's modules import only each other and Lean's own libraries. Its constants (the
+  dictionary, the transforms, what symbols stand for) and its primitives are its own, in the form the fast code wants.
+  Only the proofs import the specification, from modules of their own.
 - **New primitives** may be added to that module when three things hold, and the owner is told afterwards: Lean's own
   runtime already does the same thing; it is proved safe (the model as its body, its ranges by its signature); and it is
   kept simple (a line or a short loop of C, with none of the decoder's logic in it).

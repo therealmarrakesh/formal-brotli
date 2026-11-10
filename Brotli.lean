@@ -4,3 +4,4 @@ module
 
 public import Brotli.Spec
 public import Brotli.Decoder
+public import Brotli.FastDecoder
