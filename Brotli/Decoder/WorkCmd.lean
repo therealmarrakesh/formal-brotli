@@ -1341,14 +1341,6 @@ theorem Rel.k24 {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {p : Phase} (h : Re
   case literalSymbol => exact h.elim
   all_goals exact h.1.k24
 
-/-- A state at a word's bytes stands for a word's place. -/
-theorem Rel.word_of {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {p : Phase} (h : Rel w k m st p) (ht : st.tag = .word) :
-    ∃ s pending, p = .word s pending := by
-  cases p
-  case word s pending => exact ⟨s, pending, rfl⟩
-  case literalSymbol => exact h.elim
-  all_goals exact absurd (h.2.1.symm.trans ht) (fun e => Tag.noConfusion e)
-
 /-- A state at literals stands for a place of literals. -/
 theorem Rel.lit_of {w k : Nat} {m : MetaBlockHeader} {st : Cmd} {p : Phase} (h : Rel w k m st p) (ht : st.tag = .literals) :
     crank p = 4 ∧ cred p = 0 := by

@@ -69,6 +69,20 @@ theorem icFb_rel {α β : Type} {R : α → β → Prop} (C : FCtx H T lCur iCur
 
 end
 
+/-- `dictWith` on the same reference passes its continuations the same word length and write. -/
+theorem dictWith_rel {α β : Type} {R : α → β → Prop} {mask : USize} {k : Nat} {hk : k ≤ 24}
+    {hm : mask.toNat = 2 ^ k - 1} {clen wordId : UInt64} {ring : ByteArray} {o : USize} {hr hr' : ring.size = 2 ^ k}
+    {n1 : Unit → α} {n2 : Unit → β} {s1 : USize → (Unit → { r : ByteArray // r.size = 2 ^ k }) → α}
+    {s2 : USize → (Unit → { r : ByteArray // r.size = 2 ^ k }) → β} (hn : R (n1 ()) (n2 ()))
+    (hs : dictValid clen wordId → ∀ (wl : USize) put, dictLen clen wordId = wl → R (s1 wl put) (s2 wl put)) :
+    R (dictWith hk hm clen wordId ring o hr n1 s1) (dictWith hk hm clen wordId ring o hr' n2 s2) := by
+  rw [dictWith_eq, dictWith_eq]
+  by_cases h : dictValid clen wordId
+  · rw [dite_eq_left h, dite_eq_left h]
+    exact hs h _ _ rfl
+  · rw [dite_eq_right h, dite_eq_right h]
+    exact hn
+
 /-! ### The fast loop's work -/
 
 /-- What the fast loop's work is paid by: the bytes it writes, from the window position `opos` it is at to the one it
@@ -251,7 +265,71 @@ theorem fastLoop_work {H : Hdr} {kk : USize} {a : ByteArray} {stop : USize} {hs 
         by_cases hbad : (¬ code < 128 ∧ ok2 = false) ∨ (if code < 128 then d01 &&& 0xFFFFFFFF else dx) = 0 ∨
             (usmin cap16 (opos + wB)).toUInt64 < (if code < 128 then d01 &&& 0xFFFFFFFF else dx)
         · rw [dite_eq_left hbad, dite_eq_left hbad]
-          exact FW.exit rfl (Nat.le_trans (Nat.le_add_right _ _) N0.ahead)
+          -- a dictionary word: paid for by its bytes, as a copy
+          refine dictWith_rel (R := fun r w => FW pB bEnd opos 0 (Subtype.val r) w)
+            (FW.exit rfl (Nat.le_trans (Nat.le_add_right _ _) N0.ahead)) ?_
+          intro hv wl put hwl0
+          by_cases hwl : ¬ (¬ code < 128 ∧ ok2 = false) ∧ ¬ (if code < 128 then d01 &&& 0xFFFFFFFF else dx) = 0 ∧
+              wl ≠ 0 ∧ opos.toUInt64 + wl.toUInt64 ≤ bEnd
+          · rw [dite_eq_left hwl, dite_eq_left hwl]
+            have hwN : wl.toNat ≤ 38 := by
+              rw [← hwl0, dictLen_eq hv]
+              exact dictBuild_le hv
+            have hw1 : 1 ≤ wl.toNat := by
+              have : wl.toNat ≠ 0 := fun e => hwl.2.2.1 (USize.toNat_inj.mp e)
+              omega
+            have hle := UInt64.le_iff_toNat_le.mp hwl.2.2.2
+            rw [u64_add_small (by rw [USize.toNat_toUInt64, USize.toNat_toUInt64]; omega), USize.toNat_toUInt64,
+              USize.toNat_toUInt64] at hle
+            have hoW : (opos + wl).toNat = opos.toNat + wl.toNat := fastAdd (by omega)
+            by_cases hi : iCount = 0
+            · rw [dite_eq_left hi, dite_eq_left hi]
+              exact FW.copyExit rfl hoW (by omega)
+            · rw [dite_eq_right hi, dite_eq_right hi]
+              refine fillK_rel (R := fun r w => FW pB bEnd opos 0 (Subtype.val r) w) ?_
+              intro word3 count3 pos3 hf3
+              rw [icK_fb, icK_fb]
+              refine icFb_rel (R := fun r w => FW pB bEnd opos 0 (Subtype.val r) w) C ?_
+              intro vi hcv hkv hkv' hvi
+              have hIL := len_bound C (x := word3) (a := wordBits vi) (b := rowBits (insertRow (wordSym vi) hcv))
+                (base := rowBase (insertRow (wordSym vi) hcv))
+                (by have := and15_lt vi; exact Nat.lt_trans this (by decide))
+                (insertRow_bits24 hcv) (by rw [(insertRow_fields hcv).2]; exact (cmdRow_small hcv).2.1)
+              have hCL := len_bound C (x := word3 >>> wordBits vi) (a := rowBits (insertRow (wordSym vi) hcv))
+                (b := rowBits (copyRow (wordSym vi) hcv)) (base := rowBase (copyRow (wordSym vi) hcv))
+                (by have := insertRow_bits24 hcv; omega) (copyRow_bits hcv)
+                (by rw [(copyRow_fields hcv).2]; have := (cmdRow_small hcv).2.2.2; omega)
+              have hoU : (opos + wl).toUInt64.toNat = opos.toNat + wl.toNat := by
+                rw [USize.toNat_toUInt64, hoW]
+              by_cases h1 : decide (wordBits vi + rowBits (insertRow (wordSym vi) hcv) +
+                  rowBits (copyRow (wordSym vi) hcv) ≤ count3) = false ∨ bEnd < (opos + wl).toUInt64 +
+                  (rowBase (insertRow (wordSym vi) hcv) +
+                    ((word3 >>> wordBits vi) &&& maskT T C.big C.size32 (rowBits (insertRow (wordSym vi) hcv)))) +
+                  (rowBase (copyRow (wordSym vi) hcv) +
+                    (((word3 >>> wordBits vi) >>> rowBits (insertRow (wordSym vi) hcv))
+                    &&& maskT T C.big C.size32 (rowBits (copyRow (wordSym vi) hcv))))
+              · rw [dite_eq_left h1, dite_eq_left h1]
+                exact FW.copyExit rfl hoW (by omega)
+              · rw [dite_eq_right h1, dite_eq_right h1]
+                have hadm := UInt64.le_iff_toNat_le.mp (UInt64.not_lt.mp (fun h => h1 (Or.inr h)))
+                rw [u64_add_small (by rw [u64_add_small (by omega), hoU]; omega), u64_add_small (by omega), hoU] at hadm
+                have hcl2 : 1 ≤ (rowBase (copyRow (wordSym vi) hcv) +
+                    (((word3 >>> wordBits vi) >>> rowBits (insertRow (wordSym vi) hcv))
+                    &&& maskT T C.big C.size32 (rowBits (copyRow (wordSym vi) hcv)))).toNat := by
+                  have hx := extra_lt C (x := word3 >>> wordBits vi) (a := rowBits (insertRow (wordSym vi) hcv))
+                    (b := rowBits (copyRow (wordSym vi) hcv)) (by have := insertRow_bits24 hcv; omega) (copyRow_bits hcv)
+                  have hb := (cmdRow_small hcv).2.2.2
+                  rw [← (copyRow_fields hcv).2] at hb
+                  have hc2 : 2 ≤ (rowBase (copyRow (wordSym vi) hcv)).toNat := by
+                    rw [(copyRow_fields hcv).2]; exact cmdRow_copy2 hcv
+                  rw [u64_add_small (by omega)]
+                  omega
+                refine FW.copy (ihI _ (by rw [← hI]; exact icount_dec hi) _ _ _ pos3 _ (opos + wl) (iCount - 1)
+                  lCount _ _ _ _ _ _ _ 0 _ _ _ rfl rfl
+                  (N0.adv hk (n := wl) (by omega) (by rw [UInt64.add_zero]; omega))
+                  (by rw [h0]; have := lCount.toNat_lt; omega) (by rw [h0]; omega) hcl2) hoW hw1
+          · rw [dite_eq_right hwl, dite_eq_right hwl]
+            exact FW.exit rfl (Nat.le_trans (Nat.le_add_right _ _) N0.ahead)
         · rw [dite_eq_right hbad, dite_eq_right hbad]
           by_cases hi : iCount = 0
           · rw [dite_eq_left hi, dite_eq_left hi]

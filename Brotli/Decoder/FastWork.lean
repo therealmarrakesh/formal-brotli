@@ -8,17 +8,17 @@ public import Brotli.Decoder.WorkCmd
 /-!
 # The work of the command loop with the fast loop
 
-Each function here mirrors the function of the same name without its `W`, branch by branch: a round each, and a copy by
-its bytes. The fast loop's rounds are paid for by the bytes it writes (`fastLoop_work`), four a byte, with four more for
-the round that leaves it; an entry into the fast loop that writes nothing costs two rounds, which the step that leads to
-it holds (`cpot`).
+Each function here mirrors the function of the same name without its `W`, branch by branch: a round each, and a copy or
+a dictionary word by its bytes. The fast loop's rounds are paid for by the bytes it writes (`fastLoop_work`), four a
+byte, with four more for the round that leaves it; an entry into the fast loop that writes nothing costs two rounds,
+which the step that leads to it holds (`cpot`).
 -/
 
 namespace Brotli.Decoder
 
 open Brotli.Spec
 
-/-- The work of `fastLoop`: a round each, and a copy's bytes. -/
+/-- The work of `fastLoop`: a round each, and a copy's or a dictionary word's bytes. -/
 def fastLoopW (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.toNat ≤ a.size) (cap : USize)
     (T : ByteArray) (np : UInt64) (x : CmdExt) (flags : Flags) (mask size cap16 pB wB posLim : USize)
     (rEnd bEnd tb : UInt64) (modeOff lRow pairBase iRow iFb dRow : USize)
@@ -134,7 +134,42 @@ def fastLoopW (H : Hdr) (kk : USize) (a : ByteArray) (stop : USize) (hs : stop.t
       fun ok2 word2x count2x dcode dx hok2 =>
     let d := if code < 128 then d0 else dx
     let written := usmin cap16 (opos + wB)
-    if hbad : (¬ code < 128 ∧ ok2 = false) ∨ d = 0 ∨ written.toUInt64 < d then 1
+    if hbad : (¬ code < 128 ∧ ok2 = false) ∨ d = 0 ∨ written.toUInt64 < d then
+      -- a dictionary word written whole: a round, and the word's bytes
+      let wid := d - (written.toUInt64 + 1)
+      dictWith hk hmk clen wid ring opos S.size (fun _ => 1) fun wl put =>
+      if hwl : ¬ (¬ code < 128 ∧ ok2 = false) ∧ ¬ d = 0 ∧ wl ≠ 0 ∧ opos.toUInt64 + wl.toUInt64 ≤ bEnd then
+        have hw2 : (BitBuffer.mk (if code < 128 then word1 else word2x) (if code < 128 then count1 else count2x)).Wf := by
+          by_cases hc : code < 128
+          · rw [ite_eq_left hc, ite_eq_left hc]
+            exact hf1.wf
+          · rw [ite_eq_right hc, ite_eq_right hc]
+            exact hok2 (by cases h : ok2 with
+              | false => exact absurd ⟨hc, h⟩ hwl.1
+              | true => rfl)
+        let dCount' := if code < 128 then dCount else dCount - 1
+        let ring' := (put ()).1
+        have hsz' : ring'.size = 2 ^ kk.toNat := (put ()).2
+        let opos' := opos + wl
+        if hi0 : iCount = 0 then 1 + wl.toNat
+        else
+        have _hdi : (iCount - 1).toNat < iCount.toNat := icount_dec hi0
+        have hp1 : pos1.toNat + 8 ≤ stop.toNat := by
+          have := hf1.acct
+          have : count1.toNat ≤ 64 := hf1.wf.count_le
+          omega
+        fillK a stop hs (if code < 128 then word1 else word2x) (if code < 128 then count1 else count2x) pos1 40 hw2
+          (by decide) hf1.posStop (fun _ => hp1) fun word3 count3 pos3 hf3 =>
+        icK C word3 count3 hf3.wf fun ok1 word4 count4 code' ilen' clen' hok1 =>
+        if h1 : ok1 = false ∨ bEnd < opos'.toUInt64 + ilen' + clen' then 1 + wl.toNat
+        else
+          1 + wl.toNat + fastLoopW H kk a stop hs cap T np x flags mask size cap16 pB wB posLim rEnd bEnd tb modeOff lRow
+            pairBase iRow iFb dRow C X W word4 count4 pos3 ring' opos' (iCount - 1) lCount dCount' d01 d23 code' ilen'
+            clen' ilen' 0 0 0
+            ⟨hok1 (by cases h : ok1 with
+              | false => exact absurd (Or.inl h) h1
+              | true => rfl), hf3.posStop, hsz', fun h => absurd rfl h⟩
+      else 1
     else
     have hw2 : (BitBuffer.mk (if code < 128 then word1 else word2x) (if code < 128 then count1 else count2x)).Wf := by
       by_cases hc : code < 128

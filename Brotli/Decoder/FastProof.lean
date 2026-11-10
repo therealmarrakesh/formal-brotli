@@ -129,6 +129,12 @@ theorem Rel.insertCopy_of (h : Rel w k m r p) (ht : r.tag = .insertCopy) : ∃ s
   | literalSymbol => exact h.elim
   | _ => exact Tag.noConfusion (h.2.1.symm.trans ht)
 
+theorem Rel.word_of (h : Rel w k m r p) (ht : r.tag = .word) : ∃ s pending, p = .word s pending := by
+  cases p with
+  | word s pending => exact ⟨s, pending, rfl⟩
+  | literalSymbol => exact h.elim
+  | _ => exact Tag.noConfusion (h.2.1.symm.trans ht)
+
 /-- Staying put is a move. -/
 theorem MoveOk.refl (hrel : Rel w k m st p) (hp : st.pos = pos) (hs : pos.toNat ≤ stop.toNat) :
     MoveOk w k m K a stop p st pos p st := by
@@ -167,6 +173,20 @@ theorem RingOk.slack {ring ring' : ByteArray} {k p : Nat} {out : List Nat} (h : 
     split <;> omega
   · unfold ringIdx
     split <;> omega
+
+/-- The window a dictionary word's write leaves (`dictPutW`) holds what the byte-by-byte store of the word (`putList`)
+leaves holding: the two differ only in the 8 bytes after the word, which are slack. -/
+theorem dictPutW_ring {mask : USize} {k : Nat} (hk : k ≤ 24) (hm : mask.toNat = 2 ^ k - 1) {clen wordId : UInt64}
+    (h : dictValid clen wordId) (ring : ByteArray) (o : USize) (hr : ring.size = 2 ^ k) {n : USize}
+    (hn : n.toNat = (dictBuild clen wordId h).size) {out : List Nat}
+    (hR : RingOk (putList hk hm ring o hr (dictBuild clen wordId h).data.toList) k ((o + n) &&& mask).toNat out) :
+    RingOk (dictPutW hk hm clen wordId h ring o hr) k ((o + n) &&& mask).toNat out := by
+  obtain ⟨hs, he⟩ := dictPutW_spec hk hm h ring o hr
+  have hp : ((o + n) &&& mask).toNat = ((o &&& mask).toNat + (dictBuild clen wordId h).size) % 2 ^ k := by
+    rw [add_mask_toNat hk hm, hn]
+  refine hR.slack (by rw [hs, putList_size]) fun i _ hi _ => he i fun ⟨h1, h2, h3⟩ => hi ?_
+  rw [hp, Nat.mod_eq_of_lt (by omega)]
+  omega
 
 /-! ### With the chunk ending where it starts, a refill takes nothing -/
 
@@ -1276,6 +1296,80 @@ theorem copy_move {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeader} {K : C
   rw [e0, UInt64.sub_self] at hmv
   exact hmv
 
+/-! ### A dictionary word -/
+
+/-- A word written whole: the next command. -/
+theorem stepWord_done {k : USize} {st : Cmd} {pos : USize} (h : st.wordBuf.usize - st.wordPos = 0) :
+    stepWord k st pos = { st with tag := .command, pos := pos, status := .next } := by
+  unfold stepWord
+  rw [ite_eq_left h]
+
+/-- A whole dictionary word, as a move: the step machine's word steps with the chunk ending where they start and room
+for all of it, then the next command, with a window that holds what the byte-by-byte store holds and the context bytes
+read back from it, at the loop's unmasked position `x`. -/
+theorem word_move {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
+    {a : ByteArray} {stop : USize} {s : CommandState} {pending : List Nat} {st : Cmd} {pos : USize}
+    (hrel : Rel w k.toNat m st (.word s pending)) (hw0 : st.wordPos = 0) (hn1 : 1 ≤ st.wordBuf.size)
+    (hroom : st.pend.toNat + st.wordBuf.size + 16 ≤ 2 ^ k.toNat) (h2 : 2 ≤ st.written.toNat)
+    (hp : pos.toNat ≤ stop.toNat) (hk : k.toNat ≤ 24) (hsz : st.ring.size = 2 ^ k.toNat) {x : USize}
+    (hx : st.wpos = x &&& ringMask k) {ring' : ByteArray} (hs' : ring'.size = 2 ^ k.toNat)
+    (hR : ∀ out, RingOk (putList hk (ringMask_toNat hk) st.ring x hsz st.wordBuf.data.toList) k.toNat
+      ((x + st.wordBuf.usize) &&& ringMask k).toNat out →
+      RingOk ring' k.toNat ((x + st.wordBuf.usize) &&& ringMask k).toNat out) :
+    ∃ p', MoveOk w k.toNat m K a stop (.word s pending) st pos p'
+      { st with
+        ring := ring', wpos := (x + st.wordBuf.usize) &&& ringMask k
+        p1 := wget ring' (x + st.wordBuf.usize - USize.ofNat 1) (ringMask k) (ringMask_toNat hk) hs'
+        p2 := wget ring' (x + st.wordBuf.usize - USize.ofNat 2) (ringMask k) (ringMask_toNat hk) hs'
+        ext := { st.ext with wordPos := st.wordPos + st.wordBuf.usize }
+        pend := st.pend + st.wordBuf.usize
+        written := usmin (ringSize k - USize.ofNat 16) (st.written + st.wordBuf.usize)
+        tag := .command, pos := pos, status := .next } := by
+  obtain ⟨hC, htag, hprod, hpend, hsmall, hwp⟩ := hrel
+  have hR24 : 2 ^ k.toNat ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
+  have hR10 : 2 ^ 10 ≤ 2 ^ k.toNat := Nat.pow_le_pow_right (by decide) hC.k10
+  have h1024 : (2 : Nat) ^ 10 = 1024 := rfl
+  have hwri := hC.written
+  have hmN := ringMask_toNat hk
+  have hnU : st.wordBuf.usize.toNat = st.wordBuf.size := usize_ofNat' (by omega)
+  have hw0N : st.wordPos.toNat = 0 := by rw [hw0]; rfl
+  have hbs : st.wordBuf.data.toList.length = st.wordBuf.size := by
+    show st.wordBuf.data.toList.length = st.wordBuf.data.size
+    simp
+  have hplen : pending.length = st.wordBuf.size - st.wordPos.toNat := by
+    rw [← hpend]
+    simp [hbs]
+  have hwpos : st.wpos.toNat < 2 ^ k.toNat := hC.ring.pos_lt
+  have hb : st.wordPos.toNat + st.wordBuf.usize.toNat ≤ st.wordBuf.size := by omega
+  have hb32 : st.wordPos.toNat + st.wordBuf.usize.toNat ≤ 2 ^ 32 - 1 := by omega
+  obtain ⟨h1, _, h3⟩ := wordRun_spec (buf := st.wordBuf) (mask := ringMask k) hk hmN _ st.wordBuf.usize st.wordPos
+    st.ring st.wpos st.p1 st.p2 hb hb32 hsz hwpos s.output rfl hC.ring hC.ctx hC.bytes
+  have hmoved : ((st.wordBuf.data.toList.drop st.wordPos.toNat).take st.wordBuf.usize.toNat).map UInt8.toNat =
+      pending.take st.wordBuf.usize.toNat := by
+    rw [← hpend, List.map_take]
+  have hall : (st.wordBuf.data.toList.drop st.wordPos.toNat).take st.wordBuf.usize.toNat = st.wordBuf.data.toList := by
+    rw [hw0N, List.drop_zero, List.take_of_length_le (by omega)]
+  rw [hmoved] at h1 h3
+  rw [wordRun_put hk hmN _ st.wordBuf.usize st.wordPos st.ring st.wpos st.p1 st.p2 hb hb32 hsz hwpos rfl,
+    wordRun_wpos hk hmN _ st.wordBuf.usize st.wordPos st.ring st.wpos st.p1 st.p2 hb hb32 hsz hwpos rfl, hall,
+    putList_mask hk hmN _ _ st.wpos x hsz (by rw [hx]; exact mask_mask hmN x), hx, mask_add hk hmN] at h1
+  have h1' := hR _ h1
+  have h2' := wget_ctx (x := x + st.wordBuf.usize) hk hmN (by omega) hs' h1' (by rw [List.length_append]; omega)
+  have hstep := word_after (stop := pos) (K := K) (a := a) hC htag hprod hpend hsmall hwp (Nat.le_refl _)
+    (run := st.wordBuf.usize)
+    (r := ⟨ring', (x + st.wordBuf.usize) &&& ringMask k,
+      wget ring' (x + st.wordBuf.usize - USize.ofNat 1) (ringMask k) hmN hs',
+      wget ring' (x + st.wordBuf.usize - USize.ofNat 2) (ringMask k) hmN hs'⟩)
+    (by omega) (by omega) (by omega) hplen h1' h2' h3
+  obtain ⟨p1', m1⟩ := hstep.widen rfl rfl hp
+  obtain ⟨_, _, rfl⟩ := m1.rel.word_of htag
+  have hz : st.wordBuf.usize - (st.wordPos + st.wordBuf.usize) = 0 := by
+    rw [hw0, USize.zero_add, USize.sub_self]
+  have h := stepWord_ok (K := K) (a := a) (stop := pos) m1.rel (Nat.le_refl _)
+  rw [stepWord_done (st := finishWord (clearRing st) _ st.wordBuf.usize (ringSize k) pos) hz] at h
+  obtain ⟨p2', m2⟩ := h.widen rfl rfl hp
+  exact ⟨p2', m1.trans m2⟩
+
 /-! ### The steps between the fast loop's reads, as moves -/
 
 /-- The end of a copy: the next command. -/
@@ -1432,14 +1526,6 @@ theorem stepDistanceSymbol_fast {H : Hdr} {T : ByteArray} {lCur iCur tb : UInt64
   rw [tableBase_toNat, UInt8.toNat_toUInt64, uget_toNat, dMapIndex_toNat (by omega), C.dRowBase_toNat]
   rfl
 
-/-- `applyDistance` within the window and the meta-block goes on, where it is. -/
-theorem applyDistance_next {st : Cmd} {pos : USize} {dcode d : UInt64} (hw : ¬ st.written.toUInt64 < d)
-    (hrc : ¬ st.remaining < st.clen) :
-    (applyDistance st pos dcode d).status = .next ∧ (applyDistance st pos dcode d).pos = pos := by
-  unfold applyDistance
-  rw [ite_eq_right hw, ite_eq_right hrc]
-  split <;> exact ⟨rfl, rfl⟩
-
 theorem u64_shr_zero (x : UInt64) : x >>> 0 = x := by
   apply UInt64.toNat_inj.mp
   rw [UInt64.toNat_shiftRight]
@@ -1453,7 +1539,8 @@ theorem distFast_short {np nd d0 d1 d2 d3 dc x : UInt64} (h16 : dc < 16) :
 theorem u64_zero_le (x : UInt64) : 0 ≤ x := UInt64.le_iff_toNat_le.mpr (Nat.zero_le _)
 
 /-- The distance's symbol, a short code: one of the last distances, adjusted. As a move, to `applyDistance` with the
-code word's bits dropped. -/
+code word's bits dropped, when that goes on where it is: the distance below `2 ^ 32`, and the copy or the word it
+begins (`r`) within the meta-block. -/
 theorem distShort_move {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
     {a : ByteArray} {stop : USize} {s : CommandState} {clen : Nat} {dist : BlockState} {st : Cmd} {pos : USize}
     {T : ByteArray} {lCur iCur tb : UInt64} {modeOff lRow iRow iFb dRow : USize}
@@ -1461,22 +1548,14 @@ theorem distShort_move {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {
     (hrel : Rel w k m st (.distanceSymbol s clen dist)) (hp : pos.toNat ≤ stop.toNat) {v : UInt64}
     (hv : v = lookupT T (dRowBase C st.clen) st.word (C.dIn st.clen) C.lim C.size32) (hl : wordBits v ≤ st.count)
     (h16 : wordSym v < 16) (hd0 : shortFast st.d0 st.d1 st.d2 st.d3 (wordSym v) ≠ 0)
-    (hw : ¬ st.written.toUInt64 < shortFast st.d0 st.d1 st.d2 st.d3 (wordSym v)) (hrc : ¬ st.remaining < st.clen) :
-    ∃ p', MoveOk w k m K a stop (.distanceSymbol s clen dist) st pos p'
-      (applyDistance (setBits st (st.word >>> wordBits v) (st.count - wordBits v)) pos (wordSym v)
-        (shortFast st.d0 st.d1 st.d2 st.d3 (wordSym v))) := by
+    (hlt : (shortFast st.d0 st.d1 st.d2 st.d3 (wordSym v)).toNat < 2 ^ 32) {r : Cmd}
+    (hr : applyDistance (setBits st (st.word >>> wordBits v) (st.count - wordBits v)) pos (wordSym v)
+      (shortFast st.d0 st.d1 st.d2 st.d3 (wordSym v)) = r) (hs : r.status = .next) (hrp : r.pos = pos) :
+    ∃ p', MoveOk w k m K a stop (.distanceSymbol s clen dist) st pos p' r := by
   have hrel0 := hrel
   obtain ⟨hC, _, _, _⟩ := hrel
   have h0lt : st.d0.toNat < 2 ^ 32 := by rw [← hC.d0]; exact hC.dsLt.1
   have h1lt : st.d1.toNat < 2 ^ 32 := by rw [← hC.d1]; exact hC.dsLt.2.1
-  have hwr := hC.written
-  have hwin := hC.win
-  have hR : 2 ^ k ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hC.k24
-  have hlt : (shortFast st.d0 st.d1 st.d2 st.d3 (wordSym v)).toNat < 2 ^ 32 := by
-    have := UInt64.le_iff_toNat_le.mp (UInt64.not_lt.mp hw)
-    rw [USize.toNat_toUInt64] at this
-    have : min w s.output.length ≤ w := Nat.min_le_left _ _
-    omega
   have hsf := shortFast_eq h0lt h1lt (UInt64.lt_iff_toNat_lt.mp h16) hd0 hlt
   have h := stepDistanceSymbol_ok (K := K) (a := a) (stop := pos) hH hrel0 (Nat.le_refl _) (Or.inr rfl)
   rw [stepDistanceSymbol_fast C pos, ← hv] at h
@@ -1494,13 +1573,12 @@ theorem distShort_move {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {
     rw [ite_eq_left hl, hx, ite_eq_left (show (0 : UInt64) ≤ 24 by decide), ite_eq_left (u64_zero_le _),
       distFast_short h16, ← hsf, ite_eq_right hd0]
     simp only [BitBuffer.drop, u64_shr_zero, UInt64.sub_zero]
-  rw [e] at h
-  obtain ⟨hs1, hs2⟩ := applyDistance_next (st := setBits st (st.word >>> wordBits v) (st.count - wordBits v))
-    (pos := pos) (dcode := wordSym v) hw hrc
-  exact h.widen hs1 hs2 hp
+  rw [e, hr] at h
+  exact h.widen hs hrp hp
 
 /-- The distance's symbol, from 16 on: the shared table's distance with no extra bits, plus the extra bits shifted by
-NPOSTFIX. As a move, to `applyDistance` with the code word's and the extra bits dropped. -/
+NPOSTFIX. As a move, to `applyDistance` with the code word's and the extra bits dropped, when that goes on where it is:
+the copy or the word it begins (`r`) within the meta-block. -/
 theorem distLong_move {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
     {a : ByteArray} {stop : USize} {s : CommandState} {clen : Nat} {dist : BlockState} {st : Cmd} {pos : USize}
     {T : ByteArray} {lCur iCur tb : UInt64} {modeOff lRow iRow iFb dRow : USize}
@@ -1509,11 +1587,10 @@ theorem distLong_move {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {K
     (hv : v = lookupT T (dRowBase C st.clen) st.word (C.dIn st.clen) C.lim C.size32) (h16 : ¬ wordSym v < 16)
     (hE : E = dEntry H.npostfix H.ndirect (wordSym v))
     (hD : D = (E >>> 32) + (((st.word >>> wordBits v) &&& maskT T C.big C.size32 (E &&& 31)) <<< H.npostfix))
-    (hok : wordBits v + (E &&& 31) ≤ st.count) (hd0 : D ≠ 0) (hw : ¬ st.written.toUInt64 < D)
-    (hrc : ¬ st.remaining < st.clen) :
-    ∃ p', MoveOk w k m K a stop (.distanceSymbol s clen dist) st pos p'
-      (applyDistance (setBits st ((st.word >>> wordBits v) >>> (E &&& 31)) (st.count - wordBits v - (E &&& 31))) pos
-        (wordSym v) D) := by
+    (hok : wordBits v + (E &&& 31) ≤ st.count) (hd0 : D ≠ 0) {r : Cmd}
+    (hr : applyDistance (setBits st ((st.word >>> wordBits v) >>> (E &&& 31)) (st.count - wordBits v - (E &&& 31))) pos
+      (wordSym v) D = r) (hs : r.status = .next) (hrp : r.pos = pos) :
+    ∃ p', MoveOk w k m K a stop (.distanceSymbol s clen dist) st pos p' r := by
   have hrel0 := hrel
   have hnp := H.npLe
   have hnd := H.ndLe
@@ -1526,8 +1603,7 @@ theorem distLong_move {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {K
     extraBitsFast_toNat hnp hnd (wordValue_lt v)
   obtain ⟨eA, eB⟩ := dEntry_split hnp hnd (wordValue_lt v) h16 (by rw [hbitsE]; exact hn24)
   rw [← hE] at eA eB
-  rw [eA] at hok hD
-  rw [eA]
+  rw [eA] at hok hD hr
   have hlv : (wordBits v).toNat < 16 := and15_lt v
   have hok' := UInt64.le_iff_toNat_le.mp hok
   rw [u64_add_small (by omega)] at hok'
@@ -1560,11 +1636,8 @@ theorem distLong_move {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader} {K
     rw [ite_eq_left hl, ite_eq_left (UInt64.le_iff_toNat_le.mpr (by rw [hbitsE]; exact hn24)), ite_eq_left hnbc,
       hDeq, ite_eq_right hd0]
     simp only [BitBuffer.drop]
-  rw [e] at h
-  obtain ⟨hs1, hs2⟩ := applyDistance_next (st := setBits st ((st.word >>> wordBits v) >>>
-      extraBitsFast H.npostfix H.ndirect (wordSym v)) (st.count - wordBits v - extraBitsFast H.npostfix H.ndirect
-      (wordSym v))) (pos := pos) (dcode := wordSym v) hw hrc
-  exact h.widen hs1 hs2 hp
+  rw [e, hr] at h
+  exact h.widen hs hrp hp
 
 /-! ### The insert-and-copy element -/
 
@@ -1827,6 +1900,40 @@ theorem applyDistance_push {st : Cmd} {pos : USize} {dcode d : UInt64} (hw : ¬ 
   unfold applyDistance
   rw [ite_eq_right hw, ite_eq_right hrc, ite_eq_right h0]
 
+/-- A distance past the bytes written, to a valid dictionary reference whose word fits the meta-block: the word, the
+last distances not pushed. -/
+theorem applyDistance_word {st : Cmd} {pos : USize} {dcode d : UInt64} (hw : st.written.toUInt64 < d)
+    (hv : dictValid st.clen (d - (st.written.toUInt64 + 1)))
+    (hrc : ¬ st.remaining < (dictBuild st.clen (d - (st.written.toUInt64 + 1)) hv).usize.toUInt64) :
+    applyDistance st pos dcode d =
+      { st with
+        remaining := st.remaining - (dictBuild st.clen (d - (st.written.toUInt64 + 1)) hv).usize.toUInt64
+        ext := { st.ext with wordBuf := dictBuild st.clen (d - (st.written.toUInt64 + 1)) hv, wordPos := 0 }
+        tag := .word, pos := pos, status := .next } := by
+  unfold applyDistance applyWord applyBuilt
+  rw [ite_eq_left hw, dite_eq_left hv, ite_eq_right hrc]
+
+/-- The start of a distance implied 0 (the last distance), past the bytes written: the dictionary word, when it is
+valid and fits the meta-block. -/
+theorem distWord_move {α : Type} {w k : Nat} {H : Hdr} {m : MetaBlockHeader}
+    {K : CommandState → List Bool → Option α} {a : ByteArray} {stop : USize} {s : CommandState} {c clen : Nat} {st : Cmd}
+    {pos : USize} (hH : HdrRel H m) (hrel : Rel w k m st (.distance s c clen)) (hr : st.remaining ≠ 0)
+    (hc : st.code < 128) (hd : st.d0 ≠ 0) (hw : st.written.toUInt64 < st.d0)
+    (hv : dictValid st.clen (st.d0 - (st.written.toUInt64 + 1)))
+    (hrc : ¬ st.remaining < (dictBuild st.clen (st.d0 - (st.written.toUInt64 + 1)) hv).usize.toUInt64)
+    (hp : pos.toNat ≤ stop.toNat) :
+    ∃ p', MoveOk w k m K a stop (.distance s c clen) st pos p'
+      { st with
+        remaining := st.remaining - (dictBuild st.clen (st.d0 - (st.written.toUInt64 + 1)) hv).usize.toUInt64
+        ext := { st.ext with wordBuf := dictBuild st.clen (st.d0 - (st.written.toUInt64 + 1)) hv, wordPos := 0 }
+        tag := .word, pos := pos, status := .next } := by
+  have h := stepDistance_ok (K := K) (a := a) (stop := pos) hH hrel (Nat.le_refl _) (Or.inr rfl)
+  have e : stepDistance H st pos = applyDistance st pos 0 st.d0 := by
+    unfold stepDistance
+    rw [ite_eq_right hr, ite_eq_left hc, ite_eq_right hd]
+  rw [e, applyDistance_word hw hv hrc] at h
+  exact h.widen rfl rfl hp
+
 /-- The bytes written, capped, after `n` more: the cap of the uncapped count plus `n`. -/
 theorem usmin_add {c x n : USize} (hx : x.toNat + n.toNat < 2 ^ 32) :
     usmin c (usmin c x + n) = usmin c (x + n) := by
@@ -1897,6 +2004,12 @@ theorem Rel.command_ext {s : CommandState} (h : Rel w k m st (.command s)) {cbit
     Rel w k m { st with ext := { st.ext with copyBits := cbits, copyBase := cb, dist := d } } (.command s) := by
   obtain ⟨hC, hr⟩ := h
   exact ⟨{ hC with cbase1 := hcb }, hr⟩
+
+/-- Nor do the word's fields (`wordBuf`, `wordPos`) at a command's start, as long as the buffer stays at most 38 bytes. -/
+theorem Rel.command_word {s : CommandState} (h : Rel w k m st (.command s)) {b : ByteArray} {q : USize}
+    (hb : b.size ≤ 38) : Rel w k m { st with ext := { st.ext with wordBuf := b, wordPos := q } } (.command s) := by
+  obtain ⟨hC, hr⟩ := h
+  exact ⟨{ hC with wordLe := hb }, hr⟩
 
 end
 
@@ -2407,6 +2520,25 @@ theorem fillK_spec {α : Type} {P : α → Prop} {a : ByteArray} {stop : USize} 
   · exact h _ _ _ _
   · exact h _ _ _ _
 
+/-- A dependent `if`, case by case. -/
+theorem dite_spec {α : Type} {P : α → Prop} {c : Prop} [Decidable c] {t : c → α} {e : ¬ c → α} (h1 : ∀ h, P (t h))
+    (h2 : ∀ h, P (e h)) : P (dite c t e) := by
+  by_cases h : c
+  · rw [dite_eq_left h]
+    exact h1 h
+  · rw [dite_eq_right h]
+    exact h2 h
+
+/-- `dictWith` passes its continuation a valid reference's word length and the word's write (`dictWith_eq`). -/
+theorem dictWith_spec {α : Type} {P : α → Prop} {mask : USize} {k : Nat} {hk : k ≤ 24} {hm : mask.toNat = 2 ^ k - 1}
+    {clen wordId : UInt64} {ring : ByteArray} {o : USize} {hr : ring.size = 2 ^ k} {n : Unit → α}
+    {s : USize → (Unit → { r : ByteArray // r.size = 2 ^ k }) → α} (hn : P (n ()))
+    (hs : ∀ (h : dictValid clen wordId) (wl : USize), dictLen clen wordId = wl → P (s wl
+      fun _ => ⟨dictPutW hk hm clen wordId h ring o hr, (dictPutW_spec hk hm h ring o hr).1⟩)) :
+    P (dictWith hk hm clen wordId ring o hr n s) := by
+  rw [dictWith_eq]
+  exact dite_spec (fun h => hs h _ rfl) fun _ => hn
+
 /-! ### A command's distance -/
 
 /-- The state at a command's copy, in the loop's terms: what remains less the copy, and the copy's length and distance.
@@ -2419,6 +2551,17 @@ theorem fillK_spec {α : Type} {P : α → Prop} {a : ByteArray} {stop : USize} 
     ⟨x.iCur, x.iPrev, x.lCur, x.lPrev, x.dCur, x.dPrev, d01 &&& 0xFFFFFFFF, d01 >>> 32, d23 &&& 0xFFFFFFFF, d23 >>> 32,
       code, ilen, clen, x.copyBits, x.copyBase, d, x.wordBuf, x.wordPos⟩,
     .copy, clen, pos, .next⟩
+
+/-- The state at a command's dictionary word, in the loop's terms: what remains less the word, and the word in the
+buffer. -/
+@[inline] def fword (word count : UInt64) (ring : ByteArray) (opos mask pB cap cap16 wB : USize) (rEnd : UInt64)
+    (iCount lCount dCount : UInt64) (flags : Flags) (x : CmdExt) (d01 d23 code ilen clen : UInt64) (p1 p2 : UInt8)
+    (wb : ByteArray) (pos : USize) : Cmd :=
+  ⟨word, count, ring, opos &&& mask, opos + pB, cap, usmin cap16 (opos + wB), p1, p2,
+    rEnd - opos.toUInt64 - wb.usize.toUInt64, iCount, lCount, dCount, flags,
+    ⟨x.iCur, x.iPrev, x.lCur, x.lPrev, x.dCur, x.dPrev, d01 &&& 0xFFFFFFFF, d01 >>> 32, d23 &&& 0xFFFFFFFF, d23 >>> 32,
+      code, ilen, clen, x.copyBits, x.copyBase, x.dist, wb, 0⟩,
+    .word, 0, pos, .next⟩
 
 /-- With the copy within the meta-block, something remains, and at least the copy. -/
 theorem rem_facts {rEnd clen : UInt64} {opos : USize} (h : clen.toNat ≤ (rEnd - opos.toUInt64).toNat)
@@ -2513,8 +2656,9 @@ theorem dShort_move {T : ByteArray} {tb : UInt64} {modeOff lRow iRow iFb dRow : 
   obtain ⟨hr0, hrc⟩ := rem_facts hrem hC.clen1
   obtain ⟨p2, m2⟩ := distCount_move (K := K) (a := a) (stop := stop) (pos := pos1) hH m1.rel hr0 hc hdc hf.posStop
   obtain ⟨_, _, _, rfl⟩ := m2.rel.distanceSymbol_of rfl
-  obtain ⟨p3, m3⟩ := distShort_move C hH m2.rel hf.posStop hv hl h16 hd0 hw hrc
-  exact ⟨p3, (applyDistance_fcopy hw hrc (dist_small hC hw) hn) ▸ (m1.trans m2).trans m3⟩
+  obtain ⟨p3, m3⟩ := distShort_move C hH m2.rel hf.posStop hv hl h16 hd0 (dist_small hC hw)
+    (applyDistance_fcopy hw hrc (dist_small hC hw) hn) rfl rfl
+  exact ⟨p3, (m1.trans m2).trans m3⟩
 
 /-- A distance's code from 16 on: from the distance, a refill to 40 bits, the block count, the symbol and its extra
 bits, then the copy. -/
@@ -2540,8 +2684,9 @@ theorem dLong_move {T : ByteArray} {tb : UInt64} {modeOff lRow iRow iFb dRow : U
   obtain ⟨hr0, hrc⟩ := rem_facts hrem hC.clen1
   obtain ⟨p2, m2⟩ := distCount_move (K := K) (a := a) (stop := stop) (pos := pos1) hH m1.rel hr0 hc hdc hf.posStop
   obtain ⟨_, _, _, rfl⟩ := m2.rel.distanceSymbol_of rfl
-  obtain ⟨p3, m3⟩ := distLong_move C hH m2.rel hf.posStop hv h16 hE hD hok hd0 hw hrc
-  exact ⟨p3, (applyDistance_fcopy hw hrc (dist_small hC hw) hn) ▸ (m1.trans m2).trans m3⟩
+  obtain ⟨p3, m3⟩ := distLong_move C hH m2.rel hf.posStop hv h16 hE hD hok hd0
+    (applyDistance_fcopy hw hrc (dist_small hC hw) hn) rfl rfl
+  exact ⟨p3, (m1.trans m2).trans m3⟩
 
 /-- The copy at a command, then the next command: the fast copy's window, the context bytes read back from it, all at
 the loop's unmasked position. -/
@@ -2594,6 +2739,189 @@ theorem fcopy_move {s : CommandState} {dd nn : Nat} {d : UInt64}
     congr 1
     exact UInt64.toNat_inj.mp (by rw [USize.toNat_toUInt64, hcU])
   exact ⟨_, by unfold fexit; rw [ep, ew, er]; exact m3⟩
+
+/-- A distance past the bytes written to a valid dictionary reference is below `2 ^ 32`: at most the bytes written
+and the word ID, plus one. -/
+theorem word_small {st : Cmd} {out : List Nat} {rem : Nat} {ds : Distances} {ic lit dist : BlockState} {d cl : UInt64}
+    (hC : Core w k.toNat m st out rem ds ic lit dist) (hw : st.written.toUInt64 < d)
+    (hv : dictValid cl (d - (st.written.toUInt64 + 1))) : d.toNat < 2 ^ 32 := by
+  have h1 := dictValid_lt hv
+  have h2 := hC.written
+  have h3 := hC.win
+  have h4 : 2 ^ k.toNat ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hC.k24
+  have : min w out.length ≤ w := Nat.min_le_left _ _
+  have hwN := UInt64.lt_iff_toNat_lt.mp hw
+  rw [USize.toNat_toUInt64] at hwN
+  have e1 : (st.written.toUInt64 + 1).toNat = st.written.toNat + 1 := by
+    rw [UInt64.toNat_add, USize.toNat_toUInt64, show (1 : UInt64).toNat = 1 from rfl]
+    exact Nat.mod_eq_of_lt (by omega)
+  rw [u64_sub_le (by rw [e1]; omega), e1] at h1
+  have h18 : (2 : Nat) ^ 18 = 262144 := rfl
+  have h24 : (2 : Nat) ^ 24 = 16777216 := rfl
+  have h32 : (2 : Nat) ^ 32 = 4294967296 := rfl
+  omega
+
+/-- A dictionary word's length, from its reference, where the loop takes it: not empty, and before `bEnd`. -/
+theorem word_fits {cl wid : UInt64} (hv : dictValid cl wid) {wl opos : USize} {bEnd : UInt64}
+    (hwl : dictLen cl wid = wl) (hb : bEnd.toNat < 2 ^ 30) (ho : opos.toNat ≤ bEnd.toNat) (hn : wl ≠ 0)
+    (hle : opos.toUInt64 + wl.toUInt64 ≤ bEnd) :
+    wl.toNat = (dictBuild cl wid hv).size ∧
+      (dictBuild cl wid hv).usize.toUInt64.toNat = (dictBuild cl wid hv).size ∧ 1 ≤ (dictBuild cl wid hv).size ∧
+      (dictBuild cl wid hv).size ≤ 38 ∧ opos.toNat + (dictBuild cl wid hv).size ≤ bEnd.toNat := by
+  subst hwl
+  have hl := dictLen_eq hv
+  have h38 := dictBuild_le hv
+  have hu : (dictBuild cl wid hv).usize.toUInt64.toNat = (dictBuild cl wid hv).size := by
+    rw [USize.toNat_toUInt64]
+    exact usize_ofNat' (by omega)
+  have h1 : (dictLen cl wid).toNat ≠ 0 := fun e => hn (USize.toNat_inj.mp e)
+  have hle' := UInt64.le_iff_toNat_le.mp hle
+  rw [u64_add_small (by rw [USize.toNat_toUInt64, USize.toNat_toUInt64]; omega), USize.toNat_toUInt64,
+    USize.toNat_toUInt64] at hle'
+  exact ⟨hl, hu, by omega, h38, by omega⟩
+
+/-- `applyDistance` after a distance's symbol, past the bytes written, as the state at the word. -/
+theorem applyDistance_fword {word1 count1 w' c' dcode d : UInt64} {pos1 : USize}
+    (hw : (usmin cap16 (opos + wB)).toUInt64 < d) (hv : dictValid clen (d - ((usmin cap16 (opos + wB)).toUInt64 + 1)))
+    (hrc : ¬ rEnd - opos.toUInt64 <
+      (dictBuild clen (d - ((usmin cap16 (opos + wB)).toUInt64 + 1)) hv).usize.toUInt64) :
+    applyDistance (setBits { { fexit word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code
+        ilen clen p1 p2 .distance 0 pos with word := word1, count := count1, pos := pos1 } with
+        dCount := dCount - 1, tag := .distanceSymbol, pos := pos1, status := .next } w' c') pos1 dcode d =
+      fword w' c' ring opos mask pB cap cap16 wB rEnd iCount LC (dCount - 1) flags x d01 d23 code ilen clen p1 p2
+        (dictBuild clen (d - ((usmin cap16 (opos + wB)).toUInt64 + 1)) hv) pos1 := by
+  rw [applyDistance_word hw hv hrc]
+  rfl
+
+/-- A distance implied 0 (the last distance), past the bytes written: from the distance, a refill to 40 bits, then the
+dictionary word. -/
+theorem dImplW_move (hH : HdrRel H m)
+    (hrel : Rel w k.toNat m (fexit word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code
+      ilen clen p1 p2 .distance 0 pos) (.distance s c cl))
+    {word1 count1 : UInt64} {pos1 : USize} (hf : FillOk a stop word count pos 40 word1 count1 pos1)
+    (hc : code < 128) (hd0 : d01 &&& 0xFFFFFFFF ≠ 0) (hw : (usmin cap16 (opos + wB)).toUInt64 < d01 &&& 0xFFFFFFFF)
+    (hv : dictValid clen ((d01 &&& 0xFFFFFFFF) - ((usmin cap16 (opos + wB)).toUInt64 + 1)))
+    (hrem : (dictBuild clen _ hv).usize.toUInt64.toNat ≤ (rEnd - opos.toUInt64).toNat)
+    (h1 : 1 ≤ (dictBuild clen _ hv).usize.toUInt64.toNat) :
+    ∃ p', MoveOk w k.toNat m K a stop (.distance s c cl)
+      (fexit word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code ilen clen p1 p2
+        .distance 0 pos) pos p'
+      (fword word1 count1 ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code ilen clen p1 p2
+        (dictBuild clen _ hv) pos1) := by
+  have m1 := fill_move (K := K) hrel hf
+  obtain ⟨hr0, hrc⟩ := rem_facts hrem h1
+  obtain ⟨p', m2⟩ := distWord_move (K := K) (a := a) (stop := stop) (pos := pos1) hH m1.rel hr0 hc hd0 hw hv hrc
+    hf.posStop
+  exact ⟨p', m1.trans m2⟩
+
+/-- A distance's short code past the bytes written: from the distance, a refill to 40 bits, the block count, the
+symbol, then the dictionary word. -/
+theorem dShortW_move {T : ByteArray} {tb : UInt64} {modeOff lRow iRow iFb dRow : USize}
+    (C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow) (hH : HdrRel H m)
+    (hrel : Rel w k.toNat m (fexit word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code
+      ilen clen p1 p2 .distance 0 pos) (.distance s c cl))
+    {word1 count1 : UInt64} {pos1 : USize} (hf : FillOk a stop word count pos 40 word1 count1 pos1)
+    (hc : ¬ code < 128) (hdc : dCount ≠ 0) {v : UInt64}
+    (hv : v = lookupT T (dRowBase C clen) word1 (C.dIn clen) C.lim C.size32) (hl : wordBits v ≤ count1)
+    (h16 : wordSym v < 16)
+    (hd0 : shortFast (d01 &&& 0xFFFFFFFF) (d01 >>> 32) (d23 &&& 0xFFFFFFFF) (d23 >>> 32) (wordSym v) ≠ 0)
+    (hw : (usmin cap16 (opos + wB)).toUInt64 <
+      shortFast (d01 &&& 0xFFFFFFFF) (d01 >>> 32) (d23 &&& 0xFFFFFFFF) (d23 >>> 32) (wordSym v))
+    (hdv : dictValid clen (shortFast (d01 &&& 0xFFFFFFFF) (d01 >>> 32) (d23 &&& 0xFFFFFFFF) (d23 >>> 32) (wordSym v) -
+      ((usmin cap16 (opos + wB)).toUInt64 + 1)))
+    (hrem : (dictBuild clen _ hdv).usize.toUInt64.toNat ≤ (rEnd - opos.toUInt64).toNat)
+    (h1 : 1 ≤ (dictBuild clen _ hdv).usize.toUInt64.toNat) :
+    ∃ p', MoveOk w k.toNat m K a stop (.distance s c cl)
+      (fexit word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code ilen clen p1 p2
+        .distance 0 pos) pos p'
+      (fword (word1 >>> wordBits v) (count1 - wordBits v) ring opos mask pB cap cap16 wB rEnd iCount LC (dCount - 1)
+        flags x d01 d23 code ilen clen p1 p2 (dictBuild clen _ hdv) pos1) := by
+  have m1 := fill_move (K := K) hrel hf
+  have hC := hrel.1
+  obtain ⟨hr0, hrc⟩ := rem_facts hrem h1
+  obtain ⟨p2, m2⟩ := distCount_move (K := K) (a := a) (stop := stop) (pos := pos1) hH m1.rel hr0 hc hdc hf.posStop
+  obtain ⟨_, _, _, rfl⟩ := m2.rel.distanceSymbol_of rfl
+  obtain ⟨p3, m3⟩ := distShort_move C hH m2.rel hf.posStop hv hl h16 hd0 (word_small hC hw hdv)
+    (applyDistance_fword hw hdv hrc) rfl rfl
+  exact ⟨p3, (m1.trans m2).trans m3⟩
+
+/-- A distance's code from 16 on past the bytes written: from the distance, a refill to 40 bits, the block count, the
+symbol and its extra bits, then the dictionary word. -/
+theorem dLongW_move {T : ByteArray} {tb : UInt64} {modeOff lRow iRow iFb dRow : USize}
+    (C : FCtx H T x.lCur x.iCur x.dCur tb modeOff lRow iRow iFb dRow) (hH : HdrRel H m)
+    (hrel : Rel w k.toNat m (fexit word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code
+      ilen clen p1 p2 .distance 0 pos) (.distance s c cl))
+    {word1 count1 : UInt64} {pos1 : USize} (hf : FillOk a stop word count pos 40 word1 count1 pos1)
+    (hc : ¬ code < 128) (hdc : dCount ≠ 0) {v E D : UInt64}
+    (hv : v = lookupT T (dRowBase C clen) word1 (C.dIn clen) C.lim C.size32) (h16 : ¬ wordSym v < 16)
+    (hE : E = dEntry H.npostfix H.ndirect (wordSym v))
+    (hD : D = (E >>> 32) + (((word1 >>> wordBits v) &&& maskT T C.big C.size32 (E &&& 31)) <<< H.npostfix))
+    (hok : wordBits v + (E &&& 31) ≤ count1) (hd0 : D ≠ 0) (hw : (usmin cap16 (opos + wB)).toUInt64 < D)
+    (hdv : dictValid clen (D - ((usmin cap16 (opos + wB)).toUInt64 + 1)))
+    (hrem : (dictBuild clen _ hdv).usize.toUInt64.toNat ≤ (rEnd - opos.toUInt64).toNat)
+    (h1 : 1 ≤ (dictBuild clen _ hdv).usize.toUInt64.toNat) :
+    ∃ p', MoveOk w k.toNat m K a stop (.distance s c cl)
+      (fexit word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code ilen clen p1 p2
+        .distance 0 pos) pos p'
+      (fword ((word1 >>> wordBits v) >>> (E &&& 31)) (count1 - wordBits v - (E &&& 31)) ring opos mask pB cap cap16 wB
+        rEnd iCount LC (dCount - 1) flags x d01 d23 code ilen clen p1 p2 (dictBuild clen _ hdv) pos1) := by
+  have m1 := fill_move (K := K) hrel hf
+  obtain ⟨hr0, hrc⟩ := rem_facts hrem h1
+  obtain ⟨p2, m2⟩ := distCount_move (K := K) (a := a) (stop := stop) (pos := pos1) hH m1.rel hr0 hc hdc hf.posStop
+  obtain ⟨_, _, _, rfl⟩ := m2.rel.distanceSymbol_of rfl
+  obtain ⟨p3, m3⟩ := distLong_move C hH m2.rel hf.posStop hv h16 hE hD hok hd0 (applyDistance_fword hw hdv hrc) rfl rfl
+  exact ⟨p3, (m1.trans m2).trans m3⟩
+
+/-- The dictionary word at a command, then the next command: the word's window, the context bytes read back from it,
+all at the loop's unmasked position. -/
+theorem fword_move {s : CommandState} {pending : List Nat} {wid : UInt64} {hv : dictValid clen wid}
+    (hrel : Rel w k.toNat m (fword word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code
+      ilen clen p1 p2 (dictBuild clen wid hv) pos) (.word s pending))
+    (hk : k.toNat ≤ 24) (hmk : mask = ringMask k) (hmN : mask.toNat = 2 ^ k.toNat - 1)
+    (hcap : cap16 = ringSize k - USize.ofNat 16) (hcN : cap16.toNat = 2 ^ k.toNat - 16) {bEnd : UInt64} {ahead : Nat}
+    (N : FNum opos pB wB rEnd bEnd k.toNat ahead) (hsz : ring.size = 2 ^ k.toNat) {wl : USize}
+    (hwl : dictLen clen wid = wl) (h1 : 1 ≤ (dictBuild clen wid hv).size)
+    (hb : opos.toNat + (dictBuild clen wid hv).size ≤ bEnd.toNat) (hwb : x.wordBuf.size ≤ 38)
+    (hp : pos.toNat ≤ stop.toNat) :
+    ∃ p', MoveOk w k.toNat m K a stop (.word s pending)
+      (fword word count ring opos mask pB cap cap16 wB rEnd iCount LC dCount flags x d01 d23 code ilen clen p1 p2
+        (dictBuild clen wid hv) pos) pos p'
+      (fexit word count (dictPutW hk hmN clen wid hv ring opos hsz) (opos + wl) mask pB cap cap16 wB rEnd
+        iCount LC dCount flags x d01 d23 code ilen clen
+        (wget (dictPutW hk hmN clen wid hv ring opos hsz) (opos + wl - USize.ofNat 1) mask hmN
+          (dictPutW_spec hk hmN hv ring opos hsz).1)
+        (wget (dictPutW hk hmN clen wid hv ring opos hsz) (opos + wl - USize.ofNat 2) mask hmN
+          (dictPutW_spec hk hmN hv ring opos hsz).1)
+        .command 0 pos) := by
+  have hC := hrel.1
+  subst hmk hwl
+  have hah := N.ahead
+  have hpend := N.pend
+  have hsm := N.small
+  have hwr := N.wr
+  have h2w := N.two
+  have hR10 : 2 ^ 10 ≤ 2 ^ k.toNat := Nat.pow_le_pow_right (by decide) hC.k10
+  have h1024 : (2 : Nat) ^ 10 = 1024 := rfl
+  have hle := dictBuild_le hv
+  have hnU : (dictBuild clen wid hv).usize.toNat = (dictBuild clen wid hv).size := usize_ofNat' (by omega)
+  have eL : dictLen clen wid = (dictBuild clen wid hv).usize := USize.toNat_inj.mp (by rw [dictLen_eq hv, hnU])
+  have hw2 : 2 ≤ (usmin cap16 (opos + wB)).toNat := by
+    rw [usmin_toNat]
+    omega
+  obtain ⟨p1', m1⟩ := word_move (K := K) (a := a) (stop := stop) (pos := pos) (x := opos) hrel rfl h1
+    (by show (opos + pB).toNat + (dictBuild clen wid hv).size + 16 ≤ _; omega) hw2 hp hk hsz rfl
+    (dictPutW_spec hk hmN hv ring opos hsz).1 (fun _ h => dictPutW_ring hk hmN hv ring opos hsz hnU h)
+  obtain ⟨_, rfl⟩ := m1.rel.command_of rfl
+  have m2 := m1.congr (m1.rel.command_word (b := x.wordBuf) (q := x.wordPos) hwb) rfl rfl rfl rfl
+  have ep : opos + (dictBuild clen wid hv).usize + pB = opos + pB + (dictBuild clen wid hv).usize := by
+    rw [USize.add_assoc, USize.add_comm (dictBuild clen wid hv).usize pB, ← USize.add_assoc]
+  have ew : usmin cap16 (opos + (dictBuild clen wid hv).usize + wB) =
+      usmin (ringSize k - USize.ofNat 16) (usmin cap16 (opos + wB) + (dictBuild clen wid hv).usize) := by
+    rw [← hcap, usmin_add (by omega), USize.add_assoc opos (dictBuild clen wid hv).usize wB,
+      USize.add_comm (dictBuild clen wid hv).usize wB, ← USize.add_assoc]
+  have er : rEnd - (opos + (dictBuild clen wid hv).usize).toUInt64 =
+      rEnd - opos.toUInt64 - (dictBuild clen wid hv).usize.toUInt64 := rem_add (by omega)
+  exact ⟨_, by unfold fexit; rw [eL, ep, ew, er]; exact m2⟩
 
 /-- A command's start within its block, then its insert-and-copy element read through the tree (`icFb`, which the
 fused entries equal): from a refill to 40 bits, the command's literals, in the loop's record. -/
@@ -2953,8 +3281,86 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
           by_cases hbad : ¬True ∧ ok2 = false ∨ d01 &&& 4294967295 = 0 ∨
               (usmin cap16 (opos + wB)).toUInt64 < d01 &&& 4294967295
           · rw [dite_eq_left hbad]
-            exact ⟨p, MoveOk.refl hrel rfl S.posStop,
-          fexit_frame (Nat.le_refl _) (Nat.le_trans (Nat.le_add_right _ _) N0.ahead)⟩
+            -- a dictionary word: the step machine's distance, then the word written whole
+            refine dictWith_spec (P := fun r => ∃ p', MoveOk w kk.toNat mH K a stop _ _ pos p' (Subtype.val r) ∧
+              FFrame cap pB bEnd opos (Subtype.val r)) ⟨p, MoveOk.refl hrel rfl S.posStop,
+                fexit_frame (Nat.le_refl _) (Nat.le_trans (Nat.le_add_right _ _) N0.ahead)⟩ ?_
+            intro hv wl hwl0
+            refine dite_spec (P := fun r => ∃ p', MoveOk w kk.toNat mH K a stop _ _ pos p' (Subtype.val r) ∧
+              FFrame cap pB bEnd opos (Subtype.val r)) (fun hwl => ?_) fun _ => ⟨p, MoveOk.refl hrel rfl S.posStop,
+                fexit_frame (Nat.le_refl _) (Nat.le_trans (Nat.le_add_right _ _) N0.ahead)⟩
+            have hd0 : d01 &&& 4294967295 ≠ 0 := hwl.2.1
+            have hw : (usmin cap16 (opos + wB)).toUInt64 < d01 &&& 4294967295 := by
+              rcases hbad with h | h | h
+              · exact absurd trivial h.1
+              · exact absurd h hd0
+              · exact h
+            have hah := N0.ahead
+            have hbe := N0.rem
+            have hsm := N0.small
+            have h0 : (0 : UInt64).toNat = 0 := rfl
+            obtain ⟨hlen, hu, hs1, hs38, hfit⟩ := word_fits hv hwl0 hsm (by omega) hwl.2.2.1 hwl.2.2.2
+            have hoN : (opos + wl).toNat = opos.toNat + wl.toNat := fastAdd (by omega)
+            obtain ⟨_, _, _, rfl⟩ := hrel.distance_of rfl
+            obtain ⟨pa, ma⟩ := dImplW_move (K := K) hH hrel hf1 hc hd0 hw hv (by omega) (by omega)
+            obtain ⟨_, _, rfl⟩ := ma.rel.word_of rfl
+            obtain ⟨pb, mb⟩ := fword_move (K := K) (a := a) (stop := stop) ma.rel hk hmk hmN hcap W.cap16 N0 S.size hwl0
+              hs1 hfit hrel.1.wordLe hf1.posStop
+            by_cases hi : iCount = 0
+            · rw [dite_eq_left hi]
+              exact ⟨pb, ma.trans mb, fexit_frame (by omega) (by omega)⟩
+            · rw [dite_eq_right hi]
+              refine fillK_spec (P := fun r => ∃ p', MoveOk w kk.toNat mH K a stop _ _ pos p' (Subtype.val r) ∧
+          FFrame cap pB bEnd opos (Subtype.val r)) ?_
+              intro word3 count3 pos3 hf3
+              rw [ite_eq_left hc, ite_eq_left hc] at hf3
+              rw [icK_fb]
+              refine icFb_spec (P := fun r => ∃ p', MoveOk w kk.toNat mH K a stop _ _ pos p' (Subtype.val r) ∧
+          FFrame cap pB bEnd opos (Subtype.val r)) C _ _ _ _
+                ?_
+              intro vi hcv hkv hvi
+              have hIL := len_bound C (x := word3) (a := wordBits vi) (b := rowBits (insertRow (wordSym vi) hcv))
+                (base := rowBase (insertRow (wordSym vi) hcv))
+                (by have := and15_lt vi; exact Nat.lt_trans this (by decide))
+                (insertRow_bits24 hcv) (by rw [(insertRow_fields hcv).2]; exact (cmdRow_small hcv).2.1)
+              have hCL := len_bound C (x := word3 >>> wordBits vi) (a := rowBits (insertRow (wordSym vi) hcv))
+                (b := rowBits (copyRow (wordSym vi) hcv)) (base := rowBase (copyRow (wordSym vi) hcv))
+                (by have := insertRow_bits24 hcv; omega) (copyRow_bits hcv)
+                (by rw [(copyRow_fields hcv).2]; have := (cmdRow_small hcv).2.2.2; omega)
+              have hoU : (opos + wl).toUInt64.toNat = opos.toNat + wl.toNat := by
+                rw [USize.toNat_toUInt64, hoN]
+              have hrm : (rEnd - (opos + wl).toUInt64).toNat = (rEnd - opos.toUInt64).toNat - wl.toNat := by
+                rw [rem_add (by omega), u64_sub_le (by rw [USize.toNat_toUInt64]; omega), USize.toNat_toUInt64]
+              by_cases h1 : decide (wordBits vi + rowBits (insertRow (wordSym vi) hcv) +
+                  rowBits (copyRow (wordSym vi) hcv) ≤ count3) = false ∨ bEnd < (opos + wl).toUInt64 +
+                  (rowBase (insertRow (wordSym vi) hcv) +
+                    ((word3 >>> wordBits vi) &&& maskT T C.big C.size32 (rowBits (insertRow (wordSym vi) hcv)))) +
+                  (rowBase (copyRow (wordSym vi) hcv) +
+                    (((word3 >>> wordBits vi) >>> rowBits (insertRow (wordSym vi) hcv))
+                    &&& maskT T C.big C.size32 (rowBits (copyRow (wordSym vi) hcv))))
+              · rw [dite_eq_left h1]
+                exact ⟨pb, ma.trans mb, fexit_frame (by omega) (by omega)⟩
+              · rw [dite_eq_right h1]
+                have hA : decide (wordBits vi + rowBits (insertRow (wordSym vi) hcv) +
+                    rowBits (copyRow (wordSym vi) hcv) ≤ count3) = true := by
+                  cases h : decide (wordBits vi + rowBits (insertRow (wordSym vi) hcv) +
+                      rowBits (copyRow (wordSym vi) hcv) ≤ count3) with
+                  | false => exact absurd (Or.inl h) h1
+                  | true => rfl
+                have hadm := UInt64.le_iff_toNat_le.mp (UInt64.not_lt.mp (fun h => h1 (Or.inr h)))
+                rw [u64_add_small (by rw [u64_add_small (by omega), hoU]; omega), u64_add_small (by omega), hoU] at hadm
+                obtain ⟨_, rfl⟩ := mb.rel.command_of rfl
+                obtain ⟨pc, mc⟩ := ic_round C hK hH mb.rel hf3 hi hvi hcv (of_decide_eq_true hA) (by omega)
+                obtain ⟨pd, md⟩ := to_fabs (lits := rowBase (insertRow (wordSym vi) hcv) +
+                    ((word3 >>> wordBits vi) &&& maskT T C.big C.size32 (rowBits (insertRow (wordSym vi) hcv))))
+                  (mm := 0) hH hs ((ma.trans mb).trans mc) (UInt64.add_zero _).symm (UInt64.add_zero _).symm hmN W.cap16
+                  (N0.adv hk (n := wl) (ahead' := 0) (by omega) (by omega)).two
+                rw [fabs_ctx 0 0] at md
+                obtain ⟨pe, me, fe⟩ := ihI _ (by rw [← hI]; exact icount_dec hi) _ _ _ pos3 _ (opos + wl)
+                  (iCount - 1) lCount dCount d01 d23 (codeClass (wordSym vi)) _ _ _ 0 _ _ _ rfl rfl
+                  (N0.adv hk (n := wl) (by omega) (by rw [UInt64.add_zero]; omega))
+                  (by rw [h0]; have := lCount.toNat_lt; omega) (by rw [h0]; omega) pd md.rel
+                exact ⟨pe, md.trans me, fe.mono (by omega)⟩
           · rw [dite_eq_right hbad]
             have hd0 : d01 &&& 4294967295 ≠ 0 := fun h => hbad (Or.inr (Or.inl h))
             have hw : ¬ (usmin cap16 (opos + wB)).toUInt64 < d01 &&& 4294967295 := fun h => hbad (Or.inr (Or.inr h))
@@ -3045,8 +3451,94 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
                 (usmin cap16 (opos + wB)).toUInt64 <
                   shortFast (d01 &&& 4294967295) (d01 >>> 32) (d23 &&& 4294967295) (d23 >>> 32) (wordSym v)
             · rw [dite_eq_left hbad]
-              exact ⟨p, MoveOk.refl hrel rfl S.posStop,
-          fexit_frame (Nat.le_refl _) (Nat.le_trans (Nat.le_add_right _ _) N0.ahead)⟩
+              -- a dictionary word: the step machine's distance, then the word written whole
+              refine dictWith_spec (P := fun r => ∃ p', MoveOk w kk.toNat mH K a stop _ _ pos p' (Subtype.val r) ∧
+                FFrame cap pB bEnd opos (Subtype.val r)) ⟨p, MoveOk.refl hrel rfl S.posStop,
+                  fexit_frame (Nat.le_refl _) (Nat.le_trans (Nat.le_add_right _ _) N0.ahead)⟩ ?_
+              intro hdv wl hwl0
+              refine dite_spec (P := fun r => ∃ p', MoveOk w kk.toNat mH K a stop _ _ pos p' (Subtype.val r) ∧
+                FFrame cap pB bEnd opos (Subtype.val r)) (fun hwl => ?_) fun _ => ⟨p, MoveOk.refl hrel rfl S.posStop,
+                  fexit_frame (Nat.le_refl _) (Nat.le_trans (Nat.le_add_right _ _) N0.ahead)⟩
+              have hl : wordBits v ≤ count1 := of_decide_eq_true (by
+                cases h : decide (wordBits v ≤ count1) with
+                | false => exact absurd h hwl.1
+                | true => rfl)
+              have hd0 : shortFast (d01 &&& 4294967295) (d01 >>> 32) (d23 &&& 4294967295) (d23 >>> 32) (wordSym v) ≠ 0 :=
+                hwl.2.1
+              have hw : (usmin cap16 (opos + wB)).toUInt64 <
+                  shortFast (d01 &&& 4294967295) (d01 >>> 32) (d23 &&& 4294967295) (d23 >>> 32) (wordSym v) := by
+                rcases hbad with h | h | h
+                · exact absurd h hwl.1
+                · exact absurd h hd0
+                · exact h
+              have hdc : dCount ≠ 0 := fun h => hd2 (Or.inr ⟨UInt64.not_lt.mp hc, h⟩)
+              have hah := N0.ahead
+              have hbe := N0.rem
+              have hsm := N0.small
+              have h0 : (0 : UInt64).toNat = 0 := rfl
+              obtain ⟨hlen, hu, hs1, hs38, hfit⟩ := word_fits hdv hwl0 hsm (by omega) hwl.2.2.1 hwl.2.2.2
+              have hoN : (opos + wl).toNat = opos.toNat + wl.toNat := fastAdd (by omega)
+              obtain ⟨_, _, _, rfl⟩ := hrel.distance_of rfl
+              obtain ⟨pa, ma⟩ := dShortW_move (K := K) C hH hrel hf1 hc hdc hv hl h16 hd0 hw hdv (by omega) (by omega)
+              obtain ⟨_, _, rfl⟩ := ma.rel.word_of rfl
+              obtain ⟨pb, mb⟩ := fword_move (K := K) (a := a) (stop := stop) ma.rel hk hmk hmN hcap W.cap16 N0 S.size
+                hwl0 hs1 hfit hrel.1.wordLe hf1.posStop
+              by_cases hi : iCount = 0
+              · rw [dite_eq_left hi]
+                exact ⟨pb, ma.trans mb, fexit_frame (by omega) (by omega)⟩
+              · rw [dite_eq_right hi]
+                refine fillK_spec (P := fun r => ∃ p', MoveOk w kk.toNat mH K a stop _ _ pos p' (Subtype.val r) ∧
+          FFrame cap pB bEnd opos (Subtype.val r)) ?_
+                intro word3 count3 pos3 hf3
+                rw [ite_eq_right hc, ite_eq_right hc] at hf3
+                rw [icK_fb]
+                refine icFb_spec (P := fun r => ∃ p', MoveOk w kk.toNat mH K a stop _ _ pos p' (Subtype.val r) ∧
+          FFrame cap pB bEnd opos (Subtype.val r)) C _ _ _
+                  _ ?_
+                intro vi hcv hkv hvi
+                have hIL := len_bound C (x := word3) (a := wordBits vi) (b := rowBits (insertRow (wordSym vi) hcv))
+                  (base := rowBase (insertRow (wordSym vi) hcv))
+                  (by have := and15_lt vi; exact Nat.lt_trans this (by decide))
+                  (insertRow_bits24 hcv) (by rw [(insertRow_fields hcv).2]; exact (cmdRow_small hcv).2.1)
+                have hCL := len_bound C (x := word3 >>> wordBits vi) (a := rowBits (insertRow (wordSym vi) hcv))
+                  (b := rowBits (copyRow (wordSym vi) hcv)) (base := rowBase (copyRow (wordSym vi) hcv))
+                  (by have := insertRow_bits24 hcv; omega) (copyRow_bits hcv)
+                  (by rw [(copyRow_fields hcv).2]; have := (cmdRow_small hcv).2.2.2; omega)
+                have hoU : (opos + wl).toUInt64.toNat = opos.toNat + wl.toNat := by
+                  rw [USize.toNat_toUInt64, hoN]
+                have hrm : (rEnd - (opos + wl).toUInt64).toNat = (rEnd - opos.toUInt64).toNat - wl.toNat := by
+                  rw [rem_add (by omega), u64_sub_le (by rw [USize.toNat_toUInt64]; omega), USize.toNat_toUInt64]
+                by_cases h1 : decide (wordBits vi + rowBits (insertRow (wordSym vi) hcv) +
+                    rowBits (copyRow (wordSym vi) hcv) ≤ count3) = false ∨ bEnd < (opos + wl).toUInt64 +
+                    (rowBase (insertRow (wordSym vi) hcv) +
+                      ((word3 >>> wordBits vi) &&& maskT T C.big C.size32 (rowBits (insertRow (wordSym vi) hcv)))) +
+                    (rowBase (copyRow (wordSym vi) hcv) +
+                      (((word3 >>> wordBits vi) >>> rowBits (insertRow (wordSym vi) hcv))
+                      &&& maskT T C.big C.size32 (rowBits (copyRow (wordSym vi) hcv))))
+                · rw [dite_eq_left h1]
+                  exact ⟨pb, ma.trans mb, fexit_frame (by omega) (by omega)⟩
+                · rw [dite_eq_right h1]
+                  have hA : decide (wordBits vi + rowBits (insertRow (wordSym vi) hcv) +
+                      rowBits (copyRow (wordSym vi) hcv) ≤ count3) = true := by
+                    cases h : decide (wordBits vi + rowBits (insertRow (wordSym vi) hcv) +
+                        rowBits (copyRow (wordSym vi) hcv) ≤ count3) with
+                    | false => exact absurd (Or.inl h) h1
+                    | true => rfl
+                  have hadm := UInt64.le_iff_toNat_le.mp (UInt64.not_lt.mp (fun h => h1 (Or.inr h)))
+                  rw [u64_add_small (by rw [u64_add_small (by omega), hoU]; omega), u64_add_small (by omega), hoU]
+                    at hadm
+                  obtain ⟨_, rfl⟩ := mb.rel.command_of rfl
+                  obtain ⟨pc, mc⟩ := ic_round C hK hH mb.rel hf3 hi hvi hcv (of_decide_eq_true hA) (by omega)
+                  obtain ⟨pd, md⟩ := to_fabs (lits := rowBase (insertRow (wordSym vi) hcv) +
+                      ((word3 >>> wordBits vi) &&& maskT T C.big C.size32 (rowBits (insertRow (wordSym vi) hcv))))
+                    (mm := 0) hH hs ((ma.trans mb).trans mc) (UInt64.add_zero _).symm (UInt64.add_zero _).symm hmN
+                    W.cap16 (N0.adv hk (n := wl) (ahead' := 0) (by omega) (by omega)).two
+                  rw [fabs_ctx 0 0] at md
+                  obtain ⟨pe, me, fe⟩ := ihI _ (by rw [← hI]; exact icount_dec hi) _ _ _ pos3 _ (opos + wl)
+                    (iCount - 1) lCount (dCount - 1) d01 d23 (codeClass (wordSym vi)) _ _ _ 0 _ _ _ rfl rfl
+                    (N0.adv hk (n := wl) (by omega) (by rw [UInt64.add_zero]; omega))
+                    (by rw [h0]; have := lCount.toNat_lt; omega) (by rw [h0]; omega) pd md.rel
+                  exact ⟨pe, md.trans me, fe.mono (by omega)⟩
             · rw [dite_eq_right hbad]
               have hl : wordBits v ≤ count1 := of_decide_eq_true (by
                 cases h : decide (wordBits v ≤ count1) with
@@ -3166,8 +3658,95 @@ theorem fastLoop_ok {α : Type} {w : Nat} {mH : MetaBlockHeader} {K : CommandSta
                 (usmin cap16 (opos + wB)).toUInt64 <
                   (E >>> 32) + (((word1 >>> wordBits v) &&& maskT T C.big C.size32 (E &&& 31)) <<< np)
             · rw [dite_eq_left hbad]
-              exact ⟨p, MoveOk.refl hrel rfl S.posStop,
-          fexit_frame (Nat.le_refl _) (Nat.le_trans (Nat.le_add_right _ _) N0.ahead)⟩
+              -- a dictionary word: the step machine's distance, then the word written whole
+              refine dictWith_spec (P := fun r => ∃ p', MoveOk w kk.toNat mH K a stop _ _ pos p' (Subtype.val r) ∧
+                FFrame cap pB bEnd opos (Subtype.val r)) ⟨p, MoveOk.refl hrel rfl S.posStop,
+                  fexit_frame (Nat.le_refl _) (Nat.le_trans (Nat.le_add_right _ _) N0.ahead)⟩ ?_
+              intro hdv wl hwl0
+              refine dite_spec (P := fun r => ∃ p', MoveOk w kk.toNat mH K a stop _ _ pos p' (Subtype.val r) ∧
+                FFrame cap pB bEnd opos (Subtype.val r)) (fun hwl => ?_) fun _ => ⟨p, MoveOk.refl hrel rfl S.posStop,
+                  fexit_frame (Nat.le_refl _) (Nat.le_trans (Nat.le_add_right _ _) N0.ahead)⟩
+              have hok : wordBits v + (E &&& 31) ≤ count1 := of_decide_eq_true (by
+                cases h : decide (wordBits v + (E &&& 31) ≤ count1) with
+                | false => exact absurd h hwl.1
+                | true => rfl)
+              have hd0 : (E >>> 32) + (((word1 >>> wordBits v) &&& maskT T C.big C.size32 (E &&& 31)) <<< np) ≠ 0 :=
+                hwl.2.1
+              have hw : (usmin cap16 (opos + wB)).toUInt64 <
+                  (E >>> 32) + (((word1 >>> wordBits v) &&& maskT T C.big C.size32 (E &&& 31)) <<< np) := by
+                rcases hbad with h | h | h
+                · exact absurd h hwl.1
+                · exact absurd h hd0
+                · exact h
+              have hdc : dCount ≠ 0 := fun h => hd2 (Or.inr ⟨UInt64.not_lt.mp hc, h⟩)
+              have hah := N0.ahead
+              have hbe := N0.rem
+              have hsm := N0.small
+              have h0 : (0 : UInt64).toNat = 0 := rfl
+              obtain ⟨hlen, hu, hs1, hs38, hfit⟩ := word_fits hdv hwl0 hsm (by omega) hwl.2.2.1 hwl.2.2.2
+              have hoN : (opos + wl).toNat = opos.toNat + wl.toNat := fastAdd (by omega)
+              obtain ⟨_, _, _, rfl⟩ := hrel.distance_of rfl
+              obtain ⟨pa, ma⟩ := dLongW_move (K := K) C hH hrel hf1 hc hdc hv h16 hE (by rw [W.np]) hok hd0 hw hdv
+                (by omega) (by omega)
+              obtain ⟨_, _, rfl⟩ := ma.rel.word_of rfl
+              obtain ⟨pb, mb⟩ := fword_move (K := K) (a := a) (stop := stop) ma.rel hk hmk hmN hcap W.cap16 N0 S.size
+                hwl0 hs1 hfit hrel.1.wordLe hf1.posStop
+              by_cases hi : iCount = 0
+              · rw [dite_eq_left hi]
+                exact ⟨pb, ma.trans mb, fexit_frame (by omega) (by omega)⟩
+              · rw [dite_eq_right hi]
+                refine fillK_spec (P := fun r => ∃ p', MoveOk w kk.toNat mH K a stop _ _ pos p' (Subtype.val r) ∧
+          FFrame cap pB bEnd opos (Subtype.val r)) ?_
+                intro word3 count3 pos3 hf3
+                rw [ite_eq_right hc, ite_eq_right hc] at hf3
+                rw [icK_fb]
+                refine icFb_spec (P := fun r => ∃ p', MoveOk w kk.toNat mH K a stop _ _ pos p' (Subtype.val r) ∧
+          FFrame cap pB bEnd opos (Subtype.val r)) C _ _ _
+                  _ ?_
+                intro vi hcv hkv hvi
+                have hIL := len_bound C (x := word3) (a := wordBits vi) (b := rowBits (insertRow (wordSym vi) hcv))
+                  (base := rowBase (insertRow (wordSym vi) hcv))
+                  (by have := and15_lt vi; exact Nat.lt_trans this (by decide))
+                  (insertRow_bits24 hcv) (by rw [(insertRow_fields hcv).2]; exact (cmdRow_small hcv).2.1)
+                have hCL := len_bound C (x := word3 >>> wordBits vi) (a := rowBits (insertRow (wordSym vi) hcv))
+                  (b := rowBits (copyRow (wordSym vi) hcv)) (base := rowBase (copyRow (wordSym vi) hcv))
+                  (by have := insertRow_bits24 hcv; omega) (copyRow_bits hcv)
+                  (by rw [(copyRow_fields hcv).2]; have := (cmdRow_small hcv).2.2.2; omega)
+                have hoU : (opos + wl).toUInt64.toNat = opos.toNat + wl.toNat := by
+                  rw [USize.toNat_toUInt64, hoN]
+                have hrm : (rEnd - (opos + wl).toUInt64).toNat = (rEnd - opos.toUInt64).toNat - wl.toNat := by
+                  rw [rem_add (by omega), u64_sub_le (by rw [USize.toNat_toUInt64]; omega), USize.toNat_toUInt64]
+                by_cases h1 : decide (wordBits vi + rowBits (insertRow (wordSym vi) hcv) +
+                    rowBits (copyRow (wordSym vi) hcv) ≤ count3) = false ∨ bEnd < (opos + wl).toUInt64 +
+                    (rowBase (insertRow (wordSym vi) hcv) +
+                      ((word3 >>> wordBits vi) &&& maskT T C.big C.size32 (rowBits (insertRow (wordSym vi) hcv)))) +
+                    (rowBase (copyRow (wordSym vi) hcv) +
+                      (((word3 >>> wordBits vi) >>> rowBits (insertRow (wordSym vi) hcv))
+                      &&& maskT T C.big C.size32 (rowBits (copyRow (wordSym vi) hcv))))
+                · rw [dite_eq_left h1]
+                  exact ⟨pb, ma.trans mb, fexit_frame (by omega) (by omega)⟩
+                · rw [dite_eq_right h1]
+                  have hA : decide (wordBits vi + rowBits (insertRow (wordSym vi) hcv) +
+                      rowBits (copyRow (wordSym vi) hcv) ≤ count3) = true := by
+                    cases h : decide (wordBits vi + rowBits (insertRow (wordSym vi) hcv) +
+                        rowBits (copyRow (wordSym vi) hcv) ≤ count3) with
+                    | false => exact absurd (Or.inl h) h1
+                    | true => rfl
+                  have hadm := UInt64.le_iff_toNat_le.mp (UInt64.not_lt.mp (fun h => h1 (Or.inr h)))
+                  rw [u64_add_small (by rw [u64_add_small (by omega), hoU]; omega), u64_add_small (by omega), hoU]
+                    at hadm
+                  obtain ⟨_, rfl⟩ := mb.rel.command_of rfl
+                  obtain ⟨pc, mc⟩ := ic_round C hK hH mb.rel hf3 hi hvi hcv (of_decide_eq_true hA) (by omega)
+                  obtain ⟨pd, md⟩ := to_fabs (lits := rowBase (insertRow (wordSym vi) hcv) +
+                      ((word3 >>> wordBits vi) &&& maskT T C.big C.size32 (rowBits (insertRow (wordSym vi) hcv))))
+                    (mm := 0) hH hs ((ma.trans mb).trans mc) (UInt64.add_zero _).symm (UInt64.add_zero _).symm hmN
+                    W.cap16 (N0.adv hk (n := wl) (ahead' := 0) (by omega) (by omega)).two
+                  rw [fabs_ctx 0 0] at md
+                  obtain ⟨pe, me, fe⟩ := ihI _ (by rw [← hI]; exact icount_dec hi) _ _ _ pos3 _ (opos + wl)
+                    (iCount - 1) lCount (dCount - 1) d01 d23 (codeClass (wordSym vi)) _ _ _ 0 _ _ _ rfl rfl
+                    (N0.adv hk (n := wl) (by omega) (by rw [UInt64.add_zero]; omega))
+                    (by rw [h0]; have := lCount.toNat_lt; omega) (by rw [h0]; omega) pd md.rel
+                  exact ⟨pe, md.trans me, fe.mono (by omega)⟩
             · rw [dite_eq_right hbad]
               have hok : wordBits v + (E &&& 31) ≤ count1 := of_decide_eq_true (by
                 cases h : decide (wordBits v + (E &&& 31) ≤ count1) with

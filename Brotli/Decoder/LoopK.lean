@@ -1049,16 +1049,6 @@ theorem runCmdKF_off {n : USize} {fresh : Bool} {tag : Tag}
   rw [runCmdKF, dite_eq_right hn]
   simp only [h1, h2, or_self, and_false, false_and, ↓reduceDIte]
 
-/-- An equation with a dependent `if` on its left, case by case: the condition is the goal's own, found by
-unification, so a large goal needs neither `split` nor the condition written out. -/
-theorem dite_cases {c : Prop} [Decidable c] {β : Type} {t : c → β} {e : ¬ c → β} {r : β} (h1 : ∀ h : c, t h = r)
-    (h2 : ∀ h : ¬ c, e h = r) : dite c t e = r := by
-  by_cases h : c
-  · rw [dite_eq_left h]
-    exact h1 h
-  · rw [dite_eq_right h]
-    exact h2 h
-
 /-- `dite_cases` for a plain `if`. -/
 theorem ite_cases {c : Prop} [Decidable c] {β : Type} {t e r : β} (h1 : c → t = r) (h2 : ¬ c → e = r) :
     ite c t e = r := by

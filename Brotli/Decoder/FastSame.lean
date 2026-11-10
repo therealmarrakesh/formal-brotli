@@ -134,7 +134,35 @@ theorem fastLoop_same {H : Hdr} {kk : USize} {a1 a2 : ByteArray} {e1 e2 : USize}
         by_cases hbad : (¬ code < 128 ∧ ok2 = false) ∨ (if code < 128 then d01 &&& 0xFFFFFFFF else dx) = 0 ∨
             (usmin cap16 (opos + wB)).toUInt64 < (if code < 128 then d01 &&& 0xFFFFFFFF else dx)
         · rw [dite_eq_left hbad, dite_eq_left hbad]
-          exact ⟨rfl, h⟩
+          -- a dictionary word: the same tests and the same writes, then the copy's tail
+          refine dictWith_rel (R := fun r1 r2 => FSame a1 e1 a2 e2 (Subtype.val r1) (Subtype.val r2)) ⟨rfl, h⟩ ?_
+          intro _ wl put _
+          by_cases hwl : ¬ (¬ code < 128 ∧ ok2 = false) ∧ ¬ (if code < 128 then d01 &&& 0xFFFFFFFF else dx) = 0 ∧
+              wl ≠ 0 ∧ opos.toUInt64 + wl.toUInt64 ≤ bEnd
+          · rw [dite_eq_left hwl, dite_eq_left hwl]
+            by_cases hi : iCount = 0
+            · rw [dite_eq_left hi, dite_eq_left hi]
+              exact ⟨rfl, hS⟩
+            · rw [dite_eq_right hi, dite_eq_right hi]
+              refine fillK_same (R := fun r1 r2 => FSame a1 e1 a2 e2 (Subtype.val r1) (Subtype.val r2)) hS ?_
+              intro w3 c3 r3 hf3 w3' c3' r3' hf3' ew' ec' hS'
+              subst ew' ec'
+              rw [icK_fb, icK_fb]
+              refine icFb_rel (R := fun r1 r2 => FSame a1 e1 a2 e2 (Subtype.val r1) (Subtype.val r2)) C ?_
+              intro vi hcv hkv hkv' hvi
+              by_cases h1 : decide (wordBits vi + rowBits (insertRow (wordSym vi) hcv) +
+                  rowBits (copyRow (wordSym vi) hcv) ≤ c3) = false ∨ bEnd < (opos + wl).toUInt64 +
+                  (rowBase (insertRow (wordSym vi) hcv) +
+                    ((w3 >>> wordBits vi) &&& maskT T C.big C.size32 (rowBits (insertRow (wordSym vi) hcv)))) +
+                  (rowBase (copyRow (wordSym vi) hcv) +
+                    (((w3 >>> wordBits vi) >>> rowBits (insertRow (wordSym vi) hcv))
+                    &&& maskT T C.big C.size32 (rowBits (copyRow (wordSym vi) hcv))))
+              · rw [dite_eq_left h1, dite_eq_left h1]
+                exact ⟨rfl, hS⟩
+              · rw [dite_eq_right h1, dite_eq_right h1]
+                exact ihI _ (by rw [← hI]; exact icount_dec hi) _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ rfl rfl hS'
+          · rw [dite_eq_right hwl, dite_eq_right hwl]
+            exact ⟨rfl, h⟩
         · rw [dite_eq_right hbad, dite_eq_right hbad]
           by_cases hi : iCount = 0
           · rw [dite_eq_left hi, dite_eq_left hi]

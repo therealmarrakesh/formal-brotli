@@ -2,6 +2,7 @@ module
 
 public import Brotli.Decoder.Copy
 public import Brotli.Decoder.CmdLut
+public import Brotli.Decoder.FastTab
 
 @[expose] public section
 
@@ -604,6 +605,437 @@ theorem elementStep_spec {t : ByteArray} {hs : t.size < 2 ^ 24} {kind k : UInt8}
     congr 2
     omega
 
+/-! ### Stores at masked window positions
+
+The fast command loop writes the window through these stores, and a dictionary word can be written straight into the
+window through them, with no buffer: `putList` is what such a write does, a byte list stored from a position on, each
+byte at its masked position. -/
+
+/-- A window index masked with the constant `0xFFFFFF`, which is no change (every window is at most `2 ^ 24` bytes) but
+tells the C compiler the index is small, so that a byte store can't reach the array's reference count and the store's
+exclusivity check isn't repeated (P25, `docs/lean-facts.md`). -/
+@[inline] def wix (i : USize) : USize := i &&& USize.ofNat 0xFFFFFF
+
+theorem wix_toNat {i : USize} (h : i.toNat < 2 ^ 24) : (wix i).toNat = i.toNat := by
+  unfold wix
+  rw [USize.toNat_and, usize_lit (by decide), show 16777215 = 2 ^ 24 - 1 from rfl, Nat.and_two_pow_sub_one_eq_mod]
+  exact Nat.mod_eq_of_lt h
+
+theorem mask_lt {i mask : USize} {k : Nat} (hm : mask.toNat = 2 ^ k - 1) : (i &&& mask).toNat < 2 ^ k := by
+  rw [USize.toNat_and, hm, Nat.and_two_pow_sub_one_eq_mod]
+  exact Nat.mod_lt _ (Nat.two_pow_pos _)
+
+/-- A store at a masked window position. -/
+@[inline] def wput (ring : ByteArray) (i mask : USize) {k : Nat} (hk : k ≤ 24) (hm : mask.toNat = 2 ^ k - 1)
+    (hs : ring.size = 2 ^ k) (v : UInt8) : ByteArray :=
+  ring.uset (wix (i &&& mask)) v (by
+    have := mask_lt (i := i) hm
+    have : 2 ^ k ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
+    rw [wix_toNat (by omega)]
+    omega)
+
+theorem wput_size (ring : ByteArray) (i mask : USize) {k : Nat} (hk : k ≤ 24) (hm : mask.toNat = 2 ^ k - 1)
+    (hs : ring.size = 2 ^ k) (v : UInt8) : (wput ring i mask hk hm hs v).size = 2 ^ k :=
+  (size_ringWrite ring _ v _).trans hs
+
+private theorem uget_list (t : ByteArray) (i : USize) (h : i.toNat < t.size) :
+    t.uget i h = t.data.toList[i.toNat]'(by have : t.size = t.data.size := rfl; simp only [Array.length_toList]; omega) := by
+  cases t with
+  | mk bs => simp [ByteArray.uget]
+
+section
+variable {mask : USize} {k : Nat} (hk : k ≤ 24) (hm : mask.toNat = 2 ^ k - 1)
+
+/-- The window after the bytes `l` are stored from position `o` on, each at its masked position. -/
+def putList : (ring : ByteArray) → (o : USize) → ring.size = 2 ^ k → List UInt8 → ByteArray
+  | ring, _, _, [] => ring
+  | ring, o, hs, b :: l => putList (wput ring o mask hk hm hs b) (o + USize.ofNat 1) (wput_size ring o mask hk hm hs b) l
+
+theorem putList_size : ∀ (l : List UInt8) (ring : ByteArray) (o : USize) (hs : ring.size = 2 ^ k),
+    (putList hk hm ring o hs l).size = 2 ^ k
+  | [], _, _, hs => hs
+  | b :: l, ring, o, hs => putList_size l (wput ring o mask hk hm hs b) (o + USize.ofNat 1) (wput_size ring o mask hk hm hs b)
+
+theorem putList_congr {r1 r2 : ByteArray} {o1 o2 : USize} {h1 : r1.size = 2 ^ k} {h2 : r2.size = 2 ^ k}
+    {l : List UInt8} (e1 : r1 = r2) (e2 : o1 = o2) : putList hk hm r1 o1 h1 l = putList hk hm r2 o2 h2 l := by
+  subst e1 e2
+  rfl
+
+theorem putList_append : ∀ (l1 l2 : List UInt8) (ring : ByteArray) (o : USize) (hs : ring.size = 2 ^ k),
+    putList hk hm ring o hs (l1 ++ l2) =
+      putList hk hm (putList hk hm ring o hs l1) (o + USize.ofNat l1.length) (putList_size hk hm l1 ring o hs) l2
+  | [], l2, ring, o, hs => putList_congr hk hm rfl (by rw [List.length_nil, show USize.ofNat 0 = 0 from rfl,
+      USize.add_zero])
+  | b :: l1, l2, ring, o, hs => by
+    show putList hk hm (wput ring o mask hk hm hs b) (o + USize.ofNat 1) (wput_size ring o mask hk hm hs b) (l1 ++ l2) =
+      putList hk hm (putList hk hm (wput ring o mask hk hm hs b) (o + USize.ofNat 1) (wput_size ring o mask hk hm hs b) l1)
+        (o + USize.ofNat (b :: l1).length) _ l2
+    refine (putList_append l1 l2 _ _ _).trans (putList_congr hk hm rfl ?_)
+    rw [List.length_cons, USize.ofNat_add, USize.add_assoc, USize.add_comm (USize.ofNat 1)]
+
+theorem uset_idx {t : ByteArray} {i j : USize} {v : UInt8} {hi : i.toNat < t.size} {hj : j.toNat < t.size}
+    (e : i = j) : t.uset i v hi = t.uset j v hj := by
+  subst e
+  rfl
+
+theorem uset_congr2 {t : ByteArray} {i j : USize} {v w : UInt8} {hi : i.toNat < t.size} {hj : j.toNat < t.size}
+    (e : i = j) (ev : v = w) : t.uset i v hi = t.uset j w hj := by
+  subst e ev
+  rfl
+
+theorem wput_congr {ring : ByteArray} {i j : USize} {hs : ring.size = 2 ^ k} {v : UInt8}
+    (e : i &&& mask = j &&& mask) : wput ring i mask hk hm hs v = wput ring j mask hk hm hs v := by
+  unfold wput
+  exact uset_idx (by rw [e])
+
+include hk hm in
+/-- The next position, masked, depends only on the position masked. -/
+theorem next_mask {a b : USize} (e : a &&& mask = b &&& mask) :
+    (a + USize.ofNat 1) &&& mask = (b + USize.ofNat 1) &&& mask := by
+  have hb : k ≤ System.Platform.numBits := by rcases System.Platform.numBits_eq with h | h <;> omega
+  have hd : 2 ^ k ∣ 2 ^ System.Platform.numBits := Nat.pow_dvd_pow 2 hb
+  have e' := congrArg USize.toNat e
+  rw [USize.toNat_and, USize.toNat_and, hm, Nat.and_two_pow_sub_one_eq_mod, Nat.and_two_pow_sub_one_eq_mod] at e'
+  apply USize.toNat_inj.mp
+  rw [USize.toNat_and, USize.toNat_and, hm, Nat.and_two_pow_sub_one_eq_mod, Nat.and_two_pow_sub_one_eq_mod,
+    USize.toNat_add, USize.toNat_add, Nat.mod_mod_of_dvd _ hd, Nat.mod_mod_of_dvd _ hd, Nat.add_mod, e',
+    ← Nat.add_mod]
+
+/-- A list stored from a position is stored from any position equal to it masked. -/
+theorem putList_mask : ∀ (l : List UInt8) (ring : ByteArray) (o o' : USize) (hs : ring.size = 2 ^ k),
+    o &&& mask = o' &&& mask → putList hk hm ring o hs l = putList hk hm ring o' hs l
+  | [], _, _, _, _, _ => rfl
+  | b :: l, ring, o, o', hs, e => by
+    show putList hk hm (wput ring o mask hk hm hs b) (o + USize.ofNat 1) (wput_size ring o mask hk hm hs b) l =
+      putList hk hm (wput ring o' mask hk hm hs b) (o' + USize.ofNat 1) (wput_size ring o' mask hk hm hs b) l
+    exact (putList_congr hk hm (wput_congr hk hm e) rfl).trans (putList_mask l _ _ _ _ (next_mask hk hm e))
+
+include hm in
+theorem mask_mask (o : USize) : (o &&& mask) &&& mask = o &&& mask := by
+  apply USize.toNat_inj.mp
+  rw [USize.toNat_and, USize.toNat_and, hm, Nat.and_two_pow_sub_one_eq_mod, Nat.and_two_pow_sub_one_eq_mod, Nat.mod_mod]
+
+/-- What the word loop does to the window: its bytes stored from its position on. -/
+theorem wordRun_put {buf : ByteArray} : ∀ (N : Nat) (n idx : USize) (ring : ByteArray) (wpos : USize) (p1 p2 : UInt8)
+    (hb : idx.toNat + n.toNat ≤ buf.size) (hb32 : idx.toNat + n.toNat ≤ 2 ^ 32 - 1) (hsize : ring.size = 2 ^ k)
+    (hwp : wpos.toNat < 2 ^ k), n.toNat = N →
+    (wordRun buf mask k hk hm n idx ring wpos p1 p2 hb hb32 hsize hwp).ring =
+      putList hk hm ring wpos hsize ((buf.data.toList.drop idx.toNat).take n.toNat) := by
+  intro N
+  induction N with
+  | zero =>
+    intro n idx ring wpos p1 p2 hb hb32 hsize hwp hN
+    rw [wordRun, dite_eq_left (usize_zero hN), hN, List.take_zero]
+    rfl
+  | succ N ih =>
+    intro n idx ring wpos p1 p2 hb hb32 hsize hwp hN
+    have hn : n ≠ 0 := fun e => by rw [e] at hN; exact Nat.succ_ne_zero _ hN.symm
+    have hpred := usize_pred hn
+    rw [wordRun, dite_eq_right hn]
+    dsimp only
+    have hi : (idx + USize.ofNat 1).toNat = idx.toNat + 1 := usize_succ (by omega)
+    have hl : idx.toNat < buf.data.toList.length := by
+      have : buf.size = buf.data.size := rfl
+      simp only [Array.length_toList]
+      omega
+    rw [ih (n - USize.ofNat 1) _ _ _ _ _ _ _ _ _ (by omega), hi, hpred, hN, List.drop_eq_getElem_cons hl,
+      List.take_succ_cons, Nat.add_sub_cancel]
+    have hR : 2 ^ k ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
+    rw [putList.eq_2]
+    refine (putList_congr hk hm ?_ rfl).trans (putList_mask hk hm _ _ _ _ _ ?_)
+    · unfold ringWrite wput
+      refine uset_congr2 (USize.toNat_inj.mp ?_) (uget_list buf idx _)
+      rw [wix_toNat (Nat.lt_of_lt_of_le (mask_lt (i := wpos) hm) hR), USize.toNat_and, hm,
+        Nat.and_two_pow_sub_one_eq_mod, Nat.mod_eq_of_lt hwp]
+    · exact mask_mask hm _
+
+/-- `n` bytes of `t` from `p`, stored in the window from position `o` on, each at its masked position. -/
+def putRun (t : ByteArray) (ht : t.size < 2 ^ 24) (p n : USize) (h : p.toNat + n.toNat ≤ t.size) (ring : ByteArray)
+    (o : USize) (hs : ring.size = 2 ^ k) : ByteArray :=
+  if hn : n = 0 then ring
+  else
+    have hnz := usize_ne hn
+    have hp : (p + USize.ofNat 1).toNat = p.toNat + 1 := by exact usize_plus (by decide) (by omega)
+    have hq := usize_pred hn
+    putRun t ht (p + USize.ofNat 1) (n - USize.ofNat 1) (by rw [hp, hq]; omega)
+      (wput ring o mask hk hm hs (t.uget p (by omega))) (o + USize.ofNat 1)
+      (wput_size ring o mask hk hm hs _)
+termination_by n.toNat
+decreasing_by
+  have := usize_ne hn
+  omega
+
+theorem putRun_eq (t : ByteArray) (ht : t.size < 2 ^ 24) : ∀ (N : Nat) (p n : USize) (h : p.toNat + n.toNat ≤ t.size)
+    (ring : ByteArray) (o : USize) (hs : ring.size = 2 ^ k), n.toNat = N →
+    putRun hk hm t ht p n h ring o hs = putList hk hm ring o hs ((t.data.toList.drop p.toNat).take n.toNat) := by
+  intro N
+  induction N with
+  | zero =>
+    intro p n h ring o hs hN
+    rw [putRun, dite_eq_left (usize_zero hN), hN, List.take_zero]
+    rfl
+  | succ N ih =>
+    intro p n h ring o hs hN
+    have hn : n ≠ 0 := fun e => by rw [e] at hN; exact Nat.succ_ne_zero _ hN.symm
+    have hpred := usize_pred hn
+    have hp : (p + USize.ofNat 1).toNat = p.toNat + 1 := usize_plus (by decide) (by omega)
+    rw [putRun, dite_eq_right hn]
+    dsimp only
+    have hl : p.toNat < t.data.toList.length := by
+      have : t.size = t.data.size := rfl
+      simp only [Array.length_toList]
+      omega
+    rw [ih (p + USize.ofNat 1) (n - USize.ofNat 1) _ _ _ _ (by omega), hp, hpred, hN, List.drop_eq_getElem_cons hl,
+      List.take_succ_cons, Nat.add_sub_cancel]
+    rw [putList.eq_2]
+    exact putList_congr hk hm (congrArg (wput ring o mask hk hm hs) (uget_list t p _)) rfl
+
+theorem putRun_size (t : ByteArray) (ht : t.size < 2 ^ 24) (p n : USize) (h : p.toNat + n.toNat ≤ t.size)
+    (ring : ByteArray) (o : USize) (hs : ring.size = 2 ^ k) : (putRun hk hm t ht p n h ring o hs).size = 2 ^ k := by
+  rw [putRun_eq hk hm t ht _ p n h ring o hs rfl]
+  exact putList_size hk hm _ _ _ _
+
+theorem take_drop_length {t : ByteArray} {p n : Nat} (h : p + n ≤ t.size) :
+    ((t.data.toList.drop p).take n).length = n := by
+  have : t.size = t.data.size := rfl
+  simp only [List.length_take, List.length_drop, Array.length_toList]
+  omega
+
+private theorem data_push2 (b : ByteArray) (x y : UInt8) :
+    ((b.push x).push y).data.toList = b.data.toList ++ [x, y] := by
+  rw [data_push, data_push, List.append_assoc]
+  rfl
+
+private theorem data_push3 (b : ByteArray) (x y z : UInt8) :
+    (((b.push x).push y).push z).data.toList = b.data.toList ++ [x, y, z] := by
+  rw [data_push, data_push2, List.append_assoc]
+  rfl
+
+/-- What `fermentPush` adds to a buffer, stored in the window instead, from position `o` on. -/
+def fermentPut (t : ByteArray) (hs : t.size < 2 ^ 24) (pos n : USize) (h : pos.toNat + n.toNat ≤ t.size)
+    (hn : n.toNat ≠ 0) (ring : ByteArray) (o : USize) (hr : ring.size = 2 ^ k) : ByteArray :=
+  have h1 : (pos + USize.ofNat 1).toNat = pos.toNat + 1 := by exact usize_plus (by decide) (by omega)
+  have h2 : (pos + USize.ofNat 2).toNat = pos.toNat + 2 := by exact usize_plus (by decide) (by omega)
+  let b := t.uget pos (by omega)
+  if b < 192 then wput ring o mask hk hm hr (if 97 ≤ b ∧ b ≤ 122 then b ^^^ 32 else b)
+  else if b < 224 then
+    if hn1 : n.toNat = 1 then wput ring o mask hk hm hr b
+    else
+      wput (wput ring o mask hk hm hr b) (o + USize.ofNat 1) mask hk hm (wput_size ring o mask hk hm hr b)
+        (t.uget (pos + USize.ofNat 1) (by omega) ^^^ 32)
+  else
+    if hn1 : n.toNat = 1 then wput ring o mask hk hm hr b
+    else if hn2 : n.toNat = 2 then
+      wput (wput ring o mask hk hm hr b) (o + USize.ofNat 1) mask hk hm (wput_size ring o mask hk hm hr b)
+        (t.uget (pos + USize.ofNat 1) (by omega))
+    else
+      wput (wput (wput ring o mask hk hm hr b) (o + USize.ofNat 1) mask hk hm (wput_size ring o mask hk hm hr b)
+          (t.uget (pos + USize.ofNat 1) (by omega)))
+        (o + USize.ofNat 1 + USize.ofNat 1) mask hk hm (wput_size _ _ mask hk hm (wput_size ring o mask hk hm hr b) _)
+        (t.uget (pos + USize.ofNat 2) (by omega) ^^^ 5)
+
+/-- `fermentPut` stores what `fermentPush` adds. -/
+theorem fermentPut_mirror (t : ByteArray) (hs : t.size < 2 ^ 24) (pos n : USize) (h : pos.toNat + n.toNat ≤ t.size)
+    (hn : n.toNat ≠ 0) (buf ring : ByteArray) (o : USize) (hr : ring.size = 2 ^ k) :
+    ∃ L : List UInt8, (fermentPush t hs pos n buf h hn).data.toList = buf.data.toList ++ L ∧
+      fermentPut hk hm t hs pos n h hn ring o hr = putList hk hm ring o hr L ∧
+      L.length = (fermentUsed (t.uget pos (by omega)) n).toNat := by
+  have one : (USize.ofNat 1).toNat = 1 := usize_lit (by decide)
+  have two : (USize.ofNat 2).toNat = 2 := usize_lit (by decide)
+  have three : (USize.ofNat 3).toNat = 3 := usize_lit (by decide)
+  unfold fermentPush fermentPut fermentUsed
+  dsimp only
+  by_cases h192 : t.uget pos (by omega) < 192
+  · rw [ite_eq_left h192, ite_eq_left h192, ite_eq_left h192]
+    exact ⟨_, data_push _ _, rfl, by rw [one]; rfl⟩
+  · rw [ite_eq_right h192, ite_eq_right h192, ite_eq_right h192]
+    by_cases h224 : t.uget pos (by omega) < 224
+    · rw [ite_eq_left h224, ite_eq_left h224, ite_eq_left h224, usmin_toNat, two]
+      by_cases hn1 : n.toNat = 1
+      · rw [dite_eq_left hn1, dite_eq_left hn1]
+        exact ⟨_, data_push _ _, rfl, by simp only [List.length_singleton]; omega⟩
+      · rw [dite_eq_right hn1, dite_eq_right hn1]
+        exact ⟨_, data_push2 _ _ _, rfl, by simp only [List.length_cons, List.length_nil]; omega⟩
+    · rw [ite_eq_right h224, ite_eq_right h224, ite_eq_right h224, usmin_toNat, three]
+      by_cases hn1 : n.toNat = 1
+      · rw [dite_eq_left hn1, dite_eq_left hn1]
+        exact ⟨_, data_push _ _, rfl, by simp only [List.length_singleton]; omega⟩
+      · rw [dite_eq_right hn1, dite_eq_right hn1]
+        by_cases hn2 : n.toNat = 2
+        · rw [dite_eq_left hn2, dite_eq_left hn2]
+          exact ⟨_, data_push2 _ _ _, rfl, by simp only [List.length_cons, List.length_nil]; omega⟩
+        · rw [dite_eq_right hn2, dite_eq_right hn2]
+          exact ⟨_, data_push3 _ _ _ _, rfl, by simp only [List.length_cons, List.length_nil]; omega⟩
+
+theorem fermentPut_size (t : ByteArray) (hs : t.size < 2 ^ 24) (pos n : USize) (h : pos.toNat + n.toNat ≤ t.size)
+    (hn : n.toNat ≠ 0) (ring : ByteArray) (o : USize) (hr : ring.size = 2 ^ k) :
+    (fermentPut hk hm t hs pos n h hn ring o hr).size = 2 ^ k := by
+  obtain ⟨L, -, e, -⟩ := fermentPut_mirror hk hm t hs pos n h hn ByteArray.empty ring o hr
+  rw [e]
+  exact putList_size hk hm _ _ _ _
+
+/-- What `fermentRun` adds to a buffer, stored in the window instead, from position `o` on. -/
+def fermentRunPut (t : ByteArray) (hs : t.size < 2 ^ 24) (pos n : USize) (h : pos.toNat + n.toNat ≤ t.size)
+    (ring : ByteArray) (o : USize) (hr : ring.size = 2 ^ k) : ByteArray :=
+  if hn : n = 0 then ring
+  else
+    have hnz := usize_ne hn
+    have hu := fermentUsed_bounds (t.uget pos (by omega)) hnz
+    have hp : (pos + fermentUsed (t.uget pos (by omega)) n).toNat =
+        pos.toNat + (fermentUsed (t.uget pos (by omega)) n).toNat := by exact usize_add_small (by omega)
+    have hq : (n - fermentUsed (t.uget pos (by omega)) n).toNat =
+        n.toNat - (fermentUsed (t.uget pos (by omega)) n).toNat :=
+      USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr hu.2)
+    fermentRunPut t hs (pos + fermentUsed (t.uget pos (by omega)) n) (n - fermentUsed (t.uget pos (by omega)) n)
+      (by rw [hp, hq]; omega) (fermentPut hk hm t hs pos n h hnz ring o hr)
+      (o + fermentUsed (t.uget pos (by omega)) n) (fermentPut_size hk hm t hs pos n h hnz ring o hr)
+termination_by n.toNat
+decreasing_by
+  rw [hq]
+  omega
+
+/-- `fermentRunPut` stores what `fermentRun` adds. -/
+theorem fermentRunPut_mirror (t : ByteArray) (hs : t.size < 2 ^ 24) : ∀ (N : Nat) (pos n : USize)
+    (h : pos.toNat + n.toNat ≤ t.size), n.toNat = N → ∀ (buf ring : ByteArray) (o : USize) (hr : ring.size = 2 ^ k),
+    ∃ L : List UInt8, (fermentRun t hs pos n buf h).data.toList = buf.data.toList ++ L ∧
+      fermentRunPut hk hm t hs pos n h ring o hr = putList hk hm ring o hr L ∧ L.length = n.toNat := by
+  intro N
+  induction N using Nat.strongRecOn with
+  | ind N ih =>
+    intro pos n h hN buf ring o hr
+    rw [fermentRun, fermentRunPut]
+    by_cases hn : n = 0
+    · rw [dite_eq_left hn, dite_eq_left hn]
+      exact ⟨[], by rw [List.append_nil], rfl, by rw [hn]; rfl⟩
+    · rw [dite_eq_right hn, dite_eq_right hn]
+      have hnz := usize_ne hn
+      obtain ⟨L1, e1, p1, l1⟩ := fermentPut_mirror hk hm t hs pos n h hnz buf ring o hr
+      have hu := fermentUsed_bounds (t.uget pos (by omega)) hnz
+      have hq : (n - fermentUsed (t.uget pos (by omega)) n).toNat =
+          n.toNat - (fermentUsed (t.uget pos (by omega)) n).toNat :=
+        USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr hu.2)
+      have hp : (pos + fermentUsed (t.uget pos (by omega)) n).toNat =
+          pos.toNat + (fermentUsed (t.uget pos (by omega)) n).toNat := usize_add_small (by omega)
+      obtain ⟨L2, e2, p2, l2⟩ := ih (n - fermentUsed (t.uget pos (by omega)) n).toNat (by rw [hq]; omega)
+        (pos + fermentUsed (t.uget pos (by omega)) n) (n - fermentUsed (t.uget pos (by omega)) n)
+        (by rw [hp, hq]; omega) rfl (fermentPush t hs pos n buf h hnz)
+        (fermentPut hk hm t hs pos n h hnz ring o hr) (o + fermentUsed (t.uget pos (by omega)) n)
+        (fermentPut_size hk hm t hs pos n h hnz ring o hr)
+      refine ⟨L1 ++ L2, by rw [e2, e1, List.append_assoc], ?_, by rw [List.length_append, l1, l2, hq]; omega⟩
+      rw [p2, putList_append]
+      exact putList_congr hk hm p1 (by rw [l1, USize.ofNat_toNat])
+
+/-- How many bytes the transform's elementary part leaves of a word of `len` bytes. -/
+@[inline] def elemLen (kind k : UInt8) (len : USize) : USize :=
+  if kind < 3 then len else len - usmin len k.toUSize
+
+/-- What `elementStep` adds to a buffer, stored in the window instead, from position `o` on. -/
+def elemPut (t : ByteArray) (hs : t.size < 2 ^ 24) (kind amt : UInt8) (off len : USize)
+    (h : off.toNat + len.toNat ≤ t.size) (ring : ByteArray) (o : USize) (hr : ring.size = 2 ^ k) : ByteArray :=
+  if kind = 0 then putRun hk hm t hs off len h ring o hr
+  else if kind = 1 then
+    if hn : len = 0 then ring
+    else
+      have hnz := usize_ne hn
+      have hu := fermentUsed_bounds (t.uget off (by omega)) hnz
+      have hp : (off + fermentUsed (t.uget off (by omega)) len).toNat =
+          off.toNat + (fermentUsed (t.uget off (by omega)) len).toNat := by exact usize_add_small (by omega)
+      have hq : (len - fermentUsed (t.uget off (by omega)) len).toNat =
+          len.toNat - (fermentUsed (t.uget off (by omega)) len).toNat :=
+        USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr hu.2)
+      putRun hk hm t hs (off + fermentUsed (t.uget off (by omega)) len) (len - fermentUsed (t.uget off (by omega)) len)
+        (by rw [hp, hq]; omega) (fermentPut hk hm t hs off len h hnz ring o hr)
+        (o + fermentUsed (t.uget off (by omega)) len) (fermentPut_size hk hm t hs off len h hnz ring o hr)
+  else if kind = 2 then fermentRunPut hk hm t hs off len h ring o hr
+  else if kind = 3 then
+    have hmin : (usmin len amt.toUSize).toNat = min len.toNat amt.toNat := by rw [usmin_toNat, u8_usize]
+    have hub : amt.toNat < 256 := amt.toNat_lt
+    have hp : (off + usmin len amt.toUSize).toNat = off.toNat + min len.toNat amt.toNat := by
+      rw [usize_add_small (by rw [hmin]; omega), hmin]
+    have hq : (len - usmin len amt.toUSize).toNat = len.toNat - min len.toNat amt.toNat := by
+      rw [USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr (by rw [hmin]; omega)), hmin]
+    putRun hk hm t hs (off + usmin len amt.toUSize) (len - usmin len amt.toUSize) (by rw [hp, hq]; omega) ring o hr
+  else
+    have hmin : (usmin len amt.toUSize).toNat = min len.toNat amt.toNat := by rw [usmin_toNat, u8_usize]
+    have hq : (len - usmin len amt.toUSize).toNat = len.toNat - min len.toNat amt.toNat := by
+      rw [USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr (by rw [hmin]; omega)), hmin]
+    putRun hk hm t hs off (len - usmin len amt.toUSize) (by rw [hq]; omega) ring o hr
+
+/-- `elemPut` stores what `elementStep` adds. -/
+theorem elemPut_mirror (t : ByteArray) (hs : t.size < 2 ^ 24) (kind amt : UInt8) (off len : USize)
+    (h : off.toNat + len.toNat ≤ t.size) (buf ring : ByteArray) (o : USize) (hr : ring.size = 2 ^ k) :
+    ∃ L : List UInt8, (elementStep t hs kind amt off len buf h).data.toList = buf.data.toList ++ L ∧
+      elemPut hk hm t hs kind amt off len h ring o hr = putList hk hm ring o hr L ∧
+      L.length = (elemLen kind amt len).toNat := by
+  have hmin : (usmin len amt.toUSize).toNat = min len.toNat amt.toNat := by rw [usmin_toNat, u8_usize]
+  have hub : amt.toNat < 256 := amt.toNat_lt
+  have hq : (len - usmin len amt.toUSize).toNat = len.toNat - min len.toNat amt.toNat := by
+    rw [USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr (by rw [hmin]; omega)), hmin]
+  unfold elementStep elemPut elemLen
+  by_cases h0 : kind = 0
+  · subst h0
+    rw [ite_eq_left rfl, ite_eq_left rfl, ite_eq_left (show (0 : UInt8) < 3 by decide), emitRun_data _ _ h,
+      putRun_eq hk hm t hs _ off len h ring o hr rfl]
+    exact ⟨_, rfl, rfl, take_drop_length h⟩
+  rw [ite_eq_right h0, ite_eq_right h0]
+  by_cases h1 : kind = 1
+  · subst h1
+    rw [ite_eq_left rfl, ite_eq_left rfl, ite_eq_left (show (1 : UInt8) < 3 by decide)]
+    by_cases hn : len = 0
+    · rw [dite_eq_left hn, dite_eq_left hn]
+      exact ⟨[], by rw [List.append_nil], rfl, by rw [hn]; rfl⟩
+    · rw [dite_eq_right hn, dite_eq_right hn]
+      dsimp only
+      have hnz := usize_ne hn
+      obtain ⟨L1, e1, p1, l1⟩ := fermentPut_mirror hk hm t hs off len h hnz buf ring o hr
+      have hu := fermentUsed_bounds (t.uget off (by omega)) hnz
+      have hp : (off + fermentUsed (t.uget off (by omega)) len).toNat =
+          off.toNat + (fermentUsed (t.uget off (by omega)) len).toNat := usize_add_small (by omega)
+      have hq' : (len - fermentUsed (t.uget off (by omega)) len).toNat =
+          len.toNat - (fermentUsed (t.uget off (by omega)) len).toNat :=
+        USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr hu.2)
+      refine ⟨L1 ++ (t.data.toList.drop (off + fermentUsed (t.uget off (by omega)) len).toNat).take
+        (len - fermentUsed (t.uget off (by omega)) len).toNat, ?_, ?_, ?_⟩
+      · rw [emitRun_data _ _ (by rw [hp, hq']; omega), e1, List.append_assoc]
+      · rw [putRun_eq hk hm t hs _ _ _ _ _ _ _ rfl, putList_append]
+        exact putList_congr hk hm p1 (by rw [l1, USize.ofNat_toNat])
+      · rw [List.length_append, take_drop_length (by rw [hp, hq']; omega), l1, hq']
+        omega
+  rw [ite_eq_right h1, ite_eq_right h1]
+  by_cases h2 : kind = 2
+  · subst h2
+    rw [ite_eq_left rfl, ite_eq_left rfl, ite_eq_left (show (2 : UInt8) < 3 by decide)]
+    exact fermentRunPut_mirror hk hm t hs _ off len h rfl buf ring o hr
+  rw [ite_eq_right h2, ite_eq_right h2]
+  have hk3 : ¬ kind < 3 := fun e => by
+    have e' := UInt8.lt_iff_toNat_lt.mp e
+    have a0 : kind.toNat ≠ 0 := fun x => h0 (UInt8.toNat_inj.mp (by rw [x]; rfl))
+    have a1 : kind.toNat ≠ 1 := fun x => h1 (UInt8.toNat_inj.mp (by rw [x]; rfl))
+    have a2 : kind.toNat ≠ 2 := fun x => h2 (UInt8.toNat_inj.mp (by rw [x]; rfl))
+    rw [show (3 : UInt8).toNat = 3 from rfl] at e'
+    omega
+  rw [ite_eq_right hk3]
+  by_cases h3 : kind = 3
+  · subst h3
+    rw [ite_eq_left rfl, ite_eq_left rfl]
+    dsimp only
+    have hp : (off + usmin len amt.toUSize).toNat = off.toNat + min len.toNat amt.toNat := by
+      rw [usize_add_small (by rw [hmin]; omega), hmin]
+    rw [emitRun_data _ _ (by rw [hp, hq]; omega), putRun_eq hk hm t hs _ _ _ _ _ _ _ rfl]
+    exact ⟨_, rfl, rfl, take_drop_length (by rw [hp, hq]; omega)⟩
+  · rw [ite_eq_right h3, ite_eq_right h3]
+    rw [emitRun_data _ _ (by rw [hq]; omega), putRun_eq hk hm t hs _ _ _ _ _ _ _ rfl]
+    exact ⟨_, rfl, rfl, take_drop_length (by rw [hq]; omega)⟩
+
+theorem elemPut_size (t : ByteArray) (hs : t.size < 2 ^ 24) (kind amt : UInt8) (off len : USize)
+    (h : off.toNat + len.toNat ≤ t.size) (ring : ByteArray) (o : USize) (hr : ring.size = 2 ^ k) :
+    (elemPut hk hm t hs kind amt off len h ring o hr).size = 2 ^ k := by
+  obtain ⟨L, -, e, -⟩ := elemPut_mirror hk hm t hs kind amt off len h ByteArray.empty ring o hr
+  rw [e]
+  exact putList_size hk hm _ _ _ _
+
+end
+
 theorem base_toNat {id : USize} (hid : id.toNat < 121) : (id * USize.ofNat 32).toNat = 32 * id.toNat := by
   rw [USize.toNat_mul, usize_lit (by decide), Nat.mul_comm, ← USize.size_eq_two_pow]
   have := USize.le_size
@@ -759,7 +1191,7 @@ theorem lt121 {t : UInt64} (h : t < 121) : t.toNat < 121 := by
 def dictValid (clen wordId : UInt64) : Prop :=
   ∃ h : 4 ≤ clen ∧ clen ≤ 24, dictTid (lenRow clen (lt25 h)) wordId < 121
 
-instance (clen wordId : UInt64) : Decidable (dictValid clen wordId) :=
+@[inline] instance (clen wordId : UInt64) : Decidable (dictValid clen wordId) :=
   if h : 4 ≤ clen ∧ clen ≤ 24 then
     if ht : dictTid (lenRow clen (lt25 h)) wordId < 121 then isTrue ⟨h, ht⟩
     else isFalse fun ⟨_, e⟩ => ht e
@@ -820,6 +1252,20 @@ theorem dict_parts {clen wordId row : UInt64} (h4 : 4 ≤ clen.toNat) (h24 : cle
   · rw [hoff]
     unfold wordOffset
     omega
+
+/-- A valid dictionary reference's word ID is below `2 ^ 18`: one of 121 transforms of at most `2 ^ 11` words. -/
+theorem dictValid_lt {clen wordId : UInt64} (h : dictValid clen wordId) : wordId.toNat < 2 ^ 18 := by
+  obtain ⟨hc, ht⟩ := h
+  have hl := lt25 hc
+  obtain ⟨h1, -, -⟩ := dict_parts (wordId := wordId) (ge4 hc) (by omega) (lenRow_fields hl).1 (lenRow_fields hl).2
+  have ht' := lt121 ht
+  rw [h1, Nat.shiftRight_eq_div_pow] at ht'
+  have hp : 2 ^ NDBITS.getD clen.toNat 0 ≤ 2 ^ 11 := Nat.pow_le_pow_right (by decide) (len_small _ hl).1
+  have hw := (Nat.div_lt_iff_lt_mul (Nat.two_pow_pos _)).mp ht'
+  have hm := Nat.mul_le_mul_left 121 hp
+  have h11 : (2 : Nat) ^ 11 = 2048 := rfl
+  have h18 : (2 : Nat) ^ 18 = 262144 := rfl
+  omega
 
 theorem dictBytes_small : dictBytes.size < 2 ^ 24 := by
   rw [dictBytes_size]
@@ -890,5 +1336,929 @@ theorem dictBuild_spec {clen wordId : UInt64} {distance maxDistance : Nat} (hw :
           · exact absurd ⟨UInt64.le_iff_toNat_le.mpr (by rw [show (4 : UInt64).toNat = 4 from rfl]; exact h1),
               UInt64.le_iff_toNat_le.mpr (by rw [show (24 : UInt64).toNat = 24 from rfl]; exact h2)⟩ hc
       rw [ite_eq_left hout]
+
+/-! ### A word's length, and the word written straight into the window
+
+The fast command loop takes a dictionary word itself: its length from the transform's row alone (`dictLen`), and its
+bytes stored straight into the window (`dictPutW`), with no word built. `dictLen_eq` proves the length the built word's.
+`dictPutW_spec` proves the window the one `putList` leaves with the built word, but perhaps for the 8 bytes after it;
+`wordRun_put` shows `putList` is what the step machine's word loop leaves.
+-/
+
+/-- A byte of a transform's row. -/
+private theorem row_at {id : USize} (hid : id.toNat < 121) {j : Nat} (hj : j < 32) :
+    (id * USize.ofNat 32 + USize.ofNat j).toNat = 32 * id.toNat + j ∧ 32 * id.toNat + j < transLut.size := by
+  have hb := base_toNat hid
+  have hsz := transLut_size
+  rw [usize_plus (by omega) (by omega), hb]
+  exact ⟨rfl, by omega⟩
+
+/-- A transform's prefix and suffix lengths, as the row holds them, are 13 bytes at most together. -/
+private theorem affix_uget {id : USize} (hid : id.toNat < 121) (h2 : (id * USize.ofNat 32 + USize.ofNat 2).toNat < transLut.size)
+    (h3 : (id * USize.ofNat 32 + USize.ofNat 3).toNat < transLut.size) :
+    (transLut.uget (id * USize.ofNat 32 + USize.ofNat 2) h2).toNat +
+      (transLut.uget (id * USize.ofNat 32 + USize.ofNat 3) h3).toNat ≤ 13 := by
+  have e : ∀ (i : USize) (hi : i.toNat < transLut.size), transLut.uget i hi = transLut.data[i.toNat]?.getD 0 := by
+    intro i hi
+    generalize transLut = t at hi
+    cases t with
+    | mk bs =>
+      have h' : i.toNat < bs.size := hi
+      show bs[i.toNat]'h' = (bs[i.toNat]?).getD 0
+      rw [Array.getElem?_eq_getElem h']
+      rfl
+  rw [e, e, (row_at hid (j := 2) (by decide)).1, (row_at hid (j := 3) (by decide)).1]
+  exact affix_le hid
+
+theorem row_lt {id : USize} (hid : id.toNat < 121) {j : Nat} (hj : j < 32) :
+    (id * USize.ofNat 32 + USize.ofNat j).toNat < transLut.size := by
+  rw [(row_at hid hj).1]
+  exact (row_at hid hj).2
+
+theorem base_lt {id : USize} (hid : id.toNat < 121) : (id * USize.ofNat 32).toNat < transLut.size := by
+  have := base_toNat hid
+  have := transLut_size
+  omega
+
+private theorem u8_ofNat (x : UInt8) : x.toUSize = USize.ofNat x.toNat :=
+  USize.toNat_inj.mp (by rw [u8_usize, usize_lit (by have := x.toNat_lt; omega)])
+
+theorem elemLen_le (kind amt : UInt8) (len : USize) : (elemLen kind amt len).toNat ≤ len.toNat := by
+  unfold elemLen
+  split
+  · exact Nat.le_refl _
+  · rw [USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr (by rw [usmin_toNat]; omega))]
+    omega
+
+/-- The length of a word from its transform's fields: prefix, elementary part and suffix. -/
+@[inline] def wordLenF (kind amt pl sl : UInt8) (len : USize) : USize :=
+  pl.toUSize + elemLen kind amt len + sl.toUSize
+
+/-- The length of the word of transform `id` on a base word of `len` bytes. -/
+@[inline] def wordLenB (id len : USize) (hid : id.toNat < 121) : USize :=
+  wordLenF (transLut.uget (id * USize.ofNat 32) (base_lt hid))
+    (transLut.uget (id * USize.ofNat 32 + USize.ofNat 1) (row_lt hid (by decide)))
+    (transLut.uget (id * USize.ofNat 32 + USize.ofNat 2) (row_lt hid (by decide)))
+    (transLut.uget (id * USize.ofNat 32 + USize.ofNat 3) (row_lt hid (by decide))) len
+
+section
+variable {mask : USize} {k : Nat} (hk : k ≤ 24) (hm : mask.toNat = 2 ^ k - 1)
+
+/-- A word stored in the window from position `o` on, from its transform's fields (the row at `base`): the prefix, the
+elementary part on the base word, the suffix. -/
+def wordPutF (base off len : USize) (kind amt pl sl : UInt8)
+    (hB : (base + USize.ofNat 4).toNat + pl.toNat + sl.toNat ≤ transLut.size)
+    (h : off.toNat + len.toNat ≤ dictBytes.size) (hs : dictBytes.size < 2 ^ 24) (ring : ByteArray) (o : USize)
+    (hr : ring.size = 2 ^ k) : ByteArray :=
+  have hsz := transLut_size
+  have hlt : transLut.size < 2 ^ 24 := by omega
+  have hpl : pl.toUSize.toNat = pl.toNat := by exact u8_usize pl
+  have hsl : sl.toUSize.toNat = sl.toNat := by exact u8_usize sl
+  have hp4 : (base + USize.ofNat 4 + pl.toUSize).toNat = (base + USize.ofNat 4).toNat + pl.toNat := by
+    rw [usize_add_small (by rw [hpl]; omega), hpl]
+  let r0 := putRun hk hm transLut hlt (base + USize.ofNat 4) pl.toUSize (by rw [hpl]; omega) ring o hr
+  let r1 := elemPut hk hm dictBytes hs kind amt off len h r0 (o + pl.toUSize) (putRun_size hk hm _ _ _ _ _ _ _ _)
+  putRun hk hm transLut hlt (base + USize.ofNat 4 + pl.toUSize) sl.toUSize (by rw [hp4, hsl]; omega) r1
+    (o + pl.toUSize + elemLen kind amt len) (elemPut_size hk hm _ _ _ _ _ _ _ _ _ _)
+
+/-- `wordPutF` stores the word `buildWord` builds from the same fields, and `wordLenF` is its length. -/
+theorem wordPutF_eq (base off len : USize) (kind amt pl sl : UInt8)
+    (hB : (base + USize.ofNat 4).toNat + pl.toNat + sl.toNat ≤ transLut.size)
+    (h : off.toNat + len.toNat ≤ dictBytes.size) (hs : dictBytes.size < 2 ^ 24) (ring : ByteArray) (o : USize)
+    (hr : ring.size = 2 ^ k) :
+    let w := emitRun transLut (elementStep dictBytes hs kind amt off len
+      (emitRun transLut (freshBytes 38) (base + USize.ofNat 4).toNat pl.toNat) h) (base + USize.ofNat 4 + pl.toUSize).toNat
+      sl.toNat
+    wordPutF hk hm base off len kind amt pl sl hB h hs ring o hr = putList hk hm ring o hr w.data.toList ∧
+      (wordLenF kind amt pl sl len).toNat = w.size := by
+  intro w
+  have hsz := transLut_size
+  have hlt : transLut.size < 2 ^ 24 := by omega
+  have hpl : pl.toUSize.toNat = pl.toNat := u8_usize pl
+  have hsl : sl.toUSize.toNat = sl.toNat := u8_usize sl
+  have hp4 : (base + USize.ofNat 4 + pl.toUSize).toNat = (base + USize.ofNat 4).toNat + pl.toNat := by
+    rw [usize_add_small (by rw [hpl]; omega), hpl]
+  have hP := emitRun_data transLut (freshBytes 38) (start := (base + USize.ofNat 4).toNat) (len := pl.toNat)
+    (by omega)
+  have hfresh : (freshBytes 38).data.toList = [] := rfl
+  rw [hfresh, List.nil_append] at hP
+  have hr0 := putRun_size hk hm transLut hlt (base + USize.ofNat 4) pl.toUSize (by rw [hpl]; omega) ring o hr
+  obtain ⟨E, eE, pE, lE⟩ := elemPut_mirror hk hm dictBytes hs kind amt off len h
+    (emitRun transLut (freshBytes 38) (base + USize.ofNat 4).toNat pl.toNat)
+    (putRun hk hm transLut hlt (base + USize.ofNat 4) pl.toUSize (by rw [hpl]; omega) ring o hr) (o + pl.toUSize) hr0
+  have hS := emitRun_data transLut (elementStep dictBytes hs kind amt off len
+    (emitRun transLut (freshBytes 38) (base + USize.ofNat 4).toNat pl.toNat) h)
+    (start := (base + USize.ofNat 4 + pl.toUSize).toNat) (len := sl.toNat) (by rw [hp4]; omega)
+  rw [eE, hP] at hS
+  have lP : ((transLut.data.toList.drop (base + USize.ofNat 4).toNat).take pl.toNat).length = pl.toNat :=
+    take_drop_length (by omega)
+  have lS : ((transLut.data.toList.drop (base + USize.ofNat 4 + pl.toUSize).toNat).take sl.toNat).length = sl.toNat :=
+    take_drop_length (by rw [hp4]; omega)
+  have hel := elemLen_le kind amt len
+  have hd : dictBytes.size < 2 ^ 24 := hs
+  refine ⟨?_, ?_⟩
+  · show _ = putList hk hm ring o hr w.data.toList
+    unfold wordPutF
+    dsimp only
+    rw [show w.data.toList = _ from hS, putList_append,
+      putRun_eq hk hm transLut hlt _ (base + USize.ofNat 4 + pl.toUSize) sl.toUSize _ _ _ _ rfl, hsl]
+    refine putList_congr hk hm ?_ ?_
+    · rw [pE, putList_append]
+      refine putList_congr hk hm ((putRun_eq hk hm transLut hlt _ _ _ _ _ _ _ rfl).trans (by rw [hpl])) ?_
+      rw [lP, ← u8_ofNat]
+    · rw [List.length_append, USize.ofNat_add, lP, lE, USize.ofNat_toNat, ← u8_ofNat, USize.add_assoc]
+  · show _ = w.data.size
+    rw [← Array.length_toList, show w.data.toList = _ from hS, List.length_append, List.length_append, lP, lE, lS]
+    unfold wordLenF
+    rw [usize_add_small (by rw [usize_add_small (by rw [hpl]; omega), hpl, hsl]; omega),
+      usize_add_small (by rw [hpl]; omega), hpl, hsl]
+
+end
+
+/-! ### The word in 8-byte blocks
+
+Where the word and the 8 bytes after it fit before the window's end, the word is written in 8-byte blocks, each one load
+from `transLut` or `dictBytes` and one store in the window: the prefix, the base word and the suffix, each part from the
+exact end of the one before, so that only the last part's overrun stays, in the 8 bytes after the word (`WritesJ`). -/
+
+/-- A run of `n` bytes of `t` from `p`. -/
+@[reducible] def runBytes (t : ByteArray) (p n : Nat) : List UInt8 := (t.data.toList.drop p).take n
+
+theorem runBytes_add (t : ByteArray) (p a b : Nat) :
+    runBytes t p (a + b) = runBytes t p a ++ runBytes t (p + a) b := by
+  unfold runBytes
+  rw [List.take_add, List.drop_drop]
+
+theorem runBytes_length {t : ByteArray} {p n : Nat} (h : p + n ≤ t.size) : (runBytes t p n).length = n :=
+  take_drop_length h
+
+theorem runBytes_8 {t : ByteArray} {p n : Nat} (h : 8 ≤ n) :
+    runBytes t p 8 ++ runBytes t (p + 8) (n - 8) = runBytes t p n := by
+  rw [← runBytes_add]
+  congr 1
+  omega
+
+theorem runBytes_get {t : ByteArray} {p n j : Nat} (hj : j < n) : (runBytes t p n)[j]? = t.data[p + j]? := by
+  unfold runBytes
+  rw [List.getElem?_take, ite_eq_left hj, List.getElem?_drop, Array.getElem?_toList]
+
+/-- `R'` holds the bytes `X` from window index `i` on, perhaps other bytes in the 8 after them, and `R`'s bytes
+elsewhere. -/
+def WritesJ (R R' : ByteArray) (i : Nat) (X : List UInt8) : Prop :=
+  R'.size = R.size ∧ ∀ q, (i ≤ q → q < i + X.length → R'.data[q]? = X[q - i]?) ∧
+    (q < i ∨ i + X.length + 8 ≤ q → R'.data[q]? = R.data[q]?)
+
+theorem WritesJ.refl (R : ByteArray) (i : Nat) : WritesJ R R i [] :=
+  ⟨rfl, fun _ => ⟨fun h1 h2 => absurd h2 (by simp only [List.length_nil]; omega), fun _ => rfl⟩⟩
+
+/-- A window index `≤` a small literal. -/
+theorem usize_le_lit {n : USize} {c : Nat} (hc : c < 2 ^ 32) : n ≤ USize.ofNat c ↔ n.toNat ≤ c := by
+  rw [USize.le_iff_toNat_le, fastLit hc]
+
+theorem WritesJ.of_eq {R R' : ByteArray} {i : Nat} {X Y : List UInt8} (h : WritesJ R R' i X) (e : X = Y) :
+    WritesJ R R' i Y := e ▸ h
+
+theorem WritesJ.trans {R R1 R2 : ByteArray} {i j : Nat} {X Y : List UInt8} (h1 : WritesJ R R1 i X)
+    (h2 : WritesJ R1 R2 j Y) (hj : j = i + X.length) : WritesJ R R2 i (X ++ Y) := by
+  subst hj
+  refine ⟨h2.1.trans h1.1, fun q => ⟨fun hq1 hq2 => ?_, fun hq => ?_⟩⟩
+  · rw [List.length_append] at hq2
+    by_cases hx : q < i + X.length
+    · rw [(h2.2 q).2 (Or.inl hx), (h1.2 q).1 hq1 hx, List.getElem?_append_left (by omega)]
+    · rw [(h2.2 q).1 (by omega) (by omega), List.getElem?_append_right (by omega)]
+      congr 1
+      omega
+  · rw [List.length_append] at hq
+    rw [(h2.2 q).2 (by omega), (h1.2 q).2 (by omega)]
+
+/-- A write of exactly `X` from `i`. -/
+theorem WritesJ.exact {R R' : ByteArray} {i : Nat} {X : List UInt8} (hs : R'.size = R.size)
+    (h : ∀ q, R'.data[q]? = if i ≤ q ∧ q < i + X.length then X[q - i]? else R.data[q]?) : WritesJ R R' i X :=
+  ⟨hs, fun q => ⟨fun h1 h2 => by rw [h q, ite_eq_left ⟨h1, h2⟩],
+    fun hq => by rw [h q, ite_eq_right (show ¬ (i ≤ q ∧ q < i + X.length) by omega)]⟩⟩
+
+private theorem uset_get' (t : ByteArray) (i : USize) (v : UInt8) (h : i.toNat < t.size) (q : Nat) :
+    (t.uset i v h).data[q]? = if q = i.toNat then some v else t.data[q]? := by
+  by_cases hq : q = i.toNat
+  · subst hq
+    rw [ite_eq_left rfl]
+    have hs : i.toNat < (t.uset i v h).data.size := by
+      show i.toNat < (t.uset i v h).size
+      rw [size_uset']
+      exact h
+    have e := uset_get_same (v := v) h
+    cases hx : (t.uset i v h).data[i.toNat]? with
+    | none => exact absurd hx (by rw [Array.getElem?_eq_getElem hs]; simp)
+    | some x =>
+      rw [hx] at e
+      exact congrArg some e
+  · rw [ite_eq_right hq, uset_get_ne h hq]
+
+section
+variable {mask : USize} {k : Nat} (hk : k ≤ 24) (hm : mask.toNat = 2 ^ k - 1)
+
+include hk hm in
+/-- The window index of `o + c`. -/
+theorem add_mask_toNat (o c : USize) : ((o + c) &&& mask).toNat = ((o &&& mask).toNat + c.toNat) % 2 ^ k := by
+  have hb : k ≤ System.Platform.numBits := by rcases System.Platform.numBits_eq with h | h <;> omega
+  have hd : 2 ^ k ∣ 2 ^ System.Platform.numBits := Nat.pow_dvd_pow 2 hb
+  rw [USize.toNat_and, USize.toNat_and, hm, Nat.and_two_pow_sub_one_eq_mod, Nat.and_two_pow_sub_one_eq_mod,
+    USize.toNat_add, Nat.mod_mod_of_dvd _ hd, Nat.mod_add_mod]
+
+/-- The bytes `putList` stores, where they don't reach the window's end. -/
+theorem putList_get : ∀ (l : List UInt8) (ring : ByteArray) (o : USize) (hs : ring.size = 2 ^ k),
+    (o &&& mask).toNat + l.length ≤ 2 ^ k → ∀ q, (putList hk hm ring o hs l).data[q]? =
+      if (o &&& mask).toNat ≤ q ∧ q < (o &&& mask).toNat + l.length then l[q - (o &&& mask).toNat]? else ring.data[q]?
+  | [], ring, o, hs, _, q => by
+    rw [ite_eq_right (by simp)]
+    rfl
+  | x :: l, ring, o, hs, hb, q => by
+    have hR : 2 ^ k ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
+    have hlt := mask_lt (i := o) hm
+    have hw : ∀ q, (wput ring o mask hk hm hs x).data[q]? =
+        if q = (o &&& mask).toNat then some x else ring.data[q]? := by
+      intro q
+      unfold wput
+      rw [uset_get', wix_toNat (by omega)]
+    have h1 : (USize.ofNat 1).toNat = 1 := usize_lit (by decide)
+    have hn : ((o + USize.ofNat 1) &&& mask).toNat = ((o &&& mask).toNat + 1) % 2 ^ k := by
+      rw [add_mask_toNat hk hm, h1]
+    rw [putList.eq_2]
+    simp only [List.length_cons] at hb ⊢
+    by_cases hl : l = []
+    · subst hl
+      rw [putList.eq_1, hw]
+      by_cases hq : q = (o &&& mask).toNat
+      · rw [ite_eq_left hq, ite_eq_left ⟨by omega, by simp only [List.length_nil]; omega⟩, hq, Nat.sub_self]
+        rfl
+      · rw [ite_eq_right hq, ite_eq_right (fun hc => hq (by simp only [List.length_nil] at hc; omega))]
+    · have hlen : 1 ≤ l.length := by
+        cases l with
+        | nil => exact absurd rfl hl
+        | cons _ _ => simp
+      have hn' : ((o + USize.ofNat 1) &&& mask).toNat = (o &&& mask).toNat + 1 := by
+        rw [hn, Nat.mod_eq_of_lt (by omega)]
+      rw [putList_get l _ _ _ (by rw [hn']; omega) q, hn', hw]
+      by_cases hin : (o &&& mask).toNat + 1 ≤ q ∧ q < (o &&& mask).toNat + 1 + l.length
+      · rw [ite_eq_left hin, ite_eq_left (by omega),
+          show q - (o &&& mask).toNat = (q - ((o &&& mask).toNat + 1)) + 1 by omega, List.getElem?_cons_succ]
+      · rw [ite_eq_right hin]
+        by_cases hq : q = (o &&& mask).toNat
+        · rw [ite_eq_left hq, ite_eq_left (by omega), hq, Nat.sub_self, List.getElem?_cons_zero]
+        · rw [ite_eq_right hq, ite_eq_right (by omega)]
+
+/-- `putList`, where it doesn't reach the window's end, writes exactly its bytes. -/
+theorem putList_writes (l : List UInt8) (ring : ByteArray) (o : USize) (hs : ring.size = 2 ^ k)
+    (h : (o &&& mask).toNat + l.length ≤ 2 ^ k) : WritesJ ring (putList hk hm ring o hs l) (o &&& mask).toNat l :=
+  WritesJ.exact ((putList_size hk hm l ring o hs).trans hs.symm) (putList_get hk hm l ring o hs h)
+
+end
+
+private theorem leList_toNat (v : UInt64) : ∀ (n j : Nat), j < n →
+    ((leList v n)[j]?).map UInt8.toNat = some (v.toNat / 256 ^ j % 256)
+  | 0, _, h => absurd h (by omega)
+  | n + 1, 0, _ => by
+    rw [leList, List.getElem?_cons_zero]
+    show some v.toUInt8.toNat = _
+    rw [UInt64.toNat_toUInt8, Nat.pow_zero, Nat.div_one]
+  | n + 1, j + 1, h => by
+    rw [leList, List.getElem?_cons_succ, leList_toNat (v >>> 8) n j (by omega)]
+    congr 1
+    rw [UInt64.toNat_shiftRight, show (8 : UInt64).toNat % 64 = 8 from rfl, Nat.shiftRight_eq_div_pow,
+      show (2 : Nat) ^ 8 = 256 from rfl, Nat.div_div_eq_div_mul, ← Nat.pow_succ']
+
+private theorem leAt_byteD (t : ByteArray) : ∀ (n i j : Nat), j < n → (leAt t i n / 256 ^ j) % 256 = byteN t (i + j)
+  | 0, _, _, h => absurd h (by omega)
+  | n + 1, i, 0, _ => by
+    rw [leAt, Nat.pow_zero, Nat.div_one]
+    show _ = byteN t i
+    have := byteN_lt t i
+    omega
+  | n + 1, i, j + 1, h => by
+    rw [leAt, Nat.pow_succ, Nat.mul_comm (256 ^ j) 256, ← Nat.div_div_eq_div_mul]
+    have hb := byteN_lt t i
+    have : (byteN t i + 256 * leAt t (i + 1) n) / 256 = leAt t (i + 1) n := by omega
+    rw [this, leAt_byteD t n (i + 1) j (by omega)]
+    congr 1
+    omega
+
+/-- 8 bytes of `t` from `p`, stored at window index `i`: one 8-byte load and one 8-byte store. -/
+@[inline] def blk (t : ByteArray) (p : USize) (hp : p.toNat + 8 ≤ t.size) (h32 : t.size < 2 ^ 32) (ring : ByteArray)
+    (i : USize) (hi : i.toNat + 8 ≤ ring.size) (h24 : ring.size ≤ 2 ^ 24) : ByteArray :=
+  store64 ring (wix i) (load64 t p hp h32) (by rw [wix_toNat (by omega)]; exact hi)
+
+theorem blk_size (t : ByteArray) (p : USize) (hp : p.toNat + 8 ≤ t.size) (h32 : t.size < 2 ^ 32) (ring : ByteArray)
+    (i : USize) (hi : i.toNat + 8 ≤ ring.size) (h24 : ring.size ≤ 2 ^ 24) :
+    (blk t p hp h32 ring i hi h24).size = ring.size :=
+  storeLE_size _ _ _ _ (by rw [wix_toNat (by omega)]; exact hi)
+
+theorem blk_get (t : ByteArray) (p : USize) (hp : p.toNat + 8 ≤ t.size) (h32 : t.size < 2 ^ 32) (ring : ByteArray)
+    (i : USize) (hi : i.toNat + 8 ≤ ring.size) (h24 : ring.size ≤ 2 ^ 24) (q : Nat) :
+    (blk t p hp h32 ring i hi h24).data[q]? =
+      if i.toNat ≤ q ∧ q < i.toNat + 8 then t.data[p.toNat + (q - i.toNat)]? else ring.data[q]? := by
+  have hix : (wix i).toNat = i.toNat := wix_toNat (by omega)
+  show (storeLE ring (wix i) (load64 t p hp h32) 8).data[q]? = _
+  rw [storeLE_get _ _ _ _ (by rw [hix]; exact hi), hix]
+  by_cases hq : i.toNat ≤ q ∧ q < i.toNat + 8
+  · rw [ite_eq_left hq, ite_eq_left hq]
+    have e := leList_toNat (load64 t p hp h32) 8 (q - i.toNat) (by omega)
+    rw [load64_toNat, leAt_byteD t 8 p.toNat (q - i.toNat) (by omega)] at e
+    have hlt : p.toNat + (q - i.toNat) < t.data.size := by
+      have : t.size = t.data.size := rfl
+      omega
+    rw [Array.getElem?_eq_getElem hlt]
+    revert e
+    cases (leList (load64 t p hp h32) 8)[q - i.toNat]? with
+    | none => intro e; cases e
+    | some x =>
+      intro e
+      have e' : x.toNat = byteN t (p.toNat + (q - i.toNat)) := Option.some.inj e
+      unfold byteN at e'
+      rw [Array.getElem?_eq_getElem hlt] at e'
+      exact congrArg some (UInt8.toNat_inj.mp e')
+  · rw [ite_eq_right hq, ite_eq_right hq]
+
+/-- A block holding a run of at most 8 bytes. -/
+theorem blk_writes (t : ByteArray) (p : USize) (hp : p.toNat + 8 ≤ t.size) (h32 : t.size < 2 ^ 32) (ring : ByteArray)
+    (i : USize) (hi : i.toNat + 8 ≤ ring.size) (h24 : ring.size ≤ 2 ^ 24) (n : Nat) (hn : n ≤ 8) :
+    WritesJ ring (blk t p hp h32 ring i hi h24) i.toNat (runBytes t p.toNat n) := by
+  have hl : (runBytes t p.toNat n).length = n := runBytes_length (by omega)
+  refine ⟨blk_size t p hp h32 ring i hi h24, fun q => ⟨fun h1 h2 => ?_, fun hq => ?_⟩⟩
+  · rw [hl] at h2
+    rw [blk_get, ite_eq_left ⟨h1, by omega⟩, runBytes_get (by omega)]
+  · rw [hl] at hq
+    rw [blk_get, ite_eq_right (by omega)]
+
+/-- A run of at most 16 bytes (an affix), by one block or two. -/
+@[inline] def aff2 (t : ByteArray) (p n : USize) (hp : p.toNat + n.toNat + 8 ≤ t.size) (h32 : t.size < 2 ^ 32)
+    (ring : ByteArray) (i : USize) (hi : i.toNat + n.toNat + 8 ≤ ring.size) (h24 : ring.size ≤ 2 ^ 24)
+    (hn : n.toNat ≤ 16) : ByteArray :=
+  if n = 0 then ring
+  else
+    let r := blk t p (by omega) h32 ring i (by omega) h24
+    have hr : r.size = ring.size := blk_size t p (by omega) h32 ring i (by omega) h24
+    if hn8 : n ≤ USize.ofNat 8 then r
+    else
+      have h8 : 8 < n.toNat := Nat.lt_of_not_le fun e => hn8 ((usize_le_lit (by decide)).mpr e)
+      blk t (p + USize.ofNat 8) (by rw [fastIdx_add (by omega)]; omega) h32 r (i + USize.ofNat 8)
+        (by rw [fastIdx_add (by omega), hr]; omega) (by rw [hr]; exact h24)
+
+theorem aff2_writes (t : ByteArray) (p n : USize) (hp : p.toNat + n.toNat + 8 ≤ t.size) (h32 : t.size < 2 ^ 32)
+    (ring : ByteArray) (i : USize) (hi : i.toNat + n.toNat + 8 ≤ ring.size) (h24 : ring.size ≤ 2 ^ 24)
+    (hn : n.toNat ≤ 16) :
+    WritesJ ring (aff2 t p n hp h32 ring i hi h24 hn) i.toNat (runBytes t p.toNat n.toNat) := by
+  unfold aff2
+  by_cases hn0 : n = 0
+  · rw [ite_eq_left hn0]
+    have : n.toNat = 0 := by rw [hn0]; rfl
+    exact (WritesJ.refl ring i.toNat).of_eq (by rw [this]; simp)
+  · rw [ite_eq_right hn0]
+    dsimp only
+    by_cases hn8 : n ≤ USize.ofNat 8
+    · rw [dite_eq_left hn8]
+      exact blk_writes _ _ _ _ _ _ _ _ _ ((usize_le_lit (by decide)).mp hn8)
+    · rw [dite_eq_right hn8]
+      have h8 : 8 < n.toNat := Nat.lt_of_not_le fun e => hn8 ((usize_le_lit (by decide)).mpr e)
+      refine WritesJ.of_eq (WritesJ.trans (blk_writes _ _ _ _ _ _ _ _ 8 (Nat.le_refl _))
+        (blk_writes _ _ _ _ _ _ _ _ (n.toNat - 8) (by omega)) ?_) ?_
+      · rw [fastIdx_add (by omega), runBytes_length (by omega)]
+      · rw [fastIdx_add (by omega), ← runBytes_add]
+        congr 1
+        omega
+
+/-- A run of at most 24 bytes (a base word), by one to three blocks. -/
+@[inline] def run3 (t : ByteArray) (p n : USize) (hp : p.toNat + n.toNat + 8 ≤ t.size) (h32 : t.size < 2 ^ 32)
+    (ring : ByteArray) (i : USize) (hi : i.toNat + n.toNat + 8 ≤ ring.size) (h24 : ring.size ≤ 2 ^ 24)
+    (hn : n.toNat ≤ 24) : ByteArray :=
+  if n = 0 then ring
+  else
+    let r := blk t p (by omega) h32 ring i (by omega) h24
+    have hr : r.size = ring.size := blk_size t p (by omega) h32 ring i (by omega) h24
+    if hn8 : n ≤ USize.ofNat 8 then r
+    else
+      have h8 : 8 < n.toNat := Nat.lt_of_not_le fun e => hn8 ((usize_le_lit (by decide)).mpr e)
+      let r2 := blk t (p + USize.ofNat 8) (by rw [fastIdx_add (by omega)]; omega) h32 r (i + USize.ofNat 8)
+        (by rw [fastIdx_add (by omega), hr]; omega) (by rw [hr]; exact h24)
+      have hr2 : r2.size = ring.size := (blk_size _ _ _ _ _ _ _ _).trans hr
+      if hn16 : n ≤ USize.ofNat 16 then r2
+      else
+        have h16 : 16 < n.toNat := Nat.lt_of_not_le fun e => hn16 ((usize_le_lit (by decide)).mpr e)
+        blk t (p + USize.ofNat 16) (by rw [fastIdx_add (by omega)]; omega) h32 r2 (i + USize.ofNat 16)
+          (by rw [fastIdx_add (by omega), hr2]; omega) (by rw [hr2]; exact h24)
+
+theorem run3_writes (t : ByteArray) (p n : USize) (hp : p.toNat + n.toNat + 8 ≤ t.size) (h32 : t.size < 2 ^ 32)
+    (ring : ByteArray) (i : USize) (hi : i.toNat + n.toNat + 8 ≤ ring.size) (h24 : ring.size ≤ 2 ^ 24)
+    (hn : n.toNat ≤ 24) :
+    WritesJ ring (run3 t p n hp h32 ring i hi h24 hn) i.toNat (runBytes t p.toNat n.toNat) := by
+  unfold run3
+  by_cases hn0 : n = 0
+  · rw [ite_eq_left hn0]
+    have : n.toNat = 0 := by rw [hn0]; rfl
+    exact (WritesJ.refl ring i.toNat).of_eq (by rw [this]; simp)
+  · rw [ite_eq_right hn0]
+    dsimp only
+    by_cases hn8 : n ≤ USize.ofNat 8
+    · rw [dite_eq_left hn8]
+      exact blk_writes _ _ _ _ _ _ _ _ _ ((usize_le_lit (by decide)).mp hn8)
+    · rw [dite_eq_right hn8]
+      have h8 : 8 < n.toNat := Nat.lt_of_not_le fun e => hn8 ((usize_le_lit (by decide)).mpr e)
+      have w1 := blk_writes t p (by omega) h32 ring i (by omega) h24 8 (Nat.le_refl _)
+      have w2 := WritesJ.trans w1
+        (blk_writes t (p + USize.ofNat 8) (by rw [fastIdx_add (by omega)]; omega) h32
+          (blk t p (by omega) h32 ring i (by omega) h24) (i + USize.ofNat 8)
+          (by rw [fastIdx_add (by omega), blk_size]; omega) (by rw [blk_size]; exact h24) (min (n.toNat - 8) 8)
+          (by omega))
+        (by rw [fastIdx_add (by omega), runBytes_length (by omega)])
+      by_cases hn16 : n ≤ USize.ofNat 16
+      · rw [dite_eq_left hn16]
+        have h16 := (usize_le_lit (by decide)).mp hn16
+        refine w2.of_eq ?_
+        rw [fastIdx_add (by omega), Nat.min_eq_left (by omega), runBytes_8 (by omega)]
+      · rw [dite_eq_right hn16]
+        have h16 : 16 < n.toNat := Nat.lt_of_not_le fun e => hn16 ((usize_le_lit (by decide)).mpr e)
+        refine WritesJ.of_eq (WritesJ.trans w2 (blk_writes _ _ _ _ _ _ _ _ (n.toNat - 16) (by omega)) ?_) ?_
+        · rw [fastIdx_add (by omega), List.length_append, runBytes_length (by omega),
+            runBytes_length (by rw [fastIdx_add (by omega)]; omega)]
+          omega
+        · rw [fastIdx_add (by omega), fastIdx_add (by omega), Nat.min_eq_right (by omega), List.append_assoc,
+            show p.toNat + 16 = p.toNat + 8 + 8 by omega, show n.toNat - 16 = n.toNat - 8 - 8 by omega,
+            runBytes_8 (by omega), runBytes_8 (by omega)]
+
+section
+variable {mask : USize} {k : Nat} (hk : k ≤ 24) (hm : mask.toNat = 2 ^ k - 1)
+
+theorem elemLen_lt3 {kind amt : UInt8} {len : USize} (h : kind < 3) : elemLen kind amt len = len := by
+  unfold elemLen
+  rw [ite_eq_left h]
+
+theorem elemLen_ge3 {kind amt : UInt8} {len : USize} (h : ¬ kind < 3) :
+    elemLen kind amt len = len - usmin len amt.toUSize := by
+  unfold elemLen
+  rw [ite_eq_right h]
+
+theorem kind_not_lt3 {kind : UInt8} (h0 : ¬ kind = 0) (h1 : ¬ kind = 1) (h2 : ¬ kind = 2) : ¬ kind < 3 := fun e => by
+  have e' := UInt8.lt_iff_toNat_lt.mp e
+  have a0 : kind.toNat ≠ 0 := fun x => h0 (UInt8.toNat_inj.mp (by rw [x]; rfl))
+  have a1 : kind.toNat ≠ 1 := fun x => h1 (UInt8.toNat_inj.mp (by rw [x]; rfl))
+  have a2 : kind.toNat ≠ 2 := fun x => h2 (UInt8.toNat_inj.mp (by rw [x]; rfl))
+  rw [show (3 : UInt8).toNat = 3 from rfl] at e'
+  omega
+
+/-- The transform's elementary part on the base word, stored from window index `i` (the masked `o`): the identity and
+the omissions by blocks, fermentFirst by its byte writer and then blocks, fermentAll byte by byte; 32 bytes of
+`dictBytes` follow `off`, and the part and 8 bytes more fit before the window's end. -/
+@[inline] def elemPutB (kind amt : UInt8) (off len : USize) (h : off.toNat + len.toNat ≤ dictBytes.size)
+    (hd : off.toNat + 32 ≤ dictBytes.size) (hl : len.toNat ≤ 24) (ring : ByteArray) (o i : USize)
+    (hr : ring.size = 2 ^ k) (_hio : (o &&& mask).toNat = i.toNat)
+    (hw : i.toNat + (elemLen kind amt len).toNat + 8 ≤ 2 ^ k) : ByteArray :=
+  have hR : 2 ^ k ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
+  have hds := dictBytes_size
+  have h32 : dictBytes.size < 2 ^ 32 := by omega
+  if h0 : kind = 0 then
+    have he : elemLen kind amt len = len := elemLen_lt3 (by rw [h0]; decide)
+    run3 dictBytes off len (by omega) h32 ring i (by rw [he] at hw; omega) (by omega) hl
+  else if h1 : kind = 1 then
+    have he : elemLen kind amt len = len := elemLen_lt3 (by rw [h1]; decide)
+    if hn : len = 0 then ring
+    else
+      have hnz := usize_ne hn
+      have hu := fermentUsed_bounds (dictBytes.uget off (by omega)) hnz
+      have hp : (off + fermentUsed (dictBytes.uget off (by omega)) len).toNat =
+          off.toNat + (fermentUsed (dictBytes.uget off (by omega)) len).toNat := by exact usize_add_small (by omega)
+      have hq : (len - fermentUsed (dictBytes.uget off (by omega)) len).toNat =
+          len.toNat - (fermentUsed (dictBytes.uget off (by omega)) len).toNat :=
+        USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr hu.2)
+      have hi : (i + fermentUsed (dictBytes.uget off (by omega)) len).toNat =
+          i.toNat + (fermentUsed (dictBytes.uget off (by omega)) len).toNat := by exact usize_add_small (by omega)
+      have hf := fermentPut_size hk hm dictBytes dictBytes_small off len h hnz ring o hr
+      run3 dictBytes (off + fermentUsed (dictBytes.uget off (by omega)) len)
+        (len - fermentUsed (dictBytes.uget off (by omega)) len) (by rw [hp, hq]; omega) h32
+        (fermentPut hk hm dictBytes dictBytes_small off len h hnz ring o hr)
+        (i + fermentUsed (dictBytes.uget off (by omega)) len) (by rw [hf, hi, hq]; rw [he] at hw; omega)
+        (by rw [hf]; omega) (by rw [hq]; omega)
+  else if h2 : kind = 2 then fermentRunPut hk hm dictBytes dictBytes_small off len h ring o hr
+  else if h3 : kind = 3 then
+    have he : elemLen kind amt len = len - usmin len amt.toUSize := elemLen_ge3 (by rw [h3]; decide)
+    have hmin : (usmin len amt.toUSize).toNat = min len.toNat amt.toNat := by rw [usmin_toNat, u8_usize]
+    have hub : amt.toNat < 256 := amt.toNat_lt
+    have hp : (off + usmin len amt.toUSize).toNat = off.toNat + min len.toNat amt.toNat := by
+      rw [usize_add_small (by rw [hmin]; omega), hmin]
+    have hq : (len - usmin len amt.toUSize).toNat = len.toNat - min len.toNat amt.toNat := by
+      rw [USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr (by rw [hmin]; omega)), hmin]
+    run3 dictBytes (off + usmin len amt.toUSize) (len - usmin len amt.toUSize) (by rw [hp, hq]; omega) h32 ring i
+      (by rw [he, hq] at hw; rw [hq]; omega) (by omega) (by rw [hq]; omega)
+  else
+    have he : elemLen kind amt len = len - usmin len amt.toUSize := elemLen_ge3 (kind_not_lt3 h0 h1 h2)
+    have hmin : (usmin len amt.toUSize).toNat = min len.toNat amt.toNat := by rw [usmin_toNat, u8_usize]
+    have hq : (len - usmin len amt.toUSize).toNat = len.toNat - min len.toNat amt.toNat := by
+      rw [USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr (by rw [hmin]; omega)), hmin]
+    run3 dictBytes off (len - usmin len amt.toUSize) (by rw [hq]; omega) h32 ring i
+      (by rw [he, hq] at hw; rw [hq]; omega) (by omega) (by rw [hq]; omega)
+
+/-- `elemPutB` stores what `elementStep` adds, with up to 8 bytes after it. -/
+theorem elemPutB_writes (kind amt : UInt8) (off len : USize) (h : off.toNat + len.toNat ≤ dictBytes.size)
+    (hd : off.toNat + 32 ≤ dictBytes.size) (hl : len.toNat ≤ 24) (ring : ByteArray) (o i : USize)
+    (hr : ring.size = 2 ^ k) (hio : (o &&& mask).toNat = i.toNat)
+    (hw : i.toNat + (elemLen kind amt len).toNat + 8 ≤ 2 ^ k) (buf : ByteArray) :
+    ∃ E : List UInt8, (elementStep dictBytes dictBytes_small kind amt off len buf h).data.toList = buf.data.toList ++ E ∧
+      WritesJ ring (elemPutB hk hm kind amt off len h hd hl ring o i hr hio hw) i.toNat E ∧
+      E.length = (elemLen kind amt len).toNat := by
+  have hR : 2 ^ k ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
+  have hds := dictBytes_size
+  have hmin : (usmin len amt.toUSize).toNat = min len.toNat amt.toNat := by rw [usmin_toNat, u8_usize]
+  have hub : amt.toNat < 256 := amt.toNat_lt
+  have hq : (len - usmin len amt.toUSize).toNat = len.toNat - min len.toNat amt.toNat := by
+    rw [USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr (by rw [hmin]; omega)), hmin]
+  unfold elemPutB elementStep
+  dsimp only
+  by_cases h0 : kind = 0
+  · subst h0
+    rw [dite_eq_left rfl, ite_eq_left rfl, emitRun_data _ _ h]
+    have he : elemLen 0 amt len = len := elemLen_lt3 (by decide)
+    exact ⟨_, rfl, run3_writes _ _ _ _ _ _ _ _ _ _, by rw [he]; exact runBytes_length h⟩
+  rw [dite_eq_right h0, ite_eq_right h0]
+  by_cases h1 : kind = 1
+  · subst h1
+    rw [dite_eq_left rfl, ite_eq_left rfl]
+    have he : elemLen 1 amt len = len := elemLen_lt3 (by decide)
+    by_cases hn : len = 0
+    · rw [dite_eq_left hn, dite_eq_left hn]
+      exact ⟨[], by rw [List.append_nil], WritesJ.refl _ _, by rw [he, hn]; rfl⟩
+    · rw [dite_eq_right hn, dite_eq_right hn]
+      have hnz := usize_ne hn
+      obtain ⟨L1, e1, p1, l1⟩ := fermentPut_mirror hk hm dictBytes dictBytes_small off len h hnz buf ring o hr
+      have hu := fermentUsed_bounds (dictBytes.uget off (by omega)) hnz
+      have hp : (off + fermentUsed (dictBytes.uget off (by omega)) len).toNat =
+          off.toNat + (fermentUsed (dictBytes.uget off (by omega)) len).toNat := usize_add_small (by omega)
+      have hq' : (len - fermentUsed (dictBytes.uget off (by omega)) len).toNat =
+          len.toNat - (fermentUsed (dictBytes.uget off (by omega)) len).toNat :=
+        USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.mpr hu.2)
+      have hi : (i + fermentUsed (dictBytes.uget off (by omega)) len).toNat =
+          i.toNat + (fermentUsed (dictBytes.uget off (by omega)) len).toNat := usize_add_small (by omega)
+      rw [he] at hw
+      have w1 : WritesJ ring (fermentPut hk hm dictBytes dictBytes_small off len h hnz ring o hr) i.toNat L1 := by
+        rw [p1, ← hio]
+        exact putList_writes hk hm _ _ _ _ (by rw [hio, l1]; omega)
+      refine ⟨L1 ++ runBytes dictBytes (off + fermentUsed (dictBytes.uget off (by omega)) len).toNat
+        (len - fermentUsed (dictBytes.uget off (by omega)) len).toNat, ?_, ?_, ?_⟩
+      · rw [emitRun_data _ _ (by rw [hp, hq']; omega), e1, List.append_assoc]
+      · exact w1.trans (run3_writes _ _ _ _ _ _ _ _ _ _) (by rw [hi, l1])
+      · rw [List.length_append, runBytes_length (by rw [hp, hq']; omega), l1, hq', he]
+        omega
+  rw [dite_eq_right h1, ite_eq_right h1]
+  by_cases h2 : kind = 2
+  · subst h2
+    rw [dite_eq_left rfl, ite_eq_left rfl]
+    have he : elemLen 2 amt len = len := elemLen_lt3 (by decide)
+    obtain ⟨L, e, p, l⟩ := fermentRunPut_mirror hk hm dictBytes dictBytes_small _ off len h rfl buf ring o hr
+    refine ⟨L, e, ?_, by rw [l, he]⟩
+    rw [p, ← hio]
+    exact putList_writes hk hm _ _ _ _ (by rw [hio, l]; rw [he] at hw; omega)
+  rw [dite_eq_right h2, ite_eq_right h2]
+  have he : elemLen kind amt len = len - usmin len amt.toUSize := elemLen_ge3 (kind_not_lt3 h0 h1 h2)
+  by_cases h3 : kind = 3
+  · subst h3
+    rw [dite_eq_left rfl, ite_eq_left rfl]
+    have hp : (off + usmin len amt.toUSize).toNat = off.toNat + min len.toNat amt.toNat := by
+      rw [usize_add_small (by rw [hmin]; omega), hmin]
+    rw [emitRun_data _ _ (by rw [hp, hq]; omega)]
+    exact ⟨_, rfl, run3_writes _ _ _ _ _ _ _ _ _ _, by rw [he]; exact runBytes_length (by rw [hp, hq]; omega)⟩
+  · rw [dite_eq_right h3, ite_eq_right h3]
+    rw [emitRun_data _ _ (by rw [hq]; omega)]
+    exact ⟨_, rfl, run3_writes _ _ _ _ _ _ _ _ _ _, by rw [he]; exact runBytes_length (by rw [hq]; omega)⟩
+
+theorem elemPutB_size (kind amt : UInt8) (off len : USize) (h : off.toNat + len.toNat ≤ dictBytes.size)
+    (hd : off.toNat + 32 ≤ dictBytes.size) (hl : len.toNat ≤ 24) (ring : ByteArray) (o i : USize)
+    (hr : ring.size = 2 ^ k) (hio : (o &&& mask).toNat = i.toNat)
+    (hw : i.toNat + (elemLen kind amt len).toNat + 8 ≤ 2 ^ k) :
+    (elemPutB hk hm kind amt off len h hd hl ring o i hr hio hw).size = 2 ^ k := by
+  obtain ⟨_, _, w, _⟩ := elemPutB_writes hk hm kind amt off len h hd hl ring o i hr hio hw ByteArray.empty
+  exact w.1.trans hr
+
+theorem wordLenF_toNat (kind amt pl sl : UInt8) {len : USize} (hl : len.toNat ≤ 24) :
+    (wordLenF kind amt pl sl len).toNat = pl.toNat + (elemLen kind amt len).toNat + sl.toNat := by
+  have hel := elemLen_le kind amt len
+  have hp := u8_usize pl
+  have hs := u8_usize sl
+  have a := pl.toNat_lt
+  have b := sl.toNat_lt
+  unfold wordLenF
+  rw [usize_add_small (by rw [usize_add_small (by rw [hp]; omega), hp, hs]; omega), usize_add_small (by rw [hp]; omega),
+    hp, hs]
+
+/-- The word from its transform's fields, stored by blocks from window index `o &&& mask`: the prefix, the elementary
+part on the base word, the suffix, each from the exact end of the one before; 32 bytes of `transLut` follow the row's
+base and of `dictBytes` the base word's offset, and the word and 8 bytes more fit before the window's end. -/
+@[inline] def wordPutFB3 (base off len : USize) (kind amt pl sl : UInt8) (h : off.toNat + len.toNat ≤ dictBytes.size)
+    (hb : base.toNat + 32 ≤ transLut.size) (ha : pl.toNat + sl.toNat ≤ 13) (hl : len.toNat ≤ 24)
+    (hd : off.toNat + 32 ≤ dictBytes.size) (ring : ByteArray) (o : USize) (hr : ring.size = 2 ^ k)
+    (hw : (o &&& mask).toNat + (wordLenF kind amt pl sl len).toNat + 8 ≤ 2 ^ k) : ByteArray :=
+  have hR : 2 ^ k ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
+  have hts := transLut_size
+  have h32 : transLut.size < 2 ^ 32 := by omega
+  have hpl : pl.toUSize.toNat = pl.toNat := by exact u8_usize pl
+  have hsl : sl.toUSize.toNat = sl.toNat := by exact u8_usize sl
+  have hwl := wordLenF_toNat kind amt pl sl hl
+  have hel := elemLen_le kind amt len
+  have hlt := mask_lt (i := o) hm
+  have h4 : (base + USize.ofNat 4).toNat = base.toNat + 4 := fastIdx_add (by omega)
+  have hi1 : ((o &&& mask) + pl.toUSize).toNat = (o &&& mask).toNat + pl.toNat := by
+    rw [fastAdd (by rw [hpl]; omega), hpl]
+  have hi2 : ((o &&& mask) + pl.toUSize + elemLen kind amt len).toNat =
+      (o &&& mask).toNat + pl.toNat + (elemLen kind amt len).toNat := by
+    rw [fastAdd (by rw [hi1]; omega), hi1]
+  have h4p : (base + USize.ofNat 4 + pl.toUSize).toNat = base.toNat + 4 + pl.toNat := by
+    rw [fastAdd (by rw [h4, hpl]; omega), h4, hpl]
+  let r0 := aff2 transLut (base + USize.ofNat 4) pl.toUSize (by rw [h4, hpl]; omega) h32 ring (o &&& mask)
+    (by rw [hpl, hr]; omega) (by omega) (by rw [hpl]; omega)
+  have hr0 : r0.size = 2 ^ k := (aff2_writes _ _ _ _ _ _ _ _ _ _).1.trans hr
+  let r1 := elemPutB hk hm kind amt off len h hd hl r0 (o + pl.toUSize) ((o &&& mask) + pl.toUSize) hr0
+    (by rw [add_mask_toNat hk hm, hpl, hi1, Nat.mod_eq_of_lt (by omega)]) (by rw [hi1]; omega)
+  have hr1 : r1.size = 2 ^ k := elemPutB_size _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+  aff2 transLut (base + USize.ofNat 4 + pl.toUSize) sl.toUSize (by rw [h4p, hsl]; omega) h32 r1
+    ((o &&& mask) + pl.toUSize + elemLen kind amt len) (by rw [hi2, hsl, hr1]; omega) (by omega)
+    (by rw [hsl]; omega)
+
+/-- `wordPutFB3` stores the word `buildWord` builds from the same fields, with up to 8 bytes after it. -/
+theorem wordPutFB3_writes (base off len : USize) (kind amt pl sl : UInt8) (h : off.toNat + len.toNat ≤ dictBytes.size)
+    (hb : base.toNat + 32 ≤ transLut.size) (ha : pl.toNat + sl.toNat ≤ 13) (hl : len.toNat ≤ 24)
+    (hd : off.toNat + 32 ≤ dictBytes.size) (ring : ByteArray) (o : USize) (hr : ring.size = 2 ^ k)
+    (hw : (o &&& mask).toNat + (wordLenF kind amt pl sl len).toNat + 8 ≤ 2 ^ k) :
+    WritesJ ring (wordPutFB3 hk hm base off len kind amt pl sl h hb ha hl hd ring o hr hw) (o &&& mask).toNat
+      (emitRun transLut (elementStep dictBytes dictBytes_small kind amt off len
+        (emitRun transLut (freshBytes 38) (base + USize.ofNat 4).toNat pl.toNat) h)
+        (base + USize.ofNat 4 + pl.toUSize).toNat sl.toNat).data.toList := by
+  have hR : 2 ^ k ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
+  have hts := transLut_size
+  have hpl : pl.toUSize.toNat = pl.toNat := u8_usize pl
+  have hsl : sl.toUSize.toNat = sl.toNat := u8_usize sl
+  have hwl := wordLenF_toNat kind amt pl sl hl
+  have hel := elemLen_le kind amt len
+  have hlt := mask_lt (i := o) hm
+  have h4 : (base + USize.ofNat 4).toNat = base.toNat + 4 := fastIdx_add (by omega)
+  have hi1 : ((o &&& mask) + pl.toUSize).toNat = (o &&& mask).toNat + pl.toNat := by
+    rw [fastAdd (by rw [hpl]; omega), hpl]
+  have hi2 : ((o &&& mask) + pl.toUSize + elemLen kind amt len).toNat =
+      (o &&& mask).toNat + pl.toNat + (elemLen kind amt len).toNat := by
+    rw [fastAdd (by rw [hi1]; omega), hi1]
+  have h4p : (base + USize.ofNat 4 + pl.toUSize).toNat = base.toNat + 4 + pl.toNat := by
+    rw [fastAdd (by rw [h4, hpl]; omega), h4, hpl]
+  unfold wordPutFB3
+  dsimp only
+  have wP := aff2_writes transLut (base + USize.ofNat 4) pl.toUSize (by rw [h4, hpl]; omega) (by omega) ring
+    (o &&& mask) (by rw [hpl, hr]; omega) (by omega) (by rw [hpl]; omega)
+  obtain ⟨E, eE, wE, lE⟩ := elemPutB_writes hk hm kind amt off len h hd hl _ (o + pl.toUSize)
+    ((o &&& mask) + pl.toUSize) (wP.1.trans hr)
+    (by rw [add_mask_toNat hk hm, hpl, hi1, Nat.mod_eq_of_lt (by omega)]) (by rw [hi1]; omega)
+    (emitRun transLut (freshBytes 38) (base + USize.ofNat 4).toNat pl.toNat)
+  have hP : (emitRun transLut (freshBytes 38) (base + USize.ofNat 4).toNat pl.toNat).data.toList =
+      runBytes transLut (base + USize.ofNat 4).toNat pl.toUSize.toNat := by
+    rw [emitRun_data _ _ (by rw [h4]; omega), hpl]
+    rfl
+  rw [emitRun_data _ _ (by rw [h4p]; omega), eE, hP]
+  refine WritesJ.trans (j := ((o &&& mask) + pl.toUSize + elemLen kind amt len).toNat) (wP.trans wE ?_) ?_ ?_
+  · rw [hi1, runBytes_length (by rw [h4, hpl]; omega), hpl]
+  · exact (aff2_writes _ _ _ _ _ _ _ _ _ _).of_eq (by rw [hsl])
+  · rw [hi2, List.length_append, runBytes_length (by rw [h4, hpl]; omega), hpl, lE, Nat.add_assoc]
+
+include hk hm in
+/-- The window part of `wordPutW`'s guard. -/
+theorem guard_win {o wl : USize} {ring : ByteArray} (hr : ring.size = 2 ^ k) (hwl : wl.toNat ≤ 64)
+    (hg : (o &&& mask) + wl + USize.ofNat 8 ≤ ring.usize) : (o &&& mask).toNat + wl.toNat + 8 ≤ 2 ^ k := by
+  have hR : 2 ^ k ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hk
+  have hlt := mask_lt (i := o) hm
+  have hu : ring.usize.toNat = ring.size := by
+    show (USize.ofNat ring.size).toNat = _
+    exact fastLit (by omega)
+  have e := USize.le_iff_toNat_le.mp hg
+  rw [fastIdx_add (by rw [fastAdd (by omega)]; omega), fastAdd (by omega), hu, hr] at e
+  exact e
+
+/-- The dictionary part of `wordPutW`'s guard. -/
+theorem guard_dict {off : USize} (ho : off.toNat < 2 ^ 24) (hg : off + USize.ofNat 32 ≤ USize.ofNat 122784) :
+    off.toNat + 32 ≤ dictBytes.size := by
+  have e := USize.le_iff_toNat_le.mp hg
+  rw [fastIdx_add (by omega), fastLit (by decide)] at e
+  rw [dictBytes_size]
+  exact e
+
+/-- The word's write, one call a word: by blocks (`wordPutFB3`) where the word and 8 bytes more fit before the window's
+end and 32 bytes of `dictBytes` follow the base word's offset, otherwise byte by byte (`wordPutF`). -/
+@[noinline] def wordPutW (base off len : USize) (kind amt pl sl : UInt8)
+    (hB : (base + USize.ofNat 4).toNat + pl.toNat + sl.toNat ≤ transLut.size)
+    (h : off.toNat + len.toNat ≤ dictBytes.size) (hb : base.toNat + 32 ≤ transLut.size)
+    (ha : pl.toNat + sl.toNat ≤ 13) (hl : len.toNat ≤ 24) (ring : ByteArray) (o : USize) (hr : ring.size = 2 ^ k) :
+    ByteArray :=
+  if hg : (o &&& mask) + wordLenF kind amt pl sl len + USize.ofNat 8 ≤ ring.usize ∧
+      off + USize.ofNat 32 ≤ USize.ofNat 122784 then
+    wordPutFB3 hk hm base off len kind amt pl sl h hb ha hl
+      (guard_dict (by have := dictBytes_size; omega) hg.2) ring o hr
+      (guard_win hk hm hr (by have := elemLen_le kind amt len; rw [wordLenF_toNat kind amt pl sl hl]; omega) hg.1)
+  else wordPutF hk hm base off len kind amt pl sl hB h dictBytes_small ring o hr
+
+/-- What `wordPutW` leaves: a window of the same size holding the word `buildWord` builds from the same fields, from
+`o &&& mask` on, as `putList` stores it, but where the blocks ran, perhaps for the 8 bytes after the word, which then lie
+before the window's end. -/
+theorem wordPutW_spec (base off len : USize) (kind amt pl sl : UInt8)
+    (hB : (base + USize.ofNat 4).toNat + pl.toNat + sl.toNat ≤ transLut.size)
+    (h : off.toNat + len.toNat ≤ dictBytes.size) (hb : base.toNat + 32 ≤ transLut.size)
+    (ha : pl.toNat + sl.toNat ≤ 13) (hl : len.toNat ≤ 24) (ring : ByteArray) (o : USize) (hr : ring.size = 2 ^ k) :
+    let w := emitRun transLut (elementStep dictBytes dictBytes_small kind amt off len
+      (emitRun transLut (freshBytes 38) (base + USize.ofNat 4).toNat pl.toNat) h)
+      (base + USize.ofNat 4 + pl.toUSize).toNat sl.toNat
+    (wordPutW hk hm base off len kind amt pl sl hB h hb ha hl ring o hr).size = 2 ^ k ∧
+      ∀ q, ¬ ((o &&& mask).toNat + w.size ≤ q ∧ q < (o &&& mask).toNat + w.size + 8 ∧
+          (o &&& mask).toNat + w.size + 8 ≤ 2 ^ k) →
+        (wordPutW hk hm base off len kind amt pl sl hB h hb ha hl ring o hr).data[q]? =
+          (putList hk hm ring o hr w.data.toList).data[q]? := by
+  intro w
+  have hF := wordPutF_eq hk hm base off len kind amt pl sl hB h dictBytes_small ring o hr
+  have hel := elemLen_le kind amt len
+  have hwl := wordLenF_toNat kind amt pl sl hl
+  have hlen : w.data.toList.length = w.size := Array.length_toList
+  unfold wordPutW
+  by_cases hg : (o &&& mask) + wordLenF kind amt pl sl len + USize.ofNat 8 ≤ ring.usize ∧
+      off + USize.ofNat 32 ≤ USize.ofNat 122784
+  · rw [dite_eq_left hg]
+    have hd := guard_dict (by have := dictBytes_size; omega) hg.2
+    have hw := guard_win hk hm hr (by rw [hwl]; omega) hg.1
+    have hwr := wordPutFB3_writes hk hm base off len kind amt pl sl h hb ha hl hd ring o hr hw
+    have hfit : (o &&& mask).toNat + w.size + 8 ≤ 2 ^ k := by rw [← hF.2]; exact hw
+    have hwr' : WritesJ ring (wordPutFB3 hk hm base off len kind amt pl sl h hb ha hl hd ring o hr hw)
+        (o &&& mask).toNat w.data.toList := hwr
+    refine ⟨hwr.1.trans hr, fun q hq => ?_⟩
+    rw [putList_get hk hm _ _ _ _ (by rw [hlen]; omega)]
+    replace hwr := hwr'
+    by_cases hin : (o &&& mask).toNat ≤ q ∧ q < (o &&& mask).toNat + w.data.toList.length
+    · rw [ite_eq_left hin]
+      exact (hwr.2 q).1 hin.1 hin.2
+    · rw [ite_eq_right hin]
+      exact (hwr.2 q).2 (by omega)
+  · rw [dite_eq_right hg, hF.1]
+    exact ⟨putList_size hk hm _ _ _ _, fun _ _ => rfl⟩
+
+end
+
+/-- The length of a dictionary reference's word, without building it; 0 for a reference that isn't valid. -/
+@[inline] def dictLen (clen wordId : UInt64) : USize :=
+  if h : dictValid clen wordId then
+    wordLenB (dictTid (lenRow clen (lt25 h.1)) wordId).toUSize clen.toUSize
+      (by
+        have hl := lt25 h.1
+        have hp := dict_parts (wordId := wordId) (ge4 h.1) (by omega) (lenRow_fields hl).1 (lenRow_fields hl).2
+        have ht := lt121 h.2
+        rw [word_toUSize (by omega)]
+        exact ht)
+  else 0
+
+/-- A transform's row: its prefix and suffix lie inside `transLut`. -/
+theorem row_bound {id : USize} (hid : id.toNat < 121) :
+    (id * USize.ofNat 32 + USize.ofNat 4).toNat +
+        (transLut.uget (id * USize.ofNat 32 + USize.ofNat 2) (row_lt hid (by decide))).toNat +
+        (transLut.uget (id * USize.ofNat 32 + USize.ofNat 3) (row_lt hid (by decide))).toNat ≤ transLut.size := by
+  have := affix_uget hid (row_lt hid (by decide)) (row_lt hid (by decide))
+  have := transLut_size
+  rw [(row_at hid (j := 4) (by decide)).1]
+  omega
+
+/-- A transform's prefix and suffix are 13 bytes at most together. -/
+theorem row_affix {id : USize} (hid : id.toNat < 121) :
+    (transLut.uget (id * USize.ofNat 32 + USize.ofNat 2) (row_lt hid (by decide))).toNat +
+      (transLut.uget (id * USize.ofNat 32 + USize.ofNat 3) (row_lt hid (by decide))).toNat ≤ 13 :=
+  affix_uget hid _ _
+
+/-- 32 bytes of `transLut` follow a transform's row's start. -/
+theorem row_end {id : USize} (hid : id.toNat < 121) : (id * USize.ofNat 32).toNat + 32 ≤ transLut.size := by
+  have := base_toNat hid
+  have := transLut_size
+  omega
+
+/-- `dictLen` is the length of `dictBuild`'s word. -/
+theorem dictLen_eq {clen wordId : UInt64} (h : dictValid clen wordId) :
+    (dictLen clen wordId).toNat = (dictBuild clen wordId h).size := by
+  have hl := lt25 h.1
+  have hp := dict_parts (wordId := wordId) (ge4 h.1) (by omega) (lenRow_fields hl).1 (lenRow_fields hl).2
+  have hid : (dictTid (lenRow clen hl) wordId).toUSize.toNat < 121 := by
+    have ht := lt121 h.2
+    rw [word_toUSize (by omega)]
+    exact ht
+  unfold dictLen dictBuild
+  rw [dite_eq_left h]
+  unfold wordLenB buildWord
+  exact (wordPutF_eq (mask := 0) (k := 0) (by decide) rfl _ _ _ _ _ _ _ (row_bound hid) _ _ (ByteArray.mk #[0]) 0
+    rfl).2
+
+/-- A reference with a word of some length is valid. -/
+theorem dictLen_valid {clen wordId : UInt64} (h : dictLen clen wordId ≠ 0) : dictValid clen wordId := by
+  unfold dictLen at h
+  by_cases hv : dictValid clen wordId
+  · exact hv
+  · rw [dite_eq_right hv] at h
+    exact absurd rfl h
+
+section
+variable {mask : USize} {k : Nat} (hk : k ≤ 24) (hm : mask.toNat = 2 ^ k - 1)
+
+/-- The word of a valid dictionary reference written into the window from `o` on (`wordPutW`): `dictBuild`'s word, as
+`putList` stores it, perhaps with other bytes in the 8 after it (`dictPutW_spec`). -/
+def dictPutW (clen wordId : UInt64) (h : dictValid clen wordId) (ring : ByteArray) (o : USize)
+    (hr : ring.size = 2 ^ k) : ByteArray :=
+  have hl := lt25 h.1
+  have hp := dict_parts (wordId := wordId) (ge4 h.1) (by omega) (lenRow_fields hl).1 (lenRow_fields hl).2
+  have hid : (dictTid (lenRow clen hl) wordId).toUSize.toNat < 121 := by
+    have ht := lt121 h.2
+    rw [word_toUSize (by omega)]
+    exact ht
+  wordPutW hk hm ((dictTid (lenRow clen hl) wordId).toUSize * USize.ofNat 32)
+    (dictOff (lenRow clen hl) clen wordId).toUSize clen.toUSize
+    (transLut.uget ((dictTid (lenRow clen hl) wordId).toUSize * USize.ofNat 32) (base_lt hid))
+    (transLut.uget ((dictTid (lenRow clen hl) wordId).toUSize * USize.ofNat 32 + USize.ofNat 1) (row_lt hid (by decide)))
+    (transLut.uget ((dictTid (lenRow clen hl) wordId).toUSize * USize.ofNat 32 + USize.ofNat 2) (row_lt hid (by decide)))
+    (transLut.uget ((dictTid (lenRow clen hl) wordId).toUSize * USize.ofNat 32 + USize.ofNat 3) (row_lt hid (by decide)))
+    (row_bound hid)
+    (by
+      rw [word_toUSize (by omega), clen_usize hl, dictBytes_size]
+      exact hp.2.2)
+    (row_end hid) (row_affix hid) (by rw [clen_usize hl]; exact h.1.2 |> UInt64.le_iff_toNat_le.mp) ring o hr
+
+set_option maxRecDepth 20000 in
+/-- What `dictPutW` leaves: a window of the same size holding `dictBuild`'s word from `o &&& mask` on, as `putList`
+stores it, but perhaps for the 8 bytes after the word where those lie before the window's end. These are within the 16
+bytes after the write position that the window's relation leaves free (`RingOk`). -/
+theorem dictPutW_spec {clen wordId : UInt64} (h : dictValid clen wordId) (ring : ByteArray) (o : USize)
+    (hr : ring.size = 2 ^ k) :
+    (dictPutW hk hm clen wordId h ring o hr).size = 2 ^ k ∧
+      ∀ q, ¬ ((o &&& mask).toNat + (dictBuild clen wordId h).size ≤ q ∧
+          q < (o &&& mask).toNat + (dictBuild clen wordId h).size + 8 ∧
+          (o &&& mask).toNat + (dictBuild clen wordId h).size + 8 ≤ 2 ^ k) →
+        (dictPutW hk hm clen wordId h ring o hr).data[q]? =
+          (putList hk hm ring o hr (dictBuild clen wordId h).data.toList).data[q]? := by
+  unfold dictPutW dictBuild buildWord
+  exact wordPutW_spec hk hm _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+/-- A dictionary reference looked up once, for the fast loop: when it is valid, `some` gets the word's length and the
+write of the word into the window from `o` on (`dictWith_eq`: `dictLen` and `dictPutW`), from one reading of the length
+row and the transform's row; otherwise `none`. -/
+@[inline] def dictWith {α : Type} (clen wordId : UInt64) (ring : ByteArray) (o : USize) (hr : ring.size = 2 ^ k)
+    (none : Unit → α) (some : USize → (Unit → { r : ByteArray // r.size = 2 ^ k }) → α) : α :=
+  if h : dictValid clen wordId then
+    have hl := lt25 h.1
+    have hp := dict_parts (wordId := wordId) (ge4 h.1) (by omega) (lenRow_fields hl).1 (lenRow_fields hl).2
+    have hid : (dictTid (lenRow clen hl) wordId).toUSize.toNat < 121 := by
+      have ht := lt121 h.2
+      rw [word_toUSize (by omega)]
+      exact ht
+    let base := (dictTid (lenRow clen hl) wordId).toUSize * USize.ofNat 32
+    let kind := transLut.uget base (base_lt hid)
+    let amt := transLut.uget (base + USize.ofNat 1) (row_lt hid (by decide))
+    let pl := transLut.uget (base + USize.ofNat 2) (row_lt hid (by decide))
+    let sl := transLut.uget (base + USize.ofNat 3) (row_lt hid (by decide))
+    some (wordLenF kind amt pl sl clen.toUSize)
+      (fun _ => ⟨wordPutW hk hm base (dictOff (lenRow clen hl) clen wordId).toUSize clen.toUSize kind amt pl sl
+          (row_bound hid)
+          (by
+            rw [word_toUSize (by omega), clen_usize hl, dictBytes_size]
+            exact hp.2.2)
+          (row_end hid) (row_affix hid) (by rw [clen_usize hl]; exact h.1.2 |> UInt64.le_iff_toNat_le.mp) ring o hr,
+        (dictPutW_spec hk hm h ring o hr).1⟩)
+  else none ()
+
+/-- `dictWith` gives `dictLen` and `dictPutW`. -/
+theorem dictWith_eq {α : Type} (clen wordId : UInt64) (ring : ByteArray) (o : USize) (hr : ring.size = 2 ^ k)
+    (none : Unit → α) (some : USize → (Unit → { r : ByteArray // r.size = 2 ^ k }) → α) :
+    dictWith hk hm clen wordId ring o hr none some =
+      if h : dictValid clen wordId then
+        some (dictLen clen wordId) (fun _ => ⟨dictPutW hk hm clen wordId h ring o hr, (dictPutW_spec hk hm h ring o hr).1⟩)
+      else none () := by
+  unfold dictWith
+  by_cases h : dictValid clen wordId
+  · rw [dite_eq_left h, dite_eq_left h]
+    unfold dictLen
+    rw [dite_eq_left h]
+    rfl
+  · rw [dite_eq_right h, dite_eq_right h]
+
+theorem dictWith_congr {α : Type} {clen wordId : UInt64} {ring : ByteArray} {o : USize} {hr : ring.size = 2 ^ k}
+    {n1 n2 : Unit → α} {s1 s2 : USize → (Unit → { r : ByteArray // r.size = 2 ^ k }) → α} (hn : n1 () = n2 ())
+    (hs : ∀ wl put, s1 wl put = s2 wl put) :
+    dictWith hk hm clen wordId ring o hr n1 s1 = dictWith hk hm clen wordId ring o hr n2 s2 := by
+  rw [dictWith_eq, dictWith_eq]
+  by_cases h : dictValid clen wordId
+  · rw [dite_eq_left h, dite_eq_left h]
+    exact hs _ _
+  · rw [dite_eq_right h, dite_eq_right h]
+    exact hn
+
+theorem dictWith_const {α : Type} {clen wordId : UInt64} {ring : ByteArray} {o : USize} {hr : ring.size = 2 ^ k}
+    {n : Unit → α} {s : USize → (Unit → { r : ByteArray // r.size = 2 ^ k }) → α} {v : α} (hn : n () = v)
+    (hs : ∀ wl put, s wl put = v) : dictWith hk hm clen wordId ring o hr n s = v := by
+  rw [dictWith_eq]
+  by_cases h : dictValid clen wordId
+  · rw [dite_eq_left h]
+    exact hs _ _
+  · rw [dite_eq_right h]
+    exact hn
+
+end
 
 end Brotli.Decoder

@@ -392,7 +392,7 @@ def stepWord (k : USize) (st : Cmd) (pos : USize) : Cmd :=
     else markStep st pos .bad
 
 /-- What follows the word loop, whatever it returned. -/
-private theorem word_after {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
+theorem word_after {α : Type} {w : Nat} {k : USize} {m : MetaBlockHeader} {K : CommandState → List Bool → Option α}
     {a : ByteArray} {stop : USize} {s : CommandState} {pending : List Nat} {st : Cmd} {pos run : USize} {r : CopyRun}
     (hC : Core w k.toNat m st s.output s.remaining s.distances s.insertCopy s.literal s.distance)
     (htag : st.tag = .word) (hprod : s.produced = s.output.length + pending.length)
