@@ -356,6 +356,14 @@ within that room: it is never copied to grow and never held twice.
 **The largest tables** the format allows, for the room: with the table format of 5.7 and its root capped at 8 bits,
 about 1.5 MB.
 
+**That figure is out of date — to revisit once the whole decoder has landed** (owner, 2026-11-10). It was worked out
+before step 3. Three choices made there (8.1) make tables larger: a context table of 8 KB for every literal block
+type that has contexts, and a stream may declare 256 (about 2 MB); entries of 8 bytes, not 2, for insert-and-copy and
+distance codes; and a root of at least 256 entries for every literal table. The largest tables a stream can ask for
+are now several megabytes (the harness gives them 6 MB), and the new figure has not been worked out. It sets the room
+the buffer reserves and the constant in the memory part of the contract (2.4), so it is settled, with those three
+choices, when the whole decoder is measured.
+
 **What the proofs pay.** With one array, every store must be shown to leave the other regions as they were, where
 separate arrays would give that for nothing. It is mechanical, but it is at every step.
 
@@ -958,6 +966,50 @@ Each step usable by the next, with something to measure as early as possible.
 7. The handlers for every event, and rejection.
 8. The memory limit.
 Then the whole decoder is measured, and only then proved.
+
+### 9.1 Step 4, the header: how it is to be built — proposed
+
+The header of 5.7 as a machine that can stop between any two elements, in running mode first (exact mode comes with
+the driver, step 5). Written before the code, to be corrected by it.
+
+**One element a call, two loops.** The header's place is a number in the slow state (`hphase`). `headerStep` reads
+that number and does one thing: reads one element (a field of a few bits, a symbol with its extra bits), stores what
+it learnt in the slow state, sets the next place, and returns `buf`. The two long stretches, a code's symbol lengths
+and a context map's values, are loops of their own inside it that run on a budget of rounds (a round at most 8 bits
+there) and leave when it is spent, their few values saved. The caller (the harness now, the driver later) makes sure
+the margin of real input is ahead before each call. An element costs some tens of instructions of dispatch; a header
+has some tens to a few hundred elements outside the two loops.
+
+**Reading a prefix code is a sub-machine** used from six places (each category's two switching codes, the context
+maps' codes, and the three kinds of code). It is entered with the alphabet's size, the kind of table to build
+(narrow or wide, its source of what symbols stand for, its least root) and where to put the table's name, and with
+the place to go back to. Its own places: the first two bits; for a simple code, the count of symbols, each symbol,
+the shape bit for four; for a code by lengths, the code-length code's lengths (one element each, at most 5 bits),
+then the lengths' loop. It ends by building the table (5.7) or, for one symbol, the one-entry table.
+
+**The order of places** is the format's (checked against the specification's reader): for each of the three
+categories, the count of block types and, above one, its two codes and first count; the two distance parameters; a
+context mode for each literal block type; the literal map (the count of codes, and above one the run-length limit, the
+map's code, the values, the move-to-front flag); the distance map likewise; the literal codes; the insert-and-copy
+codes; the distance codes; then finishing.
+
+**Where a header's things go,** in the tables' region (5.2), in this order: the header's working arrays (the two maps
+as bytes, one a context; the list of each code's table name as it is built), then the tables, then the rows the
+command loop reads (a context table for each literal block type that has contexts; a row of four names for each
+distance block type). The slow state holds each category's count of types, current and previous type, its two
+codes' names and its count; the distance parameters; the context modes go with the maps.
+
+**Finishing** composes the maps with the names: each literal block type is marked trivial if its 64 map values are
+one, and the meta-block trivial if all are; where it is not, each type's context table is filled (by rows of the
+map, 8.1); each distance block type's row of four names is written; the distance symbols' table is rebuilt if the
+two parameters changed (it is needed before the distance codes' tables are built, so this part comes there); the
+command loop's slots are set (the current tables, the counters, the bound) and the phase becomes the commands.
+
+**Rejections found here** are those of 5.10 for a prefix code and a context map; each sets the phase to rejected.
+
+**How it is checked:** `fdrun` reads each header both ways, by the specification's reader as now and by this
+machine, and compares what they leave: every table by decoding with it, the maps, the counts and the parameters; and
+then decodes the stream with the tables this machine built.
 
 ## 10. Decisions
 
