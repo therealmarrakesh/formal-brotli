@@ -881,16 +881,27 @@ between one element and the next.
   the offset of the next literal's table position itself: one shift and one or from the literal just read. On the
   streams with literal contexts this took 6 to 10% off the loop (jquery at quality 11: 189 µs to 170 µs).
 
-**Where the loop stands, measured** (VTune, 400 passes): 49.1 M cycles and 121 M instructions a pass, 2.5 instructions
-a cycle, 482,000 mispredicts. That is 10% under Google's command phase (54.6 M cycles) and 24% under the earlier
-decoder's (64.5 M). It is the loop alone on a rough harness, with a few dozen commands a stream done outside it, and
-the whole decoder has still to be built around it: not a number to quote.
+**Where the loop stands, measured** (VTune, 400 mixed passes: every page decoded once a pass, among the others, as
+the benchmarks time the decoders): 51.5 M cycles and 123 M instructions a pass in the loop, 584,000 mispredicts; with
+the word writer (1.3 M cycles) and the loop's exits (0.5 M), 53.2 M cycles. Google's command phase, which includes
+its dictionary words, its copies and its handing out of output, is 54.6 M; the earlier decoder's is 64.5 M. So the
+loop is level with Google's command phase (2 to 3% under, which is inside what this harness leaves out) and 17% under
+the earlier decoder's. What the harness leaves out of the figure: handing output to the caller, staging input, and
+the few dozen to few hundred commands a stream that it does itself. It is not a number to quote.
+
+- *A correction.* The figures first recorded here (49.1 M cycles, 482,000 mispredicts, "10% under Google") were taken
+  with each page decoded 400 times in a row and counted the loop's own function alone. Repeating a page keeps the
+  caches warm and lets the branch predictor learn the stream: mixed passes cost the loop 5% more cycles and 21% more
+  mispredicts, and small pages most (a 74 KB page: 82 µs repeated, 98 µs mixed). `fdrun` now runs mixed passes and
+  reports medians; `--repeat` gives the old behaviour as a diagnostic. The comparisons between alternatives made
+  earlier on this page were each made within one setup, so their direction stands; their sizes are for a repeated
+  page.
 
 - *By quality:* at quality 11, where literals have contexts, the loop alone takes 0.66 to 0.88 of the time of Google's
   whole decode of the same page; at quality 5, where they have none, 0.93 to 1.02. Google's weak point is its literal
   context chain; without it the two loops are close.
-- *What binds it now:* mispredicts, about a quarter of its cycles (stalled cycles are 23% of all), though it has half
-  as many as Google's; and the rest at 3.3 instructions a cycle. Cache misses are not it: cycles stalled on a
+- *What binds it now:* mispredicts, about a quarter of its cycles (stalled cycles are 23% of all), though it has about
+  two thirds as many as Google's; and the rest at about 3 instructions a cycle. Cache misses are not it: cycles stalled on a
   first-level miss are under 2%.
 
 **Where the mispredicts are** (the same collection's samples, by the block they land in; they smear forward some
