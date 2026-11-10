@@ -893,6 +893,24 @@ the whole decoder has still to be built around it: not a number to quote.
   as many as Google's; and the rest at 3.3 instructions a cycle. Cache misses are not it: cycles stalled on a
   first-level miss are under 2%.
 
+**Where the mispredicts are** (the same collection's samples, by the block they land in; they smear forward some
+instructions, so the shares are approximate; the loop compiled for literal contexts):
+- *the test for literals left,* about half: 36% where another literal was expected and there was none, 18% the other
+  way. It follows the data, and Google's loop has the same test. Decoding one literal always and discarding it would
+  put a literal's lookup on the chain of every command that has none: not tried;
+- *the insert-and-copy lookup's second level,* about 12%. That alphabet has 704 symbols, and something like 40% of
+  heads go on to a sub-table;
+- *the rest,* spread thin: the copy's length (16 or fewer, 32 or fewer), whether a distance is a plain copy, the
+  distance lookup's second level (about 4% of distances, well predicted).
+
+**A wider root for insert-and-copy tables: measured, not taken.** With a root of 10 bits nearly every head would end
+in one load with no branch. The loop got slower: 9.69 ms a pass with 8 bits, 9.91 with 10, 10.14 with 11. The tables
+are 8 bytes an entry, so 8 KB and 16 KB against 2 KB, and what they cost in the first-level cache is more than the
+branch and the second load cost. The cap stays 8 for every table.
+
+**The loop's design is provisionally final** (owner, 2026-11-10): what section 5.6 and the items above say, as built
+in step 3. It is reopened only by what the whole decoder's measurement shows.
+
 **A cost these choices move to the header, not yet measured.** Three of them make a meta-block's header dearer, and
 the loop's time does not show it:
 - *the context tables* (item 4): 2048 entries a literal block type that has contexts. Filled one entry at a time
