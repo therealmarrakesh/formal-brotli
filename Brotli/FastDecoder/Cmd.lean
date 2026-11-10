@@ -194,7 +194,7 @@ structure LitWay where
         let outlen : UInt64 := ((t >>> 24) &&& (0xFF : UInt64)) + n + ((t >>> 32) &&& (0xFF : UInt64))
         if opos + outlen ≤ slot buf Slot.bound h then
           head (wordPut buf opos ((li >>> 8) + (wid &&& mask nd) * clen + first) n tid) bb sh (opos + outlen)
-            counters owed
+            counters (by sized h)
         else leave buf Reason.copy ((bb <<< 3) + sh) opos counters 0 clen (dist ||| (push <<< 62)) h
       else leave buf Reason.copy ((bb <<< 3) + sh) opos counters 0 clen (dist ||| (push <<< 62)) h
     else leave buf Reason.copy ((bb <<< 3) + sh) opos counters 0 clen (dist ||| (push <<< 62)) h

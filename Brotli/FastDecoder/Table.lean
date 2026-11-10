@@ -236,4 +236,4 @@ def build (buf : ByteArray) (wide mt rmin : UInt64) (h : ringAt.toNat ≤ buf.si
 def buildOne (buf : ByteArray) (s wide mt rmin : UInt64) (h : ringAt.toNat ≤ buf.size) : ByteArray :=
   let pos := slot buf Slot.tabNext h
   let buf1 := put wide mt buf pos 0 1 ((1 : UInt64) <<< rmin) s 0
-  built wide buf1 pos rmin ((1 : UInt64) <<< rmin) owed
+  built wide buf1 pos rmin ((1 : UInt64) <<< rmin) (by sized h)
