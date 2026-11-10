@@ -55,6 +55,11 @@ theorem rev8_size : rev8.size = 256 :=
     rw [rev8_size, UInt64.toNat_and]
     exact Nat.succ_le_succ Nat.and_le_right)
 
+/-- The low 8 bits of `k` in reverse order, from the copy of `rev8` in the buffer's front: read at a constant place
+in `buf`, with no pointer of its own to load (`DESIGN.md` 8.1). -/
+@[inline] def revB (buf : ByteArray) (k : UInt64) : UInt64 :=
+  load8 buf (revAt + (k &&& 255)) owed
+
 /-! ### Lookup -/
 
 /-- The entry for the code at the bottom of `w` in the narrow table `name`: its low 4 bits are the code's length and
@@ -110,6 +115,9 @@ One load and two stores. -/
   let buf := store16 buf (wd &&& (0xFFFF : UInt64)) s owed
   store32 buf (listAt + (len <<< 2))
     (((wd &&& (0xFFFF0000 : UInt64)) + (0x10000 : UInt64)) ||| (linkAt + (s <<< 1))) owed
+
+@[simp] theorem listAdd_size (buf : ByteArray) (len s : UInt64) : (listAdd buf len s).size = buf.size := by
+  simp [listAdd]
 
 /-- The count of symbols of length `len`. -/
 @[inline] def listCount (buf : ByteArray) (len : UInt64) : UInt64 :=
@@ -179,48 +187,168 @@ table's size in entries. -/
     (built wide buf pos r nxt h).size = buf.size := by
   simp [built]
 
-/-- The walk through the lists of lengths beyond the root. `key` is the root slot the next sub-table hangs from,
-as a code; `subkey` is the code within the current sub-table, its first bit highest of 8, and `0x100` when the
-sub-table is full; `cur` and `tb` are the current sub-table's place and width, `nxt` the next free entry. -/
-def subWalk (wide mt pos maxl r : UInt64) (buf : ByteArray) (len n s key subkey cur tb nxt : UInt64)
-    (h : ringAt.toNat ≤ buf.size) : ByteArray :=
-  if hn : n ≠ 0 then
-    if hk : subkey = 0x100 then
-      let tb' := subWidth buf r len n ((1 : UInt64) <<< (len - r))
-      let buf' := putPtr wide buf pos (rev key) tb' nxt
-      subWalk wide mt pos maxl r buf' len n s (key + ((0x80 : UInt64) >>> (r - 1))) 0 nxt tb'
-        (nxt + ((1 : UInt64) <<< tb')) (by sized h)
-    else
-      let next := listNext buf s
-      let buf' := put wide mt buf pos (cur + rev subkey) ((1 : UInt64) <<< (len - r))
-        ((1 : UInt64) <<< (tb - (len - r))) s len
-      have : (n - 1).toNat < n.toNat := pred_lt hn
-      subWalk wide mt pos maxl r buf' len (n - 1) next key (subkey + ((0x80 : UInt64) >>> (len - r - 1))) cur tb nxt
-        (by sized h)
-  else if hl : len < maxl then
-    have : maxl.toNat - (len + 1).toNat < maxl.toNat - len.toNat := succ_nearer hl
-    subWalk wide mt pos maxl r buf (len + 1) (listCount buf (len + 1)) (listHead buf (len + 1)) key subkey cur tb nxt
-      h
+/-- A run of `n` symbols of one length from `s` on in their list, written into one table (the root, or one
+sub-table): symbol by symbol, each to `cnt` slots, the first at `base` and the slot that `key` reversed names, and
+every `stride` slots after; `key`, the code with its first bit highest of 8, goes up by `kstep` a symbol. `ent` makes
+a symbol's entry from the symbol and `la`, what its length adds; `fil` writes it. The loop is compiled once for each
+kind of entry, and carries nothing for the choice. The symbol after the run is left in `Slot.walk`. -/
+@[specialize] def tabRun (ent : ByteArray → UInt64 → UInt64 → UInt64)
+    (fil : ByteArray → UInt64 → UInt64 → UInt64 → UInt64 → UInt64 → ByteArray)
+    (buf : ByteArray) (base la stride cnt kstep s n key : UInt64) : ByteArray :=
+  if hn : n = 0 then store64 buf Slot.walk s owed
   else
-    built wide buf pos r nxt h
-termination_by (maxl.toNat - len.toNat, n.toNat, if subkey = 0x100 then 1 else 0)
-
-/-- The walk through the lists of lengths within the root. `key` is the next code, its first bit highest of 8. -/
-def rootWalk (wide mt pos maxl r : UInt64) (buf : ByteArray) (len n s key : UInt64) (h : ringAt.toNat ≤ buf.size) :
-    ByteArray :=
-  if hn : n ≠ 0 then
-    let next := listNext buf s
-    let buf' := put wide mt buf pos (rev key) ((1 : UInt64) <<< len) ((1 : UInt64) <<< (r - len)) s len
     have : (n - 1).toNat < n.toNat := pred_lt hn
-    rootWalk wide mt pos maxl r buf' len (n - 1) next (key + ((0x80 : UInt64) >>> (len - 1))) (by sized h)
-  else if hl : len < r then
+    let next := listNext buf s
+    tabRun ent fil (fil buf base (revB buf key) stride cnt (ent buf s la)) base la stride cnt kstep next (n - 1)
+      (key + kstep)
+termination_by n.toNat
+
+theorem tabRun_size (ent : ByteArray → UInt64 → UInt64 → UInt64)
+    (fil : ByteArray → UInt64 → UInt64 → UInt64 → UInt64 → UInt64 → ByteArray)
+    (hf : ∀ b base idx st c v, (fil b base idx st c v).size = b.size)
+    (buf : ByteArray) (base la stride cnt kstep s n key : UInt64) :
+    (tabRun ent fil buf base la stride cnt kstep s n key).size = buf.size := by
+  fun_induction tabRun ent fil buf base la stride cnt kstep s n key <;> simp_all
+
+/-- The run for narrow entries: the symbol and its length, 2 bytes. -/
+@[noinline] def runNarrow (buf : ByteArray) (base len stride cnt kstep s n key : UInt64) : ByteArray :=
+  tabRun (fun _ s la => (s <<< 4) ||| la)
+    (fun buf base idx stride cnt v => fill16 buf (base + (idx <<< 1)) (stride <<< 1) cnt v owed)
+    buf base len stride cnt kstep s n key
+
+/-- The run for wide entries: what the symbol stands for (the 8 bytes at `mt + 8 * sym`) with the length added into
+its two low bytes. -/
+@[noinline] def runWide (mt : UInt64) (buf : ByteArray) (base len stride cnt kstep s n key : UInt64) : ByteArray :=
+  tabRun (fun buf s la => load64 buf (mt + (s <<< 3)) owed + la)
+    (fun buf base idx stride cnt v => fill64 buf (base + (idx <<< 3)) (stride <<< 3) cnt v owed)
+    buf base (len * 257) stride cnt kstep s n key
+
+@[simp] theorem runNarrow_size (buf : ByteArray) (base len stride cnt kstep s n key : UInt64) :
+    (runNarrow buf base len stride cnt kstep s n key).size = buf.size := by
+  unfold runNarrow
+  exact tabRun_size _ _ (by intros; simp) ..
+
+@[simp] theorem runWide_size (mt : UInt64) (buf : ByteArray) (base len stride cnt kstep s n key : UInt64) :
+    (runWide mt buf base len stride cnt kstep s n key).size = buf.size := by
+  unfold runWide
+  exact tabRun_size _ _ (by intros; simp) ..
+
+/-- A run in the table at `pos`, of the kind `wide` and `mt` say, from entry `at0` of it. -/
+@[inline] def runIn (wide mt pos : UInt64) (buf : ByteArray) (at0 len stride cnt kstep s n key : UInt64) : ByteArray :=
+  if wide = 0 then runNarrow buf (pos + (at0 <<< 1)) len stride cnt kstep s n key
+  else runWide mt buf (pos + (at0 <<< 3)) len stride cnt kstep s n key
+
+@[simp] theorem runIn_size (wide mt pos : UInt64) (buf : ByteArray) (at0 len stride cnt kstep s n key : UInt64) :
+    (runIn wide mt pos buf at0 len stride cnt kstep s n key).size = buf.size := by
+  unfold runIn
+  split <;> simp
+
+/-- The `n` symbols of one length beyond the root, from `s` on in their list, written into sub-tables. `key` is the
+code with its first bit highest of 16: its high byte is the root slot the symbol's sub-table hangs from and its low
+byte the code within the sub-table. The low byte is zero exactly when a new root slot begins, and then the sub-table
+is started in passing: its width worked out from the symbols remaining (`subWidth`), the root slot pointed at it
+(`ptr`). `cur` and `tb` are the current sub-table's place and width, `nxt` the next free entry; they are left in
+`Slot.walk` (16 bits each for `cur` and `nxt`, `tb` above). The root is `rootCap` bits wherever there are sub-tables.
+Compiled once for each kind of entry, as `tabRun`. -/
+@[specialize] def subRun (ent : ByteArray → UInt64 → UInt64 → UInt64)
+    (fil : ByteArray → UInt64 → UInt64 → UInt64 → UInt64 → UInt64 → ByteArray)
+    (ptr : ByteArray → UInt64 → UInt64 → UInt64 → UInt64 → ByteArray)
+    (buf : ByteArray) (pos len la s n key cur tb nxt : UInt64) : ByteArray :=
+  if hn : n = 0 then store64 buf Slot.walk (cur ||| (nxt <<< 16) ||| (tb <<< 32)) owed
+  else
+    let d : UInt64 := len - rootCap
+    let go := fun (buf : ByteArray) (cur tb nxt : UInt64) =>
+      have : (n - 1).toNat < n.toNat := pred_lt hn
+      let next := listNext buf s
+      subRun ent fil ptr
+        (fil buf pos (cur + revB buf key) ((1 : UInt64) <<< d) ((1 : UInt64) <<< (tb - d)) (ent buf s la))
+        pos len la next (n - 1) (key + ((0x10000 : UInt64) >>> len)) cur tb nxt
+    if key &&& 0xFF = 0 then
+      let tb' := subWidth buf rootCap len n ((1 : UInt64) <<< d)
+      go (ptr buf pos (revB buf (key >>> 8)) tb' nxt) nxt tb' (nxt + ((1 : UInt64) <<< tb'))
+    else go buf cur tb nxt
+termination_by n.toNat
+
+@[noinline] def subNarrow (buf : ByteArray) (pos len s n key cur tb nxt : UInt64) : ByteArray :=
+  subRun (fun _ s la => (s <<< 4) ||| la)
+    (fun buf base idx stride cnt v => fill16 buf (base + (idx <<< 1)) (stride <<< 1) cnt v owed)
+    (fun buf pos idx tb nxt => putPtr 0 buf pos idx tb nxt)
+    buf pos len len s n key cur tb nxt
+
+@[noinline] def subWide (mt : UInt64) (buf : ByteArray) (pos len s n key cur tb nxt : UInt64) : ByteArray :=
+  subRun (fun buf s la => load64 buf (mt + (s <<< 3)) owed + la)
+    (fun buf base idx stride cnt v => fill64 buf (base + (idx <<< 3)) (stride <<< 3) cnt v owed)
+    (fun buf pos idx tb nxt => putPtr 1 buf pos idx tb nxt)
+    buf pos len (len * 257) s n key cur tb nxt
+
+theorem subRun_size (ent : ByteArray → UInt64 → UInt64 → UInt64)
+    (fil : ByteArray → UInt64 → UInt64 → UInt64 → UInt64 → UInt64 → ByteArray)
+    (ptr : ByteArray → UInt64 → UInt64 → UInt64 → UInt64 → ByteArray)
+    (hf : ∀ b base idx st c v, (fil b base idx st c v).size = b.size)
+    (hp : ∀ b pos idx tb nxt, (ptr b pos idx tb nxt).size = b.size)
+    (buf : ByteArray) (pos len la s n key cur tb nxt : UInt64) :
+    (subRun ent fil ptr buf pos len la s n key cur tb nxt).size = buf.size := by
+  fun_induction subRun ent fil ptr buf pos len la s n key cur tb nxt <;> simp_all +zetaDelta
+
+@[simp] theorem subNarrow_size (buf : ByteArray) (pos len s n key cur tb nxt : UInt64) :
+    (subNarrow buf pos len s n key cur tb nxt).size = buf.size := by
+  unfold subNarrow
+  exact subRun_size _ _ _ (by intros; simp) (by intros; simp) ..
+
+@[simp] theorem subWide_size (mt : UInt64) (buf : ByteArray) (pos len s n key cur tb nxt : UInt64) :
+    (subWide mt buf pos len s n key cur tb nxt).size = buf.size := by
+  unfold subWide
+  exact subRun_size _ _ _ (by intros; simp) (by intros; simp) ..
+
+/-- The walk through the lists of lengths beyond the root, a length at a time. -/
+def subWalk (wide mt pos maxl : UInt64) (buf : ByteArray) (len key cur tb nxt : UInt64)
+    (h : ringAt.toNat ≤ buf.size) : ByteArray :=
+  if hl : len < maxl then
+    have : maxl.toNat - (len + 1).toNat < maxl.toNat - len.toNat := succ_nearer hl
+    let l : UInt64 := len + 1
+    let n := listCount buf l
+    if n = 0 then subWalk wide mt pos maxl buf l key cur tb nxt h
+    else
+      let s := listHead buf l
+      let buf' := if wide = 0 then subNarrow buf pos l s n key cur tb nxt else subWide mt buf pos l s n key cur tb nxt
+      have h' : ringAt.toNat ≤ buf'.size := by
+        simp only [buf']
+        split <;> simpa using h
+      let st := slot buf' Slot.walk h'
+      subWalk wide mt pos maxl buf' l (key + n * ((0x10000 : UInt64) >>> l)) (st &&& 0xFFFF) (st >>> 32)
+        ((st >>> 16) &&& 0xFFFF) h'
+  else
+    built wide buf pos rootCap nxt h
+termination_by maxl.toNat - len.toNat
+
+/-- The walk through the lists of lengths within the root, a length at a time. `key` is the next code, its first bit
+highest of 8. -/
+def rootWalk (wide mt pos maxl r : UInt64) (buf : ByteArray) (len key : UInt64) (h : ringAt.toNat ≤ buf.size) :
+    ByteArray :=
+  if hl : len < r then
     have : r.toNat - (len + 1).toNat < r.toNat - len.toNat := succ_nearer hl
-    rootWalk wide mt pos maxl r buf (len + 1) (listCount buf (len + 1)) (listHead buf (len + 1)) key h
+    let l : UInt64 := len + 1
+    let n := listCount buf l
+    let kstep : UInt64 := (0x100 : UInt64) >>> l
+    let buf' :=
+      if n = 0 then buf
+      else runIn wide mt pos buf 0 l ((1 : UInt64) <<< l) ((1 : UInt64) <<< (r - l)) kstep (listHead buf l) n key
+    rootWalk wide mt pos maxl r buf' l (key + n * kstep) (by
+      simp only [buf']
+      split <;> simpa using h)
   else if r < maxl then
-    subWalk wide mt pos maxl r buf len 0 0 key 0x100 0 0 ((1 : UInt64) <<< r) h
+    subWalk wide mt pos maxl buf len (key <<< 8) 0 0 ((1 : UInt64) <<< r) h
   else
     built wide buf pos r ((1 : UInt64) <<< r) h
-termination_by (r.toNat - len.toNat, n.toNat)
+termination_by r.toNat - len.toNat
+
+@[simp] theorem subWalk_size (wide mt pos maxl : UInt64) (buf : ByteArray) (len key cur tb nxt : UInt64)
+    (h : ringAt.toNat ≤ buf.size) : (subWalk wide mt pos maxl buf len key cur tb nxt h).size = buf.size := by
+  fun_induction subWalk wide mt pos maxl buf len key cur tb nxt h <;> simp_all +zetaDelta <;> split <;> simp
+
+@[simp] theorem rootWalk_size (wide mt pos maxl r : UInt64) (buf : ByteArray) (len key : UInt64)
+    (h : ringAt.toNat ≤ buf.size) : (rootWalk wide mt pos maxl r buf len key h).size = buf.size := by
+  fun_induction rootWalk wide mt pos maxl r buf len key h <;> simp_all +zetaDelta <;> split <;> simp
 
 /-- The table of the code whose symbols are in the lists, a complete code of two symbols or more, built at the
 position in `Slot.tabNext`. Its root is as wide as the code's longest length, up to `rootCap` and no less than
@@ -230,10 +358,21 @@ def build (buf : ByteArray) (wide mt rmin : UInt64) (h : ringAt.toNat ≤ buf.si
   let maxl := maxLen buf 15
   let r0 := if maxl ≤ rootCap then maxl else rootCap
   let r := if r0 < rmin then rmin else r0
-  rootWalk wide mt pos maxl r buf 0 0 0 0 h
+  rootWalk wide mt pos maxl r buf 0 0 h
 
 /-- The table of a code of the one symbol `s`, read from no bits: every entry of a root of `rmin` bits. -/
 def buildOne (buf : ByteArray) (s wide mt rmin : UInt64) (h : ringAt.toNat ≤ buf.size) : ByteArray :=
   let pos := slot buf Slot.tabNext h
   let buf1 := put wide mt buf pos 0 1 ((1 : UInt64) <<< rmin) s 0
   built wide buf1 pos rmin ((1 : UInt64) <<< rmin) (by sized h)
+
+@[simp] theorem listsReset_size (buf : ByteArray) (h : ringAt.toNat ≤ buf.size) : (listsReset buf h).size = buf.size := by
+  simp [listsReset]
+
+@[simp] theorem build_size (buf : ByteArray) (wide mt rmin : UInt64) (h : ringAt.toNat ≤ buf.size) :
+    (build buf wide mt rmin h).size = buf.size := by
+  simp [build]
+
+@[simp] theorem buildOne_size (buf : ByteArray) (s wide mt rmin : UInt64) (h : ringAt.toNat ≤ buf.size) :
+    (buildOne buf s wide mt rmin h).size = buf.size := by
+  simp [buildOne]

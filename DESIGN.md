@@ -455,6 +455,8 @@ negative.
 - *A margin alone, the tail left for the next call:* fails promptness.
 - *The one compiled loop run a round at a time near the end:* a copy cannot be undone, so every command would need a
   test between its distance's read and its copy.
+- *The input read in place, only the ends of chunks staged* (what Google's decoder does): not weighed when this was
+  written; since probed and tabled (9.4).
 
 ### 5.5 Output and the window — proposed
 
@@ -930,6 +932,18 @@ branch and the second load cost. The cap stays 8 for every table.
 **The loop's design is provisionally final** (owner, 2026-11-10): what section 5.6 and the items above say, as built
 in step 3. It is reopened only by what the whole decoder's measurement shows.
 
+**The loop's stores, looked at again** (2026-11-10, after the header showed what the call behind a store can cost,
+9.2). In the loop's generated code (485 instructions, compiled with contexts) a literal's round is about 37
+instructions and a command's head about 75, with no value saved to the stack in either; a distance saves one value,
+once a command; a copy none. The seven carried values fit in the registers a call keeps, so the test before a store
+costs the loop a compare and a predicted branch and nothing else: about six instructions of two hundred a command,
+none on a chain. There is nothing to take there.
+
+- *Tried and not kept:* joining the literal's byte to the context row's position by one add, with the row and the
+  class combined first, so that the table position's address needs no further addition after the literal. It took
+  two additions off the chain through the literal and put a subtraction on the chain through the class: the loop was
+  1.5% slower (10.44 ms a pass against 10.28).
+
 **A cost these choices move to the header, not yet measured.** Three of them make a meta-block's header dearer, and
 the loop's time does not show it:
 - *the context tables* (item 4): 2048 entries a literal block type that has contexts. Filled one entry at a time
@@ -967,7 +981,7 @@ Each step usable by the next, with something to measure as early as possible.
 8. The memory limit.
 Then the whole decoder is measured, and only then proved.
 
-### 9.1 Step 4, the header: how it is to be built — proposed
+### 9.1 Step 4, the header: how it is to be built — built (9.2)
 
 The header of 5.7 as a machine that can stop between any two elements, in running mode first (exact mode comes with
 the driver, step 5). Written before the code, to be corrected by it.
@@ -1010,6 +1024,494 @@ command loop's slots are set (the current tables, the counters, the bound) and t
 **How it is checked:** `fdrun` reads each header both ways, by the specification's reader as now and by this
 machine, and compares what they leave: every table by decoding with it, the maps, the counts and the parameters; and
 then decodes the stream with the tables this machine built.
+
+### 9.2 Step 4 as built, and what it costs (2026-11-10)
+
+Built as 9.1 says (`Header.lean`), in running mode, and checked as it says: on every stream of the web corpus and on
+Brotli's own test streams that fit their window, each header as this machine reads it agrees with the
+specification's reading (the counts, the parameters, the modes, both maps, every code's table by decoding every 15
+bits of input, and the bit the header ends at), and the stream decodes to its original with the tables the machine
+built. The rejections are written and have not been exercised: the harness has no invalid streams yet.
+
+**Where it differs from 9.1**
+- *Everything is taken from one moving position* (`Slot.tabNext`) as its size becomes known: working arrays and
+  tables interleaved, not the arrays first. The move-to-front list and the set of codes a map names are scratch past
+  that position (512 bytes the room must cover).
+- *The code-length code's 18 lengths are a third loop,* which in running mode runs to its end in one call (72 bits
+  at most, inside the margin). Its table was at first built by the general builder; it is now made directly (below).
+- *A context table is filled only for the classes its mode can give:* 1 for the two modes that use the last
+  byte alone, 4 for UTF-8, 8 for signed.
+- *The slow state is 1,024 bytes,* for the header's slots, the three categories and the code-length code.
+
+**The builder, rewritten for it.** The walk through the lists carried 14 values and cost about 65 instructions a
+symbol, most of them stack traffic. It is now a tight loop for a run of symbols of one length within one table
+(`tabRun`, compiled once for narrow entries and once for wide), with a new length and a new sub-table handled outside
+it. The builder's instructions fell by a fifth on one page (jquery at quality 11); the tables are the same (checked against the
+reference).
+
+**What a header costs, measured** (VTune, 400 mixed passes of the corpus, cycles a pass). Google's headers cost
+2.70 M and the earlier decoder's 8.57 M.
+
+| | first cut | now |
+|---|---|---|
+| the whole header | 4.19 M | 3.16 M |
+| the symbols' lengths | 1.36 M | 1.12 M |
+| building tables | 1.49 M | 1.03 M |
+| the code-length codes | 0.39 M and a share of the building | 0.29 M |
+| finishing (the context tables, the rows, the slots) | 0.40 M | 0.17 M |
+| the two maps | 0.34 M | 0.29 M |
+| the rest | 0.2 M | 0.26 M |
+
+So the header stands at 1.17 times Google's, 0.46 M cycles over it, which is under 1% of a whole decode; and the
+standing of 8.1 (level with Google on the commands) does not yet hold for commands and headers together. About a
+quarter of the header's cycles are mispredicts (48,000 a pass). In instructions it is 7.8 M a pass, from 10.0 M.
+
+**What was changed after the first cut, each from this document's own guidance that the first cut had not followed**
+- *The lengths' loop keeps its word in a register* (5.7: at most 7 rounds a refill). Loading the word again every
+  round put a load on the chain from one symbol to the next: about 14 cycles a round at 2 instructions a cycle. It
+  also reads the code-length symbol from a table of 32 one-byte entries at a constant place, and makes one or two
+  tests a round: its budget is never more than the symbols the alphabet has left.
+- *The context tables are filled by rows* (8.1). The table is laid out by the last byte first, 32 bytes a last byte
+  (the loop's offset is `byte << 5 | class << 2`, the same shift and or as before), so a last byte's contexts are
+  copied from the block type's row of 64 as one block of 16 or 32 bytes. The loop was measured again with this
+  layout: the loop compiled with contexts took 25.37 M cycles a pass against 25.64 M before, and the loop without
+  contexts, which the change does not touch, 25.22 M against 25.55 M; the ratio of the two moved by a quarter of a
+  percent, inside the run's noise. The layout stays. If a later measurement shows the wider UTF-8 table (8 KB in
+  place of 4) costing the loop, UTF-8 goes back to 16 bytes a last byte, with the shift read for the block type.
+- *The code-length code's table is assembled in four words and written by four stores* (5.7), from the counts of
+  each length, with nothing that branches on the data: a symbol's entries are a fixed pattern of the 32 shifted to
+  its code and spread to bytes. A first version filled the table by short loops whose counts follow the data; they
+  mispredicted 10,000 times a pass and it cost more than the general builder had.
+- *A context map is read like the lengths* (5.7), its word in a register; the check that it names every code is a
+  set of bits in a register for a map of at most 64 codes; and the move-to-front list and the marks are set up only
+  as far as the map's codes go (principle 11).
+- *A zero length is added to the list of length 0,* which nothing walks, so the lengths' loop has no branch between
+  a zero length and another. No measurable gain; kept as the simpler loop.
+
+- *Sub-tables are filled a length at a time, not a run at a time* (after the table above was taken). The code
+  counter beyond the root is kept in 16 bits, its high byte the root slot and its low byte the code within the
+  sub-table; the low byte is zero exactly when a new root slot begins, so one loop takes all of a length's symbols
+  and starts each sub-table in passing (`subRun`). Before, each run of the two or three symbols a sub-table holds of
+  one length was a call of its own. By the harness's clock the headers went from 0.87 ms a pass to 0.86.
+- *Tried and not kept:* one plain store in place of the strided fill where a symbol has a single slot (no change).
+
+- *The code-length code's table, made a length at a time* (this replaces the two forms above). Its 18 lengths are
+  gathered in a register while they are read, 3 bits each, and nothing is stored. Codes go by length and then by
+  symbol, so one counter runs through them; the symbols of a length are found by one comparison of the whole word and
+  walked as a mask, so a symbol with no length costs nothing; and before a length's symbols are stored the table's
+  first half is copied onto its second by one load and one store, which makes every shorter symbol's copies with
+  nothing emptied, tested or spread. The five lengths are five small loops, so what a length fixes is a constant in
+  its loop. Set beside Google's on one page (jquery at quality 11): 268 instructions a table against Google's 238,
+  from 1,230 for the form assembled in four words. It has up to five loop exits a table that follow the data, so it
+  was measured against the form with none: 154,000 cycles a pass and 2,800 mispredicts, against 290,000 and 1,000.
+  The walk stays.
+- *The reversed bytes and the mask-to-symbol table are read from the buffer's front* (8.1, item 6), not through a
+  pointer loaded for each symbol: for the code-length table and for both of the builder's loops.
+- *Tried and not kept:* the lengths' loop with its end read from the slow state and its refill marked by a bit in
+  the word itself (two fewer values carried than the form kept). No faster, and the word went to the stack, on the
+  chain. The form kept carries its values in registers as it is (below).
+
+**Beside Google's, part by part** (one page, jquery at quality 11, exact instructions; Google's from its own
+functions): reading codes 57,000 against 47,100; code-length tables 4,800 against 4,300; building the other tables
+52,000 against 48,800; context maps 7,500 against 6,100; context tables and finishing 12,200 against none; the
+distance symbols' table 2,300 against none; in all 137,000 against 107,000 (272,000 at the first cut).
+
+**The call behind every store: looked at twice, and shaped around** (owner, 2026-11-10). An early form of the
+lengths' loop, with nine values changing from round to round, spent about 14 of 52 instructions a symbol saving
+values to the stack and reloading them around its two stores: the test that the array is held once has a call
+behind it (section 4), and a call does not keep half the registers. Two ways of taking the call's cost away were
+looked at, and neither is taken; a third search found no other.
+
+- *The copy behind a function declared `preserve_most`,* which saves the registers itself. Probed in C: no stack
+  traffic. Decided against: it needs a C file in the library, which is a build step of its own, and the library
+  takes on no build step beyond Lean's; and the compiler's documentation calls the feature experimental.
+- *The copy reached through a small routine written in assembly inside the primitive's own text,* emitted once for
+  each object file, which saves every register itself (found by an investigation asked to get the same effect with
+  no C file and nothing experimental). It was built into the real modules in a copy and checked by a test that
+  forces the copy. It is not taken: it would put some 35 lines of assembly, for one operating system and with no
+  unwind information, into the trusted primitives; and on the code as it now stands it gains almost nothing, for
+  the reason that follows.
+- *Anything else at all, with assembly ruled out as well* (owner): a second, wider search, on the real generated
+  code. Nothing was found, and the reason is of one piece. Taking the call away takes every such save away (the
+  command loop's function goes from 38 stack operands to 19, the builder's main loop from 20 to 11), so the call is
+  the cause. But the call cannot go: a store with the test left out, tried on an array held twice, wrote into the
+  shared original. And nothing short of removing it helps. Telling the compiler the array is held once is ignored,
+  and if heeded would delete the copy; true attributes on the runtime's copy function (cold, leaf) change where its
+  code is put and not who saves the registers, and the output is the same byte for byte; attributes that would change
+  that are false of the runtime; a slow path that leaves the loop needs a Lean function saying whether an array is
+  held once, and there is no such function, since two equal arrays can differ in it; and nothing in this Lean (its
+  linear mark, its borrow annotations, its own store functions) skips the test.
+  What other languages do is hoist the test out of the loop in the compiler (Swift does). For Lean that exists as a
+  proposal and a thesis, in no release; and it would work on Lean's own array operations, where it can see the test,
+  not on a primitive whose test is inside its C. So the primitives that make this decoder fast are also what would
+  put it out of such an optimisation's reach, unless Lean one day lets a primitive declare that it needs its array
+  held once.
+
+**Shaping is enough.** With the loops as they now are, the hot paths have no stack traffic from the call at all:
+the lengths' loop is 41 instructions for a plain length, the command loop's literal round 39 (8.1), each with none
+saved to the stack. What does it is what section 4 says: few values that change from round to round, so that they
+fit in the registers a call keeps (a budget kept as an end for the index, not counted down; state packed in one
+word; what only a rare path needs read from the slow state there); and few store sites. The compiler also drops the
+second test of two stores in a row where it can see the first cannot have reached the array's own header (an index
+it knows to be small). The loop of a context map's values was the one still shaped the old way, at 38 instructions
+a value with 6 of them stack traffic; reshaped in the same manner (a position in the buffer in place of an index
+and the map's place, an end in place of a budget, the run-length limit read where it is used) it is about 30 with 2.
+
+So an earlier sentence of this section was wrong and is withdrawn: what separated this header's reading of codes
+from Google's (57,000 instructions against 47,100 on the page above) was not registers saved around stores.
+
+**What it was: the repeat codes.** Found by setting the two functions side by side, block by block with their
+execution counts (the page has 663 plain lengths, 83 zero lengths, 83 repeats of the last length adding about 440
+symbols, 51 runs of zeros). The loop for plain and zero lengths was already level with Google's: 41 instructions a
+plain length against 37, about 29,500 against 29,300 in all. The repeats were not: about 15,000 against 11,600.
+Each repeat of the last length called a function of its own to add its run of symbols to the list, a symbol at a
+time, and the runs are short (five symbols on average), so the call cost more than the work. Now a run of up to five
+is added in line: the first symbol linked after the list's last, the next four links written by one store (their
+values are consecutive), and the list's word written once with its count up by the run. Longer runs, and one within
+three symbols of the largest alphabet's end, go to a loop that writes four links a store. Reading codes is now
+51,500 instructions on the page against Google's 47,100, and the header 133,000 against 107,000.
+
+- *Tried and not kept:* 64 bytes of slack after the links, so that the one store needs no test near the alphabet's
+  end. It moved every later part of the front by 64 bytes, and the command loop read 0.7% slower with nothing else
+  changed (the loop's tables and the ring keep their place within a cache line, so this is some coarser alignment).
+  The front's positions are a thing the loop is sensitive to: a change to them is measured on the loop.
+
+
+**A caution on the comparison.** Google's 2.70 M was taken with the benchmark driver (input in network-sized
+pieces, its decoder pausing inside headers); ours with `fdrun` (the whole input at hand, a fresh buffer a decode);
+and the two decoders do not draw the line around "headers" alike. The figures show which parts are slow. How far the
+header is from Google's is known only when both run under the same driver (step 5 on).
+
+**What is left, and what it is**
+- *The symbols' lengths* (1.12 M): a chain of about 8 cycles a symbol (the next symbol's place waits for this one's
+  length through a load), and 18,000 mispredicts a pass, mostly on the repeat codes. Two symbols to a lookup
+  (section 8, item 8) would shorten the chain, but needs a table of 256 pairs built for each of about 1,300
+  code-length codes a pass; by estimate, not measurement, that costs more than it saves. Not taken.
+- *Building* (1.03 M): spread thin, with no hot spot: about 14 cycles a symbol in the wide tables, in the walk
+  through a linked list (a load a symbol, as in Google's builder, which keeps the same lists) and stores into table
+  memory that is not in the cache. Wide entries are twice the bytes of Google's.
+- The three choices of 8.1 that the header pays for stay: the context tables now cost 0.16 M a pass, and what they
+  took off the loop is many times that.
+
+### 9.3 Step 5, the driver, staging and exact mode: how it is to be built — built (9.4)
+
+What 2.3, 2.4, 5.1, 5.4, 5.5 and 5.6 say of it, gathered, with what they leave open settled here. Written before the
+code, to be corrected by it.
+
+**What is built already disagrees with the design in four places,** and step 5 puts each right:
+- the loop's budget is renewed outside the loop, by whoever called it; 5.4 says inside it, from the slow state, the
+  loop leaving only when the input ahead is really short;
+- the insert-and-copy block's count is kept by the harness; 5.6 folds it into the budget, as the smaller of the two;
+- nothing has an exact mode;
+- the code-length code's lengths are read to their end in one call; in exact mode that loop stops between elements.
+
+**The mode is a function** (section 4): from the buffer and the bit position after an element to whether every bit
+the element used was real (at or before `Slot.inEnd`). The running one answers yes without looking, so the running
+copy of a loop carries nothing for it. A loop asks it after reading an element and before the element has any
+effect, in the order of 5.6: a distance read, asked, then pushed and copied; a head read, asked (it stores nothing);
+a literal read, asked, then stored. If the answer is no the loop leaves with its values as they were before the
+element, for the reason "input".
+- *The command loop* is compiled four times: the two modes, by whether literal contexts are trivial.
+- *The header's three loops* (the code-length code's lengths, the symbols' lengths, a map's values) are compiled
+  twice.
+- *The header's single elements* have the test always, as 5.4 has it for the window size and a meta-block's start:
+  each is read once, and one comparison each is not worth a second copy of every step.
+
+**The budget, renewed inside the loop.** When the budget's field is zero at a command's head the loop calls a small
+function that works out a new one from the slow state: the rounds the real input ahead covers at a round's largest
+cost, and no more than the insert-and-copy block has commands left, which it lowers by what it grants. It leaves the
+new counters in the slow state, and the loop goes on with them. Only when it can grant nothing does the loop leave:
+for "input" if the input ahead is short, for the block switch if the block's count is spent. In exact mode the
+budget counts the block's commands alone, since every element is tested.
+
+**The driver** is the one function that holds the caller's two arrays. Each time round it reads the phase and the
+reason and does one thing:
+- *the header:* a step of it;
+- *the commands:* the loop, in running mode while the margin of real input lies ahead, in exact mode when the chunk
+  is used up and it does not;
+- *a loop left for "input":* stage the next piece of the chunk if there is one; if there is none, go to exact mode;
+  if it was already in exact mode, hand out what waits and return "needs input", or reject if the end was signalled;
+- *a loop left because the bound stopped it:* if the bound was the caller's space, hand out what waits and return
+  "needs output"; the meta-block's end and the ring's end are steps 6 and 7's;
+- *done, rejected:* return it.
+
+**Staging** (5.4): the unread tail is moved to the area's front, `bitpos` lowered by what was dropped, the next
+piece of the chunk copied after it, and `Slot.inEnd` set to the last real bit. When the chunk is used up, zeros are
+written after the last real byte for the margin. The count of bytes that were already in the area when the call
+began is kept (`Slot.carried`), for the bytes a rejection reports used.
+
+**Handing out** (5.5): one copy from the ring, from `handed` on, onto the end of the caller's buffer, of the bytes
+waiting or as many as the space left allows; `handed` moves on. The bound is set before a loop is entered: the least
+of the meta-block's end, the ring's end, and `handed` plus the space left plus one.
+
+**A call** writes its parameters into the slow state (where its chunk stands, the space, the end flag), runs the
+driver, and builds the reply: the state, the bytes used (5.4's rules), the caller's buffer, the status. The reply is
+the only thing it allocates.
+
+**What is not here yet, and how the driver stands in for it.** The stream's frame and the other kinds of meta-block
+are step 6; the handlers (a block switch, a command that does not fit, a copy that needs care, a meta-block's end)
+and the wrap are step 7 (the wrap needs the ring's size, which the stream layer sets). Until then the driver returns
+to its caller at exactly those points, with a status that is not part of the interface and says which point it is;
+the harness does that piece by simple means, as it does now, and calls again. Each such return is replaced by the
+real thing in its step, and the status goes when the last is replaced.
+
+**How it is checked:** `fdrun` decodes every stream through the driver, with the input delivered in pieces (16 KiB
+pieces, the network mix, and pieces of a few bytes so that every element is met at a chunk's end) and with output
+room given a little at a time, and compares the output with the original. Then the two things section 8 lists for
+this step are measured: what copying the input into the staging area costs, and the fixed cost of a call.
+
+### 9.4 Step 5 as built (2026-11-10)
+
+Built as 9.3 says: the mode as a function through the command loop (four compiled copies) and the header's three
+loops (two each); the budget renewed inside the loop from the slow state, with the insert-and-copy block's count
+folded in; staging, handing out and the driver (`Driver.lean`), whose reply is a call's only allocation. Checked as
+9.3 says: every stream of the web corpus, and Brotli's own test streams that fit their window, decoded through the
+driver with the input in pieces of 16 KiB, 100, 7, 3 and 1 bytes and output room of 64 KiB, 100, 5, 3 and 1 bytes a
+call, each compared with its original, and what was handed out compared as it came. Three deliveries are steps of
+`check`.
+
+**Where it differs from 9.3, and what building it showed**
+- *The header's single elements are guarded where they are dispatched,* not each in its own step: while 64 real bits
+  lie ahead a step is taken as it is (no single element of a header is longer than 39 bits); in a chunk's last bits
+  the element's own length is worked out first and the step taken only if all of it is real.
+- *The header's loops choose their own mode* by what lies ahead when they are entered: the running copy while the
+  input covers its rounds, the exact copy for the last bits. The driver chooses only the command loop's.
+- *Running mode is chosen at every entry, by what is ahead then.* A first form went to exact mode only after the loop
+  had left for want of input, and entered it in running mode at the start of each call. A loop taken up in the
+  middle of a command (literals owed, a distance to read) reads on without a test, so with small pieces it read bits
+  that were not there. Now the driver looks before it enters: if less than the margin and a refill's 8 bytes lie
+  ahead it stages more when the chunk has more, and runs the loop in exact mode when it has none. This is 5.4's
+  "running, while a margin of real input lies ahead", which the first form did not keep.
+- *At the bound there may be no head to read.* At a meta-block's end the loop looks for the next command's head,
+  and in exact mode at the stream's end there are no bits for one: that is the bound's event, not a want of input,
+  and the loop says so (in exact mode only; in running mode the bound's own test catches it, as before).
+- *The bytes a rejection reports used* (5.4, `Slot.carried`) are not worked out yet: the driver reports the bytes
+  staged. To be done with rejection, step 7.
+
+**What it costs** (the harness's clock, mixed passes; headers, commands, staging and handing out together):
+10.98 ms a pass with the whole input given at once and room for all the output; 11.48 ms in 16 KiB pieces with
+64 KiB of room a call. Before the driver, the headers and the loop came to 11.05 ms by the same clock, so the driver
+and the budget's renewal cost nothing that shows (the loop now returns to its caller a quarter as often); and
+delivering the input in pieces and handing the output out, 9 MB of it a pass, costs about 0.5 ms, 4.5%. Section 8's
+two measurements for this step (staging, and a call that does almost nothing) are to be taken by function once the
+stream layer lets a whole stream go through the driver without the harness.
+
+**Each departure from the design measured both ways** (owner, 2026-11-10: a departure may be an improvement or
+not, and only measuring says which). By the harness's clock, mixed passes, the least of three to five runs; pieces
+of 16 KiB, of 1,460 bytes (a network segment), of 64 bytes and of 1 byte, the last two to show what happens at a
+chunk's end and what a call costs. Runs of the same build differ by up to about 0.5% at the two larger sizes.
+
+| the choice | as built | the other way | result |
+|---|---|---|---|
+| a call's parameters: carried as the driver's arguments, or written into the slow state (5.1) | arguments | the slow state: the same at 16 KiB, 5.7% slower at 1 byte a call | arguments stay; 5.1's wording is departed from, for a call's fixed cost |
+| zeros after the staged bytes: at every staging, or only when the chunk is used up (5.4) | every staging | only at the chunk's end: the same at 16 KiB, about 6% slower at 64 bytes and at 1 byte (repeated; not explained) | every staging stays |
+| a header's single elements: guarded where they are dispatched, with the element's length worked out apart in a chunk's last bits, or tested inside each step after it is read (5.4) | the guard | inside each step: 0.5% slower at 16 KiB and at 1,460 bytes, 3 to 4% slower at 64 bytes and 1 byte | the guard stays. Its cost is the proof's: two pieces of code must agree on each element's length |
+| the budget's renewal: a call from inside the loop, the same in line, or the loop leaving for the driver to renew it (5.1, 5.4) | a call | in line: the loop grows from 487 instructions to 552, and 0.2 to 0.3% slower. The driver: 0.8% slower at 16 KiB, 2.9% at 1,460 bytes | the call stays, a second call in a loop that 5.1 allows one |
+
+**Two more, looked at with them**
+- *The header's input is made up first,* as the command loop's is: where less than the margin lies ahead and the
+  chunk has more, the driver stages before it takes a step. Before, the header read the last bits of each staged
+  piece an element at a time and staged only when one would not fit. 0.2 to 0.3% faster at the two realistic sizes,
+  which is inside the noise; kept as the design's shape.
+- *The staging piece's size,* within the area as it is: pieces of at most 1,024 bytes cost 2.7% more than the
+  4,032 the area gives, and of 2,048 bytes 0.6% more. A larger area was not tried: it moves the front, which the
+  command loop is sensitive to (9.2), so it is a question for the whole decoder's measurement.
+- *A call that does almost nothing:* with the input a byte a call and room for a byte, 9.8 million calls a pass,
+  the decode takes 155.7 ms against 11.2: about 15 ns a call, the harness's own loop and the reply's allocation
+  included.
+
+**Due diligence before the step was signed off** (2026-11-10): what had gone untested, tested.
+- *What a call promises, checked at every return* (2.4): it adds no more than the room it was given; "needs output"
+  comes with the room full; "needs input" comes with the chunk all used and nothing produced left waiting. These
+  hold on every stream under every delivery, the network mix of piece sizes now among them.
+- *Streams cut short.* Each stream of the corpus cut at 40 places and given to the decoder twice: with the end
+  signalled it must be rejected; without, it must ask for input, having handed out exactly what the proved decoder
+  (`Brotli/Decoder/`) hands out for the same bytes, which is what promptness means (the weaker check, that nothing
+  produced is left waiting, would pass a decoder that stopped an element early). Of 4,160 cases 1,985 were rejected
+  as they should be, 1,985 asked for input with the proved decoder's output to the byte, and 190 fell where the
+  harness still does the reading itself and are not judged; none was wrong. The same with small pieces and small
+  room, and with the network mix. Until this, nothing but whole valid streams had been through the new decoder.
+- *Not yet tested, and why:* streams that are corrupt and not merely cut short (the header's rejections have still
+  never run), which wait for the handlers and rejection of step 7 so that the whole verdict can be compared; and the
+  one test stream whose output passes its window, which waits for the wrap.
+
+**What is known to be slack or unmeasured, carried forward**
+- *Every byte of input is copied once,* into the staging area; Google's decoder reads its input where the caller
+  left it. A first estimate, by making the copy twice and timing the difference, is 1 to 2% of a decode; the clock
+  varied by more than that between sittings, so it is to be measured by function with the whole decoder (section 8,
+  item 11).
+- *What the harness does for the decoder is outside its time:* on one page (jquery at quality 11) the loop goes
+  back to the harness 121 times, for 75 copies that need care, 40 commands that do not fit and 6 block switches.
+  These are step 7's handlers, and their cost will be the decoder's.
+- *The header* stood at 3.16 M cycles a pass against Google's 2.70 M when last measured by cycles (9.2), before the
+  repeat codes were put in line.
+
+**Reading the input in place: measured, and tabled** (owner, 2026-11-10). 5.4 stages every byte of input, and
+weighs four alternatives, none of them the one Google's decoder uses: read the caller's array where it lies while
+plenty of the chunk remains, and copy only the last bytes of each chunk. It was probed: the command loop's input
+taken either from the staging area or from the caller's array (the source passed as a function, so one definition
+gives both loops), the two timed in one binary, alternated.
+
+| delivery | staged | in place | gain |
+|---|---|---|---|
+| the whole input in one call | 11.07 ms a pass | 10.71 | 3.2% |
+| 16 KiB pieces | 11.37 | 11.06 | 2.4 to 3.0% |
+| a mix of network read sizes | 11.53 | 11.46 | 0.4 to 0.8% |
+| 1,460-byte pieces | 11.54 | 11.48 | 0 to 0.8% |
+
+- The loop bears the caller's array as one more carried value: one instruction longer, three more values on the
+  stack, and still faster. So that reason of 5.4's for staging does not hold.
+- The gain is the copy and the loop's leaving every 4 KB to have more staged; the two were not told apart.
+- It shrinks with the pieces, because each chunk's end costs what it did: its last bytes staged and read in exact
+  mode, then joined to the next chunk's first bytes until the reading has moved wholly into the new chunk. The probe
+  did this crudely (160 bytes of the new chunk staged each time); a careful form may do better at small pieces.
+- It was correct under every delivery and the truncation test.
+- A first probe, valid only for the whole input in one call, gave the 3.2% alone; the measurement in pieces was
+  asked for before anything was decided on it, and is why the answer is not simply yes.
+
+Tabled, not refused: it makes the driver switch between two sources at every chunk's end, and makes blindness to
+layout something to prove of every read, where now no loop reads the caller's array at all. To be looked at again
+when the whole decoder is measured.
+
+### 9.5 Step 6, the stream layer: how it is to be built — built (9.6)
+
+What 2.1, 5.1, 5.2, 5.4, 5.5, 5.8 and 5.10 say of it, gathered, with what they leave open settled here. Written
+before the code, to be corrected by it.
+
+**The decoder's start.** `start` sets up the front of a buffer it is given: the constant tables copied in (8.1), the
+last four distances at their first values, the guard zero, the output's position and `handed` at the ring's start,
+the staging area empty, the phase the window size. The buffer itself is still the harness's to provide, large enough:
+its room and its growth (5.2) need a bound on a header's tables before they are built, which is the question 5.2
+defers and belongs with the demand and the limit (5.9), step 8.
+
+**The window size** is one element of 1, 4 or 7 bits, read in exact mode: its one unused pattern rejects. It sets the
+ring's end, `2 ^ WBITS` bytes past its start, and the window, 16 less.
+
+**A meta-block's start** is one element of at most 31 bits, read in exact mode with the bits to the byte boundary
+where the format has them checked: whether it is the last and, if so, whether it is empty; the count of nibbles; then
+either the length and, for a block that is not the last, whether it is uncompressed, or for metadata the reserved
+bit, the count of bytes and the skip length. Its rejections are 5.10's. Then, by its kind:
+- *the empty last block:* the phase becomes the end;
+- *metadata:* the bits to the byte boundary must be zero; the phase becomes metadata with its count of bytes;
+- *uncompressed:* the same of its bits to the boundary; the phase becomes uncompressed data with its count;
+- *compressed:* the meta-block's end is the output's position and its length; the tables go at the smaller of that
+  and the ring's end, and the slack (5.2); the header is begun.
+Whether the block is the last is kept, for what follows it.
+
+**Metadata** is passed by the driver without a copy: the count is lowered by the bytes of it in the staging area,
+which are dropped, and then by bytes of the caller's chunk, counted as used.
+
+**Uncompressed data** is copied by the driver into the ring at the output's position: first what is in the staging
+area, by a copy within the buffer, then straight from the caller's chunk; each time as much as the input has, the
+count has left, and the bound allows (the ring's end, and one byte more than the caller can take). Output waits and
+is handed out as for the commands.
+
+**After a meta-block** (its last byte produced, its metadata passed): the next meta-block's start, or, after the
+last, the end. For a compressed meta-block this is the handler of step 7, which also checks that every block type
+declared was used; the move to the next phase is made here, and the check left to that step.
+
+**The end:** the bits to the byte boundary must be zero. Then a byte in the staging area or in the chunk rejects; the
+end signalled, with everything handed out, is "done"; otherwise "needs input".
+
+**Carried from one meta-block to the next:** the last four distances and their index; the output's position;
+`handed`.
+
+**What the harness is left with:** the events of step 7 (a block switch, a command that does not fit, a copy that
+needs care) and the wrap, each still a `todo`. Its own reading of the frame goes, and with it the comparison of each
+header with the specification's reading, which needed the header's place in the file.
+
+**How it is checked:** every stream of the corpus and of Brotli's own test data (which has empty streams, metadata
+and uncompressed meta-blocks) decoded through the driver under the deliveries of 9.4; the truncation test, with the
+frame now the decoder's; and the frame's rejections, by changing the frame's own bits and comparing the verdict with
+the proved decoder's.
+
+### 9.6 Step 6 as built (2026-11-10)
+
+Built as 9.5 says, in `Stream.lean` (`start`, the window size, a meta-block's start, what follows a meta-block) and
+in the driver (metadata, uncompressed data, the end). What the code settled or corrected:
+
+- **A meta-block of commands is over** when the loop stops before a head with the meta-block's last byte produced:
+  for the reason "command", or for "insert-and-copy switch" when the block's count ran out on the meta-block's last
+  command (the loop asks for the count's renewal before it reads the head, so the switch that never comes is asked
+  for first). The driver tests the output's position against the meta-block's end for both.
+- **The frame's elements are read after a top-up:** as for the header (9.4), the driver stages the chunk's next piece
+  first when less than a refill lies ahead, so an element is found short only when the chunk is used up.
+- **Two slots added:** whether the meta-block is the last, and the window.
+- **The tables' place is rounded up to 8 bytes** past the slack. Measured both ways by the harness (30 mixed passes,
+  three runs each, the aligned build before and after the other): aligned 11.32 to 11.36 ms at 16 KiB pieces and
+  11.48 to 11.53 ms on the network mix; unaligned 11.43 to 11.48 ms and 11.59 to 11.62 ms. About 1% for the
+  alignment; kept.
+- **The comparison of each header with the specification's reading stays**, against what 9.5 expected. The harness
+  no longer knows where a header begins, but fed a byte at a time the decoder always returns once with a meta-block's
+  start pending, and its place then shows. So the comparison is a decode of its own, a byte at a time, with no hook
+  in the decoder. As before, only a meta-block that returns to the harness at least once is compared (52 headers on
+  the web corpus, 16 on Brotli's test data).
+
+**Checked** (all steps of `check`): the web corpus under the deliveries of 9.4, 52 of 52; Brotli's test data, 44 of
+45, the other needing the wrap (step 7); the truncation test on the web corpus, 503 rejected, 503 asking for input
+with the proved decoder's output, 34 not judged (the cut fell where the harness's slow code was reading),
+none wrong; and each of the first 48 bits of every stream flipped, the verdict against
+the proved decoder's: on the web corpus 183 accepted with the same output, 1,537 rejected by the decoder, 762
+rejected by the harness's slow code standing in for step 7, 14 needing the wrap, none wrong; on Brotli's test data
+301, 933, 208, 54, none wrong.
+
+**Read against the design again** (2.4, 5.1, 5.2, 5.4, 5.5, 5.8, 5.10, 9.5; owner's request). Conformant: the two
+elements and their rejections; metadata and uncompressed data; the end; the statuses; what is carried between
+meta-blocks (the distances' index is kept in the counters by the header's last step). Where the code differs:
+
+- *The zero bits before the end were checked where the last meta-block ends*, not by the
+  driver in the end's phase as 5.1's table has it. The bits lie in the byte the reading stands in, so they are
+  always there. Measured below, and changed to the design's form.
+- *The uncompressed bytes in the staging area are copied by `move`* (a `memmove`): the module has no copy for ranges
+  that cannot overlap. A handful of bytes a meta-block.
+- *`start` does not write the whole front* (5.2 says a stream's start does): it writes the slots, tables and guard
+  it knows are read before they are written. The harness now fills the buffer with a non-zero byte before `start`,
+  and every stream decodes as before, so nothing visibly rests on zeros; that every slot is written before it is
+  read is still a fact owed to the proof. The whole front is written when the buffer is the decoder's own (step 8).
+- *The ring's part is not extended and no demand is compared* at a meta-block's start (5.8): step 8, as 9.5 says.
+
+**Each difference built both ways and measured** (owner's rule; the harness's decoder time, now with `start` inside
+it, 30 mixed passes, three runs a schedule; the as-built code measured three times, between the others: 11.35 to
+11.42 ms at 16 KiB pieces, 11.48 to 11.56 ms on the network mix; every variant also decoded Brotli's test data and
+passed the flipped-bit test):
+
+| the choice | the other way | 16 KiB | network mix | result |
+|---|---|---|---|---|
+| the end's zero bits checked where the last meta-block ends | checked by the driver in the end's phase (5.1) | 11.32 to 11.37 | 11.47 to 11.49 | no difference to be seen: the departure earned nothing, so the design's form is now built |
+| `start` writes only what is read before it is written | `start` writes the whole front first (5.2) | 11.32 to 11.36 | 11.47 to 11.61 | no difference in the total; the smallest pages (708 to 6,138 bytes) read 0 to 3% slower, inside their own spread. Not settled by this harness; left as built until the buffer is the decoder's own (step 8), where writing the front is how the array comes to be |
+| a frame element read after the chunk's next piece is staged | staged only once the element is found short | 11.34 to 11.37 | 11.49 to 11.51 | no difference; kept, since it is 5.4's shape (exact reading only at the chunk's end) |
+
+The copy of staged uncompressed bytes by `move` is not a difference: 9.5 asks for a copy within the buffer, and this
+is one. It may be as much as a staged piece (4 KB), not a handful of bytes. No stream of the web corpus has an
+uncompressed meta-block, so that path's time is not measured at all.
+
+**Two things found that are not step 6's, for step 7:**
+
+- *A distance in the ring's last 16 bytes.* Before the first wrap the loop tests a distance against the bytes
+  produced alone (5.5, "one comparison"). The format's largest distance is the smaller of the window and the bytes
+  produced, and the window is 16 less than the ring: once more than the window has been produced, a distance between
+  the two is a dictionary reference by the format and a plain copy by the loop, and a dictionary word's number is
+  counted from the wrong place. 5.5 is wrong there. Until now the harness refused every stream whose output passed
+  its window; it does so again. A remedy to weigh with the wrap: before the first wrap the bound's ring term is the
+  window's end, not the ring's, so the last 16 bytes are produced by the handlers, which compare with both.
+- *The tables' place after a wrap.* It is put past the smaller of the meta-block's end and the ring's end, from the
+  output's position. After a wrap that position is small again while the ring is full, so the place must become the
+  ring's end for good (5.2: "once the ring is full its end no longer moves"), and a meta-block's end must be carried
+  across the wrap. Neither is built.
+
+**Time:** not measured against step 5 on one build; the harness's figure (about 11.3 ms a pass at 16 KiB pieces, 11.5 ms on the
+network mix, 30 mixed passes) lies within what step 5 recorded. The frame is a few elements a stream.
+
+**Proved** (small and local): the sizes every step of the stream layer keeps; that the window size's field, where it
+is not the unused pattern, names a ring of `2 ^ 10` to `2 ^ 24` bytes (`wbitsOf_range`); and that a meta-block's
+start with the bits to the byte boundary is at most 38 bits, for metadata and for data (`metaStart_bits`,
+`dataStart_bits`), which is the ledger's "one refill covers one element" for the frame. Owed still: the positions of
+the uncompressed copy and of the refills, which rest on the invariant, and the driver's termination, whose control
+flow step 7 changes again.
+
+**Not done here:** the check that every declared block type was used, the bytes a rejection reports used, the wrap
+(step 7); the buffer's room and growth (step 8). A stream that rejects on a further byte after its end does so
+without handing out what waits, which the non-goals allow; to be looked at with step 7's rule for rejections.
 
 ## 10. Decisions
 

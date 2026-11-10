@@ -78,9 +78,16 @@ def dsymFill (np nd : UInt64) (buf : ByteArray) (s n : UInt64) : ByteArray :=
   else buf
 termination_by n.toNat - s.toNat
 
+@[simp] theorem dsymFill_size (np nd : UInt64) (buf : ByteArray) (s n : UInt64) :
+    (dsymFill np nd buf s n).size = buf.size := by
+  fun_induction dsymFill np nd buf s n <;> simp_all +zetaDelta
+
 /-- The distance symbols' table for a header's NPOSTFIX and NDIRECT. -/
 def buildDsym (buf : ByteArray) (np nd : UInt64) : ByteArray :=
   dsymFill np nd buf 0 (16 + nd + ((48 : UInt64) <<< np))
+
+@[simp] theorem buildDsym_size (buf : ByteArray) (np nd : UInt64) : (buildDsym buf np nd).size = buf.size := by
+  simp [buildDsym]
 
 /-! ### The words' fields -/
 
@@ -100,19 +107,46 @@ def budget : UInt64 := 1
 def command : UInt64 := 2
 def distSwitch : UInt64 := 3
 def copy : UInt64 := 4
+/-- An element used bits that are not there (exact mode), or the input ahead is too short to grant a budget. -/
+def input : UInt64 := 5
+/-- The insert-and-copy block's count is spent: a block switch comes before the next command. -/
+def icSwitch : UInt64 := 6
 
 end Reason
 
 /-- The loop's values saved in the slow state, with the reason for leaving. -/
 @[noinline] def leave (buf : ByteArray) (reason bitpos opos counters lits cmd evt : UInt64)
     (h : ringAt.toNat ≤ buf.size) : ByteArray :=
+  -- the budget not used goes back to the insert-and-copy block's count
+  let ic := slot buf Slot.icLeft h + ((counters &&& budgetMask) >>> 50)
   let b := setSlot buf Slot.reason reason h
   let b := setSlot b Slot.bitpos bitpos (by sized h)
   let b := setSlot b Slot.opos opos (by sized h)
-  let b := setSlot b Slot.counters counters (by sized h)
+  let b := setSlot b Slot.counters (counters &&& ~~~budgetMask) (by sized h)
   let b := setSlot b Slot.lits lits (by sized h)
   let b := setSlot b Slot.cmd cmd (by sized h)
+  let b := setSlot b Slot.icLeft ic (by sized h)
   setSlot b Slot.evt evt (by sized h)
+
+/-- A new budget for the loop, worked out from the slow state when the old one is spent (5.4, 5.6): the rounds the
+real input ahead covers at a round's largest cost (64 bytes with what a refill loads), and no more than the
+insert-and-copy block has commands left, which is lowered by what is granted. In exact mode every element is tested,
+so the block's count alone bounds it. The new counters are left in `Slot.counters`; where nothing can be granted,
+`Slot.reason` says why: the input ahead is short, or the block's count is spent. -/
+@[noinline] def grant (buf : ByteArray) (exact : Bool) (bitpos counters : UInt64) (h : ringAt.toNat ≤ buf.size) :
+    ByteArray :=
+  let ic := slot buf Slot.icLeft h
+  let ahead : UInt64 := slot buf Slot.inEnd h - bitpos
+  let rounds : UInt64 := if exact then 4095 else if 576 ≤ ahead then (ahead - 64) >>> 9 else 0
+  let m : UInt64 := if ic < rounds then ic else rounds
+  let g : UInt64 := if 4095 < m then 4095 else m
+  let b := setSlot buf Slot.icLeft (ic - g) h
+  let b := setSlot b Slot.counters (counters ||| (g <<< 50)) (by sized h)
+  setSlot b Slot.reason (if ic = 0 then Reason.icSwitch else Reason.input) (by sized h)
+
+@[simp] theorem grant_size (buf : ByteArray) (exact : Bool) (bitpos counters : UInt64) (h : ringAt.toNat ≤ buf.size) :
+    (grant buf exact bitpos counters h).size = buf.size := by
+  simp [grant]
 
 /-- How far a command in hand is from done, for the loop's termination: nothing in hand, a copy being continued by
 its length left, or a whole command. -/
@@ -133,13 +167,21 @@ structure LitWay where
   init : (buf : ByteArray) → UInt64 → ringAt.toNat ≤ buf.size → UInt64
 
 /-- The command loop. -/
-@[specialize] def run (litName : (buf : ByteArray) → UInt64 → ringAt.toNat ≤ buf.size → UInt64)
+@[specialize] def run (real : (buf : ByteArray) → UInt64 → ringAt.toNat ≤ buf.size → Bool)
+    (litName : (buf : ByteArray) → UInt64 → ringAt.toNat ≤ buf.size → UInt64)
     (litNext : (buf : ByteArray) → UInt64 → UInt64 → ringAt.toNat ≤ buf.size → UInt64)
     (litInit : (buf : ByteArray) → UInt64 → ringAt.toNat ≤ buf.size → UInt64)
     (buf : ByteArray) (bb sh opos counters lits cmd : UInt64) (h : ringAt.toNat ≤ buf.size) : ByteArray :=
   -- the head of the next command
   let head := fun (buf : ByteArray) (bb sh opos counters : UInt64) (h : ringAt.toNat ≤ buf.size) =>
-    if counters &&& budgetMask = 0 then leave buf Reason.budget ((bb <<< 3) + sh) opos counters 0 cmdNone 0 h
+    if counters &&& budgetMask = 0 then
+      -- the budget is spent: a new one from the slow state, and only if none can be had does the loop leave
+      let buf' := grant buf (!(real buf (0xFFFFFFFFFFFFFFFF : UInt64) h)) ((bb <<< 3) + sh) counters h
+      have h' : ringAt.toNat ≤ buf'.size := by sized h
+      let c' := slot buf' Slot.counters h'
+      if c' &&& budgetMask = 0 then
+        leave buf' (slot buf' Slot.reason h') ((bb <<< 3) + sh) opos c' 0 cmdNone 0 h'
+      else run real litName litNext litInit buf' bb sh opos c' 0 cmdNone h'
     else
       let w : UInt64 := load64 buf bb owed
       let e : UInt64 := lookupW buf (slot buf Slot.icTable h) (w >>> sh)
@@ -149,8 +191,12 @@ structure LitWay where
       let ie : UInt64 := (e >>> 16) &&& 0xFF
       let ilen : UInt64 := ((e >>> 32) &&& (0xFFFF : UInt64)) + (x &&& mask ie)
       let clen : UInt64 := (e >>> 48) + ((x >>> ie) &&& mask ((e >>> 24) &&& 0xFF))
-      if opos + ilen + clen ≤ slot buf Slot.bound h ∧ ilen ≤ (counters &&& litMask) ∧ ilen ≤ 16 then
-        run litName litNext litInit buf (bb + (sh >>> 3)) ((sh &&& 7) + total) opos (counters - budgetOne - ilen)
+      if !(real buf ((bb <<< 3) + sh + total) h) then
+        -- at the bound there may be no head to read (the meta-block's end): that is the bound's event, not a want of input
+        leave buf (if slot buf Slot.bound h ≤ opos then Reason.command else Reason.input) ((bb <<< 3) + sh) opos counters 0
+          cmdNone 0 h
+      else if opos + ilen + clen ≤ slot buf Slot.bound h ∧ ilen ≤ (counters &&& litMask) ∧ ilen ≤ 16 then
+        run real litName litNext litInit buf (bb + (sh >>> 3)) ((sh &&& 7) + total) opos (counters - budgetOne - ilen)
           (litInit buf opos h) (clen ||| (((e >>> 4) &&& 7) <<< 25) ||| (ilen <<< 32)) h
       else leave buf Reason.command ((bb <<< 3) + sh) opos counters 0 cmdNone 0 h
   -- a copy of `rem` bytes at a distance of 16 or more, by blocks of 16: two in a round
@@ -161,7 +207,7 @@ structure LitWay where
     else
       let buf2 := copy16 buf1 (opos + 16) (src + 16) owed
       if rem ≤ 32 then head buf2 bb sh (opos + rem) counters (by sized h)
-      else run litName litNext litInit buf2 bb sh (opos + 32) counters 0 (cmdCont ||| (rem - (32 : UInt64)) ||| (dist <<< 32))
+      else run real litName litNext litInit buf2 bb sh (opos + 32) counters 0 (cmdCont ||| (rem - (32 : UInt64)) ||| (dist <<< 32))
         (by sized h)
   -- what a distance means: a copy from the ring, a dictionary word, or something for a handler
   let emit := fun (buf : ByteArray) (bb sh opos counters dist push clen : UInt64) (h : ringAt.toNat ≤ buf.size) =>
@@ -178,7 +224,7 @@ structure LitWay where
         else
           let buf2 := copy8 buf1 (opos + 8) (src + 8) owed
           if clen ≤ 16 then head buf2 bb sh (opos + clen) counters' (by sized h)
-          else run litName litNext litInit buf2 bb sh (opos + 16) counters' 0
+          else run real litName litNext litInit buf2 bb sh (opos + 16) counters' 0
             (cmdCont ||| (clen - (16 : UInt64)) ||| (dist <<< 33)) (by sized h)
     else if opos < dist + ringAt ∧ dist < 0x80000000 ∧ clen - 4 ≤ 20 then
       -- beyond the bytes produced: a word of the dictionary, of the copy's length, under a transform
@@ -203,10 +249,13 @@ structure LitWay where
     -- that element's length
     let v : UInt64 := lits
     let e := lookup8 buf (litName buf v h) (load64 buf bb owed >>> sh)
-    let b : UInt64 := e >>> 4
-    let v' : UInt64 := litNext buf v b h
-    run litName litNext litInit (store8 buf opos b owed) (bb + (sh >>> 3)) ((sh &&& 7) + (e &&& 15)) (opos + 1) counters
-      v' (cmd - (0x100000000 : UInt64)) (by sized h)
+    if !(real buf ((bb <<< 3) + sh + (e &&& 15)) h) then
+      leave buf Reason.input ((bb <<< 3) + sh) opos counters lits cmd 0 h
+    else
+      let b : UInt64 := e >>> 4
+      let v' : UInt64 := litNext buf v b h
+      run real litName litNext litInit (store8 buf opos b owed) (bb + (sh >>> 3)) ((sh &&& 7) + (e &&& 15)) (opos + 1) counters
+        v' (cmd - (0x100000000 : UInt64)) (by sized h)
   else if cmd >>> 62 ≠ 0 then
     if cmd >>> 63 ≠ 0 then copy buf bb sh opos counters (cmd &&& 0x1FFFFFF) ((cmd >>> 32) &&& 0x3FFFFFFF) h
     else head buf bb sh opos counters h
@@ -220,27 +269,29 @@ structure LitWay where
     let w : UInt64 := load64 buf bb owed
     let e : UInt64 := lookupW buf (load64 buf (slot buf Slot.distRow h + (((cmd >>> 26) &&& 3) <<< 3)) owed) (w >>> sh)
     let total : UInt64 := (e >>> 8) &&& 0xFF
-    let s1 : UInt64 := sh + (e &&& 15)
-    let x : UInt64 := if sh + total ≤ 64 then w >>> s1 else load64 buf (bb + (s1 >>> 3)) owed >>> (s1 &&& 7)
-    let f : UInt64 := (e >>> 24) &&& 0xFF
-    let j : UInt64 := (((counters >>> 62) + f) &&& 3) ||| (f &&& 4)
-    let extra : UInt64 := (x &&& mask ((e >>> 16) &&& 0xFF)) <<< ((f >>> 4) &&& 3)
-    let dist : UInt64 := (load64 buf (Slot.dists + (j <<< 3)) owed + (e >>> 32) + extra) &&& 0xFFFFFFFF
-    emit buf (bb + (sh >>> 3)) ((sh &&& 7) + total) opos (counters - distOne) dist ((f >>> 6) &&& 1)
-      (cmd &&& 0x1FFFFFF) h
+    if !(real buf ((bb <<< 3) + sh + total) h) then leave buf Reason.input ((bb <<< 3) + sh) opos counters 0 cmd 0 h
+    else
+      let s1 : UInt64 := sh + (e &&& 15)
+      let x : UInt64 := if sh + total ≤ 64 then w >>> s1 else load64 buf (bb + (s1 >>> 3)) owed >>> (s1 &&& 7)
+      let f : UInt64 := (e >>> 24) &&& 0xFF
+      let j : UInt64 := (((counters >>> 62) + f) &&& 3) ||| (f &&& 4)
+      let extra : UInt64 := (x &&& mask ((e >>> 16) &&& 0xFF)) <<< ((f >>> 4) &&& 3)
+      let dist : UInt64 := (load64 buf (Slot.dists + (j <<< 3)) owed + (e >>> 32) + extra) &&& 0xFFFFFFFF
+      emit buf (bb + (sh >>> 3)) ((sh &&& 7) + total) opos (counters - distOne) dist ((f >>> 6) &&& 1)
+        (cmd &&& 0x1FFFFFF) h
 termination_by ((counters &&& budgetMask).toNat, cmdRank cmd, ((cmd >>> 32) &&& 0xFFFF).toNat)
 decreasing_by all_goals exact owed
 
 /-- A literal's table by its context. Each literal block type has a table of 2048 table positions, 4 bytes each, at
-the class of the byte before the last times 1024 and the last byte times 4 (a class is what a byte contributes to the
+the last byte times 32 and the class of the byte before it times 4 (a class is what a byte contributes to the
 context as the byte before the last, under the block type's mode). `v` is that offset, so the next literal's table
 is one load from the literal just read, with one shift and one or between them; the class comes from a byte read a
 literal earlier. -/
 @[inline] def ctxWay : LitWay where
   name := fun buf v h => load32 buf (slot buf Slot.ctxRow h + v) owed
-  next := fun buf v b h => (b <<< 2) ||| (load8 buf (slot buf Slot.ctxOff h + ((v >>> 2) &&& 0xFF)) owed <<< 10)
+  next := fun buf v b h => (b <<< 5) ||| (load8 buf (slot buf Slot.ctxOff h + (v >>> 5)) owed <<< 2)
   init := fun buf opos h =>
-    (load8 buf (opos - 1) owed <<< 2) ||| (load8 buf (slot buf Slot.ctxOff h + load8 buf (opos - 2) owed) owed <<< 10)
+    (load8 buf (opos - 1) owed <<< 5) ||| (load8 buf (slot buf Slot.ctxOff h + load8 buf (opos - 2) owed) owed <<< 2)
 
 /-- A literal's table where the context does not matter: the one table, and nothing carried. -/
 @[inline] def trivWay : LitWay where
@@ -248,14 +299,30 @@ literal earlier. -/
   next := fun _ _ _ _ => 0
   init := fun _ _ _ => 0
 
-/-- The command loop entered from the slow state, for a meta-block whose literals have contexts. -/
+/-- The command loop entered from the slow state, in running mode, for a meta-block whose literals have contexts. -/
 def runCtx (buf : ByteArray) (h : ringAt.toNat ≤ buf.size) : ByteArray :=
   let bp := slot buf Slot.bitpos h
-  run ctxWay.name ctxWay.next ctxWay.init buf (bp >>> 3) (bp &&& 7) (slot buf Slot.opos h) (slot buf Slot.counters h) (slot buf Slot.lits h)
-    (slot buf Slot.cmd h) h
+  run realAlways ctxWay.name ctxWay.next ctxWay.init buf (bp >>> 3) (bp &&& 7) (slot buf Slot.opos h)
+    (slot buf Slot.counters h) (slot buf Slot.lits h) (slot buf Slot.cmd h) h
 
-/-- The command loop entered from the slow state, for a meta-block whose literal contexts are all trivial. -/
+/-- The same for a meta-block whose literal contexts are all trivial. -/
 def runTriv (buf : ByteArray) (h : ringAt.toNat ≤ buf.size) : ByteArray :=
   let bp := slot buf Slot.bitpos h
-  run trivWay.name trivWay.next trivWay.init buf (bp >>> 3) (bp &&& 7) (slot buf Slot.opos h) (slot buf Slot.counters h) (slot buf Slot.lits h)
-    (slot buf Slot.cmd h) h
+  run realAlways trivWay.name trivWay.next trivWay.init buf (bp >>> 3) (bp &&& 7) (slot buf Slot.opos h)
+    (slot buf Slot.counters h) (slot buf Slot.lits h) (slot buf Slot.cmd h) h
+
+/-- The command loop in exact mode, for a meta-block whose literals have contexts. -/
+def runCtxExact (buf : ByteArray) (h : ringAt.toNat ≤ buf.size) : ByteArray :=
+  let bp := slot buf Slot.bitpos h
+  run realExact ctxWay.name ctxWay.next ctxWay.init buf (bp >>> 3) (bp &&& 7) (slot buf Slot.opos h)
+    (slot buf Slot.counters h) (slot buf Slot.lits h) (slot buf Slot.cmd h) h
+
+/-- The command loop in exact mode, for a meta-block whose literal contexts are all trivial. -/
+def runTrivExact (buf : ByteArray) (h : ringAt.toNat ≤ buf.size) : ByteArray :=
+  let bp := slot buf Slot.bitpos h
+  run realExact trivWay.name trivWay.next trivWay.init buf (bp >>> 3) (bp &&& 7) (slot buf Slot.opos h)
+    (slot buf Slot.counters h) (slot buf Slot.lits h) (slot buf Slot.cmd h) h
+
+@[simp] theorem leave_size (buf : ByteArray) (reason bitpos opos counters lits cmd evt : UInt64)
+    (h : ringAt.toNat ≤ buf.size) : (leave buf reason bitpos opos counters lits cmd evt h).size = buf.size := by
+  simp [leave]

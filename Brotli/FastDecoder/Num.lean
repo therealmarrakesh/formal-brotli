@@ -35,3 +35,11 @@ theorem succ_nearer {a b : UInt64} (h : a < b) : b.toNat - (a + 1).toNat < b.toN
   have h1 := UInt64.lt_iff_toNat_lt.mp h
   rw [succ_toNat h]
   omega
+
+/-- A mask that is not empty loses its lowest bit. -/
+theorem and_pred_lt {m : UInt64} (h : m ≠ 0) : (m &&& (m - 1)).toNat < m.toNat := by
+  have h1 := pred_lt h
+  have h2 : (m &&& (m - 1)).toNat ≤ (m - 1).toNat := by
+    rw [UInt64.toNat_and]
+    exact Nat.and_le_right
+  omega

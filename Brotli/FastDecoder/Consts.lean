@@ -100,3 +100,32 @@ def ctxTab : ByteArray :=
 
 theorem ctxTab_size : ctxTab.size = 2048 :=
   Array.size_ofFn
+
+/-- The block count codes: extra bits and lowest count. -/
+def countCodes : List (Nat × Nat) :=
+  [(2, 1), (2, 5), (2, 9), (2, 13), (3, 17), (3, 25), (3, 33), (3, 41), (4, 49), (4, 65), (4, 81), (4, 97), (5, 113),
+   (5, 145), (5, 177), (5, 209), (6, 241), (6, 305), (7, 369), (8, 497), (9, 753), (10, 1265), (11, 2289), (12, 4337),
+   (13, 8433), (24, 16625)]
+
+/-- What each of the 26 block count symbols stands for, 4 bytes each: the lowest count in the low 2 bytes and the
+count of extra bits in the top one. -/
+def countTab : ByteArray :=
+  ⟨Array.ofFn (n := 104) fun i =>
+    let (bits, lo) := countCodes.getD (i.val / 4) (0, 0)
+    UInt8.ofNat ((lo + bits * 16777216) >>> (8 * (i.val % 4)))⟩
+
+theorem countTab_size : countTab.size = 104 :=
+  Array.size_ofFn
+
+/-- The order in which the lengths of the code-length code's 18 symbols come. -/
+def clOrder : ByteArray :=
+  ⟨#[1, 2, 3, 4, 0, 5, 17, 6, 16, 7, 8, 9, 10, 11, 12, 13, 14, 15]⟩
+
+
+/-- For a word with the one bit `3 * s + 2` set (symbol `s` of a code-length code, in a mask of its 18 symbols 3 bits
+apart), the symbol times 8, at the index `(word * 0x03F79D71B4CB0A89) >> 58`: that multiplier sends each of the 64
+single bits to a different index. -/
+def clSym : ByteArray :=
+  ⟨Array.ofFn (n := 64) fun i =>
+    UInt8.ofNat (8 * ((List.range 18).find? fun s =>
+      ((((1 : UInt64) <<< UInt64.ofNat (3 * s + 2)) * (0x03F79D71B4CB0A89 : UInt64)) >>> 58).toNat = i.val).getD 0)⟩
