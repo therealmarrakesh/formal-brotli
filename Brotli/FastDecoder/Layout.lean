@@ -37,11 +37,21 @@ def stageSize : UInt64 := 4096
 loads (5.6). Also the zeros kept after the last real byte. -/
 def margin : UInt64 := 64
 
+/-- The builder's lists (5.7), one word of 4 bytes for each code length 0 to 15: the count of the length's symbols in
+the high half, and in the low half the position where the next symbol of that length is to be linked. -/
+def listAt : UInt64 := 8768
+
+/-- The first symbol of each length's list: 16 entries of 2 bytes. -/
+def headAt : UInt64 := 8832
+
+/-- The links: for each symbol, the next symbol of its length. 704 entries of 2 bytes. -/
+def linkAt : UInt64 := 8864
+
 /-- Where the guard is: the two bytes before the ring's first (5.5). -/
-def guardAt : UInt64 := 8782
+def guardAt : UInt64 := 10286
 
 /-- Where the ring starts, which is the front's size. -/
-def ringAt : UInt64 := 8784
+def ringAt : UInt64 := 10288
 
 /-! ### The slow state: the slots' offsets -/
 
@@ -76,8 +86,8 @@ def mbLeft : UInt64 := 88
 
 /-- The command loop's counters. -/
 def counters : UInt64 := 96
-/-- The literals the command in hand owes, with the two bytes before them. -/
-def owed : UInt64 := 104
+/-- The literals the command in hand has still to read, with the two bytes before them. -/
+def lits : UInt64 := 104
 /-- The command in hand. -/
 def cmd : UInt64 := 112
 /-- The last four distances, a ring of four slots from here. -/
@@ -89,6 +99,11 @@ def icTable : UInt64 := 152
 def litRow : UInt64 := 160
 /-- The position of the current distance block type's row of table names. -/
 def distRow : UInt64 := 168
+
+/-- The position where the next table is to be built. -/
+def tabNext : UInt64 := 176
+/-- The name of the table last built. -/
+def name : UInt64 := 184
 
 end Slot
 
@@ -122,3 +137,9 @@ end Phase
 @[simp] theorem setSlot_size (buf : ByteArray) (off v : UInt64) (h : ringAt.toNat ≤ buf.size)
     (ho : off.toNat + 8 ≤ slowSize.toNat) : (setSlot buf off v h ho).size = buf.size :=
   store64_size ..
+
+open Lean in
+/-- `sized h` proves a bound on the size of an array made from another by stores, from the same bound `h` on the
+other: a store keeps the size. It uses the `@[simp]` theorems that say so, one for each function that stores. -/
+macro "sized " h:term : tactic =>
+  `(tactic| simpa +zetaDelta using $h)

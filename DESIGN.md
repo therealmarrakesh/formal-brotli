@@ -320,10 +320,12 @@ no output of its own except to move bytes between the caller and `buf`.
 2. *The distance symbols' table* (5.7): at most 520 entries of 8 bytes.
 3. *The staging area for input* (5.4): a few kilobytes, small because the whole front is written when a stream starts
    and the smallest streams should not pay for more.
-4. *Two guard bytes* (5.5).
-5. *The ring:* the window's `2 ^ WBITS` bytes, written as far as the stream has needed so far, and a few tens of bytes
+4. *The table builder's lists* (5.7): about 1.5 KB. They are in the front, not with the tables, so that their positions
+   are constants: the builder's reads and writes of them need no base, and a bound on one is a fact about a constant.
+5. *Two guard bytes* (5.5).
+6. *The ring:* the window's `2 ^ WBITS` bytes, written as far as the stream has needed so far, and a few tens of bytes
    of slack after the written part.
-6. *The current meta-block's tables* (5.7), just past the ring's written part and its slack.
+7. *The current meta-block's tables* (5.7), just past the ring's written part and its slack.
 
 **Why the tables can sit after the ring.** An array grows only at its end, a byte is part of it only once written, and
 whatever lies before a region fixes where the region starts; the ring and the tables both vary in size. But a
@@ -610,8 +612,12 @@ trivial (then the loop has no context at all). Every other choice is a test insi
   matters most for a short stream; a fixed root saves four instructions on every lookup.)* A code of one symbol has one
   entry and `R = 0`, and reads no bits, with no special case.
 - *Longer codes* go through a second level: a root entry marked as a pointer gives a sub-table's position and width.
-- *A table is named by one 32-bit value,* its position in `buf` and its `R`, so that whatever selects a table delivers
-  both in one load.
+  The mark needs no bit of its own: a root entry's length is at most `R`, so low 4 bits above `R` mean a pointer, the
+  excess being the sub-table's width and the 12 bits above its place, in entries from the table's start. A sub-table's
+  entries hold the code's whole length, so a lookup ends, at either level, at an entry whose low 4 bits are the bits to
+  consume.
+- *A table is named by one 32-bit value,* its position in `buf` times 16 and its `R`, so that whatever selects a table
+  delivers both in one load.
 
 **What symbols stand for**
 - *A literal* is its symbol: one load gives the output byte.
@@ -643,15 +649,19 @@ being at most 8 bits here. A header may be left and entered again between any tw
   - the code-length symbol is looked up;
   - a length from 1 to 15 adds the symbol to the end of *that length's list*: one store to link it after the list's
     last symbol, one to make it the last. The 15 lists are threaded through one array indexed by symbol. Symbols arrive
-    in increasing order, so each list is in symbol order;
+    in increasing order, so each list is in symbol order. Each length has one word: the place where its next symbol is
+    to be linked (at first the list's head, so an empty list is no special case) and the count of its symbols, which
+    the builder needs for the widths of sub-tables; one load and the two stores keep both;
   - the repeat codes read their extra bits and add a run of symbols to a list, or skip ahead for a run of zeros: a
     symbol that does not occur costs no store and no round;
   - the running sum that says when the code is complete is kept in a register and ends the loop.
 
 **Building one table:** one walk through the lists, shortest length first, with no sorting and no second pass.
 - The walk visits the symbols in exactly the order of their codes. So no code is looked up: it is a counter stepped
-  once a symbol and doubled from one length to the next, kept bit-reversed (the bits arrive low bit first) so that it is
-  at once the first slot to write.
+  once a symbol. The bits arrive low bit first, so the first slot to write is the code reversed: the counter is kept in
+  8 bits with the code's first bit highest (its step halves from one length to the next), and a constant table of 256
+  reversed bytes turns it into the slot. One add and one load a symbol, with no loop and no branch. This is why the
+  root's cap is 8: a wider root needs a wider reversal.
 - *A symbol whose length is within the root* is written to every root slot whose low bits are its code, by one strided
   fill.
 - *Symbols with longer codes* come last in the walk, already in order. A code with a root of 8 bits usually has some,
@@ -668,8 +678,9 @@ literal block type gets a row of 64 table names (the map composed with the table
 switching codes' names; the current insert-and-copy table's name; the current literal row, and whether every row is
 trivial; the current distance row; the output's bound; the counters; and three empty sets of block types seen.
 
-**The working area** (the lists and their ends, the code-length table, a map's values, the move-to-front list) is a
-fixed stretch of about 4 KB at the start of the tables' region, reused by every code of the header.
+**The working area.** The lists (the links, each length's word and head) are in the buffer's front (5.2), reused by
+every code of the header. Where the rest goes (the code-length table, a map's values, the move-to-front list) is
+settled with the header (section 9, step 4).
 
 **Costs, in outline.** Reading a code: a lookup and two stores a used symbol. Building it: a load, a step of the code
 and one strided fill a used symbol, each slot written once. Nothing in a header is in proportion to an alphabet's size
@@ -793,6 +804,12 @@ A sketch, to be filled in as the design settles.
   stores, termination of small loops. A bound that follows from what is visible at the point of use is proved there. A
   bound that follows from something established elsewhere is taken as a hypothesis by the function that needs it, so
   that the code states what it relies on.
+- **Owed while it is a prototype:** a loop cannot take such a hypothesis, since it would have to supply it again for
+  its next round, and that is the invariant's preservation proof. So a fact that rests on the whole invariant (section
+  6) is written `owed` at the point of use: one theorem, `owed {P : Prop} : P`, the decoder's only `sorry`, in a module
+  of its own. The signature of what uses it states exactly what is owed. Proofs are erased when the code is compiled,
+  so paying one changes nothing that runs: what is measured is what is later proved. The uses are counted, and the
+  decoder is proved when none is left.
 - **Deferred until a part is settled:** what a self-contained primitive leaves in memory (a table builder, a word
   writer, a copy).
 - **Deferred until the design is settled:** the specification's reading of a prefix (2.2); the relation between a

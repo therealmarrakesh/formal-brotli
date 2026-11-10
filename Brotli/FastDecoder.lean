@@ -2,6 +2,10 @@ module
 
 public import Brotli.FastDecoder.Prim
 public import Brotli.FastDecoder.Layout
+public import Brotli.FastDecoder.Owed
+public import Brotli.FastDecoder.Num
+public import Brotli.FastDecoder.Bits
+public import Brotli.FastDecoder.Table
 
 /-!
 # FastDecoder
