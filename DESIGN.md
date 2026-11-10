@@ -1504,8 +1504,9 @@ network mix, 30 mixed passes) lies within what step 5 recorded. The frame is a f
 
 **Proved** (small and local): the sizes every step of the stream layer keeps; that the window size's field, where it
 is not the unused pattern, names a ring of `2 ^ 10` to `2 ^ 24` bytes (`wbitsOf_range`); and that a meta-block's
-start with the bits to the byte boundary is at most 38 bits, for metadata and for data (`metaStart_bits`,
-`dataStart_bits`), which is the ledger's "one refill covers one element" for the frame. Owed still: the positions of
+start with the bits to the byte boundary is at most 38 bits, for metadata and for data (`metaWidth_le`,
+`dataWidth_le`: facts about the functions `stepMbStart` itself takes the widths from, as `wbitsOf` is the one
+`stepWbits` uses), which is the ledger's "one refill covers one element" for the frame. Owed still: the positions of
 the uncompressed copy and of the refills, which rest on the invariant, and the driver's termination, whose control
 flow step 7 changes again.
 

@@ -105,6 +105,21 @@ def toEnd (buf : ByteArray) (h : ringAt.toNat ≤ buf.size) : ByteArray :=
 def afterMb (buf : ByteArray) (h : ringAt.toNat ≤ buf.size) : ByteArray :=
   if slot buf Slot.last h ≠ 0 then toEnd buf h else setSlot buf Slot.phase Phase.mbStart h
 
+/-- The bits of a metadata block's start, from the bits `w` (2.1): whether it is the last, the count of nibbles, the
+reserved bit, the count of bytes and the skip length. The bits to the byte boundary follow. -/
+@[inline] def metaWidth (w : UInt64) : UInt64 :=
+  (1 : UInt64) + (w &&& 1) + 2 + 3 + (((w >>> ((1 : UInt64) + (w &&& 1) + 2 + 1)) &&& (3 : UInt64)) <<< (3 : UInt64))
+
+/-- Where the length ends in the start of a block of data, from the bits `w`: whether it is the last, the count of
+nibbles and the nibbles. -/
+@[inline] def lenEnd (w : UInt64) : UInt64 :=
+  (1 : UInt64) + (w &&& 1) + 2 + ((((w >>> ((1 : UInt64) + (w &&& 1))) &&& (3 : UInt64)) + 4) <<< (2 : UInt64))
+
+/-- The bits of the start of a block of data: to the length's end, and the flag for uncompressed data in a block
+that is not the last. -/
+@[inline] def dataWidth (w : UInt64) : UInt64 :=
+  lenEnd w + (1 - (w &&& 1))
+
 /-- A meta-block's start (2.1, 5.8): one element of at most 31 bits, with the bits to the byte boundary where the
 format has them. Whether it is the last, and if so whether it is empty; the count of nibbles; then the length and,
 for a block that is not the last, whether it is uncompressed; or, for metadata, the reserved bit, the count of bytes
@@ -129,7 +144,7 @@ def stepMbStart (buf : ByteArray) (h : ringAt.toNat ≤ buf.size) : ByteArray :=
       let reserved : UInt64 := (w >>> p1) &&& 1
       let sb : UInt64 := (w >>> (p1 + 1)) &&& 3
       let v : UInt64 := (w >>> (p1 + 3)) &&& mask (sb <<< 3)
-      let p2 : UInt64 := p1 + (3 : UInt64) + (sb <<< (3 : UInt64))
+      let p2 : UInt64 := metaWidth w
       let fill : UInt64 := ((0 : UInt64) - (bp + p2)) &&& 7
       if e < bp + p2 + fill then wantInput buf h
       else if reserved ≠ 0 ∨ (1 < sb ∧ v >>> ((sb - 1) <<< 3) = 0) ∨ (w >>> p2) &&& mask fill ≠ 0 then hReject buf h
@@ -141,9 +156,9 @@ def stepMbStart (buf : ByteArray) (h : ringAt.toNat ≤ buf.size) : ByteArray :=
     else
       let nib : UInt64 := code + 4
       let v : UInt64 := (w >>> p1) &&& mask (nib <<< 2)
-      let p2 : UInt64 := p1 + (nib <<< (2 : UInt64))
+      let p2 : UInt64 := lenEnd w
       let unc : UInt64 := if islast = 0 then (w >>> p2) &&& 1 else 0
-      let p3 : UInt64 := p2 + (1 - islast)
+      let p3 : UInt64 := dataWidth w
       let fill : UInt64 := if unc ≠ 0 then ((0 : UInt64) - (bp + p3)) &&& 7 else 0
       if e < bp + p3 + fill then wantInput buf h
       else if (4 < nib ∧ v >>> ((nib - 1) <<< 2) = 0) ∨ (w >>> p3) &&& mask fill ≠ 0 then hReject buf h
@@ -246,3 +261,13 @@ theorem dataStart_bits (w b c : UInt64) (hb : b &&& 3 ≠ 3) :
     rw [UInt64.toNat_sub_of_le _ _ (by rw [UInt64.le_iff_toNat_le]; omega)]; omega
   simp only [UInt64.toNat_add, hs, hm]
   omega
+
+/-- A metadata block's start as the decoder reads it (`stepMbStart`), with the bits to the byte boundary, is at most
+38 bits: one refill covers it. -/
+theorem metaWidth_le (w c : UInt64) : (metaWidth w + (c &&& (7 : UInt64))).toNat ≤ 38 :=
+  metaStart_bits w _ c
+
+/-- The same for the start of a block of data, which is what the decoder reads where the count of nibbles is not 3. -/
+theorem dataWidth_le (w c : UInt64) (hb : (w >>> ((1 : UInt64) + (w &&& 1))) &&& 3 ≠ 3) :
+    (dataWidth w + (c &&& (7 : UInt64))).toNat ≤ 38 :=
+  dataStart_bits w _ c hb
