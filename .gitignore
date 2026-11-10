@@ -3,3 +3,4 @@
 /tools
 *.md
 !/README.md
+!/DESIGN.md
