@@ -850,6 +850,39 @@ are raced on real streams.
 12. The fixed cost of a call that does almost nothing.
 13. How often each kind of event falls.
 
+### 8.1 What has been measured (2026-11-10, step 3)
+
+Measured on the web corpus with the loop alone (`fdrun`: headers by the specification's reader, the rest by simple
+means), by exact instructions (SDE) and by cycles and mispredicts (VTune). For scale, a pass of the corpus costs
+Google's decoder 54.6 M cycles and 111 M instructions in its command phase, and the earlier decoder 64.5 M and 148 M.
+
+**The loop is bound by its dependency chains, not by its instruction count.** The first cut ran 118 M instructions a
+pass, near Google's, with fewer mispredicts (3.9 a thousand instructions against 8.2), and still took 57.9 M cycles.
+Cutting its instructions by 16% (jquery at quality 11) moved its time by 4%. Shortening the chains with the
+instruction count unchanged moved it by 15 to 19%. So each alternative below is judged first by the chain it leaves
+between one element and the next.
+
+| item | result | status |
+|---|---|---|
+| 1. the bit reader | Recomputed from the position, the word's load is on the chain between every two elements (about 14 cycles an element). A word shifted in place would cost two more carried values. Taken instead: the position is carried as a byte and an offset in it, and the word is loaded from the byte where the *previous* element began, so its address never waits for that element's length. An element's symbol always fits (the offset stays under 49); its extra bits are taken from a fresh word on a branch that is almost never taken. One more carried value (seven). | decided |
+| 3. what a symbol stands for | In the table's own entry (8 bytes for insert-and-copy and distance codes): one load gives the code's length, the bits the whole element consumes, and the lengths' or the distance's bases and extra-bit counts. The second table's load was on the chain (about 25 cycles from a head or a distance to the next element, now about 10). The builder makes an entry by one add: what the symbol stands for, read from a table by symbol, plus the code's length in its two low bytes. | decided |
+| 4. the literal's context | A table for each literal block type, of 2048 table positions indexed by the last byte and the class of the byte before it. The last byte is the literal just read, so the next literal's table is one load from it (the chain from one literal to the next: about 22 cycles before, about 14 now). The class of a byte is ready a literal ahead. Its cost: 8 KB a literal block type, filled when the header is read. | decided; the cost for streams with many block types to be looked at with the header |
+| 5. a table's root | Literal tables have a root of 8 bits whatever the code, so the index does not wait for the table's name. Other tables keep a root sized to the code: their names are ready long before they are used, and a name carries the root's mask, not its width. | decided |
+| 6. where the constant tables live | Copied into the buffer's front: read at a constant place in `buf`, with no pointer of their own to load. | decided |
+| 2. a dictionary word as a call | Built as a call from inside the loop; not yet raced against an event. | to measure |
+
+With these the loop's time for a pass went from 11.3 ms to 9.8 ms. Scaled from the 57.9 M cycles measured before
+them, that is about 50 M cycles: about 8% under Google's command phase and 22% under the earlier decoder's. The
+figure is an estimate (the cycles were not measured again), it is the loop alone on a rough harness, and the whole
+decoder has still to be built around it: not a number to quote.
+
+**What binds it now** is no longer one thing: about 240 instructions a command at 2.4 a cycle, and about one
+mispredict a command.
+
+**A lesson for the code:** a loop is specialised on a function passed as an argument, not on a structure that holds
+functions (section 4). Passing the three functions that find a literal's table as one structure compiled a single
+loop that called them through closures and ran at half the speed.
+
 ## 9. Build order
 
 Each step usable by the next, with something to measure as early as possible.
@@ -857,6 +890,10 @@ Each step usable by the next, with something to measure as early as possible.
 1. The primitives, the buffer's layout and the slow state's map.
 2. The bit reader and the prefix-code table with its builder.
 3. The command loop on a header built by simple means, in running mode: the first thing to race (section 8, 1 to 6).
+   While the loop is being raced, anything may be owed (section 7), so that an alternative costs no proof. Before step
+   4 starts, with the loop's design final, every owed fact that is small and local is proved in place: a loop's
+   termination, a counter within its range, a size a store keeps. Only what rests on the whole invariant stays owed
+   (owner, 2026-11-10).
 4. The header, read and built as designed.
 5. The driver, the staging area and exact mode: pausing for input and for output.
 6. The stream layer: framing, uncompressed data, metadata, the end.

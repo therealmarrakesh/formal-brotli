@@ -161,3 +161,14 @@ def fill16 (t : ByteArray) (i s n v : UInt64) (_h : ∀ k, k < n.toNat → i.toN
 @[simp] theorem fill16_size (t : ByteArray) (i s n v : UInt64)
     (h : ∀ k, k < n.toNat → i.toNat + k * s.toNat + 2 ≤ t.size) :
     (fill16 t i s n v h).size = t.size := leFill_size ..
+
+/-- `v`'s 8 bytes written `n` times, the first at `i` and each `s` bytes after the last, little-endian. One test that
+the array is held once, then a loop of 8-byte stores. -/
+@[extern c inline "({ _Static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__, \"little-endian target\"); lean_object * r_ = lean_sarray_ensure_exclusive(#1); uint8_t * p_ = lean_sarray_cptr(r_); uint64_t i_ = (#2), s_ = (#3), n_ = (#4); uint64_t v_ = (uint64_t)(#5); for (uint64_t k_ = 0; k_ < n_; k_++) __builtin_memcpy(p_ + (size_t)(i_ + k_ * s_), &v_, 8); r_; })"]
+def fill64 (t : ByteArray) (i s n v : UInt64) (_h : ∀ k, k < n.toNat → i.toNat + k * s.toNat + 8 ≤ t.size) :
+    ByteArray :=
+  leFill t i.toNat s.toNat v 8 n.toNat
+
+@[simp] theorem fill64_size (t : ByteArray) (i s n v : UInt64)
+    (h : ∀ k, k < n.toNat → i.toNat + k * s.toNat + 8 ≤ t.size) :
+    (fill64 t i s n v h).size = t.size := leFill_size ..

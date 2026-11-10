@@ -47,11 +47,18 @@ def headAt : UInt64 := 8832
 /-- The links: for each symbol, the next symbol of its length. 704 entries of 2 bytes. -/
 def linkAt : UInt64 := 8864
 
+/-- The context table (`ctxTab`), copied here when a stream starts so that the command loop reads it at a constant
+place in `buf`: 2048 bytes. -/
+def ctxTabAt : UInt64 := 10272
+
+/-- What each insert-and-copy symbol stands for (`cmdInfo`), copied here likewise: 704 entries of 8 bytes. -/
+def cmdAt : UInt64 := 12320
+
 /-- Where the guard is: the two bytes before the ring's first (5.5). -/
-def guardAt : UInt64 := 10286
+def guardAt : UInt64 := 17966
 
 /-- Where the ring starts, which is the front's size. -/
-def ringAt : UInt64 := 10288
+def ringAt : UInt64 := 17968
 
 /-! ### The slow state: the slots' offsets -/
 
@@ -90,13 +97,20 @@ def counters : UInt64 := 96
 def lits : UInt64 := 104
 /-- The command in hand. -/
 def cmd : UInt64 := 112
-/-- The last four distances, a ring of four slots from here. -/
-def dists : UInt64 := 120
+/-- What an event carries out of the command loop: for a copy that needs care, its distance, and in bit 62 whether
+the distance is to be pushed. -/
+def evt : UInt64 := 120
+/-- The position in `buf` of the current literal block type's part of the context table: 512 bytes for its mode. -/
+def ctxOff : UInt64 := 128
+/-- The last four distances, a ring of four slots from here, and after them four slots that hold zero (5.6). -/
+def dists : UInt64 := 256
 
 /-- The current insert-and-copy table's name. -/
 def icTable : UInt64 := 152
 /-- The position of the current literal block type's row of table names. -/
 def litRow : UInt64 := 160
+/-- The position of the current literal block type's table of table positions by context (`ctxWay`). -/
+def ctxRow : UInt64 := 136
 /-- The position of the current distance block type's row of table names. -/
 def distRow : UInt64 := 168
 

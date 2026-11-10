@@ -6,6 +6,10 @@ public import Brotli.FastDecoder.Owed
 public import Brotli.FastDecoder.Num
 public import Brotli.FastDecoder.Bits
 public import Brotli.FastDecoder.Table
+public import Brotli.FastDecoder.Consts
+public import Brotli.FastDecoder.Dict
+public import Brotli.FastDecoder.Word
+public import Brotli.FastDecoder.Cmd
 
 /-!
 # FastDecoder
