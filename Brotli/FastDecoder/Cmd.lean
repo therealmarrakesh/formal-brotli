@@ -9,17 +9,24 @@ public import Brotli.FastDecoder.Word
 /-!
 # The command loop
 
-A meta-block's commands (`DESIGN.md` 5.6), in running mode: the input ahead is real for as many rounds as the budget
+A meta-block's commands (`DESIGN.md` 5.6, 8.1), in running mode: the input ahead is real for as many rounds as the budget
 says, so nothing about the input is tested.
 
-**The six carried values.** `buf`; `bitpos`; `opos`; and three words:
+**The seven carried values.** `buf`; `opos`; the input's position as a byte, `bb`, and a bit offset from it, `sh`;
+and three words:
 - `counters`: the literal block's count (bits 0 to 24), the distance block's count (25 to 49), the budget of rounds
   (50 to 61) and the index of the last distance in the ring of four (62 and 63, so that stepping it wraps by itself);
-- `lits`: the literals the command in hand has still to read (bits 0 to 15), and the two bytes before the next one
-  (the last in bits 40 to 47, the one before it in 32 to 39);
-- `cmd`: the command in hand: its copy length (bits 0 to 24), whether its distance is the last one (25) and its
-  distance's context (26 and 27). Bit 62 alone says there is no command in hand; bit 63 says a copy is being
-  continued, with the length left in bits 0 to 24 and its distance in bits 32 to 61.
+- `lits`: what finding a literal's table carries from one literal to the next (`LitWay`): with contexts, the offset
+  of the next literal's table position in the block type's table; without, nothing;
+- `cmd`: the command in hand: its copy length (bits 0 to 24), whether its distance is the last one (25), its
+  distance's context (26 and 27), and the literals it has still to read (32 to 47). Bit 62 alone says there is no
+  command in hand; bit 63 says a copy is being continued, with the length left in bits 0 to 24 and its distance in
+  bits 32 to 61.
+
+**The input's position.** An element is read from the 8 bytes at `bb`, shifted by `sh`. After an element of `n` bits,
+`bb` moves on by the whole bytes in `sh` and `sh` becomes its bits within a byte and `n`: so `bb` is the byte where
+the element before began, and its load never waits for that element's length. `sh` stays under 49, which leaves a
+symbol's 15 bits in the word; an element's extra bits are taken from a fresh word where they would not fit.
 
 **A round** is the distance and copy of the command in hand and then the head of the next command; the next command's
 literals are rounds of their own, one each.
@@ -144,7 +151,7 @@ structure LitWay where
       let clen : UInt64 := (e >>> 48) + ((x >>> ie) &&& mask ((e >>> 24) &&& 0xFF))
       if opos + ilen + clen ≤ slot buf Slot.bound h ∧ ilen ≤ (counters &&& litMask) ∧ ilen ≤ 16 then
         run litName litNext litInit buf (bb + (sh >>> 3)) ((sh &&& 7) + total) opos (counters - budgetOne - ilen)
-          (ilen ||| (litInit buf opos h <<< 32)) (clen ||| (((e >>> 4) &&& 7) <<< 25)) h
+          (litInit buf opos h) (clen ||| (((e >>> 4) &&& 7) <<< 25) ||| (ilen <<< 32)) h
       else leave buf Reason.command ((bb <<< 3) + sh) opos counters 0 cmdNone 0 h
   -- a copy of `rem` bytes at a distance of 16 or more, by blocks of 16: two in a round
   let copy := fun (buf : ByteArray) (bb sh opos counters rem dist : UInt64) (h : ringAt.toNat ≤ buf.size) =>
@@ -191,15 +198,15 @@ structure LitWay where
         else leave buf Reason.copy ((bb <<< 3) + sh) opos counters 0 clen (dist ||| (push <<< 62)) h
       else leave buf Reason.copy ((bb <<< 3) + sh) opos counters 0 clen (dist ||| (push <<< 62)) h
     else leave buf Reason.copy ((bb <<< 3) + sh) opos counters 0 clen (dist ||| (push <<< 62)) h
-  if lits &&& 0xFFFF ≠ 0 then
+  if cmd - (0x100000000 : UInt64) < (0x3FFFFFFF00000000 : UInt64) then
     -- a literal, read from the word at the byte where the element before it began: its address does not wait for
     -- that element's length
-    let v : UInt64 := lits >>> 32
+    let v : UInt64 := lits
     let e := lookup8 buf (litName buf v h) (load64 buf bb owed >>> sh)
     let b : UInt64 := e >>> 4
     let v' : UInt64 := litNext buf v b h
     run litName litNext litInit (store8 buf opos b owed) (bb + (sh >>> 3)) ((sh &&& 7) + (e &&& 15)) (opos + 1) counters
-      ((v' <<< 32) ||| ((lits &&& 0xFFFF) - 1)) cmd (by sized h)
+      v' (cmd - (0x100000000 : UInt64)) (by sized h)
   else if cmd >>> 62 ≠ 0 then
     if cmd >>> 63 ≠ 0 then copy buf bb sh opos counters (cmd &&& 0x1FFFFFF) ((cmd >>> 32) &&& 0x3FFFFFFF) h
     else head buf bb sh opos counters h
@@ -221,18 +228,19 @@ structure LitWay where
     let dist : UInt64 := (load64 buf (Slot.dists + (j <<< 3)) owed + (e >>> 32) + extra) &&& 0xFFFFFFFF
     emit buf (bb + (sh >>> 3)) ((sh &&& 7) + total) opos (counters - distOne) dist ((f >>> 6) &&& 1)
       (cmd &&& 0x1FFFFFF) h
-termination_by ((counters &&& budgetMask).toNat, cmdRank cmd, (lits &&& 0xFFFF).toNat)
+termination_by ((counters &&& budgetMask).toNat, cmdRank cmd, ((cmd >>> 32) &&& 0xFFFF).toNat)
 decreasing_by all_goals exact owed
 
-/-- A literal's table by its context. Each literal block type has a table of 2048 positions, indexed by the last byte
-times 8 and the class of the byte before it (a class is what that byte contributes to the context under the block
-type's mode). So the last byte, which is the literal just read, gives the table by one load. `v` is that index: the
-last byte in bits 3 to 10 and the class in bits 0 to 2. -/
+/-- A literal's table by its context. Each literal block type has a table of 2048 table positions, 4 bytes each, at
+the class of the byte before the last times 1024 and the last byte times 4 (a class is what a byte contributes to the
+context as the byte before the last, under the block type's mode). `v` is that offset, so the next literal's table
+is one load from the literal just read, with one shift and one or between them; the class comes from a byte read a
+literal earlier. -/
 @[inline] def ctxWay : LitWay where
-  name := fun buf v h => load32 buf (slot buf Slot.ctxRow h + (v <<< 2)) owed
-  next := fun buf v b h => (b <<< 3) ||| load8 buf (slot buf Slot.ctxOff h + (v >>> 3)) owed
+  name := fun buf v h => load32 buf (slot buf Slot.ctxRow h + v) owed
+  next := fun buf v b h => (b <<< 2) ||| (load8 buf (slot buf Slot.ctxOff h + ((v >>> 2) &&& 0xFF)) owed <<< 10)
   init := fun buf opos h =>
-    (load8 buf (opos - 1) owed <<< 3) ||| load8 buf (slot buf Slot.ctxOff h + load8 buf (opos - 2) owed) owed
+    (load8 buf (opos - 1) owed <<< 2) ||| (load8 buf (slot buf Slot.ctxOff h + load8 buf (opos - 2) owed) owed <<< 10)
 
 /-- A literal's table where the context does not matter: the one table, and nothing carried. -/
 @[inline] def trivWay : LitWay where

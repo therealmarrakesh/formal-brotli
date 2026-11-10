@@ -869,15 +869,44 @@ between one element and the next.
 | 4. the literal's context | A table for each literal block type, of 2048 table positions indexed by the last byte and the class of the byte before it. The last byte is the literal just read, so the next literal's table is one load from it (the chain from one literal to the next: about 22 cycles before, about 14 now). The class of a byte is ready a literal ahead. Its cost: 8 KB a literal block type, filled when the header is read. | decided; the cost for streams with many block types to be looked at with the header |
 | 5. a table's root | Literal tables have a root of 8 bits whatever the code, so the index does not wait for the table's name. Other tables keep a root sized to the code: their names are ready long before they are used, and a name carries the root's mask, not its width. | decided |
 | 6. where the constant tables live | Copied into the buffer's front: read at a constant place in `buf`, with no pointer of their own to load. | decided |
-| 2. a dictionary word as a call | Built as a call from inside the loop; not yet raced against an event. | to measure |
+| 2. a dictionary word as a call | Built as a call from inside the loop; not yet raced against an event. It costs 1 M cycles a pass (2% of the loop), at 1.4 instructions a cycle: the dictionary is cold. | to measure |
 
-With these the loop's time for a pass went from 11.3 ms to 9.8 ms. Scaled from the 57.9 M cycles measured before
-them, that is about 50 M cycles: about 8% under Google's command phase and 22% under the earlier decoder's. The
-figure is an estimate (the cycles were not measured again), it is the loop alone on a rough harness, and the whole
-decoder has still to be built around it: not a number to quote.
+**Two more, from the same day**
 
-**What binds it now** is no longer one thing: about 240 instructions a command at 2.4 a cycle, and about one
-mispredict a command.
+- *More than one literal a round:* two literals from one word, stored together, where two or more remain. It saved
+  instructions and no time (9.81 ms a pass against 9.77): a literal is bound by the chain to the next literal, which a
+  pair does not shorten. Not taken. Three a round (5.6) has not been tried and is not expected to differ.
+- *What is carried from one literal to the next:* it was packed in one word with the count of literals left, and
+  packed and unpacked on the chain. Now the count is a field of the command word, and the word that was carried is
+  the offset of the next literal's table position itself: one shift and one or from the literal just read. On the
+  streams with literal contexts this took 6 to 10% off the loop (jquery at quality 11: 189 µs to 170 µs).
+
+**Where the loop stands, measured** (VTune, 400 passes): 49.1 M cycles and 121 M instructions a pass, 2.5 instructions
+a cycle, 482,000 mispredicts. That is 10% under Google's command phase (54.6 M cycles) and 24% under the earlier
+decoder's (64.5 M). It is the loop alone on a rough harness, with a few dozen commands a stream done outside it, and
+the whole decoder has still to be built around it: not a number to quote.
+
+- *By quality:* at quality 11, where literals have contexts, the loop alone takes 0.66 to 0.88 of the time of Google's
+  whole decode of the same page; at quality 5, where they have none, 0.93 to 1.02. Google's weak point is its literal
+  context chain; without it the two loops are close.
+- *What binds it now:* mispredicts, about a quarter of its cycles (stalled cycles are 23% of all), though it has half
+  as many as Google's; and the rest at 3.3 instructions a cycle. Cache misses are not it: cycles stalled on a
+  first-level miss are under 2%.
+
+**A cost these choices move to the header, not yet measured.** Three of them make a meta-block's header dearer, and
+the loop's time does not show it:
+- *the context tables* (item 4): 2048 entries a literal block type that has contexts. Filled one entry at a time
+  that is about 8,000 instructions a block type; filled by rows (in the UTF-8 mode the four entries of a last byte are
+  four neighbours of the map's row), about 1,000. Against the loop it is under 1% of a pass. Against a small page it
+  is not nothing: one block type filled the slow way is a few percent of Google's whole decode of a 5 KB page;
+- *the wide entries* (item 3): the same number of stores as narrow ones, four times the bytes written and kept in the
+  first-level cache;
+- *the fixed root of literal tables* (item 5): up to 256 stores for a code that needs fewer.
+What is measured so far: building every table of the corpus (the builder alone, with the wide entries and the fixed
+roots, without reading the codes or filling the context tables) costs 1.3 M cycles and 4.7 M instructions a pass,
+under 3% of the loop. These three choices stay provisional until the header is built (step 4) and the small pages are
+measured whole; if a small page pays more than it gains, the choice is made per meta-block (a meta-block decides
+once, when its header is read, which loop it runs).
 
 **A lesson for the code:** a loop is specialised on a function passed as an argument, not on a structure that holds
 functions (section 4). Passing the three functions that find a literal's table as one structure compiled a single
