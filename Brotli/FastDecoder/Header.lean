@@ -114,6 +114,19 @@ termination_by 16 - b.toNat
 @[inline] def catAt (c : UInt64) : UInt64 :=
   Slot.cats + c * 48
 
+/-- A field of a category's record lies in the front: the category `c` (0 to 2), the field at `f`. -/
+theorem catSlot {buf : ByteArray} (h : ringAt.toNat ≤ buf.size) {c : UInt64} (hc : c.toNat ≤ 2) (f : UInt64)
+    (hf : f.toNat ≤ 40 := by decide) : (catAt c + f).toNat + 8 ≤ buf.size := by
+  have h1 : (catAt c).toNat ≤ 704 := by
+    unfold catAt
+    rw [UInt64.toNat_add, UInt64.toNat_mul]
+    have a : Slot.cats.toNat = 608 := rfl
+    have b : (48 : UInt64).toNat = 48 := rfl
+    rw [a, b]
+    rw [Nat.mod_eq_of_lt (show c.toNat * 48 < 2 ^ 64 by omega), Nat.mod_eq_of_lt (by omega)]
+    omega
+  exact frontAt h (catAt c) f 40 8 hf (by have : ringAt.toNat = 18800 := rfl; omega)
+
 /-! ### The prefix-code sub-machine -/
 
 /-- The sub-machine entered: a code over `size` symbols, its table of the kind `wide`, `mt`, `rmin` (as `build`
@@ -996,9 +1009,16 @@ type), then the loop's slots. The output's bound and the budget are the driver's
 /-! ### The machine -/
 
 /-- A header begun: the first category's count of block types is next. `Slot.tabNext` is where the meta-block's tables
-go, set by whoever starts the meta-block. -/
+go, set by whoever starts the meta-block. No command is in pieces. -/
 def headerStart (buf : ByteArray) (h : ringAt.toNat ≤ buf.size) : ByteArray :=
-  let buf := setSlot buf Slot.hcat 0 h
+  -- the block types seen (5.10): none, but each category's first, type 0
+  let buf := fill64 buf seenAt 8 12 0 (seenFill h)
+  let buf := store64 buf seenAt 1 (front (by sized h))
+  let buf := store64 buf (seenAt + 32) 1 (front (by sized h))
+  let buf := store64 buf (seenAt + 64) 1 (front (by sized h))
+  have h : ringAt.toNat ≤ buf.size := by sized h
+  let buf := setSlot buf Slot.pend 0 h
+  let buf := setSlot buf Slot.hcat 0 (by sized h)
   let buf := setSlot buf Slot.hphase HP.catN (by sized h)
   setSlot buf Slot.phase Phase.header (by sized h)
 

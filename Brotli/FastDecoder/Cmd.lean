@@ -103,7 +103,6 @@ def cmdCont : UInt64 := 0x8000000000000000
 
 namespace Reason
 
-def budget : UInt64 := 1
 def command : UInt64 := 2
 def distSwitch : UInt64 := 3
 def copy : UInt64 := 4
@@ -148,10 +147,90 @@ so the block's count alone bounds it. The new counters are left in `Slot.counter
     (grant buf exact bitpos counters h).size = buf.size := by
   simp [grant]
 
+/-- `n` bytes copied one at a time from `s` to `d`, later bytes free to be ones this copy wrote. -/
+def bytesFwd (buf : ByteArray) (d s n : UInt64) : ByteArray :=
+  if hn : n = 0 then buf
+  else
+    have : (n - 1).toNat < n.toNat := pred_lt hn
+    bytesFwd (store8 buf d (load8 buf s owed) owed) (d + 1) (s + 1) (n - 1)
+termination_by n.toNat
+
+@[simp] theorem bytesFwd_size (buf : ByteArray) (d s n : UInt64) : (bytesFwd buf d s n).size = buf.size := by
+  fun_induction bytesFwd buf d s n <;> simp_all +zetaDelta
+
+/-- More than `n` bytes less 8 copied by blocks of 8 from `m` back, `m` at least 8: the last block may run up to 7
+bytes past the `n`. -/
+def blocksFwd (buf : ByteArray) (d m n : UInt64) : ByteArray :=
+  if hn : n = 0 then buf
+  else
+    let buf1 := copy8 buf d (d - m) owed
+    if h8 : n ≤ 8 then buf1
+    else
+      have : (n - 8).toNat < n.toNat := by
+        have h1 : (8 : UInt64).toNat = 8 := rfl
+        have h2 : 8 < n.toNat := by
+          have := UInt64.lt_iff_toNat_lt.mp (UInt64.not_le.mp h8)
+          omega
+        rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.mpr (by omega))]
+        omega
+      blocksFwd buf1 (d + 8) m (n - 8)
+termination_by n.toNat
+
+@[simp] theorem blocksFwd_size (buf : ByteArray) (d m n : UInt64) : (blocksFwd buf d m n).size = buf.size := by
+  fun_induction blocksFwd buf d m n <;> simp_all +zetaDelta
+
+/-- A copy of `clen` bytes at a distance of 1 to 7, where the bytes repeat with the distance as their period. The
+first bytes, up to the least multiple of the distance that is 8 or more, are copied one at a time; from there the
+bytes repeat at that multiple, so the rest is copied by blocks of 8 from that far back. -/
+@[noinline] def shortCopy (buf : ByteArray) (opos dist clen : UInt64) : ByteArray :=
+  let m : UInt64 := ((0xECA89880 : UInt64) >>> (dist <<< 2)) &&& 15
+  if clen ≤ m then bytesFwd buf opos (opos - dist) clen
+  else blocksFwd (bytesFwd buf opos (opos - dist) m) (opos + m) m (clen - m)
+
+@[simp] theorem shortCopy_size (buf : ByteArray) (opos dist clen : UInt64) :
+    (shortCopy buf opos dist clen).size = buf.size := by
+  simp [shortCopy, apply_ite ByteArray.size]
+
 /-- How far a command in hand is from done, for the loop's termination: nothing in hand, a copy being continued by
 its length left, or a whole command. -/
 def cmdRank (cmd : UInt64) : Nat :=
   if cmd >>> 63 ≠ 0 then 1 + (cmd &&& 0x1FFFFFF).toNat else if cmd >>> 62 ≠ 0 then 0 else 0x4000000
+
+/-! ### Reading a head and a distance
+
+What an element's table entry and its extra bits mean, written once: the loop and the handlers (`Event.lean`) both
+read with these (5.6: a command the loop did not admit is read again "with the same reading function"). -/
+
+/-- The bits of a head, or of a distance with its extra bits, from its entry. -/
+@[inline] def elemBitsOf (e : UInt64) : UInt64 := (e >>> 8) &&& 0xFF
+
+/-- The count of the first extra bits after a symbol, from its entry: a head's insert length's, a distance's. -/
+@[inline] def extraOf (e : UInt64) : UInt64 := (e >>> 16) &&& 0xFF
+
+/-- A head's insert length, from its entry `e`, the bits `x` after its symbol and `ie`, `extraOf e`. -/
+@[inline] def headIlen (e x ie : UInt64) : UInt64 :=
+  ((e >>> 32) &&& (0xFFFF : UInt64)) + (x &&& mask ie)
+
+/-- A head's copy length. -/
+@[inline] def headClen (e x ie : UInt64) : UInt64 :=
+  (e >>> 48) + ((x >>> ie) &&& mask ((e >>> 24) &&& 0xFF))
+
+/-- A head's flags as the command word holds them: whether the distance is the last one (bit 25) and the distance's
+context (26 and 27). -/
+@[inline] def headFlags (e : UInt64) : UInt64 := ((e >>> 4) &&& 7) <<< 25
+
+/-- A distance symbol's flags, from its entry (`dsymWord`). -/
+@[inline] def distFlags (e : UInt64) : UInt64 := (e >>> 24) &&& 0xFF
+
+/-- A distance, from its symbol's entry `e`, its flags `f`, the bits `x` after the symbol and the counters (for the
+index of the last distances): the slot's value, the base and the shifted extra bits, summed in 32 bits. -/
+@[inline] def distOf (buf : ByteArray) (counters e x f : UInt64) : UInt64 :=
+  let j : UInt64 := (((counters >>> 62) + f) &&& 3) ||| (f &&& 4)
+  let extra : UInt64 := (x &&& mask ((e >>> 16) &&& 0xFF)) <<< ((f >>> 4) &&& 3)
+  (load64 buf (Slot.dists + (j <<< 3)) owed + (e >>> 32) + extra) &&& 0xFFFFFFFF
+
+/-- Whether a distance read from its symbol is pushed onto the last four, from its flags. -/
+@[inline] def distPush (f : UInt64) : UInt64 := (f >>> 6) &&& 1
 
 /-! ### The loop -/
 
@@ -185,19 +264,19 @@ structure LitWay where
     else
       let w : UInt64 := load64 buf bb owed
       let e : UInt64 := lookupW buf (slot buf Slot.icTable h) (w >>> sh)
-      let total : UInt64 := (e >>> 8) &&& 0xFF
+      let total : UInt64 := elemBitsOf e
       let s1 : UInt64 := sh + (e &&& 15)
       let x : UInt64 := if sh + total ≤ 64 then w >>> s1 else load64 buf (bb + (s1 >>> 3)) owed >>> (s1 &&& 7)
-      let ie : UInt64 := (e >>> 16) &&& 0xFF
-      let ilen : UInt64 := ((e >>> 32) &&& (0xFFFF : UInt64)) + (x &&& mask ie)
-      let clen : UInt64 := (e >>> 48) + ((x >>> ie) &&& mask ((e >>> 24) &&& 0xFF))
+      let ie : UInt64 := extraOf e
+      let ilen : UInt64 := headIlen e x ie
+      let clen : UInt64 := headClen e x ie
       if !(real buf ((bb <<< 3) + sh + total) h) then
         -- at the bound there may be no head to read (the meta-block's end): that is the bound's event, not a want of input
         leave buf (if slot buf Slot.bound h ≤ opos then Reason.command else Reason.input) ((bb <<< 3) + sh) opos counters 0
           cmdNone 0 h
       else if opos + ilen + clen ≤ slot buf Slot.bound h ∧ ilen ≤ (counters &&& litMask) ∧ ilen ≤ 16 then
         run real litName litNext litInit buf (bb + (sh >>> 3)) ((sh &&& 7) + total) opos (counters - budgetOne - ilen)
-          (litInit buf opos h) (clen ||| (((e >>> 4) &&& 7) <<< 25) ||| (ilen <<< 32)) h
+          (litInit buf opos h) (clen ||| headFlags e ||| (ilen <<< 32)) h
       else leave buf Reason.command ((bb <<< 3) + sh) opos counters 0 cmdNone 0 h
   -- a copy of `rem` bytes at a distance of 16 or more, by blocks of 16: two in a round
   let copy := fun (buf : ByteArray) (bb sh opos counters rem dist : UInt64) (h : ringAt.toNat ≤ buf.size) =>
@@ -226,11 +305,18 @@ structure LitWay where
           if clen ≤ 16 then head buf2 bb sh (opos + clen) counters' (by sized h)
           else run real litName litNext litInit buf2 bb sh (opos + 16) counters' 0
             (cmdCont ||| (clen - (16 : UInt64)) ||| (dist <<< 33)) (by sized h)
-    else if opos < dist + ringAt ∧ dist < 0x80000000 ∧ clen - 4 ≤ 20 then
-      -- beyond the bytes produced: a word of the dictionary, of the copy's length, under a transform
+    else if dist + ringAt ≤ opos ∧ dist ≠ 0 then
+      -- a distance of 1 to 7, within the bytes produced
+      let counters' := counters + (push <<< 62)
+      let buf' := store64 buf (Slot.dists + ((counters' >>> 62) <<< 3)) dist owed
+      head (shortCopy buf' opos dist clen) bb sh (opos + clen) counters' (by sized h)
+    else if (if slot buf Slot.full h ≠ 0 then ringAt + slot buf Slot.win h else opos) < dist + ringAt ∧
+        dist < 0x80000000 ∧ clen - 4 ≤ 20 then
+      -- beyond the largest distance (the bytes produced, or once the ring has been full the window): a word of the
+      -- dictionary, of the copy's length, under a transform
       let li := load64 lenTab (clen <<< 3) owed
       let nd : UInt64 := li &&& 31
-      let wid : UInt64 := dist + ringAt - opos - 1
+      let wid : UInt64 := dist + ringAt - (if slot buf Slot.full h ≠ 0 then ringAt + slot buf Slot.win h else opos) - 1
       let tid : UInt64 := wid >>> nd
       if tid < 121 then
         let t : UInt64 := load64 transTab (tid <<< 5) owed
@@ -268,16 +354,14 @@ structure LitWay where
     -- a distance read from the input
     let w : UInt64 := load64 buf bb owed
     let e : UInt64 := lookupW buf (load64 buf (slot buf Slot.distRow h + (((cmd >>> 26) &&& 3) <<< 3)) owed) (w >>> sh)
-    let total : UInt64 := (e >>> 8) &&& 0xFF
+    let total : UInt64 := elemBitsOf e
     if !(real buf ((bb <<< 3) + sh + total) h) then leave buf Reason.input ((bb <<< 3) + sh) opos counters 0 cmd 0 h
     else
       let s1 : UInt64 := sh + (e &&& 15)
       let x : UInt64 := if sh + total ≤ 64 then w >>> s1 else load64 buf (bb + (s1 >>> 3)) owed >>> (s1 &&& 7)
-      let f : UInt64 := (e >>> 24) &&& 0xFF
-      let j : UInt64 := (((counters >>> 62) + f) &&& 3) ||| (f &&& 4)
-      let extra : UInt64 := (x &&& mask ((e >>> 16) &&& 0xFF)) <<< ((f >>> 4) &&& 3)
-      let dist : UInt64 := (load64 buf (Slot.dists + (j <<< 3)) owed + (e >>> 32) + extra) &&& 0xFFFFFFFF
-      emit buf (bb + (sh >>> 3)) ((sh &&& 7) + total) opos (counters - distOne) dist ((f >>> 6) &&& 1)
+      let f : UInt64 := distFlags e
+      let dist : UInt64 := distOf buf counters e x f
+      emit buf (bb + (sh >>> 3)) ((sh &&& 7) + total) opos (counters - distOne) dist (distPush f)
         (cmd &&& 0x1FFFFFF) h
 termination_by ((counters &&& budgetMask).toNat, cmdRank cmd, ((cmd >>> 32) &&& 0xFFFF).toNat)
 decreasing_by all_goals exact owed

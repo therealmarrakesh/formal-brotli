@@ -12,6 +12,7 @@ public import Brotli.FastDecoder.Word
 public import Brotli.FastDecoder.Cmd
 public import Brotli.FastDecoder.Header
 public import Brotli.FastDecoder.Stream
+public import Brotli.FastDecoder.Event
 public import Brotli.FastDecoder.Driver
 
 /-!

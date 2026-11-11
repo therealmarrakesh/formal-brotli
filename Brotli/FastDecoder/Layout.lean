@@ -81,8 +81,6 @@ def limit : UInt64 := 16
 def bitpos : UInt64 := 24
 /-- The bit position just after the last real bit staged. -/
 def inEnd : UInt64 := 32
-/-- The bytes that were already in the staging area when the call began. -/
-def carried : UInt64 := 40
 
 /-- The position in `buf` where the next output byte goes. -/
 def opos : UInt64 := 48
@@ -92,8 +90,6 @@ def handed : UInt64 := 56
 def bound : UInt64 := 64
 /-- The position where the ring ends. -/
 def ringEnd : UInt64 := 72
-/-- The bytes produced so far, for the largest distance a copy may use. -/
-def produced : UInt64 := 80
 /-- The bytes of the current meta-block still to produce beyond `opos`. -/
 def mbLeft : UInt64 := 88
 
@@ -194,6 +190,15 @@ def rowsD : UInt64 := 584
 def triv : UInt64 := 592
 /-- The bits a simple code's symbol is written in. -/
 def habits : UInt64 := 600
+/-- A command done in pieces by the handlers (`Event.lean`): its copy length, flags and stage; the literals it still
+owes (or a word's bytes left); and its distance with whether it is to be pushed (or where a word's bytes left are). -/
+def pend : UInt64 := 944
+def owed : UInt64 := 952
+def pdist : UInt64 := 960
+/-- Whether the ring has been filled once (5.5). -/
+def full : UInt64 := 968
+/-- The handlers' bound on the output: the meta-block's end, the ring's end, one byte more than the caller can take. -/
+def lim : UInt64 := 976
 /-- The three categories, 48 bytes each (`Cat`). -/
 def cats : UInt64 := 608
 
@@ -214,6 +219,9 @@ def cur : UInt64 := 32
 def prev : UInt64 := 40
 
 end Cat
+
+/-- The block types seen in the meta-block (5.10): for each category 256 bits, 32 bytes. -/
+def seenAt : UInt64 := 848
 
 /-- The code-length code's table: 32 entries of a byte. -/
 def clTabAt : UInt64 := 776
@@ -268,6 +276,66 @@ theorem shr58_le (x : UInt64) : (x >>> 58).toNat ≤ 63 := by
   rw [UInt64.toNat_shiftRight]
   show x.toNat >>> 58 ≤ 63
   rw [Nat.shiftRight_eq_div_pow]
+  omega
+
+/-- A slot of the last distances' ring of four, by the index in a word's top two bits, lies in the front. -/
+theorem distSlot {buf : ByteArray} (h : ringAt.toNat ≤ buf.size) (x : UInt64) :
+    (Slot.dists + ((x >>> 62) <<< 3)).toNat + 8 ≤ buf.size := by
+  have hx : ((x >>> 62) <<< 3).toNat ≤ 24 := by
+    have h0 := x.toNat_lt
+    have h1 : (x >>> 62).toNat ≤ 3 := by
+      rw [UInt64.toNat_shiftRight]
+      show x.toNat >>> 62 ≤ 3
+      rw [Nat.shiftRight_eq_div_pow]
+      omega
+    rw [UInt64.toNat_shiftLeft, Nat.shiftLeft_eq]
+    have : (3 : UInt64).toNat % 64 = 3 := rfl
+    rw [this]
+    omega
+  exact frontAt h Slot.dists _ 24 8 hx (by decide)
+
+/-- The three sets of block types seen, 12 words of 8 bytes, lie in the front. -/
+theorem seenFill {buf : ByteArray} (h : ringAt.toNat ≤ buf.size) :
+    ∀ k, k < (12 : UInt64).toNat → seenAt.toNat + k * (8 : UInt64).toNat + 8 ≤ buf.size := by
+  intro k hk
+  have h1 : (12 : UInt64).toNat = 12 := rfl
+  have h2 : (8 : UInt64).toNat = 8 := rfl
+  have h3 : seenAt.toNat = 848 := rfl
+  have h4 : ringAt.toNat = 18800 := rfl
+  rw [h1] at hk
+  rw [h2, h3]
+  omega
+
+/-- The first word of a category's set of block types seen lies in the front. -/
+theorem seenBase {buf : ByteArray} (h : ringAt.toNat ≤ buf.size) {c : UInt64} (hc : c.toNat ≤ 2) :
+    (seenAt + (c <<< 5)).toNat + 8 ≤ buf.size := by
+  have hs : (c <<< 5).toNat = c.toNat * 32 := by
+    rw [UInt64.toNat_shiftLeft, Nat.shiftLeft_eq]
+    have : (5 : UInt64).toNat % 64 = 5 := rfl
+    rw [this]
+    omega
+  rw [UInt64.toNat_add, hs]
+  have : seenAt.toNat = 848 := rfl
+  have : ringAt.toNat = 18800 := rfl
+  omega
+
+/-- A word of a category's set of block types seen lies in the front: the category `c` (0 to 2), the word `k`
+bytes into its 32. -/
+theorem seenSlot {buf : ByteArray} (h : ringAt.toNat ≤ buf.size) {c : UInt64} (hc : c.toNat ≤ 2) (k : UInt64)
+    (hk : k.toNat ≤ 24 := by decide) : (seenAt + (c <<< 5) + k).toNat + 8 ≤ buf.size := by
+  have hs : (c <<< 5).toNat = c.toNat * 32 := by
+    rw [UInt64.toNat_shiftLeft, Nat.shiftLeft_eq]
+    have : (5 : UInt64).toNat % 64 = 5 := rfl
+    rw [this]
+    omega
+  have h1 : (seenAt + (c <<< 5)).toNat ≤ 912 := by
+    rw [UInt64.toNat_add, hs]
+    have : seenAt.toNat = 848 := rfl
+    omega
+  have h2 : (seenAt + (c <<< 5) + k).toNat ≤ 936 := by
+    rw [UInt64.toNat_add]
+    omega
+  have : ringAt.toNat = 18800 := rfl
   omega
 
 /-- The mode of a loop that reads input, as a test (5.4): whether an element that ends at the bit position given

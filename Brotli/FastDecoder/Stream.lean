@@ -61,7 +61,10 @@ def startSlots (buf : ByteArray) (h : ringAt.toNat ≤ buf.size) : ByteArray :=
   let buf := setSlot buf Slot.lits 0 h
   let buf := setSlot buf Slot.cmd cmdNone (by sized h)
   let buf := setSlot buf Slot.dsymKey 0 (by sized h)
-  setSlot buf Slot.last 0 (by sized h)
+  let buf := setSlot buf Slot.last 0 (by sized h)
+  have h : ringAt.toNat ≤ buf.size := by sized h
+  let buf := setSlot buf Slot.full 0 h
+  setSlot buf Slot.pend 0 (by sized h)
 
 /-- The decoder's start: the front of `buf` set up, the constant tables copied in and the slots set. -/
 def start (buf : ByteArray) (h : ringAt.toNat ≤ buf.size) : ByteArray :=
@@ -172,7 +175,7 @@ def stepMbStart (buf : ByteArray) (h : ringAt.toNat ≤ buf.size) : ByteArray :=
           -- compressed: the meta-block's end, the tables past the smaller of it and the ring's end, and the header
           let mbEnd : UInt64 := slot buf Slot.opos (by sized h) + v + 1
           let re := slot buf Slot.ringEnd (by sized h)
-          let top : UInt64 := if mbEnd < re then mbEnd else re
+          let top : UInt64 := if slot buf Slot.full (by sized h) ≠ 0 then re else if mbEnd < re then mbEnd else re
           let buf := setSlot buf Slot.mbEnd mbEnd (by sized h)
           let buf := setSlot buf Slot.tabNext ((top + margin + (7 : UInt64)) &&& ~~~(7 : UInt64)) (by sized h)
           headerStart buf (by sized h)

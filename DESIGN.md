@@ -1514,6 +1514,165 @@ flow step 7 changes again.
 (step 7); the buffer's room and growth (step 8). A stream that rejects on a further byte after its end does so
 without handing out what waits, which the non-goals allow; to be looked at with step 7's rule for rejections.
 
+### 9.7 Step 7, the handlers, rejection and the wrap: how it is to be built — built (9.8)
+
+What 5.1, 5.4, 5.5, 5.6 and 5.10 say of it, gathered, with what they leave open settled here. Written before the
+code, to be corrected by it.
+
+**The handlers** are functions from `buf` to `buf`, called by the driver by the reason the loop left for, reading
+with the loop's own reading functions in exact mode (an element whole or not at all, the reason "input" where it is
+not there). After this step the status `todo` is gone.
+
+- **A block switch** (literal, insert-and-copy, distance): one element, the type and the new length with its extra
+  bits. Rejected: the type already current; a category with one type (its count cannot run out in a valid stream).
+  It sets the current type and the one before, the category's table name or row, the count in the counters (or
+  `Slot.icLeft`), and adds the type to the category's set of types seen.
+- **A command that does not fit:** the head is read again. Its literals are given to the loop as an allowance (the
+  least of what the literal block's count, the bound and 16 allow), with a mark in the command in hand that more
+  are owed, sharing its test with the mark for a copy being continued. When the literals are done and the output
+  stands at the meta-block's end, the command ends there, its distance and copy unread. A copy the bound cuts is
+  made as far as the bound, the rest kept in the command in hand.
+- **A copy that needs care:** a distance under 8, by bytes; a distance of zero or less, or beyond the largest
+  distance with no valid word, rejected; a dictionary word that the bound cuts, written to a side place and copied
+  out in parts; a source or target that crosses the ring's end, in two parts.
+- **A meta-block's end:** every declared block type of every category must have been seen; then 9.5's move.
+- **The bound's two meanings:** where a command or copy does not fit, the handler tells the caller's space and the
+  ring's end, which pause or wrap, from the meta-block's end, which the command may not pass (rejected).
+
+**The wrap** (5.5), by the driver when the output stands at the ring's end: what waits is handed out (a pause for
+output if there is no room), the ring's last two bytes go to the guard, the output's position and `handed` go back
+to the ring's start, and the ring is marked full. After it a distance's source that falls before the ring's start is
+taken one ring further on.
+
+**Settled here**
+- *A distance in the ring's last 16 bytes* (9.6): until the first wrap the fast loop's bound is no further than the
+  window's end, so those bytes are produced by the handlers, which compare a distance with the window and the bytes
+  produced both. To be measured both ways.
+- *The tables' place:* once the ring is full it is the ring's end and its slack, for good. A meta-block's end is
+  kept as a position while it lies within the ring and as a count of bytes left across a wrap.
+- *The bytes a rejection reports used* (5.4): from `bitpos` and the bytes staged before the call's chunk.
+
+**To be counted before it is decided:** what the copies that leave the loop are (on one page 75 of 121 returns):
+if a kind is common it is not an event (5.1), and belongs in the loop.
+
+**How it is checked:** the harness's slow code goes; every stream of both corpora under every delivery, the wrap's
+stream among them; the truncation test with nothing left unjudged; the flipped-bit test over a stream's whole length,
+not its frame alone, the verdict and the output against the proved decoder's.
+
+### 9.8 Step 7 as built, and what was measured (2026-11-10)
+
+Built as 9.7 says, in `Event.lean` (the handlers) and the driver (calling them, and the wrap). The decoder now
+decodes every stream by itself: the harness only starts it and calls it, the status `todo` is gone, and the
+harness's slow code with it.
+
+**What the loop leaves for,** counted before anything was built (one pass of the web corpus, 52 streams, about
+8,200 returns): a copy at a distance of 2 to 7, 4,285; a command of more than 16 literals, 1,747; a distance block
+switch, 698; an insert-and-copy block switch, 651; literals that pass their block, 386; a copy at distance 1, 269;
+a command that passes the caller's bound, 117 (60 on the network mix); one that passes the meta-block's end, 33; a
+dictionary word at the caller's bound, 1.
+
+**The handlers.** A block switch is one element. A command the loop did not admit becomes a *command in pieces*
+(three slots: its copy length, flags and stage; the literals owed; its distance): the head, the literals, the
+distance, the copy or the word, each piece exact and cut where the handlers' bound cuts it, with the driver between
+pieces to stage, hand out and wrap. A meta-block's end checks the three sets of block types seen, kept as 256 bits
+a category and reset by the header's start.
+
+**The wrap** is the driver's, as 5.5 has it. The meta-block's end moves back a ring with the output.
+
+**Settled by the code**
+- *The loop's bound stops at the window's end in the ring,* always, not only before the first wrap (9.7 had it
+  only until then): in the ring's last 16 bytes the bytes since the ring's start exceed the window on every lap,
+  so the loop's one comparison is wrong there every time. Those 16 bytes are the handlers'.
+- *After a wrap the loop's test for a dictionary word* compares the distance with the window, not with the bytes
+  since the ring's start (5.5 did not say; the loop as first built took such a copy for a word). A copy whose source
+  lies before the ring's start, a ring further on, is still an event, done by the handler: a stream larger than its
+  window pays an event for each such copy. Not the web's case; to be looked at if large streams come to matter.
+- *The tables' place* is the ring's end for good once the ring has been full.
+- *The bytes a rejection reports used:* the chunk's bytes less those still unread in the staging area, never below
+  none. The rejected element is not counted, since a handler rejects before it consumes.
+
+**Measured, each built both ways** (the harness's decoder time, which is now the whole decoder but the buffer's
+allocation; 30 mixed passes, three runs a schedule, each variant between two runs of the other):
+
+| the choice | 16 KiB pieces | network mix | result |
+|---|---|---|---|
+| owed literals read by the handler, with the loop's reading functions | 11.38 to 11.41 ms | 11.55 to 11.62 ms | kept |
+| owed literals given to the loop as an allowance (5.6), with a mark tested on the last-distance path, read exactly where the input ahead does not cover them | 11.43 to 11.47 | 11.61 to 11.67 | about 0.5% slower |
+| a copy at a distance of 1 to 7 as an event (5.6) | 11.39 to 11.40 | 11.59 to 11.60 | |
+| the same made inside the loop, by one call (`shortCopy`) | 11.34 to 11.36 | 11.54 to 11.60 | about 0.35% faster at 16 KiB, no worse elsewhere; kept |
+| the loop's word test without the after-wrap comparison (wrong after a wrap) | 11.39 to 11.43 | 11.59 to 11.61 | the comparison costs nothing to be seen |
+
+- *The allowance's mark* cannot share a test with the mark of a copy being continued, as 5.6 says it does: while
+  literals are read the command's top two bits must be clear, and the last literal leaves an ordinary command. An
+  honest mark is a bit tested with the last-distance flag. It measured slower than the handler's own reader, which
+  bends "one machine" (5.1) by a second place where literals are read, with the loop's functions.
+- *A first measurement of the allowance was wrong* (43% slower on the network mix): the variant read a slot after its
+  buffer had been passed on, which copies the buffer. Found by per-page times and a count of the events.
+- *Events are cheap:* 8,200 a pass cost too little to see (the whole decoder, 11.4 ms, against 11.3 to 11.4 when
+  the harness did them outside the time). So long runs of literals are left as events.
+
+**Checked** (all steps of `check`, 55 s): the web corpus, Brotli's test data (45 of 45, the stream that wraps among
+them) and a new corpus of real text compressed with windows of 64 KiB and 256 KiB, smaller than itself (16
+streams, `tools/corpus/wrap`), under the deliveries of 9.4; every header of every meta-block against the
+specification's reading (52, 16 and 36); the truncation test with no case left unjudged (520, 450 and 160 cuts,
+each both ways, none wrong); one bit flipped in the frame; and one bit flipped anywhere in the stream (100 a
+stream), the verdict and the output against the proved decoder's, none wrong and none crashing. In all some 30,000
+corrupt streams have been through it.
+
+**Two faults the new corpus found,** both mine and both in the wrap: a wrapped copy's source computed by a
+subtraction that went below zero (a crash, found by a flipped window size and then by every stream of the new
+corpus); and the loop's word test above. Brotli's one wrapping test stream passed with both.
+
+**Read against the design again** (5.1, 5.4, 5.5, 5.6, 5.10, 9.7; owner's request), the driver and the handlers
+line by line. Conformant: what is an event and who does it; the wrap; handing out before "needs input", before the
+wrap and before "done"; the order of a block switch (read only before an element of its category, never at a
+meta-block's end); literals that reach the meta-block's end ending the command; every rejection of 5.10 with where
+it is found; finality. What differed, and what was done:
+
+- *The head and the distance were read by formulas written twice,* once in the loop and once in the handlers,
+  where 5.6 has the handler read "with the same reading function". Now each is one function (`headIlen`,
+  `headClen`, `headFlags`, `distOf`, `distPush`), used by both. Measured both ways, twice (a first form, then one
+  that keeps the loop's arithmetic as it was): every run of either lay between 11.31 and 11.42 ms at 16 KiB pieces,
+  which is as far as one build moved between runs that hour. No difference to be seen; the shared form is kept.
+- *Two bounds, where 5.5 has "the one position":* the loop's stops at the window's end in the ring, the handlers'
+  at the ring's end. Forced by the window being 16 less than the ring (above); 5.5 is to be read with this.
+- *A dictionary word that the bound cuts* is written to the side by the handler and moved out in parts; 5.6 has a
+  byte-by-byte writer inside the loop's call. One such word in a pass of the corpus.
+- *A rejection at the stream's end* (a bit that is not zero, a byte too many) reported the bytes staged, not 5.4's
+  figure. Now every rejection reports it the one way.
+- *The bytes a rejection reports used, and how timely a rejection is.* 5.4 says the count of bytes "is never
+  negative", reasoning from a staging area that holds under 9 bytes from earlier calls. That holds after "needs
+  input" only: a call that returns "needs output" has staged, and reported used, up to a staging area of input
+  beyond what it has read. A later call may then reject at a place within bytes already reported, so the figure is
+  held at none; and the bytes used when a stream is rejected can be up to a staging area (4 KB) beyond the place of
+  the fault, not a round's largest input as 5.10 has it. The contract's "a fixed number of bytes" (2.4) holds with
+  that constant. Measured against the proved decoder on corrupt streams: at most 3,776 bytes more at 16 KiB pieces,
+  71 more at pieces of a byte with a byte of room, and up to 125 fewer (it reads on a little before it decides).
+  The harness now requires no more than the stream and no more than a staging area beyond the proved decoder's.
+- *Three definitions nothing used* are gone: the slots for the bytes produced and for the bytes carried into a
+  call, and the reason "budget".
+
+**Tests added with it:** the buffer's place in memory at every call (it must never move: a store that finds the
+buffer held twice copies it, which cost two wrong measurements in this step); a call's use of no more than its
+chunk; two streams written by hand, alike but for one literal, one valid and one with a block type declared and
+never used, which must be rejected (5.10's last rule had no test of its own); the bytes used at a rejection.
+
+**Proved with it:** that every handler keeps the buffer's size, so the driver's facts after a handler are no longer
+owed; and that the handlers' reads and stores of a category's record, of the sets of block types seen and of the last
+distances lie in the front, from the widths of their indices (181 owed in all, from 203).
+
+**Seen, not acted on:** at a byte of room a call the web corpus takes about 240 ms a pass, twenty times the
+ordinary: every command passes the caller's bound and is done in pieces. Not a delivery the tests are to be tuned
+for (the posture), but it is what the pieces cost. And the same text is 11 to 26% slower a byte with a 64 KiB window
+than with 256 KiB; how much of that is the events of wrapped copies and how much is the stream having more commands
+is not known until Google's decoder is timed on the same streams.
+
+**Owed.** The handlers' positions rest on the invariant. Small and local, and not yet proved: the size the command
+loop keeps (its proof ran out of time; the driver assumes it), and the terminations of the driver and
+the loops, deferred as before.
+
+**Not done:** the buffer's room and growth, the demand and the limit (step 8); the largest tables' size (5.2).
+
 ## 10. Decisions
 
 | decided | where |

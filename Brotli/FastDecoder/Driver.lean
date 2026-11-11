@@ -1,6 +1,6 @@
 module
 
-public import Brotli.FastDecoder.Stream
+public import Brotli.FastDecoder.Event
 
 @[expose] public section
 
@@ -26,23 +26,27 @@ uncompressed data copied here, since both take bytes straight from the caller's 
 A meta-block of commands is over when the loop stops before a head with the meta-block's last byte produced. After
 the last meta-block any further byte rejects, and the call returns "done" once the caller has said the input ends.
 
-**What is not here yet** (9.3): the handlers for what the command loop leaves for, and the ring's wrap (step 7). At
-each such point the driver returns the status `todo`, which is not part of the interface; whoever called does that
-piece and calls again.
+**Events** (5.1, 9.7). What the command loop leaves for is done by the handlers of `Event.lean`, called here by the
+reason: a block switch; a command that does not fit, which becomes a command in pieces, done a piece at a time with
+this loop between the pieces to stage input, hand out output and wrap; a copy that needs care; a meta-block's end.
+The loop's own bound stops at the window's end in the ring: the ring's last 16 bytes are the handlers', which
+compare a distance with the window and the bytes produced both.
+
+**The wrap** (5.5). With the output at the ring's end and more to come, what waits is handed out, the ring's last two
+bytes go to the guard, and the output goes back to the ring's start.
 
 The bounds rest on the decoder's invariant and are left to the final proof (`Owed.lean`).
 -/
 
 namespace Brotli.FastDecoder
 
-/-- What a call returns (2.3), and `todo` (above). -/
+/-- What a call returns (2.3). -/
 inductive Status where
   | needsInput
   | needsOutput
   | done
   | rejected
   | memLimit
-  | todo
   deriving DecidableEq, Repr, Inhabited
 
 /-- A call's reply (2.3): the state, the bytes of the chunk it used, the caller's buffer with output appended, and
@@ -114,6 +118,21 @@ def drive (inp : @& ByteArray) (start stop : UInt64) (last : Bool) (outEnd : UIn
       let buf1 := stageIn buf inp ipos stop h
       have h1 : ringAt.toNat ≤ buf1.size := stageIn_front buf inp ipos stop h
       drive inp start stop last outEnd buf1 (ipos + slot buf1 Slot.took h1) out
+    -- the wrap (5.5), with the output at the ring's end and no more waiting than the caller has room for: what
+    -- waits is handed out, the ring's last two bytes go to the guard, and the output goes back to the ring's start.
+    -- The meta-block's end moves back with it
+    let wrap := fun (buf : ByteArray) (out : ByteArray) (h : ringAt.toNat ≤ buf.size) =>
+      let handed := slot buf Slot.handed h
+      let re := slot buf Slot.ringEnd h
+      let out := buf.copySlice handed.toNat out out.size (re - handed).toNat
+      let mb := slot buf Slot.mbEnd h
+      let buf1 := store16 buf guardAt (load16 buf (re - 2) owed) (front h)
+      have h1 : ringAt.toNat ≤ buf1.size := by sized h
+      let buf := setSlot buf1 Slot.opos ringAt h1
+      let buf := setSlot buf Slot.handed ringAt (by sized h1)
+      let buf := setSlot buf Slot.mbEnd (mb - (re - ringAt)) (by sized h1)
+      let buf := setSlot buf Slot.full 1 (by sized h1)
+      drive inp start stop last outEnd buf ipos out
     if phase = Phase.header then
       -- as for the commands below: the margin is made up first if the chunk has more, so that the header reads the
       -- last bits of a staged piece an element at a time only when the chunk is used up
@@ -125,10 +144,14 @@ def drive (inp : @& ByteArray) (start stop : UInt64) (last : Bool) (outEnd : UIn
         else if ipos < stop then more buf out h
         else pause buf out h
     else if phase = Phase.commands then
+      let opos := slot buf Slot.opos h
+      let re := slot buf Slot.ringEnd h
+      let mb := slot buf Slot.mbEnd h
       if space < waiting then
         -- more waits than the caller has room for: what fits is handed out
         let out := buf.copySlice handed.toNat out out.size space.toNat
         ⟨setSlot buf Slot.handed (handed + space) h, ipos - start, out, .needsOutput⟩
+      else if opos = re ∧ opos ≠ mb then wrap buf out h
       else
         -- running mode holds only while the margin of real input lies ahead (5.4): a loop taken up in the middle of a
         -- command reads on without a test. So the margin is made up first if the chunk has more, and where it has
@@ -136,22 +159,42 @@ def drive (inp : @& ByteArray) (start stop : UInt64) (last : Bool) (outEnd : UIn
         let short : Bool := slot buf Slot.inEnd h - slot buf Slot.bitpos h < ((margin + 8) <<< 3)
         if short ∧ ipos < stop then more buf out h
         else
-          -- the output's bound (5.5): the meta-block's end, the ring's end, one byte more than the caller can take
+          -- one byte more than the caller can take (5.5)
           let cap : UInt64 := handed + space + 1
-          let mb := slot buf Slot.mbEnd h
-          let re := slot buf Slot.ringEnd h
-          let b1 : UInt64 := if mb < re then mb else re
-          let buf := setSlot buf Slot.bound (if cap < b1 then cap else b1) h
-          let buf := runLoop buf short (by sized h)
-          have h : ringAt.toNat ≤ buf.size := owed
-          let reason := slot buf Slot.reason h
-          if reason = Reason.input then
-            if short then pause buf out h else drive inp start stop last outEnd buf ipos out
-          else if (reason = Reason.command ∨ reason = Reason.icSwitch) ∧ slot buf Slot.opos h = slot buf Slot.mbEnd h then
-            -- the loop stopped before a head (or before the block switch a head would need) with the meta-block's
-            -- last byte produced: the meta-block is over
-            drive inp start stop last outEnd (afterMb buf h) ipos out
-          else ⟨buf, ipos - start, out, .todo⟩
+          -- after a handler: an element was short (the chunk's next piece, or the end of what the bytes received
+          -- hold), or round again
+          let after := fun (buf : ByteArray) (h : ringAt.toNat ≤ buf.size) =>
+            if slot buf Slot.reason h ≠ Reason.input then drive inp start stop last outEnd buf ipos out
+            else if ipos < stop then more buf out h
+            else pause buf out h
+          if slot buf Slot.pend h ≠ 0 then
+            -- a command in pieces: its next piece, no further than the meta-block's end, the ring's end and the cap
+            let buf := setSlot buf Slot.lim (lo (lo mb re) cap) h
+            let buf := piece (setSlot buf Slot.reason 0 (by sized h)) (by sized h)
+            after buf (by sized h)
+          else
+            -- the loop's bound (5.5, 9.7): the meta-block's end, the window's end in the ring (the ring's last 16
+            -- bytes are the handlers'), the cap
+            let buf := setSlot buf Slot.bound (lo (lo mb (ringAt + slot buf Slot.win h)) cap) h
+            let buf := runLoop buf short (by sized h)
+            have h : ringAt.toNat ≤ buf.size := owed
+            let reason := slot buf Slot.reason h
+            if reason = Reason.input then
+              if short then pause buf out h else drive inp start stop last outEnd buf ipos out
+            else if (reason = Reason.command ∨ reason = Reason.icSwitch) ∧ slot buf Slot.opos h = slot buf Slot.mbEnd h then
+              -- the loop stopped before a head (or before the block switch a head would need) with the meta-block's
+              -- last byte produced: the meta-block is over
+              drive inp start stop last outEnd (endMb buf h) ipos out
+            else
+              -- an event, by the reason the loop left for
+              let buf := setSlot buf Slot.reason 0 h
+              have h : ringAt.toNat ≤ buf.size := by sized h
+              let buf :=
+                if reason = Reason.icSwitch then switchBlock buf 1 h (by decide)
+                else if reason = Reason.distSwitch then switchBlock buf 2 h (by decide)
+                else if reason = Reason.copy then pieceFromCopy buf h
+                else pieceHead buf h
+              after buf (by sized h)
     else if phase = Phase.wbits ∨ phase = Phase.mbStart then
       -- one element, read exactly (5.8): the chunk's next piece is staged first if less than a refill lies ahead
       if slot buf Slot.inEnd h - slot buf Slot.bitpos h < 64 ∧ ipos < stop then more buf out h
@@ -186,7 +229,7 @@ def drive (inp : @& ByteArray) (start stop : UInt64) (last : Bool) (outEnd : UIn
       else if space < waiting then
         let out := buf.copySlice handed.toNat out out.size space.toNat
         ⟨setSlot buf Slot.handed (handed + space) h, ipos - start, out, .needsOutput⟩
-      else if opos = re then ⟨buf, ipos - start, out, .todo⟩
+      else if opos = re then wrap buf out h
       else
         let n0 : UInt64 := if re - opos < left then re - opos else left
         let cap : UInt64 := handed + space + 1 - opos
@@ -214,11 +257,11 @@ def drive (inp : @& ByteArray) (start stop : UInt64) (last : Bool) (outEnd : UIn
       let bp := slot buf Slot.bitpos h
       let fill : UInt64 := ((0 : UInt64) - bp) &&& 7
       if fill ≠ 0 then
-        if bitsAt buf bp &&& mask fill ≠ 0 then ⟨hReject buf h, ipos - start, out, .rejected⟩
+        if bitsAt buf bp &&& mask fill ≠ 0 then drive inp start stop last outEnd (hReject buf h) ipos out
         else drive inp start stop last outEnd (setSlot buf Slot.bitpos (bp + fill) h) ipos out
       else
       if slot buf Slot.inEnd h ≠ slot buf Slot.bitpos h ∨ ipos < stop then
-        ⟨hReject buf h, ipos - start, out, .rejected⟩
+        drive inp start stop last outEnd (hReject buf h) ipos out
       else
         let n : UInt64 := if space < waiting then space else waiting
         let out := buf.copySlice handed.toNat out out.size n.toNat
@@ -227,7 +270,10 @@ def drive (inp : @& ByteArray) (start stop : UInt64) (last : Bool) (outEnd : UIn
         else if last then ⟨setSlot buf Slot.phase Phase.done (by sized h), ipos - start, out, .done⟩
         else ⟨buf, ipos - start, out, .needsInput⟩
     else if phase = Phase.done then ⟨buf, ipos - start, out, .done⟩
-    else if phase = Phase.rejected then ⟨buf, ipos - start, out, .rejected⟩
+    else if phase = Phase.rejected then
+      -- the bytes of this chunk up to where the reading stood when it was rejected (5.4)
+      let unread : UInt64 := (slot buf Slot.inEnd h >>> 3) - ((slot buf Slot.bitpos h + 7) >>> 3)
+      ⟨buf, (if ipos - start < unread then 0 else ipos - start - unread), out, .rejected⟩
     else if phase = Phase.memLimit then ⟨buf, ipos - start, out, .memLimit⟩
     else ⟨buf, ipos - start, out, .rejected⟩
   else ⟨buf, ipos - start, out, .rejected⟩
