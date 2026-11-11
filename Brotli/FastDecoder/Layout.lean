@@ -132,6 +132,9 @@ def took : UInt64 := 216
 def last : UInt64 := 224
 /-- The window: 16 less than the ring. -/
 def win : UInt64 := 232
+/-- The array's room (its capacity), and how many times it has been given a larger one (`growTo`). -/
+def cap : UInt64 := 240
+def moves : UInt64 := 248
 
 /-! #### The header's (5.7, 9.1) -/
 
@@ -199,6 +202,12 @@ def pdist : UInt64 := 960
 def full : UInt64 := 968
 /-- The handlers' bound on the output: the meta-block's end, the ring's end, one byte more than the caller can take. -/
 def lim : UInt64 := 976
+/-- The array's size, kept here so that no loop asks the array; and whether the array has been given its room (5.2). -/
+def size : UInt64 := 992
+def room : UInt64 := 1000
+/-- How far short of their place a single meta-block's first tables stand until the room is given (`giveRoom`).
+`Slot.room` is then 2: not yet given, and the header's first tables are in the front's array. -/
+def shift : UInt64 := 1008
 /-- The three categories, 48 bytes each (`Cat`). -/
 def cats : UInt64 := 608
 

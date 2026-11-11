@@ -310,6 +310,14 @@ structure LitWay where
       let counters' := counters + (push <<< 62)
       let buf' := store64 buf (Slot.dists + ((counters' >>> 62) <<< 3)) dist owed
       head (shortCopy buf' opos dist clen) bb sh (opos + clen) counters' (by sized h)
+    else if slot buf Slot.full h ≠ 0 ∧ dist ≤ slot buf Slot.win h ∧ opos + clen ≤ dist + ringAt then
+      -- after a wrap, within the window, its source before the ring's start: taken a ring further on (5.5), a plain
+      -- run that ends at or before the ring's end and lies ahead of the target by the ring less the distance, 16 or
+      -- more. One copy by a call, so that the loop's own copy is as it was
+      let rs : UInt64 := slot buf Slot.ringEnd h - ringAt
+      let counters' := counters + (push <<< 62)
+      let buf' := store64 buf (Slot.dists + ((counters' >>> 62) <<< 3)) dist owed
+      head (move buf' opos (opos + rs - dist) clen owed) bb sh (opos + clen) counters' (by sized h)
     else if (if slot buf Slot.full h ≠ 0 then ringAt + slot buf Slot.win h else opos) < dist + ringAt ∧
         dist < 0x80000000 ∧ clen - 4 ≤ 20 then
       -- beyond the largest distance (the bytes produced, or once the ring has been full the window): a word of the

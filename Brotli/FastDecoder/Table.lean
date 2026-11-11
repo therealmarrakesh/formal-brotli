@@ -366,6 +366,24 @@ def buildOne (buf : ByteArray) (s wide mt rmin : UInt64) (h : ringAt.toNat ≤ b
   let buf1 := put wide mt buf pos 0 1 ((1 : UInt64) <<< rmin) s 0
   built wide buf1 pos rmin ((1 : UInt64) <<< rmin) (by sized h)
 
+/-- The entries the sub-tables of the code in the lists can take, summed from length `len` to the longest `maxl`:
+`2 ^ (maxl - its length)` for each symbol. A sub-table as wide as the longest code holds exactly that for its
+symbols, and a narrower one fewer. -/
+def subNeed (buf : ByteArray) (maxl len acc : UInt64) : UInt64 :=
+  if hl : len ≤ maxl ∧ len < 16 then
+    have : 16 - (len + 1).toNat < 16 - len.toNat := succ_nearer hl.2
+    subNeed buf maxl (len + 1) (acc + (listCount buf len <<< (maxl - len)))
+  else acc
+termination_by 16 - len.toNat
+
+/-- A bound on the bytes `build` writes from `Slot.tabNext` for the code in the lists (9.9): the root, and the
+sub-tables' entries by `subNeed`. Worked out before the table is built, so that the room is there. -/
+def tableNeed (buf : ByteArray) (wide rmin : UInt64) : UInt64 :=
+  let maxl := maxLen buf 15
+  let r0 := if maxl ≤ rootCap then maxl else rootCap
+  let r := if r0 < rmin then rmin else r0
+  (((1 : UInt64) <<< r) + subNeed buf maxl (r + 1) 0) <<< (if wide = 0 then 1 else 3)
+
 @[simp] theorem listsReset_size (buf : ByteArray) (h : ringAt.toNat ≤ buf.size) : (listsReset buf h).size = buf.size := by
   simp [listsReset]
 

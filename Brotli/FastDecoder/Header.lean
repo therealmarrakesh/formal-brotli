@@ -61,6 +61,9 @@ def mapCodeRet : UInt64 := 18
 def mapVals : UInt64 := 19
 def mapImtf : UInt64 := 20
 def pcCl : UInt64 := 21
+/-- A code read by its lengths is to be built: a place of its own, so that the room its table needs is worked out
+with the lengths all read, and made, before the builder runs (9.9). -/
+def build : UInt64 := 22
 
 end HP
 
@@ -443,7 +446,7 @@ def lensSave (buf : ByteArray) (bp i sum prev rep : UInt64) (h : ringAt.toNat �
 
 /-- The lengths' loop left with the code complete. -/
 def lensDone (buf : ByteArray) (bp : UInt64) (h : ringAt.toNat ≤ buf.size) : ByteArray :=
-  pcBuild (setSlot buf Slot.bitpos bp h) (by sized h)
+  setSlot (setSlot buf Slot.bitpos bp h) Slot.hphase HP.build (by sized h)
 
 /-- The rounds the lengths' loop may run before it must look again: no more than the real input ahead covers, and no
 more than the symbols the alphabet has left, since a round takes at least one. -/
@@ -1061,7 +1064,8 @@ def headerDo (buf : ByteArray) (p : UInt64) (h : ringAt.toNat ≤ buf.size) : By
   else if p = 18 then stepMapCodeRet buf h
   else if p = 19 then stepMapVals buf h
   else if p = 20 then stepMapImtf buf h
-  else stepPcCl buf h
+  else if p = 21 then stepPcCl buf h
+  else pcBuild buf h
 
 /-- One step of the header from its place: one element, or as much of a loop as the real input ahead allows. The
 header is over when the phase is no longer the header: the commands, or rejected.
@@ -1077,6 +1081,19 @@ def headerStep (buf : ByteArray) (h : ringAt.toNat ≤ buf.size) : ByteArray :=
   if bp + 64 ≤ e then headerDo buf p h
   else if bp + elemBits buf p bp h ≤ e then headerDo buf p h
   else setSlot buf Slot.reason Reason.input h
+
+/-- How large the array must be for the header's next step (9.9): past the tables' next place, what the step at the
+place may write. Before a table is built, the bound from its code lengths; before the literal map's room is taken,
+its size; before the finishing step, the context tables, the rows and its scratch; and for every other step an
+allowance that covers the working arrays (the modes, the distance map, the lists of names, a map's scratch) and a
+simple code's table. -/
+def headerNeed (buf : ByteArray) (h : ringAt.toNat ≤ buf.size) : UInt64 :=
+  let p := slot buf Slot.hphase h
+  let tn := slot buf Slot.tabNext h
+  if p = HP.build then tn + tableNeed buf (slot buf Slot.hwide h) (slot buf Slot.hrmin h) + 64
+  else if p = HP.treesL then tn + (slot buf Slot.cats h <<< 6) + 8192
+  else if p = HP.finish then tn + (slot buf Slot.cats h <<< 13) + (slot buf (Slot.cats + 96) h <<< 5) + 8192
+  else tn + 8192
 
 /-! ### Every part keeps the buffer's size -/
 

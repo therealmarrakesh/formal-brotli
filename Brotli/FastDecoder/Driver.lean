@@ -134,6 +134,15 @@ def drive (inp : @& ByteArray) (start stop : UInt64) (last : Bool) (outEnd : UIn
       let buf := setSlot buf Slot.full 1 (by sized h1)
       drive inp start stop last outEnd buf ipos out
     if phase = Phase.header then
+      if slot buf Slot.room h = 2 ∧ slot buf Slot.hphase h = HP.litInit then
+        -- a stream of one meta-block, its header's counts of codes all declared: its room, exactly (9.12)
+        drive inp start stop last outEnd (giveRoom buf h) ipos out
+      else
+      if slot buf Slot.size h < headerNeed buf h then
+        -- room for what the header's next step may write (9.9): the array is extended, or the stream's demand
+        -- passes the limit and the phase becomes the memory limit
+        drive inp start stop last outEnd (growTo buf (headerNeed buf h) h) ipos out
+      else
       -- as for the commands below: the margin is made up first if the chunk has more, so that the header reads the
       -- last bits of a staged piece an element at a time only when the chunk is used up
       if slot buf Slot.inEnd h - slot buf Slot.bitpos h < ((margin + 8) <<< 3) ∧ ipos < stop then more buf out h
@@ -226,6 +235,9 @@ def drive (inp : @& ByteArray) (start stop : UInt64) (last : Bool) (outEnd : UIn
       let opos := slot buf Slot.opos h
       let re := slot buf Slot.ringEnd h
       if left = 0 then drive inp start stop last outEnd (afterMb buf h) ipos out
+      else if slot buf Slot.size h < lo (opos + left) re then
+        -- the ring's part as far as this meta-block writes (9.9)
+        drive inp start stop last outEnd (growTo buf (lo (opos + left) re) h) ipos out
       else if space < waiting then
         let out := buf.copySlice handed.toNat out out.size space.toNat
         ⟨setSlot buf Slot.handed (handed + space) h, ipos - start, out, .needsOutput⟩
@@ -276,7 +288,8 @@ def drive (inp : @& ByteArray) (start stop : UInt64) (last : Bool) (outEnd : UIn
       ⟨buf, (if ipos - start < unread then 0 else ipos - start - unread), out, .rejected⟩
     else if phase = Phase.memLimit then ⟨buf, ipos - start, out, .memLimit⟩
     else ⟨buf, ipos - start, out, .rejected⟩
-  else ⟨buf, ipos - start, out, .rejected⟩
+  -- no front: the state `start` gives for a limit that has no room for a decoder (5.9)
+  else ⟨buf, ipos - start, out, if buf.size = 0 then .memLimit else .rejected⟩
 termination_by stop.toNat - ipos.toNat
 decreasing_by all_goals exact owed
 

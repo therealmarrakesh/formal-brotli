@@ -1673,6 +1673,258 @@ the loops, deferred as before.
 
 **Not done:** the buffer's room and growth, the demand and the limit (step 8); the largest tables' size (5.2).
 
+### 9.9 Step 8, the buffer's room, its growth and the limit: how it is to be built — built (9.10)
+
+What 2.3, 2.4 (4), 5.2, 5.8, 5.9 and the ledger say of it, gathered, with what they leave open settled here.
+Written before the code, to be corrected by it.
+
+**What the design asks.** The decoder is started with a memory limit and allocates its own buffer. The buffer is
+given its room once, at the first meta-block's start, and is extended only within that room: where the first
+meta-block is also the last, the room is the front, its length, the slack and the tables; otherwise the declared
+window in place of the length. The ring's part is extended when a meta-block starts, and only what lies beyond the
+array's present end is written. The demand (the front, the ring's part as far as declared, the room the header's
+tables take) is compared with the limit before it is met: over it, the phase becomes the memory limit, for good. A
+limit below the front's size is reported by the start. The limit changes nothing else.
+
+**The largest tables, worked out again** (5.2 asked for it). *This paragraph's figure is wrong: 9.12 corrects it to
+about 6.4 MB.* A table has a root of at most 256 entries and
+sub-tables. A sub-table as wide as its codes need, of a complete code, has `2 ^ w` entries and at least `w + 1`
+symbols, so at most 16 entries a symbol (`w = 7`). A table is then at most `256 + 16 × the alphabet` entries: 8.7 KB
+for a literal code (2 bytes an entry), 92 KB for an insert-and-copy code and 69 KB for a distance code of the
+largest alphabet (8 bytes an entry). A meta-block may declare 256 codes of each kind, and 256 literal block types
+with a context table of 8 KB each: about 2.2 MB of literal tables, 23.6 MB of insert-and-copy tables, 17.6 MB of
+distance tables and 2 MB of context tables, 45 MB in all, where 5.2 had 1.5 MB. The harness's 6 MB was not enough
+for such a stream: until this step a hostile header could have written past the buffer.
+
+**What streams ask for,** counted: the tables of a meta-block take 2 KB to 211 KB on the web corpus, 24 KB at the
+median and 106 KB at the ninth decile; up to 290 KB on the corpus that wraps.
+
+**Settled here**
+- *The room cannot be for the largest tables.* 45 MB reserved for every stream would take every small stream's
+  buffer out of the sizes an allocator hands back warm. The room is the ring's part as 5.2 has it and a *table room*
+  of ordinary size (256 KiB to begin with; to be measured against less and more). A stream whose tables pass the
+  room is still decoded: the array is then extended past its room, which the runtime does by a new allocation and a
+  copy. That departs from 5.2's "never copied to grow and never held twice" for such a stream, and from the letter
+  of contract 4 while the copy is made; it is counted by the harness, and no stream of the three corpora does it.
+  The alternative, the room for the largest tables on streams of more than one meta-block, keeps the letter at
+  45 MB of address space a stream.
+- *Growth is the driver's,* between steps: no header step and no handler changes the array's size, so the facts
+  proved of them stand. Before a header step the driver compares the array's size (kept in a slot) with what the
+  step may write: past the tables' next place, a fixed allowance (8 KB: every working array but two is under it),
+  the literal map's size before the step that takes it, the context tables and rows before the finishing step, and
+  before a table is built a bound from its code lengths. For that, building a table read by code lengths becomes a
+  place of its own in the header's machine, so the bound is worked out with the lengths all read.
+- *A table's bound, from the counts of its lengths:* the root, and for each symbol longer than the root
+  `2 ^ (longest − its length)` entries (a sub-table's entries are the sum of that over its symbols when it is as
+  wide as the longest code, and fewer otherwise).
+- *Extending* writes zeros from the array's end to the need and a step beyond (16 KB, so that a header does not
+  grow at every table), by copies from a constant block of zeros: no new primitive.
+- *The demand and the limit:* the need is the demand; it is compared with the limit before anything is written; the
+  room is never more than the limit.
+- *The start* writes the whole front (5.2), in an array of exactly the front; the room's array takes its place at
+  the first meta-block that produces output, with one copy of the front. *(To measure: against a first array with
+  room for a small stream, which saves the copy where the guess holds.)*
+- *An uncompressed meta-block* extends the ring's part as far as it will write.
+
+**To be measured:** the fill of the ring's part when a meta-block starts (5.2, section 8 item 11: the output's
+bytes are written twice, once as zeros); the table room's size; the start; and all of it on the smallest streams,
+where a fixed cost is a large part.
+
+**How it is checked:** the decoder allocates for itself in every test there is; a decode under a limit must end in
+the stream's own verdict or "memory limit", with the array never larger than the limit at any return; for each
+stream the least limit that decodes it is found, and every limit below it must give "memory limit" and every one
+above it the same output (the limit changes nothing else); a hostile header that declares the most codes there can
+be, under a small limit.
+
+### 9.10 Step 8 as built, and what was measured (2026-11-10)
+
+Built as 9.9 says, in `Mem.lean` (the room, extending, the limit), with `start` in `Stream.lean` now taking the
+limit and allocating, a bound on a table's size in `Table.lean`, the header's need in `Header.lean`, and the
+driver asking for room before a header step and before uncompressed data. The harness no longer allocates anything
+for the decoder: it calls `start` with a limit and then `call`.
+
+**What the code settled**
+- *The demand is what the driver asks room for,* and that is what is compared with the limit: the tables' next
+  place and, by the header's place, an allowance of 8 KB, the literal map and the allowance, the context tables
+  with the rows and the allowance, or a table's bound from its code lengths. So the demand counts a table by its
+  bound and not its size, and carries the allowance: a limit within that of what a stream strictly needs may be
+  reported. It is a function of the stream alone, as the contract asks.
+- *The table room is 1 MiB* (withdrawn: 9.12 sizes the room by the header's counts). With 64 KiB five streams of the
+  corpora passed their room, and each time the array
+  had to move, which cost about 0.2 ms (the copy, and a larger block that is new to the allocator): a pass of the
+  web corpus took 12.0 ms for 11.4. With 256 KiB none passed it, by a narrow margin on the largest page (its tables
+  take 211 KB). 1 MiB measured the same as 256 KiB (11.38 to 11.46 ms against 11.44 to 11.46 at 16 KiB pieces; the
+  smallest pages alike), so the larger was taken. It is room in the address space, not memory written.
+- *Building a table is a place of its own* (`HP.build`), one more round of the header's machine for each code read
+  by its lengths.
+- *The array moves once,* from the front's array to the one with the room, by a copy of the front (19 KB). The
+  harness requires that it never moves otherwise.
+
+**What it costs.** The whole decoder, allocating and growing its own buffer, against the same decoder given a
+buffer made beforehand and already written (30 mixed passes, three runs a schedule): 11.40 to 11.43 ms against
+11.39 to 11.40 at 16 KiB pieces; 11.60 to 11.63 against 11.56 to 11.58 on the network mix. About 0.3%, for the
+front's allocation and copy and the zeros written ahead of the output. The smallest page (708 bytes) takes 7.8 µs
+either way. The fill of the ring's part (section 8, item 11) is in that figure and is not to be seen apart.
+
+**Checked** (steps of `check`, 63 s in all): everything of 9.8 with the decoder allocating for itself; for every
+stream of the three corpora the least limit that decodes it, found by halving, with every limit tried below it
+ending in "memory limit" (what was handed out a prefix of the original, the array never larger than the limit at
+any return) and every one at or above it decoding to the original; and corrupt streams under small limits (60 KB,
+300 KB), each ending in the proved decoder's verdict or in "memory limit". The least limit is the output and
+37 KB to 238 KB more on the web corpus, 66 KB at the median.
+
+**Proved:** the memory module owes nothing: extending terminates and never shrinks the array, and the array with
+its room and the array grown keep the front.
+
+**Not done, and known**
+- *No stream that declares the most codes there can be* has been made to test the tables' bound and the growth past
+  the room under a hostile header; the corrupt streams reach the limit by their windows and lengths.
+- *A stream whose tables pass the room* moves the array (9.9): none in the corpora with the room at 1 MiB.
+- *The limit below the front's size* gives the empty array as the state, for which every call returns "memory
+  limit"; the interface has no other way for a start to report.
+- *The time excludes freeing the buffer,* which the harness does after its clock stops; a comparison with another
+  decoder must count both sides alike.
+
+### 9.11 Two costs looked into by a second agent, and what came of them (2026-11-10)
+
+The two things 9.8 left "seen, not acted on" were given to a second agent (Opus), working from commit `a98f1f3`
+in a worktree of its own (`tools/wt-agent`, its package `tools/bench-agent`, its patches there), to report and
+change nothing here. What it changed in a tool: `vsgoogle` takes a list of streams (`--list=<file>`).
+
+**The gap between windows was ours.** Google's decoder, timed on the corpus that wraps, slows less from a 256 KiB
+window to a 64 KiB one than ours did (for one text 12 to 17% against our 27%). The count says why: of 27,959
+returns from the loop in a pass of that corpus, 25,798 were copies whose source lies a ring further on, each an
+event; the ring's last 16 bytes made 91.
+- *Such a copy is now made inside the loop,* where its source run ends at or before the ring's end (5.5 always had
+  it so; 9.8 had left it an event). Three forms were measured here, each between two runs of the loop as it was
+  (30 mixed passes, three runs a schedule; the web corpus at 16 KiB pieces, and the corpus that wraps):
+
+  | the form | web corpus | corpus that wraps |
+  |---|---|---|
+  | as it was (an event) | 11.36 to 11.40 ms | 7.34 to 7.38 ms |
+  | the agent's: the loop's own copy, taking a position in memory, a copy continued keeping it in 30 bits, signed | 11.38 to 11.43 | 6.82 to 6.86 |
+  | the same without the mask on a continued copy | 11.47 to 11.48 | 6.88 to 6.93 |
+  | one copy by a call (`move`), the loop's own copy untouched | 11.33 to 11.39 | 6.90 to 6.92 |
+
+  The agent's form is the fastest where the ring wraps (7.1% less) and costs the web corpus about 0.3%; without
+  the mask it was worse on both, which is the loop's shape and not the instruction; the call takes 6.2% off where
+  the ring wraps and costs the web corpus nothing to be seen. The call is kept: the web is what is decoded.
+- *With it* the slowing from 256 KiB to 64 KiB is Google's own for two of the eight pairs of streams (17% against
+  17%; 9%
+  against 10%) and 3 to 9 points over it for the others (the widest, 23% against 13%, on a text whose loop is now
+  entered about 30 times a stream: not events; not found). Google's figures are the agent's, not taken again here.
+
+**Little output room is the bound's cost, and stays.** By room a call (the web corpus, 16 KiB pieces): 216 ms a
+pass at 1 byte, 37 ms at 16, 13.5 ms at 256 (20% over), 11.43 ms at 4 KiB (1.2% over), 11.29 ms at 64 KiB. Each
+call that the bound cuts costs 22 to 62 ns. Google's decoder is cheaper at small rooms (88 ms at 1 byte, 2% over at
+256) because it decodes up to a ring ahead of what the caller can take and only copies out afterwards: what 5.5
+rules out. Three changes that keep the contract were tried by the agent and none helped: a command's pieces chained
+in one handler call (3 to 7% slower at small rooms), that with the loop skipped where no command can fit (slower),
+and the skip alone (no difference). Left untried, with its cost: the loop cutting a copy with no literals itself
+at the bound, which would make a second place where copies are cut.
+
+### 9.12 The room, sized as the reference decoder sizes its tables (2026-11-10)
+
+**9.9's figure for the largest tables was wrong.** It took a table as at most `256 + 16 × the alphabet` entries,
+which forgets that a complete code must fill the rest of its root too: a code cannot have sub-tables of the widest
+kind under every root slot and still be complete. The reference decoder allows a table `alphabet + 376` entries (a
+root of 256 and 120 for the sub-tables, a figure found by search, as zlib's is). With that and this decoder's
+entries, the most a meta-block's tables can take is about 6.4 MB, not 45 MB: 0.3 MB of literal tables, 2.2 MB of
+insert-and-copy tables, 1.8 MB of distance tables, 2 MB of context tables. The figure is the reference's and is
+not proved of this builder, which makes its sub-tables the same way.
+
+**What the reference decoder does** (owner's question). It has no single buffer: the ring, each of the three
+groups of tables and the maps are allocations of their own. A group is allocated when the header has declared its
+count of codes, at `count × (alphabet + 376)` entries. The ring starts at the least power of two that holds the
+output so far and the meta-block in hand, and grows by a new allocation and a copy, during which it says it may
+hold half as much again. It has no memory limit.
+
+**The room, by the counts** (owner, 2026-11-10: memory is not to be multiplied without reason; the table room of
+1 MiB and the move past it are withdrawn).
+- *A stream of one meta-block* (every stream of the web corpus). The header's first tables (the block-switch
+  codes', the modes, the two maps: under 30 KB at the most) are built in the front's array, short of their place.
+  When the counts of codes are all declared, the array with the room is made: the front, the ring's part for the
+  output, the slack, those first tables moved to their place, and a bound on the rest from the counts
+  (`tableBound`: a table for each code at `alphabet + 376` entries, the context tables, the rows, the lists). About
+  ten positions the header has kept are moved with the tables; the tables themselves hold only places within
+  themselves. Nothing with output in it ever moves, and nothing moves again.
+- *A stream of more than one meta-block* (withdrawn: 9.13 has its room grow): the declared window, the slack and 7 MiB for any meta-block's tables,
+  once. It never moves.
+- *The room is reserved, not written:* the array is extended into it as the tables are built, and each need is
+  compared with the limit as it comes. (As first written here it filled the whole bound with zeros, which a second
+  agent's note caught: 3% slower, and every stream writing the most its counts allow.)
+- *If a table passed its bound* the array would still be extended, by the runtime's move; memory safety does not
+  rest on the figure of 376, only "never moves" does. The harness fails a run in which the array moves once it has
+  its room, and none does.
+
+**Measured** (30 mixed passes, three runs a schedule, the old scheme run before, between and after):
+
+| the room | web corpus, 16 KiB | network mix | corpus that wraps | the smallest page |
+|---|---|---|---|---|
+| the output and a table room of 1 MiB (9.10) | 11.44 to 11.52 ms | 11.62 to 11.67 | 6.94 to 6.99 | 7.86 µs |
+| by the counts, exactly | 11.62 to 11.72 | 11.76 to 11.87 | 6.97 to 7.04 | 9.36 µs |
+| by the counts, rounded up to a power of two | 11.50 to 11.67 | 11.68 to 11.80 | 6.97 to 7.12 | 7.96 µs |
+| by the counts, and no less than 1 MiB past the first tables | 11.48 to 11.61 | 11.73 to 11.76 | 6.97 to 6.99 | 8.06 µs |
+
+- *Exact rooms are the slowest:* every stream asks the allocator for a size of its own, and gets memory that has
+  not been touched lately. Rounded to a power of two, as the reference's ring is, streams share a few sizes.
+- *The scheme itself costs about 0.7%* whatever the rounding (the last row reserves as much as the old scheme and
+  is still slower than it): the first tables built in one array and moved to another, and the room given in a
+  second step.
+- *Kept: by the counts, rounded up to a power of two.* About 1% slower than the 1 MiB room, for a room that is at
+  most twice what the stream's counts can ask for and never 1 MiB more than a small stream needs, and for an array
+  that never moves. What is written is the same either way.
+
+**Tried, to win the 1% back** (owner: a few things, then move on). Each against the kept form, five runs of 30
+mixed passes of the web corpus at 16 KiB pieces; the kept form took 11.54 to 11.67 ms that hour and the old scheme
+11.49 to 11.57.
+- *The front's array written 12 KB further at the start, the first extension made in the room's own step, and the
+  test for giving the room taken off the header's every round* (the three together): 11.56 to 11.69, then 11.56 to
+  11.83. Nothing.
+- *The power of two no less than 256 KiB,* for fewer sizes among small streams: 11.56 to 11.67. Nothing.
+None is kept. What the 0.6 to 1% is made of is not found: not the size of the room (a room of at least 1 MiB was
+as slow), not the steps tried here.
+
+**The limit** is compared with what is asked for (the ring's part, the tables as they are built), not with the
+bound: the least limits that decode the corpora's streams are what they were in 9.10.
+
+### 9.13 Flushed streams: the room grows as the reference's does (2026-11-10)
+
+**What a second agent's note pointed out.** A server that compresses a page as it makes it flushes its encoder
+along the way, and each flush ends a meta-block. Every stream of the web corpus was compressed in one go and has one
+meta-block, so 9.12's exact room served them all; but for a stream of more than one meta-block 9.12 reserved the
+declared window (4 MB by default) and 7 MiB, however small the page. That is the case the owner's posture names
+("at quality 5 on the fly"), and it was not in the corpus.
+
+**A corpus of flushed streams** (`tools/corpus/flush`, made by `flushcorpus`): the 26 texts of the web corpus
+compressed by Google's encoder (the DLL beside the decoder's) at quality 5 with the default window, flushed every
+4 KiB and every 16 KiB of input: 52 streams, 1,426 meta-blocks. Every one decodes, every header matches the
+specification's reading, and the truncation, flipped-bit and limit tests pass on them; all are steps of `check`.
+
+**The room now grows.** The first meta-block that produces output gets its room as 9.12 has it, by its header's
+counts and rounded up to a power of two, whether or not it is the last. When a later need passes the room (a later
+meta-block's output, or its tables), the array is given a larger one: a new array of the least power of two that
+holds the need, the bytes copied, the old one freed. This is what the reference decoder's ring does. So:
+- a stream reserves no more than twice what it has needed so far, and a small flushed page a small room;
+- the array moves at most about once for each doubling of the output, and a stream's bytes are copied at most twice
+  over in all (53 moves in a pass of the 52 flushed streams; none on the web corpus);
+- while a copy is made both arrays exist, and both are counted against the limit (the new room is no more than the
+  limit less the old). A stream may therefore be refused under a limit that its last array alone would fit. The
+  test of the limit finds each stream's least limit with this in it, and the limit still changes nothing else.
+
+This withdraws "never copied to grow and never held twice" (5.2) for streams of more than one meta-block, and with
+it the letter of contract 4 on address space, in favour of not reserving what is not used (owner, 2026-11-10). For
+a stream of one meta-block 9.12 stands: one room, exactly, and no move.
+
+**Measured** (30 mixed passes, three runs, the window-and-7-MiB form between two runs of the growing form):
+
+| | web corpus | flushed corpus | corpus that wraps |
+|---|---|---|---|
+| the window and 7 MiB reserved (9.12) | 11.45 to 11.46 ms | 12.60 to 12.61 ms | 6.94 to 6.99 ms |
+| the room grows by doubling | 11.38 to 11.43 | 12.77 to 12.83 | 6.95 to 6.98 |
+
+Growing costs the flushed streams about 1.4%, the copies; the others are as they were.
+
 ## 10. Decisions
 
 | decided | where |

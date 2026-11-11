@@ -1,6 +1,7 @@
 module
 
 public import Brotli.FastDecoder.Header
+public import Brotli.FastDecoder.Mem
 
 @[expose] public section
 
@@ -66,9 +67,44 @@ def startSlots (buf : ByteArray) (h : ringAt.toNat ≤ buf.size) : ByteArray :=
   let buf := setSlot buf Slot.full 0 h
   setSlot buf Slot.pend 0 (by sized h)
 
-/-- The decoder's start: the front of `buf` set up, the constant tables copied in and the slots set. -/
-def start (buf : ByteArray) (h : ringAt.toNat ≤ buf.size) : ByteArray :=
+/-- The front of `buf` set up: the constant tables copied in and the slots set. -/
+def startOn (buf : ByteArray) (h : ringAt.toNat ≤ buf.size) : ByteArray :=
   startSlots (startDists (startTabs buf) (startTabs_front buf h)) (by simpa using startTabs_front buf h)
+
+@[simp] theorem startSlots_size (buf : ByteArray) (h : ringAt.toNat ≤ buf.size) : (startSlots buf h).size = buf.size := by
+  simp [startSlots]
+
+/-- Setting the front up leaves the buffer its front. -/
+theorem startOn_front (buf : ByteArray) (h : ringAt.toNat ≤ buf.size) : ringAt.toNat ≤ (startOn buf h).size := by
+  unfold startOn
+  rw [startSlots_size, startDists_size]
+  exact startTabs_front buf h
+
+/-- An array for the front, every byte of the front written (5.2): zeros, for `startOn` to write over. Its room,
+`cap`, has space besides for the first tables of the first header, which stand in it until the stream's room is
+given (`giveRoom`). -/
+@[noinline, never_extract] def newFront (n cap : UInt64) : ByteArray :=
+  zeroFill (ByteArray.emptyWithCapacity cap.toNat) 0 n
+
+/-- The decoder's start (2.3, 5.9): its state for a memory limit of `limit` bytes. The front is allocated and
+written; the ring and the tables get their room when the first meta-block that produces output has declared what
+it needs (`giveRoom`, `growTo`). A limit below the front's size leaves no room for a decoder at all: the state is
+then the empty array, for which every call returns "memory limit". -/
+def start (limit : UInt64) : ByteArray :=
+  if limit < ringAt then ByteArray.empty
+  else
+    let cap : UInt64 := if limit < ringAt + 49152 then limit else ringAt + 49152
+    let buf := newFront ringAt cap
+    if h : ringAt.toNat ≤ buf.size then
+      let buf := startOn buf h
+      have h : ringAt.toNat ≤ buf.size := startOn_front _ h
+      let buf := setSlot buf Slot.limit limit h
+      let buf := setSlot buf Slot.size ringAt (by sized h)
+      let buf := setSlot buf Slot.cap cap (by sized h)
+      let buf := setSlot buf Slot.moves 0 (by sized h)
+      setSlot buf Slot.room 0 (by sized h)
+    else buf
+
 
 /-- An element could not be read whole: nothing changes but the reason. -/
 def wantInput (buf : ByteArray) (h : ringAt.toNat ≤ buf.size) : ByteArray :=
@@ -177,7 +213,14 @@ def stepMbStart (buf : ByteArray) (h : ringAt.toNat ≤ buf.size) : ByteArray :=
           let re := slot buf Slot.ringEnd (by sized h)
           let top : UInt64 := if slot buf Slot.full (by sized h) ≠ 0 then re else if mbEnd < re then mbEnd else re
           let buf := setSlot buf Slot.mbEnd mbEnd (by sized h)
-          let buf := setSlot buf Slot.tabNext ((top + margin + (7 : UInt64)) &&& ~~~(7 : UInt64)) (by sized h)
+          let place : UInt64 := (top + margin + (7 : UInt64)) &&& ~~~(7 : UInt64)
+          -- the first meta-block that produces output, the room not yet given: its header's first tables go in the
+          -- front's array, short of their place, until the header has declared its counts of codes (`giveRoom`)
+          let early : Bool := slot buf Slot.room (by sized h) == 0
+          let buf := setSlot buf Slot.tabNext (if early then provAt else place) (by sized h)
+          let buf := setSlot buf Slot.shift (place - provAt) (by sized h)
+          have h : ringAt.toNat ≤ buf.size := by sized h
+          let buf := if early then setSlot buf Slot.room 2 h else buf
           headerStart buf (by sized h)
 
 @[simp] theorem stepWbits_size (buf : ByteArray) (h : ringAt.toNat ≤ buf.size) : (stepWbits buf h).size = buf.size := by
